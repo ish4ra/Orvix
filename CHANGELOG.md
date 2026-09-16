@@ -2,6 +2,15 @@
 
 This file tracks user-visible changes to Pikora. GitHub Releases are published automatically for new packaged versions starting with v0.3.2.
 
+## v0.3.6 — Smooth huge-file streaming
+
+- Added PikPak Auto rendition selection for huge/high-bitrate files. Files around 24 GiB+ (or UHD/high-bitrate origins) now prefer a visible cloud transcode instead of forcing the raw remux when PikPak provides a suitable rendition.
+- Auto mode prefers known transcodes up to 30 Mbps, choosing the highest usable resolution up to 2160p; if PikPak does not provide a suitable transcode, playback falls back to the provider default/origin path.
+- Restored mpv `auto-safe` direct hardware decoding on Windows. v0.3.5's `auto-copy-safe` path prevented crashes but could become a throughput bottleneck on 4K HEVC because decoded frames are copied back through system RAM.
+- Increased forward packet cache from 256 MiB to 512 MiB and raised cloud VOD read-ahead to 300 seconds where bitrate/byte limits allow.
+- Enabled explicit mpv network caching, demuxer prefetching, controlled rebuffer recovery, a 60-second network timeout, and FFmpeg reconnect handling for temporary 5xx/network drops.
+- Retains Debrify's patched media_kit/media_kit_video packages for safer Windows native renderer teardown.
+
 ## v0.3.5 — 4K stability, safer Windows decode & PikPak file sizes
 
 - Switched Windows playback to mpv `auto-copy-safe` hardware decoding to keep GPU decode while avoiding fragile direct decoder-surface interop on difficult high-bitrate HEVC/Dolby Vision files.
