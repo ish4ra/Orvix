@@ -19,6 +19,36 @@ class SourceResult {
   final String resource;
   final bool isMagnet;
   final String? quality;
+
+  int get qualityRank {
+    switch (quality?.toUpperCase()) {
+      case '2160P':
+      case '4K':
+        return 600;
+      case '1440P':
+        return 500;
+      case '1080P':
+        return 400;
+      case '720P':
+        return 300;
+      case '480P':
+        return 200;
+      default:
+        return 100;
+    }
+  }
+
+  int get preferenceScore {
+    final lower = title.toLowerCase();
+    var score = qualityRank;
+    if (lower.contains('web-dl') || lower.contains('webdl')) score += 35;
+    if (lower.contains('bluray') || lower.contains('blu-ray')) score += 30;
+    if (lower.contains('hevc') || lower.contains('x265') || lower.contains('h265')) score += 12;
+    if (lower.contains('hdr')) score += 8;
+    if (lower.contains('cam') || lower.contains('telesync') || lower.contains('ts ')) score -= 180;
+    if (!isMagnet) score += 4;
+    return score;
+  }
 }
 
 class SourceProviderService {
@@ -73,7 +103,14 @@ class SourceProviderService {
         if (seen.add(result.resource)) out.add(result);
       }
     }
+    out.sort((a, b) => b.preferenceScore.compareTo(a.preferenceScore));
     return out;
+  }
+
+  SourceResult? bestSource(List<SourceResult> results) {
+    if (results.isEmpty) return null;
+    final copy = [...results]..sort((a, b) => b.preferenceScore.compareTo(a.preferenceScore));
+    return copy.first;
   }
 
   Future<List<SourceResult>> _resolveAddon(
