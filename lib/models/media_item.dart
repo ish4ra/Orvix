@@ -21,6 +21,17 @@ class EpisodeItem {
 
   String get label => 'S${season.toString().padLeft(2, '0')}E${episode.toString().padLeft(2, '0')}';
 
+  DateTime? get releaseDate {
+    final raw = released?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    return DateTime.tryParse(raw)?.toLocal();
+  }
+
+  bool get isUpcoming {
+    final date = releaseDate;
+    return date != null && date.isAfter(DateTime.now());
+  }
+
   factory EpisodeItem.fromCinemeta(Map<String, dynamic> json) {
     return EpisodeItem(
       id: (json['id'] ?? '').toString(),
@@ -62,6 +73,16 @@ class MediaItem {
   final List<EpisodeItem> episodes;
 
   String get typeLabel => kind == MediaKind.movie ? 'Movie' : 'TV Series';
+
+  int? get startYear {
+    final match = RegExp(r'\b(?:19|20)\d{2}\b').firstMatch(year ?? '');
+    return int.tryParse(match?.group(0) ?? '');
+  }
+
+  bool get isUpcoming {
+    final value = startYear;
+    return value != null && value > DateTime.now().year;
+  }
 
   factory MediaItem.fromCinemeta(
     Map<String, dynamic> json, {
