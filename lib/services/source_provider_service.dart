@@ -65,7 +65,7 @@ class SourceResult {
       if (seeders == 0) {
         score -= 450;
       } else {
-        score += seeders!.clamp(0, 250);
+        score += seeders!.clamp(0, 250).toInt();
         if (seeders! >= 20) score += 60;
         if (seeders! >= 100) score += 60;
       }
