@@ -7,9 +7,14 @@ import '../services/catalog_service.dart';
 import '../widgets/media_card.dart';
 
 class SearchScreen extends StatefulWidget {
-  const SearchScreen({super.key, required this.catalog});
+  const SearchScreen({
+    super.key,
+    required this.catalog,
+    required this.onOpen,
+  });
 
   final CatalogService catalog;
+  final ValueChanged<MediaItem> onOpen;
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -57,9 +62,9 @@ class _SearchScreenState extends State<SearchScreen> {
       _error = null;
     });
 
-    _debounce = Timer(const Duration(milliseconds: 280), () async {
+    _debounce = Timer(const Duration(milliseconds: 220), () async {
       try {
-        final results = await widget.catalog.search(query, limit: 24);
+        final results = await widget.catalog.search(query, limit: 30);
         if (!mounted || generation != _generation) return;
         setState(() {
           _results = results;
@@ -82,23 +87,37 @@ class _SearchScreenState extends State<SearchScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Search',
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Search',
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                        fontWeight: FontWeight.w900,
+                      ),
+                ),
+              ),
+              Text(
+                'Movies + TV',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.primary,
                   fontWeight: FontWeight.w800,
                 ),
+              ),
+            ],
           ),
           const SizedBox(height: 18),
           ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
+            constraints: const BoxConstraints(maxWidth: 820),
             child: TextField(
               controller: _controller,
               focusNode: _focusNode,
               onChanged: _onQueryChanged,
               textInputAction: TextInputAction.search,
+              style: const TextStyle(fontSize: 17),
               decoration: InputDecoration(
-                hintText: 'Search movies and TV series…',
-                prefixIcon: const Icon(Icons.search),
+                hintText: 'Start typing — suggestions appear after 2 characters…',
+                prefixIcon: const Icon(Icons.search_rounded),
                 suffixIcon: _controller.text.isEmpty
                     ? null
                     : IconButton(
@@ -113,7 +132,7 @@ class _SearchScreenState extends State<SearchScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 160),
             child: _loading
@@ -132,7 +151,7 @@ class _SearchScreenState extends State<SearchScreen> {
     if (query.runes.length < 2) {
       return const Align(
         alignment: Alignment.topLeft,
-        child: Text('Type at least 2 characters — suggestions appear automatically.'),
+        child: _SearchHint(),
       );
     }
 
@@ -166,7 +185,7 @@ class _SearchScreenState extends State<SearchScreen> {
             return MediaCard(
               item: item,
               width: double.infinity,
-              onTap: () => _showQuickDetails(context, item),
+              onTap: () => widget.onOpen(item),
             );
           },
         );
@@ -175,25 +194,31 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 }
 
-void _showQuickDetails(BuildContext context, MediaItem item) {
-  showDialog<void>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: Text(item.title),
-      content: SizedBox(
-        width: 520,
-        child: Text(
-          '${item.typeLabel}${item.year == null ? '' : ' • ${item.year}'}\n\n'
-          '${item.description ?? 'Full details, seasons/episodes, and PikPak matching are coming next.'}',
-        ),
+class _SearchHint extends StatelessWidget {
+  const _SearchHint();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 620),
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: const Color(0xFF10131A),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF232837)),
       ),
-      actions: [
-        FilledButton.icon(
-          onPressed: () => Navigator.pop(context),
-          icon: const Icon(Icons.cloud_outlined),
-          label: const Text('PikPak matching next'),
-        ),
-      ],
-    ),
-  );
+      child: const Row(
+        children: [
+          Icon(Icons.auto_awesome_outlined, size: 28),
+          SizedBox(width: 14),
+          Expanded(
+            child: Text(
+              'Type two or more characters. Pikora searches movies and TV together and updates suggestions automatically as you type.',
+              style: TextStyle(height: 1.45),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
