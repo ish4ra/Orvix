@@ -158,6 +158,8 @@ class _PikoraShellState extends State<_PikoraShell> {
       LibraryScreen(
         key: ValueKey(_authRevision),
         pikpak: widget.pikpak,
+        transfer: widget.transfer,
+        playback: widget.playback,
         onAuthChanged: () => setState(() => _authRevision++),
       ),
       SourcesScreen(sources: widget.sources),
