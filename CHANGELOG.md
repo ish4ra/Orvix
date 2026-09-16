@@ -1,5 +1,14 @@
 # Pikora Changelog
 
+## v0.4.2 — PikPak playback rollback, 3D filtering & source preferences
+
+- Reverted the v0.4.1 size-based PikPak transcode override. Playback now follows PikPak's `is_default` media rendition first, then origin, matching the proven official-client/Debrify selection order.
+- Removed the global forced mpv cache/reconnect profile; PikPak VOD now uses the patched media_kit/mpv platform defaults.
+- 3D/SBS/HSBS/top-bottom releases are hidden by default to prevent accidental side-by-side double-image playback; users can opt in from Source Engine settings.
+- Added user-defined Preferred release groups. Matching rows receive a visible ⭐ badge without changing or fabricating provider results.
+- Renamed Advanced providers to Provider pool and clarified that every configured Stremio-compatible provider is queried in parallel and merged.
+- Kept the strict default ranking: release quality → resolution → seeders → file size.
+
 ## v0.4.1 — source ranking, broader Torrentio results & smoother huge-file playback
 
 - Fixed Torrentio resolution detection by parsing stream `name`, `title`, and filename hints together; Torrentio commonly places resolution in `name` rather than `title`.

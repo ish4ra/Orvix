@@ -46,6 +46,7 @@ class SourceResult {
     required this.sortMode,
     this.quality,
     this.releaseQuality,
+    this.preferredGroup = false,
     this.seeders,
     this.sizeBytes,
     this.torrentFileIndex,
@@ -59,6 +60,7 @@ class SourceResult {
   final SourceSortMode sortMode;
   final String? quality;
   final String? releaseQuality;
+  final bool preferredGroup;
   final int? seeders;
   final int? sizeBytes;
 
@@ -162,6 +164,8 @@ class SourceProviderService {
   // Quality -> Seeders -> Size while still allowing the user to switch it.
   static const _sortKey = 'pikora_source_sort_mode_v2';
   static const _priorityKey = 'pikora_source_priority_v1';
+  static const _show3DKey = 'pikora_show_3d_sources_v1';
+  static const _preferredGroupsKey = 'pikora_preferred_release_groups_v1';
 
   // A distributor may inject an authorized/self-hosted Stremio-compatible
   // Torrentio endpoint at build time without putting a public index URL in
@@ -238,6 +242,37 @@ class SourceProviderService {
       if (!out.contains(criterion)) out.add(criterion);
     }
     return out;
+  }
+
+  Future<bool> getShow3D() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_show3DKey) ?? false;
+  }
+
+  Future<void> setShow3D(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_show3DKey, value);
+  }
+
+  Future<List<String>> getPreferredGroups() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList(_preferredGroupsKey) ?? const <String>[])
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Future<void> setPreferredGroups(List<String> values) async {
+    final cleaned = <String>[];
+    final seen = <String>{};
+    for (final value in values) {
+      final v = value.trim();
+      if (v.isEmpty) continue;
+      final key = v.toLowerCase();
+      if (seen.add(key)) cleaned.add(v);
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_preferredGroupsKey, cleaned);
   }
 
   Future<void> setPriorityOrder(List<SourceSortCriterion> order) async {
@@ -334,6 +369,8 @@ class SourceProviderService {
     if (addons.isEmpty) return const [];
     final sortMode = await getSortMode();
     final priority = await getPriorityOrder();
+    final show3D = await getShow3D();
+    final preferredGroups = await getPreferredGroups();
 
     final type = item.kind == MediaKind.movie ? 'movie' : 'series';
     final mediaId = episode == null
@@ -341,7 +378,8 @@ class SourceProviderService {
         : '${item.id}:${episode.season}:${episode.episode}';
 
     final groups = await Future.wait(
-      addons.map((addon) => _resolveAddon(addon, type, mediaId, sortMode)),
+      addons.map((addon) => _resolveAddon(
+            addon, type, mediaId, sortMode, show3D, preferredGroups)),
     );
 
     final out = <SourceResult>[];
@@ -370,6 +408,8 @@ class SourceProviderService {
     String type,
     String mediaId,
     SourceSortMode sortMode,
+    bool show3D,
+    List<String> preferredGroups,
   ) async {
     try {
       final uri = Uri.parse(
@@ -403,6 +443,8 @@ class SourceProviderService {
           rawTitle,
           fileNameHint ?? '',
         ].where((value) => value.trim().isNotEmpty).join('\n');
+        if (!show3D && _is3DRelease(metadataText)) continue;
+        final preferredGroup = _matchesPreferredGroup(metadataText, preferredGroups);
         final quality = _guessQuality(metadataText);
         final releaseQuality = _guessReleaseQuality(metadataText);
         final seeders = _guessSeeders(raw, metadataText);
@@ -451,6 +493,7 @@ class SourceProviderService {
         // Existing source sheet renders two title lines. Put the useful stats
         // first so they remain visible even when a long release name truncates.
         final statParts = <String>[
+          if (preferredGroup) '⭐ Preferred',
           if (releaseQuality != null) '🎞 $releaseQuality',
           if (quality != null) '📺 $quality',
           '👥 ${seeders?.toString() ?? '—'} seeders',
@@ -467,6 +510,7 @@ class SourceProviderService {
             sortMode: sortMode,
             quality: quality,
             releaseQuality: releaseQuality,
+            preferredGroup: preferredGroup,
             seeders: seeders,
             sizeBytes: sizeBytes,
             torrentFileIndex: torrentFileIndex,
@@ -514,6 +558,34 @@ class SourceProviderService {
     if (uri == null || !uri.hasScheme || !uri.hasAuthority) return null;
     if (uri.scheme != 'http' && uri.scheme != 'https') return null;
     return uri.toString();
+  }
+
+  bool _is3DRelease(String value) {
+    final lower = value.toLowerCase();
+    if (RegExp(r'(^|[\s._\-\[\(])(3d|sbs|hsbs|h-sbs|half[ ._-]?sbs|full[ ._-]?sbs|tab|top[ ._-]?and[ ._-]?bottom)(?=$|[\s._\-\]\)])')
+        .hasMatch(lower)) {
+      return true;
+    }
+    // MVC is predominantly used by frame-packed Blu-ray 3D releases. Require
+    // a Blu-ray/3D context so an unrelated token cannot hide a normal file.
+    return RegExp(r'\bmvc\b').hasMatch(lower) &&
+        (lower.contains('bluray') || lower.contains('blu-ray') || lower.contains('3d'));
+  }
+
+  bool _matchesPreferredGroup(String value, List<String> groups) {
+    if (groups.isEmpty) return false;
+    final normalized = value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+        .trim();
+    for (final group in groups) {
+      final token = group
+          .toLowerCase()
+          .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+          .trim();
+      if (token.isNotEmpty && (' $normalized ').contains(' $token ')) return true;
+    }
+    return false;
   }
 
   String? _guessReleaseQuality(String value) {
