@@ -50,6 +50,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   late final Future<MediaItem> _detailsFuture;
   bool _resolving = false;
   bool _watchlisted = false;
+  bool _inLibrary = false;
   String _status = '';
   double? _resolveProgress;
   int? _selectedSeason;
@@ -67,8 +68,25 @@ class _DetailsScreenState extends State<DetailsScreen> {
       _selectedSeason = seasons.first;
     }
     final watchlisted = await widget.mediaState.isWatchlisted(item);
-    if (mounted) setState(() => _watchlisted = watchlisted);
+    final inLibrary = await widget.mediaState.isInLibrary(item);
+    if (mounted) {
+      setState(() {
+        _watchlisted = watchlisted;
+        _inLibrary = inLibrary;
+      });
+    }
     return item;
+  }
+
+  Future<void> _toggleLibrary(MediaItem item) async {
+    final added = await widget.mediaState.toggleLibrary(item);
+    if (!mounted) return;
+    setState(() => _inLibrary = added);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(added ? 'Added to Library.' : 'Removed from Library.'),
+      ),
+    );
   }
 
   Future<void> _toggleWatchlist(MediaItem item) async {
@@ -230,6 +248,15 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             icon: const Icon(Icons.travel_explore_rounded),
                             label: const Text('Find Sources'),
                           ),
+                        FilledButton.tonalIcon(
+                          onPressed: () => _toggleLibrary(item),
+                          icon: Icon(
+                            _inLibrary
+                                ? Icons.video_library_rounded
+                                : Icons.library_add_outlined,
+                          ),
+                          label: Text(_inLibrary ? 'In Library' : 'Add to Library'),
+                        ),
                         OutlinedButton.icon(
                           onPressed: () => _toggleWatchlist(item),
                           icon: Icon(

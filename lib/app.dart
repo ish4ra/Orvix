@@ -4,6 +4,7 @@ import 'models/media_item.dart';
 import 'screens/details_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/library_screen.dart';
+import 'screens/media_library_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/sources_screen.dart';
 import 'services/catalog_service.dart';
@@ -169,6 +170,11 @@ class _PikoraShellState extends State<_PikoraShell> {
         onOpen: _openMedia,
       ),
       SearchScreen(catalog: widget.catalog, onOpen: _openMedia),
+      MediaLibraryScreen(
+        key: ValueKey('media-library-$_libraryRevision'),
+        mediaState: widget.mediaState,
+        onOpen: _openMedia,
+      ),
       LibraryScreen(
         key: ValueKey(_authRevision),
         pikpak: widget.pikpak,
@@ -242,6 +248,11 @@ class _PikoraShellState extends State<_PikoraShell> {
                   label: Text('Search'),
                 ),
                 NavigationRailDestination(
+                  icon: Icon(Icons.video_library_outlined),
+                  selectedIcon: Icon(Icons.video_library_rounded),
+                  label: Text('Library'),
+                ),
+                NavigationRailDestination(
                   icon: Icon(Icons.cloud_outlined),
                   selectedIcon: Icon(Icons.cloud_rounded),
                   label: Text('My PikPak'),
@@ -288,7 +299,7 @@ class _AboutScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Pikora v0.3',
+                'Pikora v0.4',
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w900),
               ),
               const SizedBox(height: 12),
@@ -301,7 +312,8 @@ class _AboutScreen extends StatelessWidget {
               const _FeatureLine(Icons.cloud_outlined, 'PikPak login, cloud library and cloud-task bridge'),
               const _FeatureLine(Icons.hub_outlined, 'User-configured Stremio-compatible source providers'),
               const _FeatureLine(Icons.play_circle_outline_rounded, 'media_kit / libmpv playback with custom controls and resume'),
-              const _FeatureLine(Icons.bookmark_outline_rounded, 'Persistent watchlist and Continue Watching rails'),
+              const _FeatureLine(Icons.video_library_outlined, 'Personal Library, persistent watchlist, and multi-title Continue Watching'),
+              const _FeatureLine(Icons.dashboard_customize_outlined, 'Customizable Home rows including optional IMDb Top 250 shelves'),
               const _FeatureLine(Icons.phone_android_outlined, 'Shared Flutter foundation for future Android & Android TV builds'),
             ],
           ),

@@ -26,6 +26,14 @@ class CatalogService {
     return _catalog(MediaKind.series, 'imdbRating', limit: limit);
   }
 
+  Future<List<MediaItem>> imdbTopMovies({int limit = 40}) {
+    return _imdbChart(MediaKind.movie, 'https://www.imdb.com/chart/top/', limit: limit);
+  }
+
+  Future<List<MediaItem>> imdbTopSeries({int limit = 40}) {
+    return _imdbChart(MediaKind.series, 'https://www.imdb.com/chart/toptv/', limit: limit);
+  }
+
   Future<List<MediaItem>> search(String query, {int limit = 18}) async {
     final normalized = query.trim();
     if (normalized.runes.length < 2) return const [];
@@ -73,6 +81,62 @@ class CatalogService {
     final meta = body['meta'];
     if (meta is! Map<String, dynamic>) return null;
     return MediaItem.fromCinemeta(meta, kind: item.kind);
+  }
+
+  Future<List<MediaItem>> _imdbChart(
+    MediaKind kind,
+    String url, {
+    required int limit,
+  }) async {
+    try {
+      final response = await _client.get(
+        Uri.parse(url),
+        headers: const {
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128 Safari/537.36',
+        },
+      ).timeout(const Duration(seconds: 18));
+      if (response.statusCode != 200) return const [];
+
+      final ids = <String>[];
+      final seen = <String>{};
+      final pattern = RegExp(r'/title/(tt\d{7,10})/');
+      for (final match in pattern.allMatches(response.body)) {
+        final id = match.group(1);
+        if (id != null && seen.add(id)) ids.add(id);
+      }
+      if (ids.isEmpty) return const [];
+
+      final selected = ids.take(limit).toList(growable: false);
+      final resolved = await Future.wait(
+        selected.map((id) => _metaByImdbId(id, kind)),
+      );
+      return resolved.whereType<MediaItem>().toList(growable: false);
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<MediaItem?> _metaByImdbId(String id, MediaKind kind) async {
+    try {
+      final type = kind == MediaKind.movie ? 'movie' : 'series';
+      final response = await _client
+          .get(
+            Uri.parse('$_baseUrl/meta/$type/$id.json'),
+            headers: const {'Accept': 'application/json'},
+          )
+          .timeout(const Duration(seconds: 12));
+      if (response.statusCode != 200) return null;
+      final body = jsonDecode(response.body);
+      if (body is! Map<String, dynamic>) return null;
+      final meta = body['meta'];
+      if (meta is! Map<String, dynamic>) return null;
+      return MediaItem.fromCinemeta(meta, kind: kind);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<List<MediaItem>> _catalog(

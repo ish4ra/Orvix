@@ -31,6 +31,7 @@ class ContinueWatchingEntry {
 
 class MediaStateService {
   static const _watchlistKey = 'pikora_watchlist_v1';
+  static const _libraryKey = 'pikora_media_library_v1';
   static const _progressKey = 'pikora_continue_watching_v1';
 
   static String progressKey(MediaItem item, {EpisodeItem? episode}) {
@@ -77,6 +78,47 @@ class MediaStateService {
     return added;
   }
 
+  Future<List<MediaItem>> library() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_libraryKey);
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      return decoded
+          .whereType<Map<String, dynamic>>()
+          .map(_mediaFromJson)
+          .where((item) => item.id.isNotEmpty)
+          .toList(growable: false);
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<bool> isInLibrary(MediaItem item) async {
+    final list = await library();
+    return list.any((entry) => entry.id == item.id && entry.kind == item.kind);
+  }
+
+  Future<bool> toggleLibrary(MediaItem item) async {
+    final prefs = await SharedPreferences.getInstance();
+    final current = [...await library()];
+    final index = current.indexWhere(
+      (entry) => entry.id == item.id && entry.kind == item.kind,
+    );
+    final added = index < 0;
+    if (added) {
+      current.insert(0, item);
+    } else {
+      current.removeAt(index);
+    }
+    await prefs.setString(
+      _libraryKey,
+      jsonEncode(current.map(_mediaToJson).toList(growable: false)),
+    );
+    return added;
+  }
+
   Future<void> saveProgress(
     MediaItem item, {
     required Duration position,
@@ -96,7 +138,7 @@ class MediaStateService {
 
     final key = progressKey(item, episode: episode);
     final fraction = position.inMilliseconds / duration.inMilliseconds;
-    if (fraction >= .95 || position < const Duration(seconds: 20)) {
+    if (fraction >= .95 || position < const Duration(seconds: 5)) {
       map.remove(key);
     } else {
       map[key] = {
@@ -156,7 +198,13 @@ class MediaStateService {
         );
       }
       entries.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-      return entries.take(limit).toList(growable: false);
+      final unique = <ContinueWatchingEntry>[];
+      final seen = <String>{};
+      for (final entry in entries) {
+        final mediaKey = '${entry.item.kind.name}:${entry.item.id}';
+        if (seen.add(mediaKey)) unique.add(entry);
+      }
+      return unique.take(limit).toList(growable: false);
     } catch (_) {
       return const [];
     }

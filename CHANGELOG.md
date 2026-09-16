@@ -2,6 +2,15 @@
 
 This file tracks user-visible changes to Pikora. GitHub Releases are published automatically for new packaged versions starting with v0.3.2.
 
+## v0.4.0 — Library, richer Continue Watching & customizable Home
+
+- Added a dedicated local **Library** separate from My PikPak storage; movies and series can be added/removed from the detail page.
+- Added a Library navigation tab with All / Movies / TV filters and quick removal.
+- Continue Watching now keeps up to 24 recent unfinished titles, deduplicates TV episodes to the most recently watched episode per series, and starts tracking after a shorter watch threshold.
+- Added **Customize Home** with row enable/disable and drag-to-reorder controls.
+- Home rows can include My Library, My Watchlist, Popular Movies, Popular TV, Top Rated Movies/TV, and optional IMDb Top 250 Movies/TV shelves.
+- IMDb chart shelves resolve current official IMDb chart IDs through Cinemeta metadata and fail softly if IMDb is unavailable.
+
 ## v0.3.7 — richer source browser & quality-first ranking
 
 - Source cards now surface parsed seeder counts and file sizes before the release name.
