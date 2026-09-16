@@ -163,7 +163,7 @@ class SourceProviderService {
   // v2 intentionally resets the old default. v0.3.7 makes the default order
   // Quality -> Seeders -> Size while still allowing the user to switch it.
   static const _sortKey = 'pikora_source_sort_mode_v2';
-  static const _priorityKey = 'orvix_source_priority_v3';
+  static const _priorityKey = 'orvix_source_priority_v4';
   static const _show3DKey = 'orvix_show_3d_sources_v1';
   static const _showLowQualityKey = 'orvix_show_low_quality_sources_v1';
   static const _preferredGroupsKey = 'orvix_preferred_release_groups_v1';
@@ -223,8 +223,8 @@ class SourceProviderService {
   }
 
   static const defaultPriority = <SourceSortCriterion>[
-    SourceSortCriterion.resolution,
     SourceSortCriterion.releaseQuality,
+    SourceSortCriterion.resolution,
     SourceSortCriterion.seeders,
     SourceSortCriterion.fileSize,
   ];
