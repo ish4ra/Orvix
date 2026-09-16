@@ -1,0 +1,78 @@
+name: Expand Orvix v0.5.1 Source Pool Once
+
+on:
+  push:
+    branches:
+      - orvix-v0.5.1-source-fix
+    paths:
+      - '.github/workflows/orvix-v051-expand-source-pool-once.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: orvix-v051-expand-source-pool-once
+  cancel-in-progress: false
+
+jobs:
+  patch-and-validate:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source-fix branch
+        uses: actions/checkout@v4
+        with:
+          ref: orvix-v0.5.1-source-fix
+          fetch-depth: 0
+
+      - name: Add MediaFusion default provider
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('lib/services/source_provider_service.dart')
+          text = path.read_text(encoding='utf-8').replace('\r\n', '\n')
+          old = "  static const _recommendedAddonUrls = <String>[\n    'https://comet.elfhosted.com',\n  ];"
+          new = "  static const _recommendedAddonUrls = <String>[\n    'https://comet.elfhosted.com',\n    'https://mediafusion.elfhosted.com',\n  ];"
+          if old not in text:
+              raise RuntimeError('Recommended provider block not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8', newline='\n')
+
+          change_path = Path('CHANGELOG.md')
+          change = change_path.read_text(encoding='utf-8').replace('\r\n', '\n')
+          old_line = '- Added Comet (ElfHosted public instance) as a second zero-config Stremio-compatible provider, seeded once and still removable from Provider configuration.'
+          new_line = '- Added Comet and MediaFusion (ElfHosted public instances) as additional zero-config Stremio-compatible providers, seeded once and still removable from Provider configuration.'
+          if old_line not in change:
+              raise RuntimeError('CHANGELOG provider line not found')
+          change_path.write_text(change.replace(old_line, new_line, 1), encoding='utf-8', newline='\n')
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Windows runner
+        shell: pwsh
+        run: flutter create --platforms=windows --project-name orvix .
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Generate Orvix Windows icon
+        run: dart run flutter_launcher_icons
+
+      - name: Analyze app sources
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Commit validated provider expansion and remove helper
+        shell: pwsh
+        run: |
+          git config user.name "Ishara Lakshan"
+          git config user.email "ishara@tuta.io"
+          git rm .github/workflows/orvix-v051-expand-source-pool-once.yml
+          git add lib/services/source_provider_service.dart CHANGELOG.md
+          git commit -m "feat: add MediaFusion to Orvix source pool"
+          git push origin HEAD:orvix-v0.5.1-source-fix
