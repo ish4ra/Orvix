@@ -11,6 +11,7 @@ import '../services/pikpak_transfer_service.dart';
 import '../services/playback_service.dart';
 import '../services/source_provider_service.dart';
 import 'player_screen.dart';
+import 'sources_screen.dart';
 
 class DetailsScreen extends StatefulWidget {
   const DetailsScreen({
@@ -37,6 +38,15 @@ class DetailsScreen extends StatefulWidget {
 }
 
 class _DetailsScreenState extends State<DetailsScreen> {
+  static const _videoExtensions = <String>{
+    'mkv', 'mp4', 'avi', 'mov', 'wmv', 'm4v', 'webm', 'ts', 'm2ts', 'mpg',
+    'mpeg', 'flv',
+  };
+
+  static const _weakTitleWords = <String>{
+    'a', 'an', 'the', 'of', 'and', 'or', 'to', 'in', 'on', 'for', 'with',
+  };
+
   late final Future<MediaItem> _detailsFuture;
   bool _resolving = false;
   bool _watchlisted = false;
@@ -66,7 +76,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
     if (!mounted) return;
     setState(() => _watchlisted = added);
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(added ? 'Added to My Watchlist.' : 'Removed from My Watchlist.')),
+      SnackBar(
+        content: Text(
+          added ? 'Added to My Watchlist.' : 'Removed from My Watchlist.',
+        ),
+      ),
     );
   }
 
@@ -89,7 +103,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     const SliverToBoxAdapter(
                       child: Padding(
                         padding: EdgeInsets.fromLTRB(40, 10, 40, 50),
-                        child: Text('Episode metadata is not available for this title yet.'),
+                        child: Text(
+                          'Episode metadata is not available for this title yet.',
+                        ),
                       ),
                     ),
                   const SliverToBoxAdapter(child: SizedBox(height: 70)),
@@ -141,7 +157,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
               gradient: LinearGradient(
                 begin: Alignment.centerLeft,
                 end: Alignment.centerRight,
-                colors: [Color(0xFA07090E), Color(0xB807090E), Color(0x0007090E)],
+                colors: [
+                  Color(0xFA07090E),
+                  Color(0xB807090E),
+                  Color(0x0007090E),
+                ],
                 stops: [0, .48, .92],
               ),
             ),
@@ -171,7 +191,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
                         _MetaPill(item.typeLabel),
                         if (item.year != null) _MetaPill(item.year!),
                         if (item.runtime != null) _MetaPill(item.runtime!),
-                        if (item.rating != null) _MetaPill('★ ${item.rating!.toStringAsFixed(1)}'),
+                        if (item.rating != null)
+                          _MetaPill('★ ${item.rating!.toStringAsFixed(1)}'),
                         ...item.genres.take(4).map(_MetaPill.new),
                       ],
                     ),
@@ -201,12 +222,24 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             icon: const Icon(Icons.video_library_outlined),
                             label: const Text('Choose an episode below'),
                           ),
+                        if (item.kind == MediaKind.movie)
+                          OutlinedButton.icon(
+                            onPressed: _resolving
+                                ? null
+                                : () => _findSourcesAndPlay(item),
+                            icon: const Icon(Icons.travel_explore_rounded),
+                            label: const Text('Find Sources'),
+                          ),
                         OutlinedButton.icon(
                           onPressed: () => _toggleWatchlist(item),
                           icon: Icon(
-                            _watchlisted ? Icons.bookmark_rounded : Icons.bookmark_add_outlined,
+                            _watchlisted
+                                ? Icons.bookmark_rounded
+                                : Icons.bookmark_add_outlined,
                           ),
-                          label: Text(_watchlisted ? 'In Watchlist' : 'Watchlist'),
+                          label: Text(
+                            _watchlisted ? 'In Watchlist' : 'Watchlist',
+                          ),
                         ),
                       ],
                     ),
@@ -245,7 +278,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 borderRadius: BorderRadius.circular(14),
                 items: [
                   for (final season in seasons)
-                    DropdownMenuItem(value: season, child: Text('Season $season')),
+                    DropdownMenuItem(
+                      value: season,
+                      child: Text('Season $season'),
+                    ),
                 ],
                 onChanged: (value) => setState(() => _selectedSeason = value),
               ),
@@ -280,7 +316,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 : CachedNetworkImage(
                     imageUrl: episode.thumbnail!,
                     fit: BoxFit.cover,
-                    errorWidget: (_, __, ___) => const Icon(Icons.movie_outlined),
+                    errorWidget: (_, __, ___) =>
+                        const Icon(Icons.movie_outlined),
                   ),
           ),
         ),
@@ -290,11 +327,29 @@ class _DetailsScreenState extends State<DetailsScreen> {
         ),
         subtitle: episode.overview == null
             ? null
-            : Text(episode.overview!, maxLines: 2, overflow: TextOverflow.ellipsis),
-        trailing: FilledButton.icon(
-          onPressed: _resolving ? null : () => _play(item, episode: episode),
-          icon: const Icon(Icons.play_arrow_rounded),
-          label: const Text('Play'),
+            : Text(
+                episode.overview!,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+        trailing: Wrap(
+          spacing: 8,
+          children: [
+            OutlinedButton.icon(
+              onPressed: _resolving
+                  ? null
+                  : () => _findSourcesAndPlay(item, episode: episode),
+              icon: const Icon(Icons.travel_explore_rounded),
+              label: const Text('Sources'),
+            ),
+            FilledButton.icon(
+              onPressed: _resolving
+                  ? null
+                  : () => _play(item, episode: episode),
+              icon: const Icon(Icons.play_arrow_rounded),
+              label: const Text('Play'),
+            ),
+          ],
         ),
       ),
     );
@@ -306,14 +361,18 @@ class _DetailsScreenState extends State<DetailsScreen> {
         color: Colors.black.withValues(alpha: .66),
         child: Center(
           child: Container(
-            width: 460,
+            width: 470,
             padding: const EdgeInsets.all(28),
             decoration: BoxDecoration(
               color: const Color(0xFF11141C),
               borderRadius: BorderRadius.circular(22),
               border: Border.all(color: const Color(0xFF292F41)),
               boxShadow: const [
-                BoxShadow(color: Color(0x55000000), blurRadius: 30, spreadRadius: 5),
+                BoxShadow(
+                  color: Color(0x55000000),
+                  blurRadius: 30,
+                  spreadRadius: 5,
+                ),
               ],
             ),
             child: Column(
@@ -331,7 +390,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 Text(
                   _status.isEmpty ? 'Finding the best path to play…' : _status,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontWeight: FontWeight.w800, height: 1.4),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    height: 1.4,
+                  ),
                 ),
                 if (_resolveProgress != null) ...[
                   const SizedBox(height: 10),
@@ -352,72 +414,152 @@ class _DetailsScreenState extends State<DetailsScreen> {
     setState(() {
       _resolving = true;
       _resolveProgress = null;
-      _status = 'Checking your PikPak library…';
+      _status = 'Checking your PikPak library for an exact match…';
     });
+
     try {
       final existing = await _findInPikPak(item, episode: episode);
       if (existing != null) {
+        if (mounted) {
+          setState(() => _status = 'Matched in PikPak: ${existing.name}');
+        }
         await _openPikPakFile(existing, item, episode);
         return;
       }
 
-      setState(() => _status = 'Checking your configured source providers…');
-      final results = await widget.sources.resolve(item, episode: episode);
-      if (!mounted) return;
-      setState(() => _resolving = false);
-
-      if (results.isEmpty) {
-        final configured = await widget.sources.getAddonUrls();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              configured.isEmpty
-                  ? 'Not in PikPak. Add a source provider from Sources, then try again.'
-                  : 'No configured provider returned a source for this title.',
-            ),
-          ),
-        );
-        return;
-      }
-
-      final chosen = await _chooseSource(results);
-      if (chosen == null || !mounted) return;
-
-      setState(() {
-        _resolving = true;
-        _resolveProgress = .02;
-        _status = 'Sending ${chosen.quality ?? 'source'} to PikPak…';
-      });
-      final taskName = episode == null ? item.title : '${item.title} ${episode.label}';
-      final added = await widget.transfer.addResource(chosen.resource, name: taskName);
-
-      if (added.taskId != null) {
-        await _waitForTask(
-          added.taskId!,
-          initialFileId: added.fileId,
-          item: item,
-          episode: episode,
-        );
-        return;
-      }
-
-      if (added.fileId != null &&
-          await _tryOpenFileId(added.fileId!, item, episode)) {
-        return;
-      }
-
-      await _waitForLibraryMatch(item, episode: episode);
-    } catch (e) {
       if (!mounted) return;
       setState(() {
         _resolving = false;
         _resolveProgress = null;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not play: $e')),
+      await _findSourcesAndPlay(item, episode: episode);
+    } catch (e) {
+      _showPlayError(e);
+    }
+  }
+
+  Future<void> _findSourcesAndPlay(
+    MediaItem item, {
+    EpisodeItem? episode,
+  }) async {
+    if (!mounted) return;
+    setState(() {
+      _resolving = true;
+      _resolveProgress = null;
+      _status = episode == null
+          ? 'Finding sources for ${item.title}…'
+          : 'Finding sources for ${item.title} ${episode.label}…';
+    });
+
+    try {
+      final results = await widget.sources.resolve(item, episode: episode);
+      if (!mounted) return;
+      setState(() => _resolving = false);
+
+      if (results.isEmpty) {
+        await _showNoSourcesDialog(item, episode: episode);
+        return;
+      }
+
+      final chosen = await _chooseSource(results);
+      if (chosen == null || !mounted) return;
+      await _sendSourceToPikPak(chosen, item, episode);
+    } catch (e) {
+      _showPlayError(e);
+    }
+  }
+
+  Future<void> _showNoSourcesDialog(
+    MediaItem item, {
+    EpisodeItem? episode,
+  }) async {
+    final configured = await widget.sources.getAddonUrls();
+    if (!mounted) return;
+
+    final openSources = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          configured.isEmpty
+              ? 'No source providers configured'
+              : 'No sources found',
+        ),
+        content: Text(
+          configured.isEmpty
+              ? 'This title is not in your PikPak library. Configure a Stremio-compatible source provider, then Pikora can send a returned source to PikPak and play it when ready.'
+              : 'Your configured providers did not return a source for this title. You can manage providers or try again.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Close'),
+          ),
+          if (configured.isNotEmpty)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context, false);
+                _findSourcesAndPlay(item, episode: episode);
+              },
+              child: const Text('Try Again'),
+            ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.extension_outlined),
+            label: const Text('Configure Sources'),
+          ),
+        ],
+      ),
+    );
+
+    if (openSources == true && mounted) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => Scaffold(
+            backgroundColor: const Color(0xFF07090E),
+            appBar: AppBar(title: const Text('Source Providers')),
+            body: SourcesScreen(sources: widget.sources),
+          ),
+        ),
       );
     }
+  }
+
+  Future<void> _sendSourceToPikPak(
+    SourceResult chosen,
+    MediaItem item,
+    EpisodeItem? episode,
+  ) async {
+    if (!mounted) return;
+    setState(() {
+      _resolving = true;
+      _resolveProgress = .02;
+      _status = 'Sending ${chosen.quality ?? 'source'} to PikPak…';
+    });
+
+    final taskName = episode == null
+        ? '${item.title}${item.year == null ? '' : ' (${_extractYear(item.year!) ?? item.year!})'}'
+        : '${item.title} ${episode.label}';
+    final added = await widget.transfer.addResource(
+      chosen.resource,
+      name: taskName,
+    );
+
+    if (added.taskId != null) {
+      await _waitForTask(
+        added.taskId!,
+        initialFileId: added.fileId,
+        item: item,
+        episode: episode,
+      );
+      return;
+    }
+
+    if (added.fileId != null &&
+        await _tryOpenFileId(added.fileId!, item, episode)) {
+      return;
+    }
+
+    await _waitForLibraryMatch(item, episode: episode);
   }
 
   Future<void> _waitForTask(
@@ -429,7 +571,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
     var fileId = initialFileId;
     for (var attempt = 0; attempt < 45; attempt++) {
       if (!mounted) return;
-      if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 2));
+      if (attempt > 0) {
+        await Future<void>.delayed(const Duration(seconds: 2));
+      }
 
       final status = await widget.transfer.getTaskStatus(taskId);
       fileId = status.fileId ?? fileId;
@@ -457,7 +601,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         if (fileId != null && await _tryOpenFileId(fileId, item, episode)) {
           return;
         }
-        for (var scan = 0; scan < 4; scan++) {
+        for (var scan = 0; scan < 5; scan++) {
           final match = await _findInPikPak(item, episode: episode);
           if (match != null) {
             await _openPikPakFile(match, item, episode);
@@ -478,7 +622,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
     });
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('The PikPak task is still running. You can check it again shortly.'),
+        content: Text(
+          'The PikPak task is still running. You can check it again shortly.',
+        ),
       ),
     );
   }
@@ -508,19 +654,25 @@ class _DetailsScreenState extends State<DetailsScreen> {
     });
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Added to PikPak. It is still preparing; check My PikPak shortly.'),
+        content: Text(
+          'Added to PikPak. It is still preparing; check My PikPak shortly.',
+        ),
       ),
     );
   }
 
   Future<SourceResult?> _chooseSource(List<SourceResult> results) {
-    final count = results.length > 20 ? 20 : results.length;
-    final best = widget.sources.bestSource(results);
+    final sorted = [...results]
+      ..sort((a, b) => b.preferenceScore.compareTo(a.preferenceScore));
+    final count = sorted.length > 30 ? 30 : sorted.length;
+    final best = widget.sources.bestSource(sorted);
+
     return showModalBottomSheet<SourceResult>(
       context: context,
       backgroundColor: const Color(0xFF11141C),
       showDragHandle: true,
-      constraints: const BoxConstraints(maxWidth: 780),
+      isScrollControlled: true,
+      constraints: const BoxConstraints(maxWidth: 820),
       builder: (context) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(22, 4, 22, 26),
@@ -536,12 +688,15 @@ class _DetailsScreenState extends State<DetailsScreen> {
                       children: [
                         Text(
                           'Choose source',
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                fontWeight: FontWeight.w900,
-                              ),
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w900),
                         ),
                         const SizedBox(height: 4),
-                        const Text('Results are ranked by quality and common release markers.'),
+                        Text(
+                          '${results.length} result${results.length == 1 ? '' : 's'} • ranked by quality and release markers',
+                        ),
                       ],
                     ),
                   ),
@@ -549,22 +704,28 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     FilledButton.icon(
                       onPressed: () => Navigator.pop(context, best),
                       icon: const Icon(Icons.bolt_rounded),
-                      label: Text('Quick Play ${best.quality ?? ''}'.trim()),
+                      label: Text(
+                        'Quick Play ${best.quality ?? ''}'.trim(),
+                      ),
                     ),
                 ],
               ),
               const SizedBox(height: 14),
               ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 440),
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(context).height * .62,
+                ),
                 child: ListView.separated(
                   shrinkWrap: true,
                   itemCount: count,
                   separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (context, index) {
-                    final result = results[index];
+                    final result = sorted[index];
                     return ListTile(
                       leading: CircleAvatar(
-                        child: Text(result.quality?.replaceAll('P', '') ?? '${index + 1}'),
+                        child: Text(
+                          result.quality?.replaceAll('P', '') ?? '${index + 1}',
+                        ),
                       ),
                       title: Text(
                         result.title,
@@ -572,7 +733,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       subtitle: Text(
-                        '${result.provider}${result.isMagnet ? ' • cloud source' : ' • direct'}',
+                        '${result.provider}${result.isMagnet ? ' • PikPak cloud source' : ' • direct URL'}',
                       ),
                       trailing: index == 0
                           ? const Chip(label: Text('Best'))
@@ -589,35 +750,132 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  Future<PikPakFile?> _findInPikPak(MediaItem item, {EpisodeItem? episode}) async {
+  Future<PikPakFile?> _findInPikPak(
+    MediaItem item, {
+    EpisodeItem? episode,
+  }) async {
     if (!await widget.pikpak.isSignedIn) return null;
-    final wanted = _normalize(episode == null ? item.title : '${item.title} ${episode.label}');
-    final titleWords = _normalize(item.title).split(' ').where((e) => e.length > 2).toList();
+
     final folders = <String>[''];
     var scanned = 0;
+    PikPakFile? bestMatch;
+    var bestScore = -1;
 
-    while (folders.isNotEmpty && scanned < 900) {
+    while (folders.isNotEmpty && scanned < 1200) {
       final folder = folders.removeAt(0);
       final files = await widget.pikpak.listFiles(parentId: folder);
+
       for (final file in files) {
         scanned++;
         if (file.isFolder) {
-          if (folders.length < 60) folders.add(file.id);
+          if (folders.length < 100) folders.add(file.id);
           continue;
         }
-        final name = _normalize(file.name);
-        final titleHits = titleWords.where((word) => name.contains(word)).length;
-        final episodeOk = episode == null ||
-            name.contains(_normalize(episode.label)) ||
-            name.contains('s${episode.season}e${episode.episode}') ||
-            name.contains('${episode.season}x${episode.episode}');
-        final enoughTitleHits = titleWords.isEmpty
-            ? name.contains(wanted)
-            : titleHits >= (titleWords.length <= 2 ? 1 : 2);
-        if ((name.contains(wanted) || enoughTitleHits) && episodeOk) return file;
+        if (!_looksLikeVideo(file)) continue;
+
+        final score = _matchScore(file.name, item, episode: episode);
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = file;
+        }
       }
     }
-    return null;
+
+    // Do not guess. Only strong matches are allowed to auto-play.
+    return bestScore >= 85 ? bestMatch : null;
+  }
+
+  int _matchScore(
+    String fileName,
+    MediaItem item, {
+    EpisodeItem? episode,
+  }) {
+    final normalizedName = _normalize(fileName);
+    final nameTokens = normalizedName.split(' ').where((e) => e.isNotEmpty).toSet();
+    final normalizedTitle = _normalize(item.title);
+    final titleTokens = normalizedTitle.split(' ').where((e) => e.isNotEmpty).toList();
+    final meaningful = titleTokens
+        .where((word) => !_weakTitleWords.contains(word))
+        .toList(growable: false);
+    final paddedName = ' $normalizedName ';
+    final exactTitlePhrase = paddedName.contains(' $normalizedTitle ');
+
+    if (!exactTitlePhrase) {
+      final requiredTokens = meaningful.isEmpty ? titleTokens : meaningful;
+      if (requiredTokens.isEmpty) return -1;
+
+      // This is intentionally strict: every meaningful title token must exist.
+      // It prevents e.g. "The Whisper Man" from matching "Spider-Man Noir".
+      if (!requiredTokens.every(nameTokens.contains)) return -1;
+      if (requiredTokens.length == 1 && !nameTokens.contains(requiredTokens.first)) {
+        return -1;
+      }
+    }
+
+    if (episode != null) {
+      if (!_matchesEpisode(normalizedName, episode)) return -1;
+    } else if (item.kind == MediaKind.movie &&
+        RegExp(r'\bs\d{1,2}e\d{1,3}\b').hasMatch(normalizedName)) {
+      return -1;
+    }
+
+    final targetYear = item.year == null ? null : _extractYear(item.year!);
+    final fileYears = RegExp(r'\b(?:19|20)\d{2}\b')
+        .allMatches(normalizedName)
+        .map((m) => m.group(0)!)
+        .toSet();
+
+    if (targetYear != null &&
+        fileYears.isNotEmpty &&
+        !fileYears.contains(targetYear)) {
+      return -1;
+    }
+
+    var score = exactTitlePhrase ? 110 : 90;
+    if (targetYear != null && fileYears.contains(targetYear)) score += 20;
+    if (episode != null) score += 25;
+
+    final lower = fileName.toLowerCase();
+    if (lower.contains('2160p') || lower.contains('4k')) {
+      score += 4;
+    } else if (lower.contains('1080p')) {
+      score += 3;
+    } else if (lower.contains('720p')) {
+      score += 2;
+    }
+    return score;
+  }
+
+  bool _matchesEpisode(String normalizedName, EpisodeItem episode) {
+    final s = episode.season;
+    final e = episode.episode;
+    final ss = s.toString().padLeft(2, '0');
+    final ee = e.toString().padLeft(2, '0');
+    final variants = <String>{
+      's${s}e$e',
+      's${s}e$ee',
+      's${ss}e$e',
+      's${ss}e$ee',
+      '${s}x$e',
+      '${s}x$ee',
+      'season $s episode $e',
+      'season $s episode $ee',
+    };
+    final padded = ' $normalizedName ';
+    return variants.any((value) => padded.contains(' $value '));
+  }
+
+  bool _looksLikeVideo(PikPakFile file) {
+    final mime = file.mimeType?.toLowerCase().trim();
+    if (mime != null && mime.isNotEmpty) {
+      if (mime.startsWith('video/')) return true;
+      if (!mime.contains('octet-stream')) return false;
+    }
+
+    final name = file.name.toLowerCase();
+    final dot = name.lastIndexOf('.');
+    if (dot < 0 || dot == name.length - 1) return true;
+    return _videoExtensions.contains(name.substring(dot + 1));
   }
 
   Future<bool> _tryOpenFileId(
@@ -642,7 +900,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
   ) async {
     if (!mounted) return;
     setState(() => _status = 'Resolving PikPak streaming URL…');
-    final url = await widget.transfer.fetchPlayableUrl(file.id) ?? file.webContentLink;
+    final url = await widget.transfer.fetchPlayableUrl(file.id) ??
+        file.webContentLink;
     if (url == null || url.isEmpty) {
       throw Exception('PikPak did not return a playable URL yet.');
     }
@@ -659,6 +918,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
       _resolving = false;
       _resolveProgress = null;
     });
+
     final title = episode == null
         ? item.title
         : '${item.title} • ${episode.label} ${episode.title}';
@@ -695,10 +955,15 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final index = episodes.indexWhere(
       (episode) =>
           episode.id == current.id ||
-          (episode.season == current.season && episode.episode == current.episode),
+          (episode.season == current.season &&
+              episode.episode == current.episode),
     );
     if (index < 0 || index + 1 >= episodes.length) return null;
     return episodes[index + 1];
+  }
+
+  String? _extractYear(String value) {
+    return RegExp(r'\b(?:19|20)\d{2}\b').firstMatch(value)?.group(0);
   }
 
   String _normalize(String value) => value
@@ -706,6 +971,17 @@ class _DetailsScreenState extends State<DetailsScreen> {
       .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
+
+  void _showPlayError(Object error) {
+    if (!mounted) return;
+    setState(() {
+      _resolving = false;
+      _resolveProgress = null;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Could not play: $error')),
+    );
+  }
 }
 
 class _MetaPill extends StatelessWidget {
