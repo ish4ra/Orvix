@@ -39,8 +39,13 @@ class PikPakTransferService {
 
   final http.Client _client;
   final FlutterSecureStorage _storage;
+  final Map<String, int> _zeroProgressPolls = <String, int>{};
 
-  Future<PikPakAddResult> addResource(String resource, {String? name}) async {
+  Future<PikPakAddResult> addResource(
+    String resource, {
+    String? name,
+    String? parentFolderId,
+  }) async {
     final session = await _session();
     final captcha = await _captcha(
       action: 'POST:/drive/v1/files',
@@ -48,12 +53,18 @@ class PikPakTransferService {
       userId: session.userId,
     );
 
+    // Keep this payload close to PikPak's web/offline-download flow. In
+    // particular, parent_id and folder_type are significant for URL/magnet
+    // tasks. For magnet resources we deliberately let PikPak obtain the real
+    // torrent/folder name from metadata instead of forcing the catalog title.
+    final isMagnet = resource.trimLeft().toLowerCase().startsWith('magnet:');
     final body = <String, dynamic>{
       'kind': 'drive#file',
-      'params': const {'from': 'manual'},
+      'name': isMagnet ? '' : (name?.trim() ?? ''),
+      'parent_id': parentFolderId ?? '',
       'upload_type': 'UPLOAD_TYPE_URL',
       'url': {'url': resource},
-      if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
+      'folder_type': '',
     };
 
     final response = await _client
@@ -65,7 +76,9 @@ class PikPakTransferService {
         .timeout(const Duration(seconds: 30));
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw PikPakTransferException(_extractError(response.body, response.statusCode));
+      throw PikPakTransferException(
+        _extractError(response.body, response.statusCode),
+      );
     }
 
     Map<String, dynamic> decoded = const {};
@@ -89,8 +102,11 @@ class PikPakTransferService {
       fileId = decoded['id']?.toString();
     }
 
+    final cleanTaskId = _nonEmpty(taskId);
+    if (cleanTaskId != null) _zeroProgressPolls.remove(cleanTaskId);
+
     return PikPakAddResult(
-      taskId: _nonEmpty(taskId),
+      taskId: cleanTaskId,
       fileId: _nonEmpty(fileId),
     );
   }
@@ -106,24 +122,51 @@ class PikPakTransferService {
       '$_driveBase/drive/v1/tasks/${Uri.encodeComponent(taskId)}',
     );
     final response = await _client
-        .get(uri, headers: _driveHeaders(session, captcha, contentType: false))
+        .get(
+          uri,
+          headers: _driveHeaders(session, captcha, contentType: false),
+        )
         .timeout(const Duration(seconds: 30));
 
     if (response.statusCode != 200) {
-      throw PikPakTransferException(_extractError(response.body, response.statusCode));
+      throw PikPakTransferException(
+        _extractError(response.body, response.statusCode),
+      );
     }
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic>) {
       throw const PikPakTransferException('Invalid PikPak task response.');
     }
 
-    return PikPakTaskStatus(
+    final status = PikPakTaskStatus(
       taskId: taskId,
       phase: decoded['phase']?.toString() ?? '',
       progress: _parseProgress(decoded['progress']),
       fileId: _nonEmpty(decoded['file_id']?.toString()),
       message: decoded['message']?.toString() ?? decoded['error']?.toString(),
     );
+
+    if (status.isComplete || status.isError || status.progress > 0) {
+      _zeroProgressPolls.remove(taskId);
+    } else {
+      final checks = (_zeroProgressPolls[taskId] ?? 0) + 1;
+      _zeroProgressPolls[taskId] = checks;
+
+      // The details screen polls about every two seconds. Do not leave the UI
+      // spinning for the full timeout when the selected torrent never begins.
+      // This is not labelled "uncached" because a source may simply have no
+      // active peers or may be temporarily unavailable.
+      if (checks >= 15) {
+        _zeroProgressPolls.remove(taskId);
+        throw const PikPakTransferException(
+          'PikPak accepted this source but it has stayed at 0% for about 30 seconds. '
+          'The source may have no active peers or may be temporarily unavailable. '
+          'Choose another source and try again.',
+        );
+      }
+    }
+
+    return status;
   }
 
   Future<String?> fetchPlayableUrl(String fileId) async {
@@ -133,13 +176,19 @@ class PikPakTransferService {
       deviceId: session.deviceId,
       userId: session.userId,
     );
-    final uri = Uri.parse('$_driveBase/drive/v1/files/${Uri.encodeComponent(fileId)}')
-        .replace(queryParameters: const {'usage': 'FETCH'});
+    final uri = Uri.parse(
+      '$_driveBase/drive/v1/files/${Uri.encodeComponent(fileId)}',
+    ).replace(queryParameters: const {'usage': 'FETCH'});
     final response = await _client
-        .get(uri, headers: _driveHeaders(session, captcha, contentType: false))
+        .get(
+          uri,
+          headers: _driveHeaders(session, captcha, contentType: false),
+        )
         .timeout(const Duration(seconds: 30));
     if (response.statusCode != 200) {
-      throw PikPakTransferException(_extractError(response.body, response.statusCode));
+      throw PikPakTransferException(
+        _extractError(response.body, response.statusCode),
+      );
     }
 
     final decoded = jsonDecode(response.body);
@@ -176,7 +225,10 @@ class PikPakTransferService {
     final token = await _storage.read(key: 'pikpak_access_token');
     final deviceId = await _storage.read(key: 'pikpak_device_id');
     final userId = await _storage.read(key: 'pikpak_user_id');
-    if (token == null || token.isEmpty || deviceId == null || deviceId.isEmpty) {
+    if (token == null ||
+        token.isEmpty ||
+        deviceId == null ||
+        deviceId.isEmpty) {
       throw const PikPakTransferException('Connect PikPak first.');
     }
     return _Session(token: token, deviceId: deviceId, userId: userId);
@@ -193,6 +245,8 @@ class PikPakTransferService {
       'User-Agent': _userAgent,
       'Authorization': 'Bearer ${session.token}',
       'X-Device-ID': session.deviceId,
+      'X-Client-ID': _clientId,
+      'X-Client-Version': _clientVersion,
       'X-Captcha-Token': captcha,
     };
   }
@@ -240,7 +294,9 @@ class PikPakTransferService {
         .timeout(const Duration(seconds: 30));
 
     if (response.statusCode != 200) {
-      throw PikPakTransferException(_extractError(response.body, response.statusCode));
+      throw PikPakTransferException(
+        _extractError(response.body, response.statusCode),
+      );
     }
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic>) {
@@ -260,8 +316,12 @@ class PikPakTransferService {
   }
 
   double _parseProgress(dynamic raw) {
-    final value = raw is num ? raw.toDouble() : double.tryParse(raw?.toString() ?? '') ?? 0;
-    if (value <= 1 && value > 0) return (value * 100).clamp(0, 100).toDouble();
+    final value = raw is num
+        ? raw.toDouble()
+        : double.tryParse(raw?.toString() ?? '') ?? 0;
+    if (value <= 1 && value > 0) {
+      return (value * 100).clamp(0, 100).toDouble();
+    }
     return value.clamp(0, 100).toDouble();
   }
 
@@ -274,7 +334,12 @@ class PikPakTransferService {
     try {
       final decoded = jsonDecode(body);
       if (decoded is Map<String, dynamic>) {
-        for (final key in const ['error_description', 'message', 'error', 'error_code']) {
+        for (final key in const [
+          'error_description',
+          'message',
+          'error',
+          'error_code',
+        ]) {
           final value = decoded[key];
           if (value != null && value.toString().trim().isNotEmpty) {
             return value.toString();
