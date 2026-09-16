@@ -25,118 +25,114 @@ jobs:
           fetch-depth: 0
 
       - name: Apply source defaults and v0.5.1 metadata
-        shell: pwsh
+        shell: python
         run: |
-          $ErrorActionPreference = 'Stop'
+          from pathlib import Path
 
-          function Read-Lf([string]$Path) {
-            return (Get-Content $Path -Raw).Replace("`r`n", "`n")
-          }
+          def read(path):
+              return Path(path).read_text(encoding="utf-8").replace("\r\n", "\n")
 
-          function Write-Lf([string]$Path, [string]$Text) {
-            [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
-          }
+          def write(path, text):
+              Path(path).write_text(text, encoding="utf-8", newline="\n")
 
-          function Replace-Required([string]$Text, [string]$Old, [string]$New, [string]$Label) {
-            if (-not $Text.Contains($Old)) {
-              throw "Expected source block not found: $Label"
-            }
-            return $Text.Replace($Old, $New)
-          }
+          def must_replace(text, old, new, label):
+              if old not in text:
+                  raise RuntimeError(f"Expected source block not found: {label}")
+              return text.replace(old, new, 1)
 
-          $path = 'lib/services/source_provider_service.dart'
-          $text = Read-Lf $path
+          path = "lib/services/source_provider_service.dart"
+          text = read(path)
 
-          $text = Replace-Required $text "    defaultValue: ''," "    defaultValue: 'https://torrentio.strem.fun'," 'built-in Torrentio default'
+          text = must_replace(
+              text,
+              "    defaultValue: '',",
+              "    defaultValue: 'https://torrentio.strem.fun',",
+              "built-in Torrentio default",
+          )
 
-          $old = "  static const _preferredGroupsKey = 'orvix_preferred_release_groups_v1';"
-          $new = @"
-  static const _preferredGroupsKey = 'orvix_preferred_release_groups_v1';
-  static const _recommendedProvidersSeedKey =
-      'orvix_recommended_source_pool_seeded_v1';
-  static const _recommendedAddonUrls = <String>[
-    'https://comet.elfhosted.com',
-  ];
-"@.Replace("`r`n", "`n").TrimEnd("`n")
-          $text = Replace-Required $text $old $new 'recommended provider constants'
+          old = "  static const _preferredGroupsKey = 'orvix_preferred_release_groups_v1';"
+          new = "\n".join([
+              "  static const _preferredGroupsKey = 'orvix_preferred_release_groups_v1';",
+              "  static const _recommendedProvidersSeedKey =",
+              "      'orvix_recommended_source_pool_seeded_v1';",
+              "  static const _recommendedAddonUrls = <String>[",
+              "    'https://comet.elfhosted.com',",
+              "  ];",
+          ])
+          text = must_replace(text, old, new, "recommended provider constants")
 
-          $old = "    await _migrateTorrentio(prefs);`n`n    final out = <String>[];"
-          $new = "    await _migrateTorrentio(prefs);`n    await _seedRecommendedProviders(prefs);`n`n    final out = <String>[];"
-          $text = Replace-Required $text $old $new 'provider seeding call'
+          old = "    await _migrateTorrentio(prefs);\n\n    final out = <String>[];"
+          new = "    await _migrateTorrentio(prefs);\n    await _seedRecommendedProviders(prefs);\n\n    final out = <String>[];"
+          text = must_replace(text, old, new, "provider seeding call")
 
-          $old = @"
-  String providerName(String url) {
-    if (_looksLikeTorrentio(url)) return 'Torrentio';
-    final uri = Uri.tryParse(url);
-    return uri?.host.isNotEmpty == true ? uri!.host : 'Source provider';
-  }
-"@.Replace("`r`n", "`n").TrimEnd("`n")
-          $new = @"
-  String providerName(String url) {
-    if (_looksLikeTorrentio(url)) return 'Torrentio';
-    final uri = Uri.tryParse(url);
-    final host = uri?.host.toLowerCase() ?? '';
-    if (host.contains('comet')) return 'Comet';
-    if (host.contains('mediafusion')) return 'MediaFusion';
-    return host.isNotEmpty ? uri!.host : 'Source provider';
-  }
-"@.Replace("`r`n", "`n").TrimEnd("`n")
-          $text = Replace-Required $text $old $new 'provider display names'
+          old = "\n".join([
+              "  String providerName(String url) {",
+              "    if (_looksLikeTorrentio(url)) return 'Torrentio';",
+              "    final uri = Uri.tryParse(url);",
+              "    return uri?.host.isNotEmpty == true ? uri!.host : 'Source provider';",
+              "  }",
+          ])
+          new = "\n".join([
+              "  String providerName(String url) {",
+              "    if (_looksLikeTorrentio(url)) return 'Torrentio';",
+              "    final uri = Uri.tryParse(url);",
+              "    final host = uri?.host.toLowerCase() ?? '';",
+              "    if (host.contains('comet')) return 'Comet';",
+              "    if (host.contains('mediafusion')) return 'MediaFusion';",
+              "    return host.isNotEmpty ? uri!.host : 'Source provider';",
+              "  }",
+          ])
+          text = must_replace(text, old, new, "provider display names")
 
-          $old = '  Future<void> _migrateTorrentio(SharedPreferences prefs) async {'
-          $new = @"
-  Future<void> _seedRecommendedProviders(SharedPreferences prefs) async {
-    // Seed curated zero-config providers once. The normal Provider pool UI can
-    // remove them later; the marker prevents a removed provider being re-added
-    // on every launch.
-    if (prefs.getBool(_recommendedProvidersSeedKey) == true) return;
+          old = "  Future<void> _migrateTorrentio(SharedPreferences prefs) async {"
+          new = "\n".join([
+              "  Future<void> _seedRecommendedProviders(SharedPreferences prefs) async {",
+              "    // Seed curated zero-config providers once. The Provider pool UI can",
+              "    // remove them later; the marker prevents a removed provider being re-added",
+              "    // on every launch.",
+              "    if (prefs.getBool(_recommendedProvidersSeedKey) == true) return;",
+              "",
+              "    final current = [...(prefs.getStringList(_prefsKey) ?? const <String>[])];",
+              "    for (final raw in _recommendedAddonUrls) {",
+              "      final value = _normalizeAddonUrl(raw);",
+              "      if (value != null &&",
+              "          !_looksLikeTorrentio(value) &&",
+              "          !current.contains(value)) {",
+              "        current.add(value);",
+              "      }",
+              "    }",
+              "    await prefs.setStringList(_prefsKey, current);",
+              "    await prefs.setBool(_recommendedProvidersSeedKey, true);",
+              "  }",
+              "",
+              "  Future<void> _migrateTorrentio(SharedPreferences prefs) async {",
+          ])
+          text = must_replace(text, old, new, "recommended provider seeding method")
+          write(path, text)
 
-    final current = [...(prefs.getStringList(_prefsKey) ?? const <String>[])];
-    for (final raw in _recommendedAddonUrls) {
-      final value = _normalizeAddonUrl(raw);
-      if (value != null &&
-          !_looksLikeTorrentio(value) &&
-          !current.contains(value)) {
-        current.add(value);
-      }
-    }
-    await prefs.setStringList(_prefsKey, current);
-    await prefs.setBool(_recommendedProvidersSeedKey, true);
-  }
+          ui_path = "lib/screens/sources_screen.dart"
+          ui = read(ui_path).replace("Pikora", "Orvix")
+          write(ui_path, ui)
 
-  Future<void> _migrateTorrentio(SharedPreferences prefs) async {
-"@.Replace("`r`n", "`n").TrimEnd("`n")
-          $text = Replace-Required $text $old $new 'recommended provider seeding method'
+          pub_path = "pubspec.yaml"
+          pub = read(pub_path)
+          pub = must_replace(pub, "version: 0.5.0+20", "version: 0.5.1+21", "v0.5.1 pubspec version")
+          write(pub_path, pub)
 
-          Write-Lf $path $text
-
-          $uiPath = 'lib/screens/sources_screen.dart'
-          $ui = Read-Lf $uiPath
-          $ui = $ui.Replace('Pikora', 'Orvix')
-          Write-Lf $uiPath $ui
-
-          $pubPath = 'pubspec.yaml'
-          $pub = Read-Lf $pubPath
-          $pub = Replace-Required $pub 'version: 0.5.0+20' 'version: 0.5.1+21' 'v0.5.1 pubspec version'
-          Write-Lf $pubPath $pub
-
-          $changePath = 'CHANGELOG.md'
-          $change = Read-Lf $changePath
-          $marker = "# Orvix Changelog`n`n"
-          if (-not $change.StartsWith($marker)) {
-            throw 'Unexpected CHANGELOG header.'
-          }
-          $section = @"
-## v0.5.1 — zero-config source pool
-
-- Restored a built-in Torrentio default for fresh installs, so Source Engine no longer starts as NOT CONFIGURED and users do not need to paste a Torrentio URL.
-- Added Comet (ElfHosted public instance) as a second zero-config Stremio-compatible provider, seeded once and still removable from Provider configuration.
-- Kept custom providers and legacy Torrentio migration intact; all configured providers continue to resolve in parallel and merge into one ranked source list.
-- Cleaned remaining Pikora wording from the active Source Engine screen.
-
-"@.Replace("`r`n", "`n")
-          $change = $marker + $section + $change.Substring($marker.Length)
-          Write-Lf $changePath $change
+          change_path = "CHANGELOG.md"
+          change = read(change_path)
+          marker = "# Orvix Changelog\n\n"
+          if not change.startswith(marker):
+              raise RuntimeError("Unexpected CHANGELOG header")
+          section = (
+              "## v0.5.1 — zero-config source pool\n\n"
+              "- Restored a built-in Torrentio default for fresh installs, so Source Engine no longer starts as NOT CONFIGURED and users do not need to paste a Torrentio URL.\n"
+              "- Added Comet (ElfHosted public instance) as a second zero-config Stremio-compatible provider, seeded once and still removable from Provider configuration.\n"
+              "- Kept custom providers and legacy Torrentio migration intact; all configured providers continue to resolve in parallel and merge into one ranked source list.\n"
+              "- Cleaned remaining Pikora wording from the active Source Engine screen.\n\n"
+          )
+          change = marker + section + change[len(marker):]
+          write(change_path, change)
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
