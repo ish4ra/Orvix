@@ -18,6 +18,9 @@ class PikPakTransferService {
   static const _driveBase = 'https://api-drive.mypikpak.com';
   static const _userAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0';
+  static const _hugeFileThreshold = 24 * 1024 * 1024 * 1024;
+  static const _largeUhdThreshold = 18 * 1024 * 1024 * 1024;
+  static const _smoothBitrateCeiling = 30 * 1000 * 1000;
 
   static const _algorithms = <String>[
     'C9qPpZLN8ucRTaTiUMWYS9cQvWOE',
@@ -277,10 +280,9 @@ class PikPakTransferService {
     return decoded is Map<String, dynamic> ? decoded : null;
   }
 
-  /// Follow PikPak/Debrify streaming semantics: prefer the media entry that
-  /// PikPak itself marks as default, then the origin rendition, then the first
-  /// usable media entry. Do not invent a quality ranking here: PikPak's
-  /// `is_default` choice is the provider-selected playback path.
+  /// Auto playback follows PikPak's own media renditions, but avoids pushing a
+  /// huge UHD remux through the raw origin URL when a much easier cloud
+  /// transcode is available. Small/normal files retain the provider default.
   String? _selectMediaUrl(Map<String, dynamic> decoded) {
     final medias = decoded['medias'];
     if (medias is! List || medias.isEmpty) return null;
@@ -291,6 +293,53 @@ class PikPakTransferService {
         .toList(growable: false);
     if (entries.isEmpty) return null;
 
+    Map<String, dynamic>? origin;
+    for (final media in entries) {
+      if (media['is_origin'] == true) {
+        origin = media;
+        break;
+      }
+    }
+
+    final fileSize = _parseInt(decoded['size']) ?? 0;
+    final originBitRate = origin == null ? 0 : _mediaBitRate(origin);
+    final originHeight = origin == null ? 0 : _mediaHeight(origin);
+    final heavyOrigin = fileSize >= _hugeFileThreshold ||
+        originBitRate >= _smoothBitrateCeiling ||
+        (originHeight >= 2160 && fileSize >= _largeUhdThreshold);
+
+    if (heavyOrigin) {
+      final transcodes = entries.where((media) {
+        if (media['is_origin'] == true) return false;
+        if (media['need_more_quota'] == true) return false;
+        if (media.containsKey('is_visible') && media['is_visible'] == false) {
+          return false;
+        }
+        return true;
+      }).toList(growable: false);
+
+      if (transcodes.isNotEmpty) {
+        final knownSafe = transcodes
+            .where((media) {
+              final bitRate = _mediaBitRate(media);
+              return bitRate > 0 && bitRate <= _smoothBitrateCeiling;
+            })
+            .toList();
+        final unknownRate = transcodes
+            .where((media) => _mediaBitRate(media) <= 0)
+            .toList();
+        final pool = knownSafe.isNotEmpty
+            ? knownSafe
+            : (unknownRate.isNotEmpty ? unknownRate : [...transcodes]);
+
+        pool.sort((a, b) => _smoothMediaScore(b).compareTo(
+              _smoothMediaScore(a),
+            ));
+        final smooth = _mediaUrl(pool.first);
+        if (smooth != null) return smooth;
+      }
+    }
+
     for (final media in entries) {
       if (media['is_default'] == true) return _mediaUrl(media);
     }
@@ -298,6 +347,45 @@ class PikPakTransferService {
       if (media['is_origin'] == true) return _mediaUrl(media);
     }
     return _mediaUrl(entries.first);
+  }
+
+  int _smoothMediaScore(Map<String, dynamic> media) {
+    final height = _mediaHeight(media);
+    final bitRate = _mediaBitRate(media);
+    var score = 0;
+
+    // Prefer the best cloud transcode up to UHD. A 2160p cloud rendition wins
+    // over 1080p when both are under the bitrate ceiling, while absurdly large
+    // resolutions are not rewarded beyond 2160p.
+    final boundedHeight = height <= 0 ? 0 : (height > 2160 ? 2160 : height);
+    score += boundedHeight * 100000;
+    if (media['is_default'] == true) score += 20000000;
+    if (bitRate > 0 && bitRate <= _smoothBitrateCeiling) {
+      score += bitRate ~/ 1000;
+    }
+    return score;
+  }
+
+  int _mediaHeight(Map<String, dynamic> media) {
+    final video = media['video'];
+    if (video is Map<String, dynamic>) {
+      final height = _parseInt(video['height']);
+      if (height != null && height > 0) return height;
+    }
+
+    final resolution = media['resolution_name']?.toString().toLowerCase() ?? '';
+    if (resolution.contains('4k')) return 2160;
+    final match = RegExp(r'(\d{3,4})p').firstMatch(resolution);
+    if (match != null) return int.tryParse(match.group(1) ?? '') ?? 0;
+    return 0;
+  }
+
+  int _mediaBitRate(Map<String, dynamic> media) {
+    final video = media['video'];
+    if (video is Map<String, dynamic>) {
+      return _parseInt(video['bit_rate']) ?? 0;
+    }
+    return 0;
   }
 
   String? _mediaUrl(Map<String, dynamic> media) {
