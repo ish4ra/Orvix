@@ -5,15 +5,16 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 class PlaybackService {
   PlaybackService() : player = Player() {
-    // Windows high-bitrate HEVC/Dolby Vision files are safer through mpv's
-    // copy-back hardware decode path. It keeps GPU decoding but avoids handing
-    // decoder-owned surfaces directly to the Flutter texture/render context,
-    // which is a common source of native-process crashes on difficult 4K files.
+    // v0.3.5 used auto-copy-safe to stop difficult 4K HEVC files from taking
+    // the process down. That path copies decoded frames back through system RAM
+    // and can become the bottleneck on UHD content. Debrify's patched
+    // media_kit_video renderer is now pinned in pubspec, so use mpv's supported
+    // direct hardware path on Windows for substantially better 4K throughput.
     controller = Platform.isWindows
         ? VideoController(
             player,
             configuration: const VideoControllerConfiguration(
-              hwdec: 'auto-copy-safe',
+              hwdec: 'auto-safe',
             ),
           )
         : VideoController(player);
@@ -40,24 +41,35 @@ class PlaybackService {
     );
   }
 
-  /// Debrify's vetted "Large" VOD buffer rung, without the aggressive
-  /// cache-pause/cache-pause-initial settings Pikora experimented with in
-  /// v0.3.3. This increases read-ahead for cloud files while preserving normal
-  /// startup behaviour.
+  /// Cloud-VOD profile for PikPak playback.
+  ///
+  /// The 512 MiB forward packet budget is intentionally much larger than the
+  /// old 256 MiB profile. mpv continuously reads ahead while playback runs, up
+  /// to about five minutes when bitrate and the byte ceiling permit it. If the
+  /// CDN briefly falls behind, cache-pause waits for a small cushion before
+  /// resuming instead of repeatedly stuttering frame-by-frame.
   Future<void> _applyNetworkProfile() async {
     final dynamic platform = player.platform;
     const properties = <String, String>{
-      'demuxer-max-bytes': '256MiB',
-      'demuxer-readahead-secs': '120',
-      'cache-secs': '120',
+      'cache': 'yes',
+      'demuxer-thread': 'yes',
+      'demuxer-max-bytes': '512MiB',
+      'demuxer-max-back-bytes': '32MiB',
+      'demuxer-readahead-secs': '300',
+      'cache-secs': '300',
+      'cache-pause': 'yes',
+      'cache-pause-wait': '3',
+      'network-timeout': '60',
+      'stream-lavf-o':
+          'reconnect=1,reconnect_on_network_error=1,reconnect_on_http_error=5xx,reconnect_delay_max=10',
     };
 
     for (final entry in properties.entries) {
       try {
         await platform.setProperty(entry.key, entry.value);
       } catch (_) {
-        // Keep playback available even when a backend does not expose one of
-        // these native mpv properties.
+        // A backend may not expose every native mpv property. Playback should
+        // still continue with the properties it accepted.
       }
     }
   }
