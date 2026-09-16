@@ -225,8 +225,8 @@ class SourceProviderService {
   static const defaultPriority = <SourceSortCriterion>[
     SourceSortCriterion.resolution,
     SourceSortCriterion.releaseQuality,
-    SourceSortCriterion.fileSize,
     SourceSortCriterion.seeders,
+    SourceSortCriterion.fileSize,
   ];
 
   Future<List<SourceSortCriterion>> getPriorityOrder() async {
