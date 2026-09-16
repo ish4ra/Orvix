@@ -1,5 +1,12 @@
 # Orvix Changelog
 
+## v0.5.1 — zero-config source pool
+
+- Restored a built-in Torrentio default for fresh installs, so Source Engine no longer starts as NOT CONFIGURED and users do not need to paste a Torrentio URL.
+- Added Comet (ElfHosted public instance) as a second zero-config Stremio-compatible provider, seeded once and still removable from Provider configuration.
+- Kept custom providers and legacy Torrentio migration intact; all configured providers continue to resolve in parallel and merge into one ranked source list.
+- Cleaned remaining Pikora wording from the active Source Engine screen.
+
 ## v0.5.0 — Orvix rebrand & multi-cloud foundation
 
 - Rebranded the active Flutter application from Pikora to **Orvix**, including package/app naming, in-app branding, installer naming, documentation and the Windows icon asset.
