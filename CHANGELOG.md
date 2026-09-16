@@ -2,6 +2,13 @@
 
 This file tracks user-visible changes to Pikora. GitHub Releases are published automatically for new packaged versions starting with v0.3.2.
 
+## v0.3.5 — 4K stability, safer Windows decode & PikPak file sizes
+
+- Switched Windows playback to mpv `auto-copy-safe` hardware decoding to keep GPU decode while avoiding fragile direct decoder-surface interop on difficult high-bitrate HEVC/Dolby Vision files.
+- Added Debrify's vetted `Large` VOD read-ahead values (`256MiB`, `120s`) without the aggressive `cache-pause`/`cache-pause-initial` behavior that regressed startup in v0.3.3.
+- Pinned Debrify's patched `media_kit` and `media_kit_video` packages at commit `709eca3a0828f2b5bfdaf153ab6a0c00a89c5f2d`, including its desktop-safe native player/render-context teardown work.
+- My PikPak now shows human-readable file sizes next to each file's MIME type.
+- Retains v0.3.4's Debrify-aligned PikPak `usage=FETCH&_magic=2021` request and provider-selected media ordering.
 
 ## v0.3.4 — Debrify-aligned PikPak playback
 
