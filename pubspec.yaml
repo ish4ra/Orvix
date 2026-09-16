@@ -1,0 +1,18 @@
+name: pikora
+description: PikPak-first cinematic media hub for Windows and Android.
+publish_to: 'none'
+version: 0.3.0+3
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  crypto: ^3.0.6
+  flutter_secure_storage: ^9.2.4
+  http: ^1.2.2
+  shared_preferences: ^2.3.5
+
+flutter:
+  uses-material-design: true
