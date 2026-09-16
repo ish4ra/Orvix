@@ -1,0 +1,39 @@
+name: Publish Orvix v0.5.0
+
+on:
+  push:
+    branches:
+      - orvix-v0.5.0-release-helper
+    paths:
+      - '.github/workflows/orvix-v050-publish.yml'
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download validated artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir -p artifacts/portable artifacts/setup
+          gh run download 35150196438 -R ish4ra/Pikora -n Orvix-v0.5.0-Windows-x64 -D artifacts/portable
+          gh run download 35150196438 -R ish4ra/Pikora -n Orvix-v0.5.0-Setup-Windows-x64 -D artifacts/setup
+          find artifacts -type f -maxdepth 3 -print
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view v0.5.0 -R ish4ra/Pikora >/dev/null 2>&1; then
+            gh release upload v0.5.0 -R ish4ra/Pikora artifacts/portable/* artifacts/setup/* --clobber
+          else
+            gh release create v0.5.0 -R ish4ra/Pikora artifacts/portable/* artifacts/setup/* \
+              --title "Orvix v0.5.0" \
+              --notes "Orvix v0.5.0: multi-cloud PikPak + TorBox foundation, TorBox device-code/API-key connection, neon-lime Orvix redesign, Windows branding/icon, and refined source ranking/filter controls."
+          fi
