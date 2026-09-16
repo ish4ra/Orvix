@@ -72,8 +72,6 @@ class MediaItem {
   final List<String> genres;
   final List<EpisodeItem> episodes;
 
-  String get typeLabel => kind == MediaKind.movie ? 'Movie' : 'TV Series';
-
   int? get startYear {
     final match = RegExp(r'\b(?:19|20)\d{2}\b').firstMatch(year ?? '');
     return int.tryParse(match?.group(0) ?? '');
@@ -82,6 +80,13 @@ class MediaItem {
   bool get isUpcoming {
     final value = startYear;
     return value != null && value > DateTime.now().year;
+  }
+
+  String get typeLabel {
+    if (isUpcoming) {
+      return kind == MediaKind.movie ? 'Upcoming Movie' : 'Upcoming TV Series';
+    }
+    return kind == MediaKind.movie ? 'Movie' : 'TV Series';
   }
 
   factory MediaItem.fromCinemeta(
