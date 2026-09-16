@@ -40,7 +40,7 @@ class PikPakTransferService {
   final http.Client _client;
   final FlutterSecureStorage _storage;
 
-  Future<void> addResource(String resource, {String? name}) async {
+  Future<PikPakAddResult> addResource(String resource, {String? name}) async {
     final session = await _session();
     final captcha = await _captcha(
       action: 'POST:/drive/v1/files',
@@ -67,6 +67,63 @@ class PikPakTransferService {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw PikPakTransferException(_extractError(response.body, response.statusCode));
     }
+
+    Map<String, dynamic> decoded = const {};
+    try {
+      final raw = jsonDecode(response.body);
+      if (raw is Map<String, dynamic>) decoded = raw;
+    } catch (_) {}
+
+    String? taskId;
+    String? fileId;
+    final task = decoded['task'];
+    if (task is Map<String, dynamic>) {
+      taskId = task['id']?.toString();
+      fileId = task['file_id']?.toString();
+    }
+    final file = decoded['file'];
+    if ((fileId == null || fileId.isEmpty) && file is Map<String, dynamic>) {
+      fileId = file['id']?.toString();
+    }
+    if (fileId == null || fileId.isEmpty) {
+      fileId = decoded['id']?.toString();
+    }
+
+    return PikPakAddResult(
+      taskId: _nonEmpty(taskId),
+      fileId: _nonEmpty(fileId),
+    );
+  }
+
+  Future<PikPakTaskStatus> getTaskStatus(String taskId) async {
+    final session = await _session();
+    final captcha = await _captcha(
+      action: 'GET:/drive/v1/tasks',
+      deviceId: session.deviceId,
+      userId: session.userId,
+    );
+    final uri = Uri.parse(
+      '$_driveBase/drive/v1/tasks/${Uri.encodeComponent(taskId)}',
+    );
+    final response = await _client
+        .get(uri, headers: _driveHeaders(session, captcha, contentType: false))
+        .timeout(const Duration(seconds: 30));
+
+    if (response.statusCode != 200) {
+      throw PikPakTransferException(_extractError(response.body, response.statusCode));
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw const PikPakTransferException('Invalid PikPak task response.');
+    }
+
+    return PikPakTaskStatus(
+      taskId: taskId,
+      phase: decoded['phase']?.toString() ?? '',
+      progress: _parseProgress(decoded['progress']),
+      fileId: _nonEmpty(decoded['file_id']?.toString()),
+      message: decoded['message']?.toString() ?? decoded['error']?.toString(),
+    );
   }
 
   Future<String?> fetchPlayableUrl(String fileId) async {
@@ -202,6 +259,17 @@ class PikPakTransferService {
     return captcha;
   }
 
+  double _parseProgress(dynamic raw) {
+    final value = raw is num ? raw.toDouble() : double.tryParse(raw?.toString() ?? '') ?? 0;
+    if (value <= 1 && value > 0) return (value * 100).clamp(0, 100).toDouble();
+    return value.clamp(0, 100).toDouble();
+  }
+
+  String? _nonEmpty(String? value) {
+    final clean = value?.trim();
+    return clean == null || clean.isEmpty ? null : clean;
+  }
+
   String _extractError(String body, int statusCode) {
     try {
       final decoded = jsonDecode(body);
@@ -218,6 +286,31 @@ class PikPakTransferService {
   }
 
   void dispose() => _client.close();
+}
+
+class PikPakAddResult {
+  const PikPakAddResult({this.taskId, this.fileId});
+  final String? taskId;
+  final String? fileId;
+}
+
+class PikPakTaskStatus {
+  const PikPakTaskStatus({
+    required this.taskId,
+    required this.phase,
+    required this.progress,
+    this.fileId,
+    this.message,
+  });
+
+  final String taskId;
+  final String phase;
+  final double progress;
+  final String? fileId;
+  final String? message;
+
+  bool get isComplete => phase == 'PHASE_TYPE_COMPLETE';
+  bool get isError => phase == 'PHASE_TYPE_ERROR';
 }
 
 class _Session {
