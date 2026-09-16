@@ -203,7 +203,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
                           ),
                         OutlinedButton.icon(
                           onPressed: () => _toggleWatchlist(item),
-                          icon: Icon(_watchlisted ? Icons.bookmark_rounded : Icons.bookmark_add_outlined),
+                          icon: Icon(
+                            _watchlisted ? Icons.bookmark_rounded : Icons.bookmark_add_outlined,
+                          ),
                           label: Text(_watchlisted ? 'In Watchlist' : 'Watchlist'),
                         ),
                       ],
@@ -233,7 +235,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
             children: [
               Text(
                 'Episodes',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w900,
+                    ),
               ),
               const Spacer(),
               DropdownButton<int>(
@@ -382,48 +386,131 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
       setState(() {
         _resolving = true;
-        _resolveProgress = .08;
+        _resolveProgress = .02;
         _status = 'Sending ${chosen.quality ?? 'source'} to PikPak…';
       });
       final taskName = episode == null ? item.title : '${item.title} ${episode.label}';
-      await widget.transfer.addResource(chosen.resource, name: taskName);
+      final added = await widget.transfer.addResource(chosen.resource, name: taskName);
 
-      for (var attempt = 1; attempt <= 18; attempt++) {
-        if (!mounted) return;
-        setState(() {
-          _resolveProgress = (.08 + attempt / 20).clamp(0, .94);
-          _status = 'PikPak is preparing the file… ${attempt * 5}s';
-        });
-        await Future<void>.delayed(const Duration(seconds: 5));
-        final match = await _findInPikPak(item, episode: episode);
-        if (match != null) {
-          setState(() {
-            _resolveProgress = .98;
-            _status = 'Ready — opening player…';
-          });
-          await _openPikPakFile(match, item, episode);
-          return;
-        }
+      if (added.taskId != null) {
+        await _waitForTask(
+          added.taskId!,
+          initialFileId: added.fileId,
+          item: item,
+          episode: episode,
+        );
+        return;
       }
 
-      if (!mounted) return;
-      setState(() {
-        _resolving = false;
-        _resolveProgress = null;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Added to PikPak. It is still preparing; open My PikPak shortly to play it.'),
-        ),
-      );
+      if (added.fileId != null &&
+          await _tryOpenFileId(added.fileId!, item, episode)) {
+        return;
+      }
+
+      await _waitForLibraryMatch(item, episode: episode);
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _resolving = false;
         _resolveProgress = null;
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not play: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not play: $e')),
+      );
     }
+  }
+
+  Future<void> _waitForTask(
+    String taskId, {
+    required MediaItem item,
+    EpisodeItem? episode,
+    String? initialFileId,
+  }) async {
+    var fileId = initialFileId;
+    for (var attempt = 0; attempt < 45; attempt++) {
+      if (!mounted) return;
+      if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 2));
+
+      final status = await widget.transfer.getTaskStatus(taskId);
+      fileId = status.fileId ?? fileId;
+      final progress = (status.progress / 100).clamp(0.0, 1.0).toDouble();
+      setState(() {
+        _resolveProgress = progress;
+        _status = status.isComplete
+            ? 'PikPak finished preparing the cloud item…'
+            : 'PikPak cloud task • ${status.progress.round()}%';
+      });
+
+      if (status.isError) {
+        throw PikPakTransferException(
+          status.message?.trim().isNotEmpty == true
+              ? status.message!
+              : 'PikPak cloud task failed.',
+        );
+      }
+
+      if (status.isComplete) {
+        setState(() {
+          _resolveProgress = 1;
+          _status = 'Ready — opening player…';
+        });
+        if (fileId != null && await _tryOpenFileId(fileId, item, episode)) {
+          return;
+        }
+        for (var scan = 0; scan < 4; scan++) {
+          final match = await _findInPikPak(item, episode: episode);
+          if (match != null) {
+            await _openPikPakFile(match, item, episode);
+            return;
+          }
+          await Future<void>.delayed(const Duration(seconds: 2));
+        }
+        throw const PikPakTransferException(
+          'PikPak completed the task but the playable video is not visible yet.',
+        );
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _resolving = false;
+      _resolveProgress = null;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('The PikPak task is still running. You can check it again shortly.'),
+      ),
+    );
+  }
+
+  Future<void> _waitForLibraryMatch(
+    MediaItem item, {
+    EpisodeItem? episode,
+  }) async {
+    for (var attempt = 1; attempt <= 18; attempt++) {
+      if (!mounted) return;
+      setState(() {
+        _resolveProgress = (.05 + attempt / 20).clamp(0, .94).toDouble();
+        _status = 'Waiting for the new PikPak file… ${attempt * 5}s';
+      });
+      await Future<void>.delayed(const Duration(seconds: 5));
+      final match = await _findInPikPak(item, episode: episode);
+      if (match != null) {
+        await _openPikPakFile(match, item, episode);
+        return;
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _resolving = false;
+      _resolveProgress = null;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Added to PikPak. It is still preparing; check My PikPak shortly.'),
+      ),
+    );
   }
 
   Future<SourceResult?> _chooseSource(List<SourceResult> results) {
@@ -449,7 +536,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
                       children: [
                         Text(
                           'Choose source',
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                fontWeight: FontWeight.w900,
+                              ),
                         ),
                         const SizedBox(height: 4),
                         const Text('Results are ranked by quality and common release markers.'),
@@ -477,8 +566,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
                       leading: CircleAvatar(
                         child: Text(result.quality?.replaceAll('P', '') ?? '${index + 1}'),
                       ),
-                      title: Text(result.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-                      subtitle: Text('${result.provider}${result.isMagnet ? ' • cloud source' : ' • direct'}'),
+                      title: Text(
+                        result.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        '${result.provider}${result.isMagnet ? ' • cloud source' : ' • direct'}',
+                      ),
                       trailing: index == 0
                           ? const Chip(label: Text('Best'))
                           : const Icon(Icons.chevron_right),
@@ -525,19 +620,50 @@ class _DetailsScreenState extends State<DetailsScreen> {
     return null;
   }
 
-  Future<void> _openPikPakFile(PikPakFile file, MediaItem item, EpisodeItem? episode) async {
+  Future<bool> _tryOpenFileId(
+    String fileId,
+    MediaItem item,
+    EpisodeItem? episode,
+  ) async {
+    try {
+      final url = await widget.transfer.fetchPlayableUrl(fileId);
+      if (url == null || url.isEmpty) return false;
+      await _openPlayerUrl(url, item, episode);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _openPikPakFile(
+    PikPakFile file,
+    MediaItem item,
+    EpisodeItem? episode,
+  ) async {
     if (!mounted) return;
     setState(() => _status = 'Resolving PikPak streaming URL…');
     final url = await widget.transfer.fetchPlayableUrl(file.id) ?? file.webContentLink;
     if (url == null || url.isEmpty) {
       throw Exception('PikPak did not return a playable URL yet.');
     }
+    await _openPlayerUrl(url, item, episode);
+  }
+
+  Future<void> _openPlayerUrl(
+    String url,
+    MediaItem item,
+    EpisodeItem? episode,
+  ) async {
     if (!mounted) return;
     setState(() {
       _resolving = false;
       _resolveProgress = null;
     });
-    final title = episode == null ? item.title : '${item.title} • ${episode.label} ${episode.title}';
+    final title = episode == null
+        ? item.title
+        : '${item.title} • ${episode.label} ${episode.title}';
+    final next = _nextEpisode(item, episode);
+
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => PlayerScreen(
@@ -547,9 +673,32 @@ class _DetailsScreenState extends State<DetailsScreen> {
           mediaState: widget.mediaState,
           item: item,
           episode: episode,
+          nextEpisodeLabel: next == null ? null : '${next.label} ${next.title}',
+          onNext: next == null
+              ? null
+              : () async {
+                  if (!mounted) return;
+                  await _play(item, episode: next);
+                },
         ),
       ),
     );
+  }
+
+  EpisodeItem? _nextEpisode(MediaItem item, EpisodeItem? current) {
+    if (current == null || item.episodes.isEmpty) return null;
+    final episodes = [...item.episodes]
+      ..sort((a, b) {
+        final season = a.season.compareTo(b.season);
+        return season != 0 ? season : a.episode.compareTo(b.episode);
+      });
+    final index = episodes.indexWhere(
+      (episode) =>
+          episode.id == current.id ||
+          (episode.season == current.season && episode.episode == current.episode),
+    );
+    if (index < 0 || index + 1 >= episodes.length) return null;
+    return episodes[index + 1];
   }
 
   String _normalize(String value) => value
