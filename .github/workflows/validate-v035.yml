@@ -1,0 +1,37 @@
+name: Validate Pikora v0.3.5 Playback Fix
+
+on:
+  push:
+    branches:
+      - v0.3.5-playback-fix
+    paths:
+      - 'lib/**'
+      - 'pubspec.yaml'
+      - '.github/workflows/validate-v035.yml'
+  workflow_dispatch:
+
+jobs:
+  validate-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Windows runner
+        shell: pwsh
+        run: flutter create --platforms=windows --project-name pikora .
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze app sources
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows release
+        run: flutter build windows --release
