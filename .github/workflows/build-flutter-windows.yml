@@ -9,7 +9,11 @@ on:
       - 'lib/**'
       - 'pubspec.yaml'
       - 'installer/**'
+      - 'CHANGELOG.md'
       - '.github/workflows/build-flutter-windows.yml'
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -18,6 +22,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $line = Get-Content pubspec.yaml | Where-Object { $_ -match '^version:' } | Select-Object -First 1
+          if (-not $line) { throw "Version not found in pubspec.yaml" }
+          $version = (($line -replace '^version:\s*', '').Split('+')[0]).Trim()
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -40,7 +54,9 @@ jobs:
 
       - name: Pack portable Windows build
         shell: pwsh
-        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath Pikora-v0.3.1-Windows-x64.zip -Force
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath "Pikora-v$version-Windows-x64.zip" -Force
 
       - name: Install Inno Setup
         shell: pwsh
@@ -60,11 +76,32 @@ jobs:
       - name: Upload portable build
         uses: actions/upload-artifact@v4
         with:
-          name: Pikora-v0.3.1-Windows-x64
-          path: Pikora-v0.3.1-Windows-x64.zip
+          name: Pikora-v${{ steps.version.outputs.version }}-Windows-x64
+          path: Pikora-v${{ steps.version.outputs.version }}-Windows-x64.zip
 
       - name: Upload setup exe
         uses: actions/upload-artifact@v4
         with:
-          name: Pikora-v0.3.1-Setup-Windows-x64
-          path: installer-output/Pikora-Setup-v0.3.1-Windows-x64.exe
+          name: Pikora-v${{ steps.version.outputs.version }}-Setup-Windows-x64
+          path: installer-output/Pikora-Setup-v${{ steps.version.outputs.version }}-Windows-x64.exe
+
+      - name: Publish GitHub Release
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $tag = "v$version"
+          $zip = "Pikora-v$version-Windows-x64.zip"
+          $exe = "installer-output/Pikora-Setup-v$version-Windows-x64.exe"
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $zip $exe --clobber
+          } else {
+            gh release create $tag $zip $exe `
+              --target "${{ github.sha }}" `
+              --title "Pikora $tag" `
+              --generate-notes
+          }
