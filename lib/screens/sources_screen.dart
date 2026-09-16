@@ -286,7 +286,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
               ),
               ButtonSegment(
                 value: SourceSortMode.fileSize,
-                icon: Icon(Icons.hard_drive_rounded),
+                icon: Icon(Icons.storage_rounded),
                 label: Text('File size'),
               ),
               ButtonSegment(
