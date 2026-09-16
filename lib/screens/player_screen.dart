@@ -42,10 +42,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   String? _error;
   bool _controlsVisible = true;
   bool _seeking = false;
+  bool _advancing = false;
   double? _seekPreviewMs;
   double _lastVolume = 100;
   int _nextCountdown = 0;
-  bool _advancing = false;
   Timer? _hideTimer;
   Timer? _saveTimer;
   Timer? _nextTimer;
@@ -71,10 +71,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       await widget.playback.open(widget.url, title: widget.title);
       final currentVolume = widget.playback.player.state.volume;
       if (currentVolume > 0) _lastVolume = currentVolume;
-      final item = widget.item;
-      final state = widget.mediaState;
-      if (item != null && state != null) {
-        final resume = await state.resumePosition(item, episode: widget.episode);
+      if (widget.item != null && widget.mediaState != null) {
+        final resume = await widget.mediaState!.resumePosition(
+          widget.item!,
+          episode: widget.episode,
+        );
         if (resume != null && resume > const Duration(seconds: 10)) {
           await widget.playback.player.seek(resume);
         }
@@ -85,15 +86,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _persistProgress() async {
-    final item = widget.item;
-    final state = widget.mediaState;
-    if (item == null || state == null) return;
-    final playerState = widget.playback.player.state;
-    await state.saveProgress(
-      item,
+    if (widget.item == null || widget.mediaState == null) return;
+    final state = widget.playback.player.state;
+    await widget.mediaState!.saveProgress(
+      widget.item!,
       episode: widget.episode,
-      position: playerState.position,
-      duration: playerState.duration,
+      position: state.position,
+      duration: state.duration,
     );
   }
 
@@ -112,20 +111,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _seekRelative(Duration offset) async {
-    final current = widget.playback.player.state.position;
-    final duration = widget.playback.player.state.duration;
-    var target = current + offset;
+    final player = widget.playback.player;
+    var target = player.state.position + offset;
     if (target < Duration.zero) target = Duration.zero;
-    if (duration > Duration.zero && target > duration) target = duration;
-    await widget.playback.player.seek(target);
+    if (player.state.duration > Duration.zero && target > player.state.duration) {
+      target = player.state.duration;
+    }
+    await player.seek(target);
     _showControls();
   }
 
   Future<void> _toggleMute() async {
     final player = widget.playback.player;
-    final volume = player.state.volume;
-    if (volume > 0) {
-      _lastVolume = volume;
+    if (player.state.volume > 0) {
+      _lastVolume = player.state.volume;
       await player.setVolume(0);
     } else {
       await player.setVolume(_lastVolume <= 0 ? 100 : _lastVolume);
@@ -135,8 +134,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _toggleFullscreen() async {
     if (!_desktop) return;
-    final fullscreen = await windowManager.isFullScreen();
-    await windowManager.setFullScreen(!fullscreen);
+    await windowManager.setFullScreen(!(await windowManager.isFullScreen()));
     _showControls();
   }
 
@@ -150,31 +148,33 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    switch (event.logicalKey) {
-      case LogicalKeyboardKey.space:
-      case LogicalKeyboardKey.mediaPlayPause:
-        widget.playback.player.playOrPause();
-        _showControls();
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.arrowLeft:
-        _seekRelative(const Duration(seconds: -10));
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.arrowRight:
-        _seekRelative(const Duration(seconds: 10));
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.keyM:
-        _toggleMute();
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.keyF:
-      case LogicalKeyboardKey.f11:
-        _toggleFullscreen();
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.escape:
-        _handleEscape();
-        return KeyEventResult.handled;
-      default:
-        return KeyEventResult.ignored;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.space || key == LogicalKeyboardKey.mediaPlayPause) {
+      widget.playback.player.playOrPause();
+      _showControls();
+      return KeyEventResult.handled;
     }
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      _seekRelative(const Duration(seconds: -10));
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowRight) {
+      _seekRelative(const Duration(seconds: 10));
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyM) {
+      _toggleMute();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyF || key == LogicalKeyboardKey.f11) {
+      _toggleFullscreen();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.escape) {
+      _handleEscape();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   void _startNextCountdown() {
@@ -210,20 +210,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _playNext() async {
-    final callback = widget.onNext;
-    if (callback == null || _advancing) return;
+    if (widget.onNext == null || _advancing) return;
     _advancing = true;
     _nextTimer?.cancel();
     await _persistProgress();
     if (!mounted) return;
     Navigator.of(context).pop();
     await Future<void>.delayed(const Duration(milliseconds: 120));
-    await callback();
+    await widget.onNext!();
   }
 
   Future<void> _pickExternalSubtitle() async {
     _hideTimer?.cancel();
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['srt', 'ass', 'ssa', 'vtt'],
     );
@@ -260,96 +259,87 @@ class _PlayerScreenState extends State<PlayerScreen> {
       showDragHandle: true,
       isScrollControlled: true,
       constraints: const BoxConstraints(maxWidth: 760),
-      builder: (sheetContext) {
-        return SafeArea(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.sizeOf(sheetContext).height * .72,
-            ),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Audio & Subtitles',
-                    style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w900,
-                        ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Switch embedded tracks or load a local subtitle file.',
-                    style: TextStyle(
-                      color: Theme.of(sheetContext).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 22),
-                  const _TrackHeading(icon: Icons.audiotrack_rounded, text: 'Audio'),
-                  const SizedBox(height: 8),
-                  if (audioTracks.isEmpty)
-                    const _EmptyTrackMessage('No selectable audio tracks reported.')
-                  else
-                    ...audioTracks.map(
-                      (track) => _TrackTile(
-                        title: _trackLabel(track.title, track.language, track.id),
-                        detail: [
-                          track.codec,
-                          if (track.channelscount != null) '${track.channelscount} ch',
-                        ].whereType<String>().where((value) => value.isNotEmpty).join(' • '),
-                        selected: player.state.track.audio.id == track.id,
-                        onTap: () async {
-                          await player.setAudioTrack(track);
-                          if (sheetContext.mounted) Navigator.pop(sheetContext);
-                        },
+      builder: (sheetContext) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(sheetContext).height * .72),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Audio & Subtitles',
+                  style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w900,
                       ),
-                    ),
-                  const SizedBox(height: 22),
-                  Row(
-                    children: [
-                      const Expanded(
-                        child: _TrackHeading(
-                          icon: Icons.subtitles_rounded,
-                          text: 'Subtitles',
-                        ),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: () async {
-                          Navigator.pop(sheetContext);
-                          await _pickExternalSubtitle();
-                        },
-                        icon: const Icon(Icons.file_open_outlined),
-                        label: const Text('Load file'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  _TrackTile(
-                    title: 'Off',
-                    detail: 'Disable subtitles',
-                    selected: player.state.track.subtitle.id.toLowerCase() == 'no',
-                    onTap: () async {
-                      await player.setSubtitleTrack(mk.SubtitleTrack.no());
-                      if (sheetContext.mounted) Navigator.pop(sheetContext);
-                    },
-                  ),
-                  ...subtitleTracks.map(
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Switch embedded tracks or load a local subtitle file.',
+                  style: TextStyle(color: Theme.of(sheetContext).colorScheme.onSurfaceVariant),
+                ),
+                const SizedBox(height: 22),
+                const _TrackHeading(icon: Icons.audiotrack_rounded, text: 'Audio'),
+                const SizedBox(height: 8),
+                if (audioTracks.isEmpty)
+                  const _EmptyTrackMessage('No selectable audio tracks reported.')
+                else
+                  ...audioTracks.map(
                     (track) => _TrackTile(
                       title: _trackLabel(track.title, track.language, track.id),
-                      detail: track.codec ?? 'Embedded subtitle',
-                      selected: player.state.track.subtitle.id == track.id,
+                      detail: [
+                        track.codec,
+                        if (track.channelscount != null) '${track.channelscount} ch',
+                      ].whereType<String>().where((value) => value.isNotEmpty).join(' • '),
+                      selected: player.state.track.audio.id == track.id,
                       onTap: () async {
-                        await player.setSubtitleTrack(track);
+                        await player.setAudioTrack(track);
                         if (sheetContext.mounted) Navigator.pop(sheetContext);
                       },
                     ),
                   ),
-                ],
-              ),
+                const SizedBox(height: 22),
+                Row(
+                  children: [
+                    const Expanded(
+                      child: _TrackHeading(icon: Icons.subtitles_rounded, text: 'Subtitles'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        Navigator.pop(sheetContext);
+                        await _pickExternalSubtitle();
+                      },
+                      icon: const Icon(Icons.file_open_outlined),
+                      label: const Text('Load file'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                _TrackTile(
+                  title: 'Off',
+                  detail: 'Disable subtitles',
+                  selected: player.state.track.subtitle.id.toLowerCase() == 'no',
+                  onTap: () async {
+                    await player.setSubtitleTrack(mk.SubtitleTrack.no());
+                    if (sheetContext.mounted) Navigator.pop(sheetContext);
+                  },
+                ),
+                ...subtitleTracks.map(
+                  (track) => _TrackTile(
+                    title: _trackLabel(track.title, track.language, track.id),
+                    detail: track.codec ?? 'Embedded subtitle',
+                    selected: player.state.track.subtitle.id == track.id,
+                    onTap: () async {
+                      await player.setSubtitleTrack(track);
+                      if (sheetContext.mounted) Navigator.pop(sheetContext);
+                    },
+                  ),
+                ),
+              ],
             ),
           ),
-        );
-      },
+        ),
+      ),
     );
     if (mounted) _scheduleHide();
   }
@@ -411,10 +401,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   StreamBuilder<bool>(
                     stream: player.stream.buffering,
                     initialData: player.state.buffering,
-                    builder: (context, snapshot) {
-                      if (snapshot.data != true) return const SizedBox.shrink();
-                      return const Center(child: CircularProgressIndicator());
-                    },
+                    builder: (context, snapshot) => snapshot.data == true
+                        ? const Center(child: CircularProgressIndicator())
+                        : const SizedBox.shrink(),
                   ),
                 AnimatedOpacity(
                   opacity: _controlsVisible ? 1 : 0,
@@ -539,8 +528,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   const _KeyboardHint('←/→ 10s'),
                   const SizedBox(width: 8),
                   const _KeyboardHint('Space Play/Pause'),
-                  const SizedBox(width: 8),
-                  const _KeyboardHint('F Fullscreen'),
+                  if (_desktop) ...[
+                    const SizedBox(width: 8),
+                    const _KeyboardHint('F Fullscreen'),
+                  ],
                 ],
               ),
             ),
