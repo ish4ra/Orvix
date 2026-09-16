@@ -21,7 +21,9 @@ class ContinueWatchingEntry {
 
   double get progress {
     if (duration.inMilliseconds <= 0) return 0;
-    return (position.inMilliseconds / duration.inMilliseconds).clamp(0, 1);
+    return (position.inMilliseconds / duration.inMilliseconds)
+        .clamp(0, 1)
+        .toDouble();
   }
 
   String get key => MediaStateService.progressKey(item, episode: episode);
