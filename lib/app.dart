@@ -7,6 +7,7 @@ import 'screens/library_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/sources_screen.dart';
 import 'services/catalog_service.dart';
+import 'services/media_state_service.dart';
 import 'services/pikpak_service.dart';
 import 'services/pikpak_transfer_service.dart';
 import 'services/playback_service.dart';
@@ -25,6 +26,7 @@ class _PikoraAppState extends State<PikoraApp> {
   late final PikPakTransferService _transfer;
   late final SourceProviderService _sources;
   late final PlaybackService _playback;
+  late final MediaStateService _mediaState;
 
   @override
   void initState() {
@@ -34,6 +36,7 @@ class _PikoraAppState extends State<PikoraApp> {
     _transfer = PikPakTransferService();
     _sources = SourceProviderService();
     _playback = PlaybackService();
+    _mediaState = MediaStateService();
   }
 
   @override
@@ -107,6 +110,7 @@ class _PikoraAppState extends State<PikoraApp> {
         transfer: _transfer,
         sources: _sources,
         playback: _playback,
+        mediaState: _mediaState,
       ),
     );
   }
@@ -119,6 +123,7 @@ class _PikoraShell extends StatefulWidget {
     required this.transfer,
     required this.sources,
     required this.playback,
+    required this.mediaState,
   });
 
   final CatalogService catalog;
@@ -126,6 +131,7 @@ class _PikoraShell extends StatefulWidget {
   final PikPakTransferService transfer;
   final SourceProviderService sources;
   final PlaybackService playback;
+  final MediaStateService mediaState;
 
   @override
   State<_PikoraShell> createState() => _PikoraShellState();
@@ -134,9 +140,10 @@ class _PikoraShell extends StatefulWidget {
 class _PikoraShellState extends State<_PikoraShell> {
   int _index = 0;
   int _authRevision = 0;
+  int _libraryRevision = 0;
 
-  void _openMedia(MediaItem item) {
-    Navigator.of(context).push(
+  Future<void> _openMedia(MediaItem item) async {
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => DetailsScreen(
           item: item,
@@ -145,15 +152,22 @@ class _PikoraShellState extends State<_PikoraShell> {
           transfer: widget.transfer,
           sources: widget.sources,
           playback: widget.playback,
+          mediaState: widget.mediaState,
         ),
       ),
     );
+    if (mounted) setState(() => _libraryRevision++);
   }
 
   @override
   Widget build(BuildContext context) {
     final screens = <Widget>[
-      HomeScreen(catalog: widget.catalog, onOpen: _openMedia),
+      HomeScreen(
+        key: ValueKey(_libraryRevision),
+        catalog: widget.catalog,
+        mediaState: widget.mediaState,
+        onOpen: _openMedia,
+      ),
       SearchScreen(catalog: widget.catalog, onOpen: _openMedia),
       LibraryScreen(
         key: ValueKey(_authRevision),
@@ -286,7 +300,8 @@ class _AboutScreen extends StatelessWidget {
               const _FeatureLine(Icons.movie_filter_outlined, 'Cinemeta movie & TV discovery with instant type-ahead search'),
               const _FeatureLine(Icons.cloud_outlined, 'PikPak login, cloud library and cloud-task bridge'),
               const _FeatureLine(Icons.hub_outlined, 'User-configured Stremio-compatible source providers'),
-              const _FeatureLine(Icons.play_circle_outline_rounded, 'media_kit / libmpv built-in playback'),
+              const _FeatureLine(Icons.play_circle_outline_rounded, 'media_kit / libmpv playback with custom controls and resume'),
+              const _FeatureLine(Icons.bookmark_outline_rounded, 'Persistent watchlist and Continue Watching rails'),
               const _FeatureLine(Icons.phone_android_outlined, 'Shared Flutter foundation for future Android & Android TV builds'),
             ],
           ),
