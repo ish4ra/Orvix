@@ -69,13 +69,14 @@ jobs:
       - name: Build Windows installer
         shell: pwsh
         run: |
+          $version = "${{ steps.version.outputs.version }}"
           $candidates = @(
             "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
             "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
           )
           $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $iscc) { throw "Inno Setup compiler was not found." }
-          & $iscc "installer\pikora.iss"
+          & $iscc "/DMyAppVersion=$version" "installer\pikora.iss"
 
       - name: Upload portable build
         uses: actions/upload-artifact@v4
