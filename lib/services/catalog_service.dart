@@ -44,6 +44,19 @@ class CatalogService {
       }
     }
 
+    // Cinemeta's native order is relevance-oriented, but it can place a
+    // similarly named upcoming remake above the exact title a user typed.
+    // Re-rank across movies + series so exact title matches are always first,
+    // followed by starts-with/contains matches. Released titles get a small
+    // tie-break boost, never enough to beat an exact title query.
+    merged.sort((a, b) {
+      final byScore = _searchScore(b, normalized).compareTo(
+        _searchScore(a, normalized),
+      );
+      if (byScore != 0) return byScore;
+      return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+    });
+
     return merged.take(limit).toList(growable: false);
   }
 
@@ -110,6 +123,36 @@ class CatalogService {
         .take(limit)
         .toList(growable: false);
   }
+
+  int _searchScore(MediaItem item, String query) {
+    final q = _searchKey(query);
+    final title = _searchKey(item.title);
+    if (q.isEmpty || title.isEmpty) return 0;
+
+    var score = 0;
+    if (title == q) {
+      score += 100000;
+    } else if (title.startsWith('$q ')) {
+      score += 40000;
+    } else if (title.contains(q)) {
+      score += 20000;
+    }
+
+    final yearMatch = RegExp(r'\b(?:19|20)\d{2}\b').firstMatch(item.year ?? '');
+    final year = int.tryParse(yearMatch?.group(0) ?? '');
+    if (year != null) {
+      score += year <= DateTime.now().year ? 5000 : -1000;
+    }
+
+    score += ((item.rating ?? 0) * 100).round();
+    return score;
+  }
+
+  String _searchKey(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+      .trim()
+      .replaceAll(RegExp(r'\s+'), ' ');
 
   void dispose() => _client.close();
 }
