@@ -1,7 +1,7 @@
 name: pikora
 description: PikPak-first cinematic media hub for Windows and Android.
 publish_to: 'none'
-version: 0.3.4+11
+version: 0.3.5+12
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -20,6 +20,22 @@ dependencies:
   media_kit_libs_video: ^1.0.5
   file_picker: ^11.0.3
   window_manager: ^0.5.2
+
+# Debrify carries two media_kit fixes that matter for desktop stability:
+# safer NativeCallable ownership/disposal and waiting for native render-context
+# teardown before libmpv destruction on Windows/Apple. Pin the exact reviewed
+# Debrify commit so a future upstream change cannot silently alter Pikora.
+dependency_overrides:
+  media_kit:
+    git:
+      url: https://github.com/varunsalian/debrify.git
+      ref: 709eca3a0828f2b5bfdaf153ab6a0c00a89c5f2d
+      path: packages/media_kit_patched
+  media_kit_video:
+    git:
+      url: https://github.com/varunsalian/debrify.git
+      ref: 709eca3a0828f2b5bfdaf153ab6a0c00a89c5f2d
+      path: packages/media_kit_video_patched
 
 flutter:
   uses-material-design: true
