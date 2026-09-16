@@ -152,10 +152,6 @@ class PikPakTransferService {
       final checks = (_zeroProgressPolls[taskId] ?? 0) + 1;
       _zeroProgressPolls[taskId] = checks;
 
-      // The details screen polls about every two seconds. Do not leave the UI
-      // spinning for the full timeout when the selected torrent never begins.
-      // This is not labelled "uncached" because a source may simply have no
-      // active peers or may be temporarily unavailable.
       if (checks >= 15) {
         _zeroProgressPolls.remove(taskId);
         throw const PikPakTransferException(
@@ -193,12 +189,34 @@ class PikPakTransferService {
 
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic>) return null;
-    final direct = decoded['web_content_link']?.toString();
-    if (direct != null && direct.startsWith('http')) return direct;
 
+    // For video playback, PikPak's media entries are the streaming-optimized
+    // path. Prefer the default rendition, then the origin rendition, then the
+    // first usable media. web_content_link remains a download-style fallback.
     final medias = decoded['medias'];
-    if (medias is List) {
-      for (final media in medias.whereType<Map<String, dynamic>>()) {
+    if (medias is List && medias.isNotEmpty) {
+      final entries = medias.whereType<Map<String, dynamic>>().toList();
+      Map<String, dynamic>? selected;
+      for (final media in entries) {
+        if (media['is_default'] == true) {
+          selected = media;
+          break;
+        }
+      }
+      if (selected == null) {
+        for (final media in entries) {
+          if (media['is_origin'] == true) {
+            selected = media;
+            break;
+          }
+        }
+      }
+
+      final ordered = <Map<String, dynamic>>[
+        if (selected != null) selected,
+        ...entries.where((media) => !identical(media, selected)),
+      ];
+      for (final media in ordered) {
         final link = media['link'];
         if (link is Map<String, dynamic>) {
           final url = link['url']?.toString();
@@ -208,6 +226,9 @@ class PikPakTransferService {
         if (url != null && url.startsWith('http')) return url;
       }
     }
+
+    final direct = decoded['web_content_link']?.toString();
+    if (direct != null && direct.startsWith('http')) return direct;
 
     final links = decoded['links'];
     if (links is Map<String, dynamic>) {
