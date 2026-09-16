@@ -14,7 +14,7 @@ class SourcesScreen extends StatefulWidget {
 class _SourcesScreenState extends State<SourcesScreen> {
   final _controller = TextEditingController();
   List<String> _addons = const [];
-  SourceSortMode _sortMode = SourceSortMode.seeders;
+  List<SourceSortCriterion> _priority = [...SourceProviderService.defaultPriority];
   String? _torrentioUrl;
   bool _busy = true;
   String? _message;
@@ -33,20 +33,20 @@ class _SourcesScreenState extends State<SourcesScreen> {
 
   Future<void> _reload() async {
     final values = await widget.sources.getAddonUrls();
-    final sortMode = await widget.sources.getSortMode();
+    final priority = await widget.sources.getPriorityOrder();
     final torrentio = await widget.sources.getIntegratedTorrentioUrl();
     if (!mounted) return;
     setState(() {
       _addons = values;
-      _sortMode = sortMode;
+      _priority = priority;
       _torrentioUrl = torrentio;
       _busy = false;
     });
   }
 
-  Future<void> _setSortMode(SourceSortMode mode) async {
-    setState(() => _sortMode = mode);
-    await widget.sources.setSortMode(mode);
+  Future<void> _setPriority(List<SourceSortCriterion> priority) async {
+    setState(() => _priority = priority);
+    await widget.sources.setPriorityOrder(priority);
   }
 
   Future<void> _add() async {
@@ -221,7 +221,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
                 const SizedBox(height: 6),
                 Text(
                   active
-                      ? 'Integrated into Pikora. Your saved endpoint is reused automatically — no need to add it again after updates.'
+                      ? 'Integrated into Pikora. Limited Lite/limit profiles are automatically supplemented with a broad result request, then merged and de-duplicated.'
                       : 'The resolver is built into Pikora. Add an authorized Torrentio-compatible endpoint once below and Pikora will migrate and reuse it automatically.',
                   style: TextStyle(color: color.onSurfaceVariant, height: 1.4),
                 ),
@@ -246,15 +246,6 @@ class _SourcesScreenState extends State<SourcesScreen> {
 
   Widget _sortCard(BuildContext context) {
     final color = Theme.of(context).colorScheme;
-    final detail = switch (_sortMode) {
-      SourceSortMode.seeders =>
-        'Best for reliability. Sources with more active seeders are shown first; known 0-seed torrents drop to the bottom.',
-      SourceSortMode.fileSize =>
-        'Largest releases are shown first. Useful when you prefer high-bitrate Blu-ray/Remux files.',
-      SourceSortMode.quality =>
-        'Resolution leads the ranking: 2160p/4K first, followed by 1440p, 1080p and lower qualities.',
-    };
-
     return Container(
       padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
@@ -265,51 +256,65 @@ class _SourcesScreenState extends State<SourcesScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(Icons.sort_rounded),
-              SizedBox(width: 10),
-              Text(
-                'Default source order',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+              const Icon(Icons.sort_rounded),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Source priority',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () => _setPriority([...SourceProviderService.defaultPriority]),
+                icon: const Icon(Icons.restart_alt_rounded),
+                label: const Text('Reset best'),
               ),
             ],
           ),
-          const SizedBox(height: 15),
-          SegmentedButton<SourceSortMode>(
-            showSelectedIcon: true,
-            segments: const [
-              ButtonSegment(
-                value: SourceSortMode.seeders,
-                icon: Icon(Icons.people_alt_rounded),
-                label: Text('Seeders'),
-              ),
-              ButtonSegment(
-                value: SourceSortMode.fileSize,
-                icon: Icon(Icons.storage_rounded),
-                label: Text('File size'),
-              ),
-              ButtonSegment(
-                value: SourceSortMode.quality,
-                icon: Icon(Icons.high_quality_rounded),
-                label: Text('Quality'),
-              ),
-            ],
-            selected: {_sortMode},
-            onSelectionChanged: _busy
-                ? null
-                : (selection) {
-                    if (selection.isNotEmpty) _setSortMode(selection.first);
+          const SizedBox(height: 7),
+          Text(
+            'Drag to choose exactly how sources are ranked. Default is release quality → resolution → seeders → file size.',
+            style: TextStyle(color: color.onSurfaceVariant, height: 1.4),
+          ),
+          const SizedBox(height: 14),
+          ReorderableListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _priority.length,
+            onReorder: _busy
+                ? (_, __) {}
+                : (oldIndex, newIndex) {
+                    final next = [..._priority];
+                    if (newIndex > oldIndex) newIndex--;
+                    final item = next.removeAt(oldIndex);
+                    next.insert(newIndex, item);
+                    _setPriority(next);
                   },
-          ),
-          const SizedBox(height: 13),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 180),
-            child: Text(
-              detail,
-              key: ValueKey(_sortMode),
-              style: TextStyle(color: color.onSurfaceVariant, height: 1.42),
-            ),
+            itemBuilder: (context, index) {
+              final criterion = _priority[index];
+              return Container(
+                key: ValueKey(criterion.name),
+                margin: const EdgeInsets.only(bottom: 7),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF151923),
+                  borderRadius: BorderRadius.circular(13),
+                  border: Border.all(color: const Color(0xFF292F40)),
+                ),
+                child: ListTile(
+                  leading: CircleAvatar(
+                    radius: 16,
+                    backgroundColor: color.primaryContainer,
+                    child: Text('${index + 1}', style: const TextStyle(fontWeight: FontWeight.w900)),
+                  ),
+                  title: Text(criterion.label, style: const TextStyle(fontWeight: FontWeight.w800)),
+                  trailing: const Icon(Icons.drag_indicator_rounded),
+                ),
+              );
+            },
           ),
         ],
       ),

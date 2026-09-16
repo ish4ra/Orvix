@@ -1,5 +1,16 @@
 # Pikora Changelog
 
+## v0.4.1 — source ranking, broader Torrentio results & smoother huge-file playback
+
+- Fixed Torrentio resolution detection by parsing stream `name`, `title`, and filename hints together; Torrentio commonly places resolution in `name` rather than `title`.
+- Added release-source classification (`REMUX`, `BluRay`, `WEB-DL`, `WEBRip`, `HDTV`, `DVD`, `CAM`).
+- Default source ranking is now strict **release quality → resolution → seeders → file size**.
+- Added fully customizable drag-to-reorder source priority in both the source picker and Source Engine settings.
+- Limited Torrentio Lite / `limit=` profiles are automatically supplemented with a broad request and merged/de-duplicated, so legacy one-result-per-quality profiles no longer starve Pikora's result list.
+- Huge PikPak remuxes now prefer a cloud transcode, with 70GB-class files biased toward a safer 1080p rendition before falling back to the raw origin.
+- Restored patched media_kit's native Windows decoder defaults instead of forcing `auto-safe`.
+- Replaced the always-on 512MiB/300s/cache-pause profile with Debrify's vetted Large + Extended network profile (256MiB/120s + reconnect), avoiding repeated visible cache-pause stalls.
+
 This file tracks user-visible changes to Pikora. GitHub Releases are published automatically for new packaged versions starting with v0.3.2.
 
 ## v0.4.0 — Library, richer Continue Watching & customizable Home

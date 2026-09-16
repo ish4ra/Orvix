@@ -7,6 +7,23 @@ import '../models/media_item.dart';
 
 enum SourceSortMode { seeders, fileSize, quality }
 
+enum SourceSortCriterion { releaseQuality, resolution, seeders, fileSize }
+
+extension SourceSortCriterionLabel on SourceSortCriterion {
+  String get label {
+    switch (this) {
+      case SourceSortCriterion.releaseQuality:
+        return 'Quality';
+      case SourceSortCriterion.resolution:
+        return 'Resolution';
+      case SourceSortCriterion.seeders:
+        return 'Seeders';
+      case SourceSortCriterion.fileSize:
+        return 'File size';
+    }
+  }
+}
+
 extension SourceSortModeLabel on SourceSortMode {
   String get label {
     switch (this) {
@@ -28,6 +45,7 @@ class SourceResult {
     required this.isMagnet,
     required this.sortMode,
     this.quality,
+    this.releaseQuality,
     this.seeders,
     this.sizeBytes,
     this.torrentFileIndex,
@@ -40,6 +58,7 @@ class SourceResult {
   final bool isMagnet;
   final SourceSortMode sortMode;
   final String? quality;
+  final String? releaseQuality;
   final int? seeders;
   final int? sizeBytes;
 
@@ -67,6 +86,27 @@ class SourceResult {
         return 200;
       default:
         return 100;
+    }
+  }
+
+  int get releaseQualityRank {
+    switch (releaseQuality?.toUpperCase()) {
+      case 'REMUX':
+        return 800;
+      case 'BLURAY':
+        return 700;
+      case 'WEB-DL':
+        return 600;
+      case 'WEBRIP':
+        return 550;
+      case 'HDTV':
+        return 400;
+      case 'DVD':
+        return 250;
+      case 'CAM':
+        return 100;
+      default:
+        return 200;
     }
   }
 
@@ -121,6 +161,7 @@ class SourceProviderService {
   // v2 intentionally resets the old default. v0.3.7 makes the default order
   // Quality -> Seeders -> Size while still allowing the user to switch it.
   static const _sortKey = 'pikora_source_sort_mode_v2';
+  static const _priorityKey = 'pikora_source_priority_v1';
 
   // A distributor may inject an authorized/self-hosted Stremio-compatible
   // Torrentio endpoint at build time without putting a public index URL in
@@ -141,7 +182,11 @@ class SourceProviderService {
     final torrentio = _normalizeAddonUrl(
       prefs.getString(_torrentioKey) ?? _bundledTorrentioProvider,
     );
-    if (torrentio != null) out.add(torrentio);
+    if (torrentio != null) {
+      final broad = _broadenTorrentioUrl(torrentio);
+      if (broad != null && broad != torrentio) out.add(broad);
+      out.add(torrentio);
+    }
 
     for (final raw in prefs.getStringList(_prefsKey) ?? const <String>[]) {
       final value = _normalizeAddonUrl(raw);
@@ -170,6 +215,77 @@ class SourceProviderService {
   Future<void> setSortMode(SourceSortMode mode) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_sortKey, mode.name);
+  }
+
+  static const defaultPriority = <SourceSortCriterion>[
+    SourceSortCriterion.releaseQuality,
+    SourceSortCriterion.resolution,
+    SourceSortCriterion.seeders,
+    SourceSortCriterion.fileSize,
+  ];
+
+  Future<List<SourceSortCriterion>> getPriorityOrder() async {
+    final prefs = await SharedPreferences.getInstance();
+    final stored = prefs.getStringList(_priorityKey);
+    if (stored == null || stored.isEmpty) return [...defaultPriority];
+    final out = <SourceSortCriterion>[];
+    for (final value in stored) {
+      for (final criterion in SourceSortCriterion.values) {
+        if (criterion.name == value && !out.contains(criterion)) out.add(criterion);
+      }
+    }
+    for (final criterion in defaultPriority) {
+      if (!out.contains(criterion)) out.add(criterion);
+    }
+    return out;
+  }
+
+  Future<void> setPriorityOrder(List<SourceSortCriterion> order) async {
+    final normalized = <SourceSortCriterion>[];
+    for (final criterion in order) {
+      if (!normalized.contains(criterion)) normalized.add(criterion);
+    }
+    for (final criterion in defaultPriority) {
+      if (!normalized.contains(criterion)) normalized.add(criterion);
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_priorityKey, normalized.map((e) => e.name).toList());
+  }
+
+  int compareResults(
+    SourceResult a,
+    SourceResult b,
+    List<SourceSortCriterion> priority,
+  ) {
+    for (final criterion in priority) {
+      final av = _criterionValue(a, criterion);
+      final bv = _criterionValue(b, criterion);
+      final cmp = bv.compareTo(av);
+      if (cmp != 0) return cmp;
+    }
+    return a.title.compareTo(b.title);
+  }
+
+  int _criterionValue(SourceResult result, SourceSortCriterion criterion) {
+    switch (criterion) {
+      case SourceSortCriterion.releaseQuality:
+        return result.releaseQualityRank;
+      case SourceSortCriterion.resolution:
+        return result.qualityRank;
+      case SourceSortCriterion.seeders:
+        return result.seeders ?? -1;
+      case SourceSortCriterion.fileSize:
+        return result.sizeBytes ?? 0;
+    }
+  }
+
+  List<SourceResult> sortResults(
+    Iterable<SourceResult> results,
+    List<SourceSortCriterion> priority,
+  ) {
+    final out = results.toList();
+    out.sort((a, b) => compareResults(a, b, priority));
+    return out;
   }
 
   Future<void> addAddonUrl(String raw) async {
@@ -217,6 +333,7 @@ class SourceProviderService {
     final addons = await getAddonUrls();
     if (addons.isEmpty) return const [];
     final sortMode = await getSortMode();
+    final priority = await getPriorityOrder();
 
     final type = item.kind == MediaKind.movie ? 'movie' : 'series';
     final mediaId = episode == null
@@ -238,8 +355,7 @@ class SourceProviderService {
         if (seen.add(dedupeKey)) out.add(result);
       }
     }
-    out.sort((a, b) => b.preferenceScore.compareTo(a.preferenceScore));
-    return out;
+    return sortResults(out, priority);
   }
 
   SourceResult? bestSource(List<SourceResult> results) {
@@ -282,9 +398,15 @@ class SourceProviderService {
         final torrentFileIndex = _parseInt(
           raw['fileIdx'] ?? raw['file_idx'] ?? raw['mapIdx'],
         );
-        final quality = _guessQuality(rawTitle);
-        final seeders = _guessSeeders(raw, rawTitle);
-        final sizeBytes = _guessSizeBytes(raw, rawTitle);
+        final metadataText = <String>[
+          raw['name']?.toString() ?? '',
+          rawTitle,
+          fileNameHint ?? '',
+        ].where((value) => value.trim().isNotEmpty).join('\n');
+        final quality = _guessQuality(metadataText);
+        final releaseQuality = _guessReleaseQuality(metadataText);
+        final seeders = _guessSeeders(raw, metadataText);
+        final sizeBytes = _guessSizeBytes(raw, metadataText);
 
         String? resource;
         var isMagnet = false;
@@ -329,6 +451,8 @@ class SourceProviderService {
         // Existing source sheet renders two title lines. Put the useful stats
         // first so they remain visible even when a long release name truncates.
         final statParts = <String>[
+          if (releaseQuality != null) '🎞 $releaseQuality',
+          if (quality != null) '📺 $quality',
           '👥 ${seeders?.toString() ?? '—'} seeders',
           '💾 ${_formatSize(sizeBytes) ?? 'size unknown'}',
         ];
@@ -342,6 +466,7 @@ class SourceProviderService {
             isMagnet: isMagnet,
             sortMode: sortMode,
             quality: quality,
+            releaseQuality: releaseQuality,
             seeders: seeders,
             sizeBytes: sizeBytes,
             torrentFileIndex: torrentFileIndex,
@@ -389,6 +514,59 @@ class SourceProviderService {
     if (uri == null || !uri.hasScheme || !uri.hasAuthority) return null;
     if (uri.scheme != 'http' && uri.scheme != 'https') return null;
     return uri.toString();
+  }
+
+  String? _guessReleaseQuality(String value) {
+    final lower = value.toLowerCase();
+    if (RegExp(r'\bremux\b').hasMatch(lower)) return 'REMUX';
+    if (lower.contains('blu-ray') || lower.contains('bluray') ||
+        RegExp(r'\b(?:bdremux|bdrip|brrip)\b').hasMatch(lower)) {
+      return 'BluRay';
+    }
+    if (RegExp(r'\bweb[ ._-]?dl\b').hasMatch(lower) || lower.contains('webdl')) {
+      return 'WEB-DL';
+    }
+    if (RegExp(r'\bweb[ ._-]?rip\b').hasMatch(lower) || lower.contains('webrip')) {
+      return 'WEBRip';
+    }
+    if (RegExp(r'\b(?:hdtv|hdrip|ppv|dsr)\b').hasMatch(lower)) return 'HDTV';
+    if (RegExp(r'\b(?:dvdrip|dvd-rip|dvd)\b').hasMatch(lower)) return 'DVD';
+    if (RegExp(r'\b(?:cam|hdcam|camrip|telesync|telecine)\b').hasMatch(lower)) return 'CAM';
+    return null;
+  }
+
+  String? _broadenTorrentioUrl(String value) {
+    if (!_looksLikeTorrentio(value)) return null;
+    final uri = Uri.tryParse(value);
+    if (uri == null) return null;
+    final segments = [...uri.pathSegments];
+    var changed = false;
+
+    if (segments.isNotEmpty && segments.last.toLowerCase() == 'lite') {
+      segments.removeLast();
+      changed = true;
+    }
+
+    for (var i = 0; i < segments.length; i++) {
+      if (!segments[i].contains('=')) continue;
+      final parts = segments[i].split('|');
+      final filtered = parts.where((part) {
+        final key = part.split('=').first.trim().toLowerCase();
+        return key != 'limit';
+      }).toList();
+      if (filtered.length != parts.length) {
+        changed = true;
+        if (filtered.isEmpty) {
+          segments.removeAt(i);
+          i--;
+        } else {
+          segments[i] = filtered.join('|');
+        }
+      }
+    }
+
+    if (!changed) return value;
+    return uri.replace(pathSegments: segments).toString().replaceAll(RegExp(r'/$'), '');
   }
 
   String? _guessQuality(String value) {
