@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:media_kit/media_kit.dart' as mk;
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../models/media_item.dart';
@@ -119,6 +120,109 @@ class _PlayerScreenState extends State<PlayerScreen> {
       default:
         return KeyEventResult.ignored;
     }
+  }
+
+  Future<void> _showTracks() async {
+    _hideTimer?.cancel();
+    final player = widget.playback.player;
+    final audioTracks = player.state.tracks.audio
+        .where((track) => track.id.toLowerCase() != 'no')
+        .toList(growable: false);
+    final subtitleTracks = player.state.tracks.subtitle
+        .where((track) => track.id.toLowerCase() != 'no')
+        .toList(growable: false);
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF11141C),
+      showDragHandle: true,
+      isScrollControlled: true,
+      constraints: const BoxConstraints(maxWidth: 760),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(sheetContext).height * .72,
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Audio & Subtitles',
+                    style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Tracks exposed by the current file through libmpv.',
+                    style: TextStyle(color: Theme.of(sheetContext).colorScheme.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 22),
+                  _TrackHeading(icon: Icons.audiotrack_rounded, text: 'Audio'),
+                  const SizedBox(height: 8),
+                  if (audioTracks.isEmpty)
+                    const _EmptyTrackMessage('No selectable audio tracks reported.')
+                  else
+                    ...audioTracks.map(
+                      (track) => _TrackTile(
+                        title: _trackLabel(track.title, track.language, track.id),
+                        detail: [track.codec, if (track.channelscount != null) '${track.channelscount} ch']
+                            .whereType<String>()
+                            .where((value) => value.isNotEmpty)
+                            .join(' • '),
+                        selected: player.state.track.audio.id == track.id,
+                        onTap: () async {
+                          await player.setAudioTrack(track);
+                          if (sheetContext.mounted) Navigator.pop(sheetContext);
+                        },
+                      ),
+                    ),
+                  const SizedBox(height: 22),
+                  _TrackHeading(icon: Icons.subtitles_rounded, text: 'Subtitles'),
+                  const SizedBox(height: 8),
+                  _TrackTile(
+                    title: 'Off',
+                    detail: 'Disable subtitles',
+                    selected: player.state.track.subtitle.id.toLowerCase() == 'no',
+                    onTap: () async {
+                      await player.setSubtitleTrack(mk.SubtitleTrack.no());
+                      if (sheetContext.mounted) Navigator.pop(sheetContext);
+                    },
+                  ),
+                  ...subtitleTracks.map(
+                    (track) => _TrackTile(
+                      title: _trackLabel(track.title, track.language, track.id),
+                      detail: track.codec ?? 'Embedded subtitle',
+                      selected: player.state.track.subtitle.id == track.id,
+                      onTap: () async {
+                        await player.setSubtitleTrack(track);
+                        if (sheetContext.mounted) Navigator.pop(sheetContext);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    if (mounted) _scheduleHide();
+  }
+
+  String _trackLabel(String? title, String? language, String id) {
+    final cleanTitle = title?.trim();
+    final cleanLanguage = language?.trim();
+    if (cleanTitle != null && cleanTitle.isNotEmpty) {
+      return cleanLanguage == null || cleanLanguage.isEmpty
+          ? cleanTitle
+          : '$cleanTitle • ${cleanLanguage.toUpperCase()}';
+    }
+    if (cleanLanguage != null && cleanLanguage.isNotEmpty) {
+      return cleanLanguage.toUpperCase();
+    }
+    return 'Track $id';
   }
 
   @override
@@ -267,7 +371,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           return Column(
                             children: [
                               SliderTheme(
-                                data: SliderTheme.of(context).copyWith(trackHeight: 3.5, thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6)),
+                                data: SliderTheme.of(context).copyWith(
+                                  trackHeight: 3.5,
+                                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                                ),
                                 child: Slider(
                                   value: actualMs,
                                   max: maxMs,
@@ -295,7 +402,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     builder: (context, snapshot) => IconButton.filled(
                                       tooltip: snapshot.data == true ? 'Pause' : 'Play',
                                       onPressed: player.playOrPause,
-                                      icon: Icon(snapshot.data == true ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 28),
+                                      icon: Icon(
+                                        snapshot.data == true ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                                        size: 28,
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(width: 6),
@@ -310,8 +420,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     icon: const Icon(Icons.forward_10_rounded),
                                   ),
                                   const SizedBox(width: 8),
-                                  Text('${_format(position)} / ${_format(duration)}', style: const TextStyle(fontWeight: FontWeight.w700)),
+                                  Text(
+                                    '${_format(position)} / ${_format(duration)}',
+                                    style: const TextStyle(fontWeight: FontWeight.w700),
+                                  ),
                                   const Spacer(),
+                                  IconButton(
+                                    tooltip: 'Audio & subtitles',
+                                    onPressed: _showTracks,
+                                    icon: const Icon(Icons.subtitles_rounded),
+                                  ),
                                   PopupMenuButton<double>(
                                     tooltip: 'Playback speed',
                                     initialValue: player.state.rate,
@@ -331,7 +449,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                         borderRadius: BorderRadius.circular(10),
                                         border: Border.all(color: const Color(0x44FFFFFF)),
                                       ),
-                                      child: Text('${player.state.rate.toStringAsFixed(player.state.rate == 1 ? 0 : 2)}×'),
+                                      child: Text(
+                                        '${player.state.rate.toStringAsFixed(player.state.rate == 1 ? 0 : 2)}×',
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -356,6 +476,64 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final minutes = value.inMinutes.remainder(60).toString().padLeft(2, '0');
     final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
     return hours > 0 ? '$hours:$minutes:$seconds' : '${value.inMinutes}:$seconds';
+  }
+}
+
+class _TrackHeading extends StatelessWidget {
+  const _TrackHeading({required this.icon, required this.text});
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
+        const SizedBox(width: 9),
+        Text(text, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+      ],
+    );
+  }
+}
+
+class _TrackTile extends StatelessWidget {
+  const _TrackTile({
+    required this.title,
+    required this.detail,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final String detail;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        selected ? Icons.radio_button_checked_rounded : Icons.radio_button_off_rounded,
+        color: selected ? Theme.of(context).colorScheme.primary : null,
+      ),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+      subtitle: detail.isEmpty ? null : Text(detail),
+      onTap: onTap,
+    );
+  }
+}
+
+class _EmptyTrackMessage extends StatelessWidget {
+  const _EmptyTrackMessage(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Text(text, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+    );
   }
 }
 
