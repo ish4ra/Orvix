@@ -1,5 +1,21 @@
 # Orvix Changelog
 
+## v0.5.0 — Orvix rebrand & multi-cloud foundation
+
+- Rebranded the active Flutter application from Pikora to **Orvix**, including package/app naming, in-app branding, installer naming, documentation and the Windows icon asset.
+- Added **TorBox** as a second cloud provider alongside PikPak.
+- Added TorBox API-key authentication and device authorization flows with secure token storage.
+- Added TorBox torrent and web-download library browsing, playable-file selection and direct playback URL resolution.
+- Added source → TorBox transfer support for magnets and direct HTTP/HTTPS resources, including task polling until content is playable.
+- Added a persistent preferred-cloud setting so playback/source resolution can use PikPak or TorBox.
+- Updated the Clouds UI to switch between PikPak and TorBox account/library views.
+- Updated the movie/episode playback flow to check the preferred cloud before resolving configured source providers.
+- Added the Orvix Windows icon generation configuration through `flutter_launcher_icons`.
+- Replaced the old Pikora-specific packaging path with an Orvix Windows pipeline that builds a portable ZIP and `Orvix-Setup` Inno Setup installer.
+- Added tag-based GitHub Release publishing for tags matching the `pubspec.yaml` version.
+- Removed the one-time upgrade-patch/self-modifying behavior from the active v0.5 validation workflow.
+- Updated README, architecture and roadmap documentation for the current `orvix-v0.5.0-dev` branch.
+
 ## v0.4.2 — PikPak playback rollback, 3D filtering & source preferences
 
 - Reverted the v0.4.1 size-based PikPak transcode override. Playback now follows PikPak's `is_default` media rendition first, then origin, matching the proven official-client/Debrify selection order.
@@ -20,7 +36,7 @@
 - Restored patched media_kit's native Windows decoder defaults instead of forcing `auto-safe`.
 - Replaced the always-on 512MiB/300s/cache-pause profile with Debrify's vetted Large + Extended network profile (256MiB/120s + reconnect), avoiding repeated visible cache-pause stalls.
 
-This file tracks user-visible changes to Orvix. GitHub Releases are published automatically for new packaged versions starting with v0.3.2.
+This file tracks user-visible changes to Orvix. GitHub Releases are published automatically for packaged version tags.
 
 ## v0.4.0 — Library, richer Continue Watching & customizable Home
 
@@ -111,6 +127,6 @@ This file tracks user-visible changes to Orvix. GitHub Releases are published au
 
 ## Versioning policy
 
-- Patch releases (`0.3.x`) contain fixes and incremental UX/playback improvements.
+- Patch releases contain fixes and incremental UX/playback improvements.
 - Each packaged release should include a Windows installer and portable ZIP.
 - User-facing changes should be recorded here before a release is published.
