@@ -34,13 +34,14 @@ jobs:
           python -c "import gzip,pathlib; p=pathlib.Path('tool/orvix_upgrade.py.gz'); pathlib.Path('tool/orvix_upgrade.py').write_bytes(gzip.decompress(p.read_bytes()))"
           python tool/orvix_upgrade.py
 
-      - name: Remove temporary patch helpers
+      - name: Keep workflow files unchanged for bot push
         shell: pwsh
         run: |
           Remove-Item tool/orvix_upgrade.part* -Force
           Remove-Item tool/orvix_upgrade.py -Force
           Remove-Item tool/orvix_upgrade.py.gz -Force
-          git rm .github/workflows/orvix-v050-dev.yml
+          git checkout HEAD -- .github/workflows/build-flutter-windows.yml
+          git checkout HEAD -- .github/workflows/orvix-v050-dev.yml
 
       - name: Commit upgraded source
         shell: pwsh
