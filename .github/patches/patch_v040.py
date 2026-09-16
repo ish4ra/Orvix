@@ -1,0 +1,1077 @@
+from pathlib import Path
+import re
+
+Path('lib/services/home_preferences_service.dart').write_text(r'''import 'package:shared_preferences/shared_preferences.dart';
+
+enum HomeSectionId {
+  continueWatching,
+  myLibrary,
+  myWatchlist,
+  popularMovies,
+  popularTv,
+  imdbTopMovies,
+  imdbTopTv,
+  topRatedMovies,
+  topRatedTv,
+}
+
+extension HomeSectionLabel on HomeSectionId {
+  String get label {
+    switch (this) {
+      case HomeSectionId.continueWatching:
+        return 'Continue Watching';
+      case HomeSectionId.myLibrary:
+        return 'My Library';
+      case HomeSectionId.myWatchlist:
+        return 'My Watchlist';
+      case HomeSectionId.popularMovies:
+        return 'Popular Movies';
+      case HomeSectionId.popularTv:
+        return 'Popular TV';
+      case HomeSectionId.imdbTopMovies:
+        return 'IMDb Top 250 Movies';
+      case HomeSectionId.imdbTopTv:
+        return 'IMDb Top 250 TV';
+      case HomeSectionId.topRatedMovies:
+        return 'Top Rated Movies';
+      case HomeSectionId.topRatedTv:
+        return 'Top Rated TV';
+    }
+  }
+}
+
+class HomePreferencesService {
+  static const _key = 'pikora_home_sections_v1';
+
+  static const defaultSections = <HomeSectionId>[
+    HomeSectionId.continueWatching,
+    HomeSectionId.myLibrary,
+    HomeSectionId.myWatchlist,
+    HomeSectionId.popularMovies,
+    HomeSectionId.popularTv,
+    HomeSectionId.topRatedMovies,
+    HomeSectionId.topRatedTv,
+  ];
+
+  Future<List<HomeSectionId>> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final stored = prefs.getStringList(_key);
+    if (stored == null || stored.isEmpty) return [...defaultSections];
+    final parsed = <HomeSectionId>[];
+    for (final value in stored) {
+      HomeSectionId? section;
+      for (final candidate in HomeSectionId.values) {
+        if (candidate.name == value) {
+          section = candidate;
+          break;
+        }
+      }
+      if (section != null && !parsed.contains(section)) parsed.add(section);
+    }
+    return parsed.isEmpty ? [...defaultSections] : parsed;
+  }
+
+  Future<void> save(List<HomeSectionId> sections) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_key, sections.map((e) => e.name).toList());
+  }
+}
+''', encoding='utf-8')
+
+Path('lib/screens/media_library_screen.dart').write_text(r'''import 'package:flutter/material.dart';
+
+import '../models/media_item.dart';
+import '../services/media_state_service.dart';
+import '../widgets/media_card.dart';
+
+enum _LibraryFilter { all, movies, tv }
+
+class MediaLibraryScreen extends StatefulWidget {
+  const MediaLibraryScreen({
+    super.key,
+    required this.mediaState,
+    required this.onOpen,
+  });
+
+  final MediaStateService mediaState;
+  final ValueChanged<MediaItem> onOpen;
+
+  @override
+  State<MediaLibraryScreen> createState() => _MediaLibraryScreenState();
+}
+
+class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
+  List<MediaItem> _items = const [];
+  _LibraryFilter _filter = _LibraryFilter.all;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _reload();
+  }
+
+  Future<void> _reload() async {
+    final items = await widget.mediaState.library();
+    if (!mounted) return;
+    setState(() {
+      _items = items;
+      _loading = false;
+    });
+  }
+
+  Future<void> _remove(MediaItem item) async {
+    if (await widget.mediaState.isInLibrary(item)) {
+      await widget.mediaState.toggleLibrary(item);
+    }
+    await _reload();
+  }
+
+  List<MediaItem> get _visible {
+    return _items.where((item) {
+      switch (_filter) {
+        case _LibraryFilter.all:
+          return true;
+        case _LibraryFilter.movies:
+          return item.kind == MediaKind.movie;
+        case _LibraryFilter.tv:
+          return item.kind == MediaKind.series;
+      }
+    }).toList(growable: false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = _visible;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(32, 30, 32, 40),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Library',
+                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -.5,
+                          ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      '${_items.length} saved title${_items.length == 1 ? '' : 's'} • your local Pikora collection',
+                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton.filledTonal(
+                tooltip: 'Refresh',
+                onPressed: _reload,
+                icon: const Icon(Icons.refresh_rounded),
+              ),
+            ],
+          ),
+          const SizedBox(height: 22),
+          SegmentedButton<_LibraryFilter>(
+            segments: const [
+              ButtonSegment(value: _LibraryFilter.all, label: Text('All')),
+              ButtonSegment(
+                value: _LibraryFilter.movies,
+                icon: Icon(Icons.movie_outlined),
+                label: Text('Movies'),
+              ),
+              ButtonSegment(
+                value: _LibraryFilter.tv,
+                icon: Icon(Icons.tv_outlined),
+                label: Text('TV'),
+              ),
+            ],
+            selected: {_filter},
+            onSelectionChanged: (value) {
+              if (value.isNotEmpty) setState(() => _filter = value.first);
+            },
+          ),
+          const SizedBox(height: 22),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : visible.isEmpty
+                    ? _EmptyLibrary(hasItems: _items.isNotEmpty)
+                    : LayoutBuilder(
+                        builder: (context, constraints) {
+                          final count = (constraints.maxWidth / 190).floor().clamp(2, 8);
+                          return GridView.builder(
+                            itemCount: visible.length,
+                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: count,
+                              crossAxisSpacing: 18,
+                              mainAxisSpacing: 22,
+                              childAspectRatio: .55,
+                            ),
+                            itemBuilder: (context, index) {
+                              final item = visible[index];
+                              return Stack(
+                                children: [
+                                  Positioned.fill(
+                                    child: MediaCard(
+                                      item: item,
+                                      width: double.infinity,
+                                      onTap: () => widget.onOpen(item),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    top: 7,
+                                    right: 7,
+                                    child: IconButton.filledTonal(
+                                      tooltip: 'Remove from Library',
+                                      onPressed: () => _remove(item),
+                                      icon: const Icon(Icons.bookmark_remove_outlined, size: 19),
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
+                          );
+                        },
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyLibrary extends StatelessWidget {
+  const _EmptyLibrary({required this.hasItems});
+  final bool hasItems;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            hasItems ? Icons.filter_alt_off_rounded : Icons.video_library_outlined,
+            size: 54,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          const SizedBox(height: 14),
+          Text(
+            hasItems ? 'Nothing in this filter' : 'Your Library is empty',
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 7),
+          Text(
+            hasItems
+                ? 'Try another Library filter.'
+                : 'Open a movie or series and choose Add to Library.',
+            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+}
+''', encoding='utf-8')
+
+Path('lib/screens/home_screen.dart').write_text(r'''import 'package:flutter/material.dart';
+
+import '../models/media_item.dart';
+import '../services/catalog_service.dart';
+import '../services/home_preferences_service.dart';
+import '../services/media_state_service.dart';
+import '../widgets/media_card.dart';
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({
+    super.key,
+    required this.catalog,
+    required this.mediaState,
+    required this.onOpen,
+  });
+
+  final CatalogService catalog;
+  final MediaStateService mediaState;
+  final ValueChanged<MediaItem> onOpen;
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final _preferences = HomePreferencesService();
+  late Future<_HomeData> _homeFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  void _load() => _homeFuture = _loadHome();
+
+  Future<_HomeData> _loadHome() async {
+    final sections = await _preferences.load();
+    final media = <HomeSectionId, List<MediaItem>>{};
+
+    Future<void> loadMedia(
+      HomeSectionId section,
+      Future<List<MediaItem>> Function() loader,
+    ) async {
+      if (!sections.contains(section)) return;
+      try {
+        media[section] = await loader();
+      } catch (_) {
+        media[section] = const [];
+      }
+    }
+
+    await Future.wait<void>([
+      loadMedia(HomeSectionId.popularMovies, () => widget.catalog.popularMovies(limit: 30)),
+      loadMedia(HomeSectionId.popularTv, () => widget.catalog.popularSeries(limit: 30)),
+      loadMedia(HomeSectionId.topRatedMovies, () => widget.catalog.topRatedMovies(limit: 30)),
+      loadMedia(HomeSectionId.topRatedTv, () => widget.catalog.topRatedSeries(limit: 30)),
+      loadMedia(HomeSectionId.imdbTopMovies, () => widget.catalog.imdbTopMovies(limit: 36)),
+      loadMedia(HomeSectionId.imdbTopTv, () => widget.catalog.imdbTopSeries(limit: 36)),
+    ]);
+
+    final continueWatching = sections.contains(HomeSectionId.continueWatching)
+        ? await widget.mediaState.continueWatching(limit: 24)
+        : const <ContinueWatchingEntry>[];
+    final library = sections.contains(HomeSectionId.myLibrary)
+        ? await widget.mediaState.library()
+        : const <MediaItem>[];
+    final watchlist = sections.contains(HomeSectionId.myWatchlist)
+        ? await widget.mediaState.watchlist()
+        : const <MediaItem>[];
+
+    media[HomeSectionId.myLibrary] = library;
+    media[HomeSectionId.myWatchlist] = watchlist;
+
+    return _HomeData(
+      sections: sections,
+      media: media,
+      continueWatching: continueWatching,
+    );
+  }
+
+  Future<void> _customizeHome() async {
+    final active = [...await _preferences.load()];
+    if (!mounted) return;
+
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: const Color(0xFF11141C),
+      showDragHandle: true,
+      isScrollControlled: true,
+      constraints: const BoxConstraints(maxWidth: 720),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          final inactive = HomeSectionId.values.where((s) => !active.contains(s)).toList();
+          return SafeArea(
+            child: SizedBox(
+              height: MediaQuery.sizeOf(sheetContext).height * .82,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(22, 4, 22, 22),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Customize Home',
+                                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Drag rows to reorder them. Hide or add shelves whenever you want.',
+                                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                              ),
+                            ],
+                          ),
+                        ),
+                        FilledButton(
+                          onPressed: () async {
+                            await _preferences.save(active);
+                            if (sheetContext.mounted) Navigator.pop(sheetContext, true);
+                          },
+                          child: const Text('Save'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    Text(
+                      'Visible rows',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: ReorderableListView.builder(
+                        itemCount: active.length,
+                        onReorder: (oldIndex, newIndex) {
+                          setSheetState(() {
+                            if (newIndex > oldIndex) newIndex--;
+                            final section = active.removeAt(oldIndex);
+                            active.insert(newIndex, section);
+                          });
+                        },
+                        itemBuilder: (context, index) {
+                          final section = active[index];
+                          return Container(
+                            key: ValueKey(section.name),
+                            margin: const EdgeInsets.only(bottom: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF171A23),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: const Color(0xFF292E3C)),
+                            ),
+                            child: ListTile(
+                              leading: const Icon(Icons.drag_indicator_rounded),
+                              title: Text(section.label, style: const TextStyle(fontWeight: FontWeight.w800)),
+                              trailing: IconButton(
+                                tooltip: 'Hide row',
+                                onPressed: () => setSheetState(() => active.remove(section)),
+                                icon: const Icon(Icons.visibility_off_outlined),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    if (inactive.isNotEmpty) ...[
+                      const Divider(height: 28),
+                      Text(
+                        'Hidden rows',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+                      ),
+                      const SizedBox(height: 9),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: inactive
+                            .map(
+                              (section) => ActionChip(
+                                avatar: const Icon(Icons.add_rounded, size: 18),
+                                label: Text(section.label),
+                                onPressed: () => setSheetState(() => active.add(section)),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+
+    if (saved == true && mounted) setState(_load);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<_HomeData>(
+      future: _homeFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.cloud_off_outlined, size: 42),
+                const SizedBox(height: 12),
+                Text('Could not load the catalog\n${snapshot.error}', textAlign: TextAlign.center),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: () => setState(_load),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry'),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final data = snapshot.data ?? _HomeData.empty();
+        final hero = data.hero;
+
+        return RefreshIndicator(
+          onRefresh: () async {
+            setState(_load);
+            await _homeFuture;
+          },
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: [
+              if (hero != null) _Hero(item: hero, onOpen: () => widget.onOpen(hero)),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(32, 18, 32, 0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _customizeHome,
+                      icon: const Icon(Icons.tune_rounded),
+                      label: const Text('Customize Home'),
+                    ),
+                  ],
+                ),
+              ),
+              for (final section in data.sections)
+                if (section == HomeSectionId.continueWatching)
+                  if (data.continueWatching.isNotEmpty)
+                    _ContinueRail(
+                      items: data.continueWatching,
+                      onOpen: (entry) => widget.onOpen(entry.item),
+                    )
+                  else
+                    const SizedBox.shrink()
+                else
+                  _MediaRail(
+                    title: section.label,
+                    items: data.items(section),
+                    onOpen: widget.onOpen,
+                  ),
+              const SizedBox(height: 48),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _Hero extends StatelessWidget {
+  const _Hero({required this.item, required this.onOpen});
+  final MediaItem item;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 430,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (item.background != null)
+            Image.network(
+              item.background!,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+            ),
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0x2208090D), Color(0xFF08090D)],
+                stops: [0.15, 1],
+              ),
+            ),
+          ),
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [Color(0xEF08090D), Color(0x0008090D)],
+                stops: [0, .74],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(40, 70, 40, 44),
+            child: Align(
+              alignment: Alignment.bottomLeft,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 640),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.title,
+                      style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -.8,
+                          ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      [
+                        item.typeLabel,
+                        if (item.year != null) item.year!,
+                        if (item.rating != null) '★ ${item.rating!.toStringAsFixed(1)}',
+                      ].join('  •  '),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (item.description != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        item.description!,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(height: 1.5),
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    FilledButton.icon(
+                      onPressed: onOpen,
+                      icon: const Icon(Icons.play_arrow_rounded),
+                      label: const Text('View & Play'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ContinueRail extends StatelessWidget {
+  const _ContinueRail({required this.items, required this.onOpen});
+
+  final List<ContinueWatchingEntry> items;
+  final ValueChanged<ContinueWatchingEntry> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 26),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Row(
+              children: [
+                Text(
+                  'Continue Watching',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(width: 10),
+                const Icon(Icons.history_rounded, size: 20),
+                const SizedBox(width: 10),
+                Text(
+                  '${items.length}',
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 330,
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              scrollDirection: Axis.horizontal,
+              itemCount: items.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 16),
+              itemBuilder: (context, index) {
+                final entry = items[index];
+                return SizedBox(
+                  width: 170,
+                  child: Column(
+                    children: [
+                      Expanded(
+                        child: MediaCard(
+                          item: entry.item,
+                          width: 170,
+                          onTap: () => onOpen(entry),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(999),
+                        child: LinearProgressIndicator(
+                          minHeight: 5,
+                          value: entry.progress,
+                          backgroundColor: const Color(0xFF1C202B),
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          [
+                            if (entry.episode != null) entry.episode!.label,
+                            '${(entry.progress * 100).round()}% watched',
+                          ].join(' • '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MediaRail extends StatelessWidget {
+  const _MediaRail({required this.title, required this.items, required this.onOpen});
+
+  final String title;
+  final List<MediaItem> items;
+  final ValueChanged<MediaItem> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 26),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Text(
+              title,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 300,
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              scrollDirection: Axis.horizontal,
+              itemCount: items.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 16),
+              itemBuilder: (context, index) {
+                final item = items[index];
+                return MediaCard(item: item, onTap: () => onOpen(item));
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeData {
+  const _HomeData({
+    required this.sections,
+    required this.media,
+    required this.continueWatching,
+  });
+
+  factory _HomeData.empty() => const _HomeData(
+        sections: <HomeSectionId>[],
+        media: <HomeSectionId, List<MediaItem>>{},
+        continueWatching: <ContinueWatchingEntry>[],
+      );
+
+  final List<HomeSectionId> sections;
+  final Map<HomeSectionId, List<MediaItem>> media;
+  final List<ContinueWatchingEntry> continueWatching;
+
+  List<MediaItem> items(HomeSectionId section) => media[section] ?? const [];
+
+  MediaItem? get hero {
+    for (final section in sections) {
+      if (section == HomeSectionId.continueWatching) continue;
+      final values = items(section);
+      if (values.isNotEmpty) return values.first;
+    }
+    if (continueWatching.isNotEmpty) return continueWatching.first.item;
+    return null;
+  }
+}
+''', encoding='utf-8')
+
+state = Path('lib/services/media_state_service.dart')
+text = state.read_text(encoding='utf-8')
+text = text.replace(
+    "  static const _watchlistKey = 'pikora_watchlist_v1';\n  static const _progressKey = 'pikora_continue_watching_v1';",
+    "  static const _watchlistKey = 'pikora_watchlist_v1';\n  static const _libraryKey = 'pikora_media_library_v1';\n  static const _progressKey = 'pikora_continue_watching_v1';",
+    1,
+)
+marker = '  Future<void> saveProgress(\n'
+library_methods = r'''  Future<List<MediaItem>> library() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_libraryKey);
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      return decoded
+          .whereType<Map<String, dynamic>>()
+          .map(_mediaFromJson)
+          .where((item) => item.id.isNotEmpty)
+          .toList(growable: false);
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<bool> isInLibrary(MediaItem item) async {
+    final list = await library();
+    return list.any((entry) => entry.id == item.id && entry.kind == item.kind);
+  }
+
+  Future<bool> toggleLibrary(MediaItem item) async {
+    final prefs = await SharedPreferences.getInstance();
+    final current = [...await library()];
+    final index = current.indexWhere(
+      (entry) => entry.id == item.id && entry.kind == item.kind,
+    );
+    final added = index < 0;
+    if (added) {
+      current.insert(0, item);
+    } else {
+      current.removeAt(index);
+    }
+    await prefs.setString(
+      _libraryKey,
+      jsonEncode(current.map(_mediaToJson).toList(growable: false)),
+    );
+    return added;
+  }
+
+'''
+if 'Future<List<MediaItem>> library()' not in text:
+    text = text.replace(marker, library_methods + marker, 1)
+text = text.replace(
+    'fraction >= .95 || position < const Duration(seconds: 20)',
+    'fraction >= .95 || position < const Duration(seconds: 5)',
+    1,
+)
+text = text.replace(
+    '''      entries.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      return entries.take(limit).toList(growable: false);''',
+    '''      entries.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      final unique = <ContinueWatchingEntry>[];
+      final seen = <String>{};
+      for (final entry in entries) {
+        final mediaKey = '${entry.item.kind.name}:${entry.item.id}';
+        if (seen.add(mediaKey)) unique.add(entry);
+      }
+      return unique.take(limit).toList(growable: false);''',
+    1,
+)
+state.write_text(text, encoding='utf-8')
+
+catalog = Path('lib/services/catalog_service.dart')
+text = catalog.read_text(encoding='utf-8')
+anchor = '''  Future<List<MediaItem>> topRatedSeries({int limit = 40}) {
+    return _catalog(MediaKind.series, 'imdbRating', limit: limit);
+  }
+'''
+addition = anchor + r'''
+  Future<List<MediaItem>> imdbTopMovies({int limit = 40}) {
+    return _imdbChart(MediaKind.movie, 'https://www.imdb.com/chart/top/', limit: limit);
+  }
+
+  Future<List<MediaItem>> imdbTopSeries({int limit = 40}) {
+    return _imdbChart(MediaKind.series, 'https://www.imdb.com/chart/toptv/', limit: limit);
+  }
+'''
+if 'imdbTopMovies' not in text:
+    text = text.replace(anchor, addition, 1)
+private_anchor = '  Future<List<MediaItem>> _catalog(\n'
+imdb_private = r'''  Future<List<MediaItem>> _imdbChart(
+    MediaKind kind,
+    String url, {
+    required int limit,
+  }) async {
+    try {
+      final response = await _client.get(
+        Uri.parse(url),
+        headers: const {
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128 Safari/537.36',
+        },
+      ).timeout(const Duration(seconds: 18));
+      if (response.statusCode != 200) return const [];
+
+      final ids = <String>[];
+      final seen = <String>{};
+      final pattern = RegExp(r'/title/(tt\d{7,10})/');
+      for (final match in pattern.allMatches(response.body)) {
+        final id = match.group(1);
+        if (id != null && seen.add(id)) ids.add(id);
+      }
+      if (ids.isEmpty) return const [];
+
+      final selected = ids.take(limit).toList(growable: false);
+      final resolved = await Future.wait(
+        selected.map((id) => _metaByImdbId(id, kind)),
+      );
+      return resolved.whereType<MediaItem>().toList(growable: false);
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<MediaItem?> _metaByImdbId(String id, MediaKind kind) async {
+    try {
+      final type = kind == MediaKind.movie ? 'movie' : 'series';
+      final response = await _client
+          .get(
+            Uri.parse('$_baseUrl/meta/$type/$id.json'),
+            headers: const {'Accept': 'application/json'},
+          )
+          .timeout(const Duration(seconds: 12));
+      if (response.statusCode != 200) return null;
+      final body = jsonDecode(response.body);
+      if (body is! Map<String, dynamic>) return null;
+      final meta = body['meta'];
+      if (meta is! Map<String, dynamic>) return null;
+      return MediaItem.fromCinemeta(meta, kind: kind);
+    } catch (_) {
+      return null;
+    }
+  }
+
+'''
+if 'Future<List<MediaItem>> _imdbChart(' not in text:
+    text = text.replace(private_anchor, imdb_private + private_anchor, 1)
+catalog.write_text(text, encoding='utf-8')
+
+details = Path('lib/screens/details_screen.dart')
+text = details.read_text(encoding='utf-8')
+text = text.replace(
+    '  bool _watchlisted = false;\n',
+    '  bool _watchlisted = false;\n  bool _inLibrary = false;\n',
+    1,
+)
+text = text.replace(
+    '''    final watchlisted = await widget.mediaState.isWatchlisted(item);
+    if (mounted) setState(() => _watchlisted = watchlisted);''',
+    '''    final watchlisted = await widget.mediaState.isWatchlisted(item);
+    final inLibrary = await widget.mediaState.isInLibrary(item);
+    if (mounted) {
+      setState(() {
+        _watchlisted = watchlisted;
+        _inLibrary = inLibrary;
+      });
+    }''',
+    1,
+)
+toggle_marker = '  Future<void> _toggleWatchlist(MediaItem item) async {\n'
+toggle_library = r'''  Future<void> _toggleLibrary(MediaItem item) async {
+    final added = await widget.mediaState.toggleLibrary(item);
+    if (!mounted) return;
+    setState(() => _inLibrary = added);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(added ? 'Added to Library.' : 'Removed from Library.'),
+      ),
+    );
+  }
+
+'''
+if '_toggleLibrary(MediaItem item)' not in text:
+    text = text.replace(toggle_marker, toggle_library + toggle_marker, 1)
+watch_button = '''                        OutlinedButton.icon(
+                          onPressed: () => _toggleWatchlist(item),'''
+library_button = r'''                        FilledButton.tonalIcon(
+                          onPressed: () => _toggleLibrary(item),
+                          icon: Icon(
+                            _inLibrary
+                                ? Icons.video_library_rounded
+                                : Icons.library_add_outlined,
+                          ),
+                          label: Text(_inLibrary ? 'In Library' : 'Add to Library'),
+                        ),
+'''
+if "label: Text(_inLibrary ? 'In Library'" not in text:
+    text = text.replace(watch_button, library_button + watch_button, 1)
+details.write_text(text, encoding='utf-8')
+
+app = Path('lib/app.dart')
+text = app.read_text(encoding='utf-8')
+text = text.replace(
+    "import 'screens/library_screen.dart';\n",
+    "import 'screens/library_screen.dart';\nimport 'screens/media_library_screen.dart';\n",
+    1,
+)
+screen_anchor = '''      SearchScreen(catalog: widget.catalog, onOpen: _openMedia),
+      LibraryScreen('''
+screen_repl = '''      SearchScreen(catalog: widget.catalog, onOpen: _openMedia),
+      MediaLibraryScreen(
+        key: ValueKey('media-library-$_libraryRevision'),
+        mediaState: widget.mediaState,
+        onOpen: _openMedia,
+      ),
+      LibraryScreen('''
+text = text.replace(screen_anchor, screen_repl, 1)
+nav_anchor = '''                NavigationRailDestination(
+                  icon: Icon(Icons.cloud_outlined),
+                  selectedIcon: Icon(Icons.cloud_rounded),
+                  label: Text('My PikPak'),
+                ),'''
+nav_repl = '''                NavigationRailDestination(
+                  icon: Icon(Icons.video_library_outlined),
+                  selectedIcon: Icon(Icons.video_library_rounded),
+                  label: Text('Library'),
+                ),
+                NavigationRailDestination(
+                  icon: Icon(Icons.cloud_outlined),
+                  selectedIcon: Icon(Icons.cloud_rounded),
+                  label: Text('My PikPak'),
+                ),'''
+text = text.replace(nav_anchor, nav_repl, 1)
+text = text.replace("'Pikora v0.3'", "'Pikora v0.4'", 1)
+text = text.replace(
+    "const _FeatureLine(Icons.bookmark_outline_rounded, 'Persistent watchlist and Continue Watching rails'),",
+    "const _FeatureLine(Icons.video_library_outlined, 'Personal Library, persistent watchlist, and multi-title Continue Watching'),\n              const _FeatureLine(Icons.dashboard_customize_outlined, 'Customizable Home rows including optional IMDb Top 250 shelves'),",
+    1,
+)
+app.write_text(text, encoding='utf-8')
+
+pubspec = Path('pubspec.yaml')
+text = pubspec.read_text(encoding='utf-8')
+text = re.sub(r'^version:\s*[^\n]+', 'version: 0.4.0+16', text, count=1, flags=re.M)
+pubspec.write_text(text, encoding='utf-8')
+
+changelog = Path('CHANGELOG.md')
+text = changelog.read_text(encoding='utf-8')
+marker = 'This file tracks user-visible changes to Pikora. GitHub Releases are published automatically for new packaged versions starting with v0.3.2.\n\n'
+section = '''## v0.4.0 — Library, richer Continue Watching & customizable Home
+
+- Added a dedicated local **Library** separate from My PikPak storage; movies and series can be added/removed from the detail page.
+- Added a Library navigation tab with All / Movies / TV filters and quick removal.
+- Continue Watching now keeps up to 24 recent unfinished titles, deduplicates TV episodes to the most recently watched episode per series, and starts tracking after a shorter watch threshold.
+- Added **Customize Home** with row enable/disable and drag-to-reorder controls.
+- Home rows can include My Library, My Watchlist, Popular Movies, Popular TV, Top Rated Movies/TV, and optional IMDb Top 250 Movies/TV shelves.
+- IMDb chart shelves resolve current official IMDb chart IDs through Cinemeta metadata and fail softly if IMDb is unavailable.
+
+'''
+if '## v0.4.0 — Library' not in text:
+    text = text.replace(marker, marker + section, 1)
+changelog.write_text(text, encoding='utf-8')
