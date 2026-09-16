@@ -1,65 +1,85 @@
 # Pikora
 
-Pikora is a **PikPak-first cinematic media hub**. The goal is a streamlined experience similar in product shape to modern media hubs: browse movies and TV, search instantly, connect a PikPak account, match cloud media, and play from one interface.
+Pikora is a **PikPak-first cinematic media hub** for browsing movies and TV, connecting your PikPak cloud, resolving user-configured sources, and playing media inside one app.
 
-## Current development — v0.3 Flutter branch
+## Active development — v0.3 Flutter branch
 
-The original v0.2 Go prototype proved the basic PikPak/catalog idea, but its UI launched Microsoft Edge in app mode. That prototype remains on `main` for reference.
+The original v0.2 Go prototype proved the catalog/PikPak idea, but its UI depended on Microsoft Edge app mode. That prototype remains on `main` for reference.
 
-Active development is now on the **`v0.3-flutter`** branch.
+Active development is now on **`v0.3-flutter`**.
 
-Why Flutter/Dart now instead of rewriting later:
+Pikora is being built in Flutter/Dart now so Windows, Android and Android TV can share the same catalog, PikPak, source-resolution and playback code. Android-specific Kotlin can be added later where native services are genuinely useful.
 
-- native Windows desktop window — no direct Edge executable dependency
-- the same Dart services/domain code can later target Android and Android TV
-- cinematic custom UI is much easier to evolve
-- the player can move to `media_kit` / libmpv
-- Android-specific Kotlin can still be added later only where a native module is genuinely useful
+## v0.3 features in progress
 
-## v0.3 foundation
+- native Flutter Windows UI — **no Microsoft Edge browser dependency**
+- cinematic dark Home screen with Popular Movies, Popular TV and Top Rated rails
+- Movies + TV instant search after 2 typed characters
+- rich movie/TV detail screens
+- TV seasons and episode lists from Cinemeta metadata
+- PikPak captcha-aware sign-in and secure token/device storage
+- PikPak folder browsing
+- title/episode matching against the connected PikPak library
+- user-configured **Stremio-compatible source providers**
+- provider result → PikPak cloud-task bridge
+- polling while PikPak prepares a newly added item
+- automatic transition to playback when the cloud file is ready
+- built-in **media_kit / libmpv** player
+- GitHub Actions Windows release build
 
-- Flutter Windows shell
-- Home / Search / My PikPak navigation
-- popular Movies / TV catalog rails
-- live movie/TV suggestions after 2+ typed characters
-- PikPak captcha-aware sign-in
-- secure token/device storage
-- PikPak root cloud library browser
-- GitHub Actions Windows build
-
-## Product direction
-
-Pikora is intentionally narrower than multi-provider apps: **PikPak is the primary cloud provider**.
-
-The intended flow is:
+## Playback flow
 
 ```text
-Catalog / Search
+Home / Search
       ↓
 Movie or TV detail
       ↓
-Check My PikPak first
+Movie Play / Episode Play
       ↓
-Resolve an authorized/user-configured source when needed
+Check connected PikPak library
+      ↓
+Found? ── yes ──→ Resolve PikPak streaming URL ──→ libmpv player
+      │
+      no
+      ↓
+Ask user-configured source providers
+      ↓
+Choose returned source
       ↓
 Send source to PikPak
       ↓
-Wait for cloud task / cache
+Wait for PikPak cloud preparation
       ↓
-Play inside Pikora
+Match the new cloud file
+      ↓
+Resolve streaming URL
+      ↓
+libmpv player
 ```
 
-The source layer is pluggable. Pikora will not bundle a hard-coded piracy torrent-site list or preconfigured infringing source configuration. User-configured/self-hosted/authorized integrations can plug into the resolver without changing the core application.
+Pikora does not bundle a hard-coded torrent-site/indexer list or a preconfigured infringing source configuration. Source providers are added by the user and should only be used for content and services they are authorized to access.
 
-## Inspiration and implementation
+## Source providers
 
-Apps such as Debrify demonstrate that this product category works well with Flutter across Windows, Android/Android TV and other platforms, including cloud-provider integrations and a libmpv-based player. Pikora is being implemented as its own PikPak-focused codebase rather than copying Debrify source directly.
+The Sources screen accepts a Stremio-compatible addon base URL or `manifest.json` URL. Pikora stores the configured provider list locally and can query its standard stream endpoint for a selected movie or episode.
 
-Debrify is AGPL-3.0-only. Copying its implementation would bring AGPL corresponding-source obligations, so Pikora uses it only as a product/architecture reference unless the project explicitly chooses AGPL-compatible reuse later.
+The resolver currently understands:
+
+- direct HTTP/HTTPS stream URLs
+- Stremio stream results containing an `infoHash`, converted into a magnet resource for PikPak
+
+## Built-in player
+
+Pikora uses `media_kit` / libmpv for playback. This provides the foundation for:
+
+- MKV/MP4 and broad codec support
+- audio-track selection
+- subtitle-track selection
+- hardware-accelerated playback where available
+- seeking, playback speed and fullscreen controls
+- later subtitle search and resume/continue-watching support
 
 ## Build v0.3
-
-Checkout the Flutter branch:
 
 ```bash
 git checkout v0.3-flutter
@@ -74,17 +94,33 @@ Release build:
 flutter build windows --release
 ```
 
-The GitHub Actions workflow also produces a Windows build artifact automatically for pushes to `v0.3-flutter`.
+GitHub Actions also produces a Windows x64 ZIP artifact for pushes to `v0.3-flutter`.
 
 ## Roadmap
 
-See:
+Immediate desktop milestones:
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-- [`docs/ROADMAP.md`](docs/ROADMAP.md)
+1. harden PikPak login/captcha and cloud-task polling against real accounts
+2. improve automatic title/episode matching and file selection
+3. player audio/subtitle picker, subtitle styling, fullscreen polish and keyboard shortcuts
+4. Continue Watching, watchlist and playback history
+5. source-provider health/status and provider ordering
+6. better task/download progress UI
+7. Windows installer/release packaging
+
+After the Windows flow is stable:
+
+- Android phone build
+- Android TV / D-pad-first layout
+- background cloud/download integration where appropriate
+- Kotlin platform modules only for Android features that need native APIs
+
+## Inspiration and licensing
+
+Apps such as Debrify demonstrate this product category across desktop, mobile and TV. Pikora is its own PikPak-focused implementation rather than a copy of Debrify source. Debrify is AGPL-3.0-only, so its code is treated as an architecture/product reference unless Pikora explicitly adopts AGPL-compatible reuse later.
 
 ## Notes
 
-- PikPak integration relies on community-observed/undocumented web endpoints and may require maintenance when PikPak changes authentication or captcha behavior.
+- PikPak integration relies on community-observed/undocumented web endpoints and may require maintenance if PikPak changes authentication, captcha or drive APIs.
 - Pikora does not persist the PikPak password by default.
 - Catalog metadata is independent from the user's PikPak cloud library.
