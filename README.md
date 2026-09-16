@@ -6,26 +6,29 @@ Pikora is a **PikPak-first cinematic media hub** for browsing movies and TV, con
 
 The original v0.2 Go prototype proved the catalog/PikPak idea, but its UI depended on Microsoft Edge app mode. That prototype remains on `main` for reference.
 
-Active development is now on **`v0.3-flutter`**.
+Active development is now on **`v0.3-flutter`**. Pikora is being built in Flutter/Dart so Windows, Android and Android TV can share the catalog, PikPak, source-resolution and playback code. Android-specific Kotlin can be added later only where native services are genuinely useful.
 
-Pikora is being built in Flutter/Dart now so Windows, Android and Android TV can share the same catalog, PikPak, source-resolution and playback code. Android-specific Kotlin can be added later where native services are genuinely useful.
-
-## v0.3 features in progress
+## Current v0.3 foundation
 
 - native Flutter Windows UI — **no Microsoft Edge browser dependency**
-- cinematic dark Home screen with Popular Movies, Popular TV and Top Rated rails
+- cinematic dark Home with Popular Movies, Popular TV, Top Rated, Continue Watching and My Watchlist
 - Movies + TV instant search after 2 typed characters
-- rich movie/TV detail screens
-- TV seasons and episode lists from Cinemeta metadata
-- PikPak captcha-aware sign-in and secure token/device storage
-- PikPak folder browsing
-- title/episode matching against the connected PikPak library
+- rich movie/TV detail screens with TV seasons and episodes
+- PikPak captcha-aware sign-in, secure token/device storage and cloud-library browsing
+- automatic title/episode matching against the connected PikPak library
 - user-configured **Stremio-compatible source providers**
+- quality-ranked source results with Quick Play
 - provider result → PikPak cloud-task bridge
-- polling while PikPak prepares a newly added item
+- real PikPak task phase/progress polling when a task ID is returned
 - automatic transition to playback when the cloud file is ready
 - built-in **media_kit / libmpv** player
-- GitHub Actions Windows release build
+- play/pause, seek, ±10s, playback speed, volume and mute controls
+- embedded audio/subtitle track selection
+- local SRT/ASS/SSA/VTT subtitle loading
+- Windows fullscreen support and keyboard shortcuts
+- resume position / Continue Watching persistence
+- next-episode countdown and autoplay-next flow
+- GitHub Actions Windows x64 release build
 
 ## Playback flow
 
@@ -44,17 +47,17 @@ Found? ── yes ──→ Resolve PikPak streaming URL ──→ libmpv player
       ↓
 Ask user-configured source providers
       ↓
-Choose returned source
+Choose / Quick Play source
       ↓
 Send source to PikPak
       ↓
-Wait for PikPak cloud preparation
+Poll PikPak task phase + real progress when available
       ↓
-Match the new cloud file
-      ↓
-Resolve streaming URL
+Resolve prepared cloud file
       ↓
 libmpv player
+      ↓
+TV: next-episode countdown → resolve next episode
 ```
 
 Pikora does not bundle a hard-coded torrent-site/indexer list or a preconfigured infringing source configuration. Source providers are added by the user and should only be used for content and services they are authorized to access.
@@ -63,21 +66,19 @@ Pikora does not bundle a hard-coded torrent-site/indexer list or a preconfigured
 
 The Sources screen accepts a Stremio-compatible addon base URL or `manifest.json` URL. Pikora stores the configured provider list locally and can query its standard stream endpoint for a selected movie or episode.
 
-The resolver currently understands:
-
-- direct HTTP/HTTPS stream URLs
-- Stremio stream results containing an `infoHash`, converted into a magnet resource for PikPak
+The resolver understands direct HTTP/HTTPS stream URLs and Stremio stream results containing an `infoHash`, which can be represented as a magnet resource for the connected PikPak account.
 
 ## Built-in player
 
-Pikora uses `media_kit` / libmpv for playback. This provides the foundation for:
+Pikora uses `media_kit` / libmpv. The current desktop player includes broad container/codec support through libmpv, seeking, playback-speed control, volume/mute, fullscreen, embedded audio/subtitle switching, external subtitle files, keyboard shortcuts, resume progress and next-episode handling.
 
-- MKV/MP4 and broad codec support
-- audio-track selection
-- subtitle-track selection
-- hardware-accelerated playback where available
-- seeking, playback speed and fullscreen controls
-- later subtitle search and resume/continue-watching support
+Current shortcuts:
+
+- `Space` — play/pause
+- `←` / `→` — seek 10 seconds
+- `M` — mute/unmute
+- `F` or `F11` — fullscreen
+- `Esc` — leave fullscreen / go back
 
 ## Build v0.3
 
@@ -94,30 +95,30 @@ Release build:
 flutter build windows --release
 ```
 
-GitHub Actions also produces a Windows x64 ZIP artifact for pushes to `v0.3-flutter`.
+GitHub Actions produces a Windows x64 ZIP artifact for pushes to `v0.3-flutter`.
 
 ## Roadmap
 
 Immediate desktop milestones:
 
-1. harden PikPak login/captcha and cloud-task polling against real accounts
-2. improve automatic title/episode matching and file selection
-3. player audio/subtitle picker, subtitle styling, fullscreen polish and keyboard shortcuts
-4. Continue Watching, watchlist and playback history
-5. source-provider health/status and provider ordering
-6. better task/download progress UI
-7. Windows installer/release packaging
+1. harden PikPak login/captcha against real accounts and edge cases
+2. improve automatic multi-file title/episode matching
+3. subtitle styling/sync and optional subtitle-provider integration
+4. playback history and better Continue Watching management
+5. source-provider health/status, ordering and per-provider controls
+6. richer PikPak Transfers screen with active/completed/error tasks
+7. Windows installer, app icon, signing/release packaging and auto-update strategy
 
 After the Windows flow is stable:
 
-- Android phone build
+- Android phone build from the shared Flutter/Dart codebase
 - Android TV / D-pad-first layout
-- background cloud/download integration where appropriate
-- Kotlin platform modules only for Android features that need native APIs
+- Android background/media-session/PiP integration
+- Kotlin modules only for Android features that genuinely need native APIs
 
 ## Inspiration and licensing
 
-Apps such as Debrify demonstrate this product category across desktop, mobile and TV. Pikora is its own PikPak-focused implementation rather than a copy of Debrify source. Debrify is AGPL-3.0-only, so its code is treated as an architecture/product reference unless Pikora explicitly adopts AGPL-compatible reuse later.
+Apps such as Debrify demonstrate this product category across desktop, mobile and TV. Pikora is its own PikPak-focused implementation rather than a copy of Debrify source. Debrify is AGPL-3.0-only, so its source is treated as an architecture/product reference unless Pikora explicitly adopts AGPL-compatible reuse later.
 
 ## Notes
 
