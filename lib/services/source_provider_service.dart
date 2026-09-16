@@ -30,6 +30,8 @@ class SourceResult {
     this.quality,
     this.seeders,
     this.sizeBytes,
+    this.torrentFileIndex,
+    this.fileNameHint,
   });
 
   final String provider;
@@ -40,6 +42,15 @@ class SourceResult {
   final String? quality;
   final int? seeders;
   final int? sizeBytes;
+
+  /// Stremio's torrent file index. This identifies the exact playable file
+  /// inside a multi-file torrent/season pack.
+  final int? torrentFileIndex;
+
+  /// Filename supplied by the addon's behaviorHints. This is useful when the
+  /// cloud provider creates a folder for the torrent and the intended episode
+  /// has to be located among many child files.
+  final String? fileNameHint;
 
   int get qualityRank {
     switch (quality?.toUpperCase()) {
@@ -253,23 +264,50 @@ class SourceProviderService {
         final directUrl = raw['url']?.toString();
         final infoHash = raw['infoHash']?.toString().trim();
         final title = (raw['title'] ?? raw['name'] ?? 'Source').toString();
+        final hints = raw['behaviorHints'] is Map<String, dynamic>
+            ? raw['behaviorHints'] as Map<String, dynamic>
+            : null;
+        final fileNameHint = _nonEmpty(hints?['filename']?.toString());
+        final torrentFileIndex = _parseInt(
+          raw['fileIdx'] ?? raw['file_idx'] ?? raw['mapIdx'],
+        );
+        final sizeBytes = _guessSizeBytes(raw, title);
 
         String? resource;
         var isMagnet = false;
         if (directUrl != null && directUrl.startsWith(RegExp(r'https?://'))) {
           resource = directUrl;
         } else if (infoHash != null && infoHash.isNotEmpty) {
-          final trackers = raw['sources'] is List
-              ? (raw['sources'] as List)
-                  .map((e) => e.toString())
-                  .where((e) => e.startsWith('tracker:'))
-                  .map(
-                    (e) =>
-                        '&tr=${Uri.encodeComponent(e.substring('tracker:'.length))}',
-                  )
-                  .join()
-              : '';
-          resource = 'magnet:?xt=urn:btih:$infoHash$trackers';
+          final queryParts = <String>[];
+          if (raw['sources'] is List) {
+            for (final source in raw['sources'] as List) {
+              final value = source.toString();
+              if (value.startsWith('tracker:')) {
+                queryParts.add(
+                  'tr=${Uri.encodeComponent(value.substring('tracker:'.length))}',
+                );
+              }
+            }
+          }
+
+          // Pikora-only metadata is carried on the in-memory magnet URL so the
+          // PikPak transfer layer can keep track of the exact torrent child.
+          // The transfer layer strips these parameters before sending the
+          // magnet to PikPak, so the cloud provider only sees a normal magnet.
+          if (torrentFileIndex != null) {
+            queryParts.add('x-pikora-file-idx=$torrentFileIndex');
+          }
+          if (fileNameHint != null) {
+            queryParts.add(
+              'x-pikora-file-name=${Uri.encodeComponent(fileNameHint)}',
+            );
+          }
+          if (sizeBytes != null && sizeBytes > 0) {
+            queryParts.add('x-pikora-video-size=$sizeBytes');
+          }
+
+          final suffix = queryParts.isEmpty ? '' : '&${queryParts.join('&')}';
+          resource = 'magnet:?xt=urn:btih:$infoHash$suffix';
           isMagnet = true;
         }
 
@@ -283,7 +321,9 @@ class SourceProviderService {
             sortMode: sortMode,
             quality: _guessQuality(title),
             seeders: _guessSeeders(raw, title),
-            sizeBytes: _guessSizeBytes(raw, title),
+            sizeBytes: sizeBytes,
+            torrentFileIndex: torrentFileIndex,
+            fileNameHint: fileNameHint,
           ),
         );
       }
@@ -404,6 +444,17 @@ class SourceProviderService {
       _ => 1.0,
     };
     return (number * multiplier).round();
+  }
+
+  int? _parseInt(dynamic raw) {
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    return int.tryParse(raw?.toString() ?? '');
+  }
+
+  String? _nonEmpty(String? value) {
+    final clean = value?.trim();
+    return clean == null || clean.isEmpty ? null : clean;
   }
 
   void dispose() => _client.close();
