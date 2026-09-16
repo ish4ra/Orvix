@@ -2,6 +2,16 @@
 
 This file tracks user-visible changes to Pikora. GitHub Releases are published automatically for new packaged versions starting with v0.3.2.
 
+## v0.3.3 — Exact episode routing & smoother PikPak playback
+
+- Preserves Stremio torrent `fileIdx`, filename hints, and video-size metadata instead of discarding them.
+- Resolves the exact video inside PikPak multi-file torrents/season packs after a cloud task completes.
+- Prevents a newly selected source from accidentally falling back to an older matching 4K/3D file elsewhere in the PikPak library when the task output is a folder.
+- Uses PikPak `original_file_index`, filename, and size to identify the intended child file, with largest-video fallback only inside the selected task output.
+- Prefers a visible PikPak transcoded rendition up to 1080p for smooth default playback before falling back to the original/raw file.
+- Enables media_kit hardware acceleration explicitly and adds initial/rebuffer cache tuning for cloud VOD.
+- CI now cancels superseded Windows builds so rapid incremental commits cannot overwrite an older release's assets.
+
 ## v0.3.2 — Catalog clarity & release history
 
 - Re-ranked search results so an exact title match wins over similarly named remakes/spin-offs.
