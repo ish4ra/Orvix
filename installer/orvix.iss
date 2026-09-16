@@ -1,6 +1,6 @@
 #define MyAppName "Orvix"
 #ifndef MyAppVersion
-#define MyAppVersion "0.3.3"
+#define MyAppVersion "0.5.0"
 #endif
 #define MyAppPublisher "Ishara Lakshan"
 #define MyAppExeName "orvix.exe"
@@ -22,6 +22,7 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#MyAppExeName}
+SetupIconFile=..\windows\runner\resources\app_icon.ico
 SetupLogging=yes
 
 [Languages]

@@ -1,100 +1,101 @@
 # Orvix Architecture
 
-Orvix is a PikPak-first media hub. The long-term goal is a single product experience across Windows and Android, with Windows shipping first.
-
-## Direction from v0.3
-
-The v0.2 Go prototype proved the PikPak and catalog flow, but its UI depended on launching Microsoft Edge in app mode. From v0.3 onward, Orvix is being rebuilt in **Flutter/Dart** so the same application code can target Windows first and Android/Android TV later without rewriting the product from scratch.
-
-The design is inspired by the product shape of apps such as Debrify, but Orvix is a clean implementation focused primarily on PikPak rather than a multi-debrid provider matrix.
+Orvix is a Flutter/Dart multi-cloud media hub. Windows is the current shipping target; Android and Android TV are planned to reuse the same domain/services layer later.
 
 ## Product layers
 
 ```text
 UI
 ├─ Home / Discover
-├─ Search + 2-character type-ahead
-├─ Movie / TV detail
+├─ Search
+├─ Movie / TV details
 ├─ Seasons / Episodes
-├─ Watchlist / Continue Watching
-├─ PikPak Library
-└─ Settings / Account
+├─ Local Library / Watchlist / Continue Watching
+├─ Clouds
+│  ├─ PikPak
+│  └─ TorBox
+├─ Sources
+└─ Player
 
-Domain
+Domain / services
 ├─ CatalogService
-├─ SourceResolver
-├─ LibraryMatcher
-├─ PlaybackCoordinator
-└─ WatchStateStore
-
-Providers
-├─ Metadata / catalog provider
-├─ PikPak account provider
-├─ PikPak cloud library provider
-└─ Optional user-configured source providers
+├─ SourceProviderService
+├─ MediaStateService
+├─ CloudPreferencesService
+├─ PikPakService
+├─ PikPakTransferService
+├─ TorBoxService
+└─ PlaybackService
 
 Platform
 ├─ Secure credential/token storage
 ├─ HTTP client
-├─ Windows player integration
-└─ Android player integration (later)
+├─ Shared preferences
+├─ media_kit / libmpv
+└─ Windows window integration
 ```
 
-## PikPak flow
+## Multi-cloud playback flow
 
-1. User signs in from the Orvix UI.
-2. Orvix obtains and refreshes PikPak authentication/captcha tokens.
-3. Orvix can browse the user's PikPak cloud files and folders.
-4. Selecting a movie or episode first checks the user's PikPak cloud for a matching playable file.
-5. A source resolver may then query only source providers configured by the user and authorized for their use.
-6. If a valid source is available, the provider can hand it to PikPak and Orvix tracks the cloud task until it is playable.
-7. Playback opens in Orvix's built-in player.
+1. The user selects a movie or episode.
+2. Orvix reads the preferred cloud (`PikPak` or `TorBox`).
+3. If that cloud is connected, Orvix checks it for an existing playable match.
+4. If no suitable cloud item exists, Orvix queries user-configured source providers.
+5. The chosen source is submitted to the preferred cloud.
+6. Orvix polls the cloud task until the selected video is ready.
+7. Orvix resolves a playable URL and hands it to the built-in player.
+8. Resume/Continue Watching state is stored locally.
 
-Orvix will not ship a hard-coded list of piracy torrent sites or bundled infringing source configurations. The source layer is intentionally pluggable so legitimate/self-hosted/user-authorized sources can be added without changing the core application.
+The source-provider layer remains user-configured. Orvix does not ship a hard-coded piracy index or preconfigured infringing source list.
 
-## Authentication
+## PikPak provider
 
-PikPak uses device identity plus captcha/shield tokens around sign-in and many drive operations. Orvix stores long-lived tokens and device state in secure storage and refreshes tokens when possible instead of repeatedly asking for the user's password.
+PikPak support includes authentication/captcha handling, secure token/device state, cloud browsing, title/episode matching, cloud-task submission and playable rendition selection.
 
-The password should not be persisted by default.
+PikPak relies on community-observed/undocumented endpoints, so this integration may need maintenance when PikPak changes its API behavior.
 
-## Catalog
+## TorBox provider
 
-The catalog layer is independent of PikPak. This is important: a title can appear in Home/Search even when it is not currently present in the user's PikPak library.
+TorBox support includes:
 
-The catalog API must support:
+- API-key authentication
+- device authorization
+- account metadata
+- torrent library listing
+- web-download listing
+- magnet submission
+- direct HTTP/HTTPS resource submission
+- task polling
+- playable video selection
+- generated download/playback URLs
 
-- movies and TV series
-- poster/backdrop metadata
-- search suggestions after 2+ typed characters
-- seasons and episodes
-- trending/popular rails
-- stable IDs used for watch state and matching
+Tokens are stored through secure storage rather than plain preferences.
+
+## Catalog and state
+
+Catalog metadata is independent from cloud storage. A title can appear in Home/Search even if it does not exist in either connected cloud.
+
+Local state includes Library, Watchlist, Continue Watching and Home customization preferences.
 
 ## Playback
 
-The planned player layer is based on `media_kit` / libmpv so the same product can support Windows and Android with:
+Playback uses `media_kit` / libmpv with reviewed desktop stability patches pinned in `pubspec.yaml`.
 
-- MKV/MP4 and common codecs
-- selectable audio/subtitle tracks
-- external subtitles
-- resume position
-- next episode
-- playback speed
-- hardware decoding where supported
+The desktop player supports common media containers/codecs, seeking, playback speed, volume/mute, fullscreen, embedded audio/subtitle tracks, external subtitle files, resume state and next-episode handling.
 
-## Cross-platform plan
+## Windows packaging
 
-### Windows
+The Windows runner is generated from the Flutter project with project name `orvix`. `flutter_launcher_icons` generates the Windows icon from `assets/branding/orvix_icon.png`.
 
-Flutter desktop app, self-contained UI. No dependency on the Edge browser executable.
+GitHub Actions then:
 
-### Android / Android TV
+1. runs Flutter analysis,
+2. builds the Windows release,
+3. creates a portable ZIP,
+4. builds `installer/orvix.iss` with Inno Setup,
+5. uploads both artifacts,
+6. publishes them to a GitHub Release for a matching version tag.
 
-Reuse the Dart domain/services layer and most UI code. Add Android-specific storage, background download and TV/D-pad adaptations only where required.
+## Legacy prototype
 
-A separate Kotlin rewrite is therefore not the default plan. Native Kotlin modules can still be added for Android-only capabilities when Flutter plugins are insufficient.
-
-## Legacy
-
-The Go v0.2 prototype remains in the repository for reference while the Flutter v0.3 branch is developed. It is not the target architecture for future releases.
+The root Go files and `ui/` directory belong to the older v0.2 prototype. They are retained for reference and are not the target architecture for new Orvix features.

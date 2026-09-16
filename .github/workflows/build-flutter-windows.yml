@@ -1,12 +1,15 @@
-name: Build Pikora Flutter Windows
+name: Build Orvix Flutter Windows
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - v0.3-flutter
+      - orvix-v0.5.0-dev
+    tags:
+      - 'v*'
     paths:
       - 'lib/**'
+      - 'assets/**'
       - 'pubspec.yaml'
       - 'installer/**'
       - 'CHANGELOG.md'
@@ -16,7 +19,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: pikora-windows-${{ github.ref }}
+  group: orvix-windows-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -32,10 +35,20 @@ jobs:
         shell: pwsh
         run: |
           $line = Get-Content pubspec.yaml | Where-Object { $_ -match '^version:' } | Select-Object -First 1
-          if (-not $line) { throw "Version not found in pubspec.yaml" }
+          if (-not $line) { throw 'Version not found in pubspec.yaml' }
           $version = (($line -replace '^version:\s*', '').Split('+')[0]).Trim()
           "version=$version" >> $env:GITHUB_OUTPUT
           "tag=v$version" >> $env:GITHUB_OUTPUT
+
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $expected = "v${{ steps.version.outputs.version }}"
+          $actual = "${{ github.ref_name }}"
+          if ($actual -ne $expected) {
+            throw "Release tag $actual does not match pubspec version $expected"
+          }
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -45,10 +58,13 @@ jobs:
 
       - name: Generate Windows runner
         shell: pwsh
-        run: flutter create --platforms=windows --project-name pikora .
+        run: flutter create --platforms=windows --project-name orvix .
 
       - name: Get dependencies
         run: flutter pub get
+
+      - name: Generate Orvix Windows icon
+        run: dart run flutter_launcher_icons
 
       - name: Analyze app sources
         run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
@@ -60,7 +76,7 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
-          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath "Pikora-v$version-Windows-x64.zip" -Force
+          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath "Orvix-v$version-Windows-x64.zip" -Force
 
       - name: Install Inno Setup
         shell: pwsh
@@ -75,31 +91,32 @@ jobs:
             "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
           )
           $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $iscc) { throw "Inno Setup compiler was not found." }
-          & $iscc "/DMyAppVersion=$version" "installer\pikora.iss"
+          if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
+          & $iscc "/DMyAppVersion=$version" "installer\orvix.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
 
       - name: Upload portable build
         uses: actions/upload-artifact@v4
         with:
-          name: Pikora-v${{ steps.version.outputs.version }}-Windows-x64
-          path: Pikora-v${{ steps.version.outputs.version }}-Windows-x64.zip
+          name: Orvix-v${{ steps.version.outputs.version }}-Windows-x64
+          path: Orvix-v${{ steps.version.outputs.version }}-Windows-x64.zip
 
-      - name: Upload setup exe
+      - name: Upload setup EXE
         uses: actions/upload-artifact@v4
         with:
-          name: Pikora-v${{ steps.version.outputs.version }}-Setup-Windows-x64
-          path: installer-output/Pikora-Setup-v${{ steps.version.outputs.version }}-Windows-x64.exe
+          name: Orvix-v${{ steps.version.outputs.version }}-Setup-Windows-x64
+          path: installer-output/Orvix-Setup-v${{ steps.version.outputs.version }}-Windows-x64.exe
 
       - name: Publish GitHub Release
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $version = "${{ steps.version.outputs.version }}"
           $tag = "v$version"
-          $zip = "Pikora-v$version-Windows-x64.zip"
-          $exe = "installer-output/Pikora-Setup-v$version-Windows-x64.exe"
+          $zip = "Orvix-v$version-Windows-x64.zip"
+          $exe = "installer-output/Orvix-Setup-v$version-Windows-x64.exe"
 
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
@@ -107,6 +124,6 @@ jobs:
           } else {
             gh release create $tag $zip $exe `
               --target "${{ github.sha }}" `
-              --title "Pikora $tag" `
+              --title "Orvix $tag" `
               --generate-notes
           }
