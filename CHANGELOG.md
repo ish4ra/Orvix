@@ -6,6 +6,7 @@ This file tracks user-visible changes to Pikora. GitHub Releases are published a
 ## v0.3.4 — Debrify-aligned PikPak playback
 
 - Reworked PikPak rendition selection to follow Debrify/PikPak semantics: `is_default` first, then `is_origin`, then the first usable media link, with `web_content_link` only as fallback.
+- Aligned PikPak file-detail requests with Debrify by adding the `_magic=2021` parameter alongside `usage=FETCH`, `thumbnail_size=SIZE_LARGE`, and `with_audit=true` when resolving streaming URLs.
 - Removed Pikora's custom "highest transcode up to 1080p" selection that could choose a non-default/broken PikPak rendition.
 - Removed always-on mpv cache/reconnect overrides. The default playback path now uses stock media_kit/libmpv behavior, matching Debrify's `Standard` network preset.
 - Removed the custom forced `hwdec` VideoController configuration from the default path and returned to the stock controller setup used by Debrify on desktop.

@@ -256,6 +256,7 @@ class PikPakTransferService {
     ).replace(
       queryParameters: const {
         'usage': 'FETCH',
+        '_magic': '2021',
         'thumbnail_size': 'SIZE_LARGE',
         'with_audit': 'true',
       },
