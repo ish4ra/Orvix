@@ -77,33 +77,37 @@ class SourceResult {
     const mb = kb * 1024;
     const gb = mb * 1024;
     const tb = gb * 1024;
-    if (bytes >= tb) return '${(bytes / tb).toStringAsFixed(bytes >= 10 * tb ? 1 : 2)} TB';
-    if (bytes >= gb) return '${(bytes / gb).toStringAsFixed(bytes >= 10 * gb ? 1 : 2)} GB';
+    if (bytes >= tb) {
+      return '${(bytes / tb).toStringAsFixed(bytes >= 10 * tb ? 1 : 2)} TB';
+    }
+    if (bytes >= gb) {
+      return '${(bytes / gb).toStringAsFixed(bytes >= 10 * gb ? 1 : 2)} GB';
+    }
     if (bytes >= mb) return '${(bytes / mb).toStringAsFixed(0)} MB';
     return '${(bytes / kb).toStringAsFixed(0)} KB';
   }
 
+  /// Ranking is deliberately lexicographic rather than a vague weighted mix.
+  /// Quality mode means exactly: quality > seeders > size.
   int get preferenceScore {
-    final availability = seeders ?? -1;
-    final sizeMb = (sizeBytes ?? 0) ~/ (1024 * 1024);
-
-    // A known dead torrent should never beat a live result just because its
-    // release name says 4K/Remux.
-    if (isMagnet && seeders == 0) return -1000000000 + qualityRank;
+    final seederRank = (seeders ?? -1).clamp(-1, 999999).toInt() + 1;
+    final sizeMb = ((sizeBytes ?? 0) ~/ (1024 * 1024))
+        .clamp(0, 999999)
+        .toInt();
 
     switch (sortMode) {
-      case SourceSortMode.seeders:
-        return (availability >= 0 ? availability * 100000 : 0) +
-            qualityRank * 100 +
-            sizeMb.clamp(0, 50000).toInt();
-      case SourceSortMode.fileSize:
-        return sizeMb * 1000 +
-            qualityRank * 100 +
-            (availability >= 0 ? availability.clamp(0, 999).toInt() : 0);
       case SourceSortMode.quality:
-        return qualityRank * 1000000 +
-            (availability >= 0 ? availability.clamp(0, 9999).toInt() * 10 : 0) +
-            sizeMb.clamp(0, 9).toInt();
+        return qualityRank * 1000000000000 +
+            seederRank * 1000000 +
+            sizeMb;
+      case SourceSortMode.seeders:
+        return seederRank * 1000000000000 +
+            qualityRank * 1000000 +
+            sizeMb;
+      case SourceSortMode.fileSize:
+        return sizeMb * 1000000000 +
+            qualityRank * 1000000 +
+            seederRank;
     }
   }
 }
@@ -113,7 +117,10 @@ class SourceProviderService {
 
   static const _prefsKey = 'pikora_source_addons';
   static const _torrentioKey = 'pikora_integrated_torrentio_url_v1';
-  static const _sortKey = 'pikora_source_sort_mode_v1';
+
+  // v2 intentionally resets the old default. v0.3.7 makes the default order
+  // Quality -> Seeders -> Size while still allowing the user to switch it.
+  static const _sortKey = 'pikora_source_sort_mode_v2';
 
   // A distributor may inject an authorized/self-hosted Stremio-compatible
   // Torrentio endpoint at build time without putting a public index URL in
@@ -156,7 +163,7 @@ class SourceProviderService {
     final stored = prefs.getString(_sortKey);
     return SourceSortMode.values.firstWhere(
       (mode) => mode.name == stored,
-      orElse: () => SourceSortMode.seeders,
+      orElse: () => SourceSortMode.quality,
     );
   }
 
@@ -224,7 +231,11 @@ class SourceProviderService {
     final seen = <String>{};
     for (final group in groups) {
       for (final result in group) {
-        if (seen.add(result.resource)) out.add(result);
+        // Keep the same source returned by different providers visible: their
+        // reported seed counts/metadata may differ. Only remove exact duplicate
+        // rows from the same provider.
+        final dedupeKey = '${result.provider}\u0000${result.resource}';
+        if (seen.add(dedupeKey)) out.add(result);
       }
     }
     out.sort((a, b) => b.preferenceScore.compareTo(a.preferenceScore));
@@ -250,7 +261,7 @@ class SourceProviderService {
       );
       final response = await _client
           .get(uri, headers: const {'Accept': 'application/json'})
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 20));
       if (response.statusCode != 200) return const [];
 
       final decoded = jsonDecode(response.body);
@@ -263,7 +274,7 @@ class SourceProviderService {
       for (final raw in streams.whereType<Map<String, dynamic>>()) {
         final directUrl = raw['url']?.toString();
         final infoHash = raw['infoHash']?.toString().trim();
-        final title = (raw['title'] ?? raw['name'] ?? 'Source').toString();
+        final rawTitle = (raw['title'] ?? raw['name'] ?? 'Source').toString();
         final hints = raw['behaviorHints'] is Map<String, dynamic>
             ? raw['behaviorHints'] as Map<String, dynamic>
             : null;
@@ -271,7 +282,9 @@ class SourceProviderService {
         final torrentFileIndex = _parseInt(
           raw['fileIdx'] ?? raw['file_idx'] ?? raw['mapIdx'],
         );
-        final sizeBytes = _guessSizeBytes(raw, title);
+        final quality = _guessQuality(rawTitle);
+        final seeders = _guessSeeders(raw, rawTitle);
+        final sizeBytes = _guessSizeBytes(raw, rawTitle);
 
         String? resource;
         var isMagnet = false;
@@ -293,7 +306,7 @@ class SourceProviderService {
           // Pikora-only metadata is carried on the in-memory magnet URL so the
           // PikPak transfer layer can keep track of the exact torrent child.
           // The transfer layer strips these parameters before sending the
-          // magnet to PikPak, so the cloud provider only sees a normal magnet.
+          // magnet to PikPak, so PikPak only sees a normal magnet.
           if (torrentFileIndex != null) {
             queryParts.add('x-pikora-file-idx=$torrentFileIndex');
           }
@@ -312,15 +325,24 @@ class SourceProviderService {
         }
 
         if (resource == null) continue;
+
+        // Existing source sheet renders two title lines. Put the useful stats
+        // first so they remain visible even when a long release name truncates.
+        final statParts = <String>[
+          '👥 ${seeders?.toString() ?? '—'} seeders',
+          '💾 ${_formatSize(sizeBytes) ?? 'size unknown'}',
+        ];
+        final displayTitle = '${statParts.join('  •  ')}\n${_compactTitle(rawTitle)}';
+
         out.add(
           SourceResult(
             provider: provider,
-            title: title,
+            title: displayTitle,
             resource: resource,
             isMagnet: isMagnet,
             sortMode: sortMode,
-            quality: _guessQuality(title),
-            seeders: _guessSeeders(raw, title),
+            quality: quality,
+            seeders: seeders,
             sizeBytes: sizeBytes,
             torrentFileIndex: torrentFileIndex,
             fileNameHint: fileNameHint,
@@ -385,28 +407,35 @@ class SourceProviderService {
   }
 
   int? _guessSeeders(Map<String, dynamic> raw, String value) {
-    for (final candidate in [
+    final hints = raw['behaviorHints'];
+    final candidates = <dynamic>[
       raw['seeders'],
       raw['seeds'],
       raw['peers'],
-      if (raw['behaviorHints'] is Map<String, dynamic>)
-        (raw['behaviorHints'] as Map<String, dynamic>)['seeders'],
-    ]) {
+      raw['seed'],
+      if (hints is Map<String, dynamic>) hints['seeders'],
+      if (hints is Map<String, dynamic>) hints['seeds'],
+      if (hints is Map<String, dynamic>) hints['peers'],
+    ];
+    for (final candidate in candidates) {
       final parsed = candidate is num
           ? candidate.toInt()
-          : int.tryParse(candidate?.toString() ?? '');
-      if (parsed != null) return parsed;
+          : int.tryParse(candidate?.toString().trim() ?? '');
+      if (parsed != null && parsed >= 0) return parsed;
     }
 
     final patterns = <RegExp>[
-      RegExp(r'👤\s*(\d+)', caseSensitive: false),
-      RegExp(r'\bseeders?\s*[:=]?\s*(\d+)\b', caseSensitive: false),
-      RegExp(r'\bseeds?\s*[:=]?\s*(\d+)\b', caseSensitive: false),
-      RegExp(r'\bpeers?\s*[:=]?\s*(\d+)\b', caseSensitive: false),
+      RegExp(r'👤\s*(\d[\d,]*)', caseSensitive: false),
+      RegExp(r'👥\s*(\d[\d,]*)', caseSensitive: false),
+      RegExp(r'\bseeders?\s*[:=]?\s*(\d[\d,]*)\b', caseSensitive: false),
+      RegExp(r'\bseeds?\s*[:=]?\s*(\d[\d,]*)\b', caseSensitive: false),
+      RegExp(r'\bpeers?\s*[:=]?\s*(\d[\d,]*)\b', caseSensitive: false),
+      RegExp(r'\bS\s*[:=]\s*(\d[\d,]*)\b', caseSensitive: false),
     ];
     for (final pattern in patterns) {
       final match = pattern.firstMatch(value);
-      final parsed = match == null ? null : int.tryParse(match.group(1) ?? '');
+      final normalized = match?.group(1)?.replaceAll(',', '');
+      final parsed = normalized == null ? null : int.tryParse(normalized);
       if (parsed != null) return parsed;
     }
     return null;
@@ -416,8 +445,12 @@ class SourceProviderService {
     final hints = raw['behaviorHints'];
     final candidates = <dynamic>[
       if (hints is Map<String, dynamic>) hints['videoSize'],
+      if (hints is Map<String, dynamic>) hints['size'],
+      if (hints is Map<String, dynamic>) hints['fileSize'],
       raw['videoSize'],
       raw['size'],
+      raw['fileSize'],
+      raw['filesize'],
     ];
     for (final candidate in candidates) {
       if (candidate is num && candidate > 0) return candidate.toInt();
@@ -428,22 +461,49 @@ class SourceProviderService {
   }
 
   int? _parseHumanSize(String value) {
-    final match = RegExp(
-      r'(\d+(?:\.\d+)?)\s*(TiB|TB|GiB|GB|MiB|MB|KiB|KB)\b',
+    final matches = RegExp(
+      r'(\d+(?:[.,]\d+)?)\s*(TiB|TB|GiB|GB|MiB|MB|KiB|KB)\b',
       caseSensitive: false,
-    ).firstMatch(value);
-    if (match == null) return null;
-    final number = double.tryParse(match.group(1) ?? '');
-    final unit = (match.group(2) ?? '').toUpperCase();
-    if (number == null) return null;
-    final multiplier = switch (unit) {
-      'TIB' || 'TB' => 1024.0 * 1024 * 1024 * 1024,
-      'GIB' || 'GB' => 1024.0 * 1024 * 1024,
-      'MIB' || 'MB' => 1024.0 * 1024,
-      'KIB' || 'KB' => 1024.0,
-      _ => 1.0,
-    };
-    return (number * multiplier).round();
+    ).allMatches(value).toList();
+    if (matches.isEmpty) return null;
+
+    // Addons sometimes include pack size and video size in one title. The
+    // largest explicit size is the safest value for source ranking/display.
+    int? largest;
+    for (final match in matches) {
+      final number = double.tryParse((match.group(1) ?? '').replaceAll(',', '.'));
+      final unit = (match.group(2) ?? '').toUpperCase();
+      if (number == null) continue;
+      final multiplier = switch (unit) {
+        'TIB' || 'TB' => 1024.0 * 1024 * 1024 * 1024,
+        'GIB' || 'GB' => 1024.0 * 1024 * 1024,
+        'MIB' || 'MB' => 1024.0 * 1024,
+        'KIB' || 'KB' => 1024.0,
+        _ => 1.0,
+      };
+      final bytes = (number * multiplier).round();
+      if (largest == null || bytes > largest) largest = bytes;
+    }
+    return largest;
+  }
+
+  String? _formatSize(int? bytes) {
+    if (bytes == null || bytes <= 0) return null;
+    const kb = 1024.0;
+    const mb = kb * 1024;
+    const gb = mb * 1024;
+    const tb = gb * 1024;
+    if (bytes >= tb) return '${(bytes / tb).toStringAsFixed(2)} TB';
+    if (bytes >= gb) return '${(bytes / gb).toStringAsFixed(bytes >= 10 * gb ? 1 : 2)} GB';
+    if (bytes >= mb) return '${(bytes / mb).toStringAsFixed(0)} MB';
+    return '${(bytes / kb).toStringAsFixed(0)} KB';
+  }
+
+  String _compactTitle(String value) {
+    return value
+        .replaceAll(RegExp(r'[\r\n]+'), '  •  ')
+        .replaceAll(RegExp(r'\s{2,}'), ' ')
+        .trim();
   }
 
   int? _parseInt(dynamic raw) {
