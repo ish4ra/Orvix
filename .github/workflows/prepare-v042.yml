@@ -1,0 +1,57 @@
+name: Prepare Pikora v0.4.2 Playback and Sources
+
+on:
+  push:
+    branches:
+      - v0.4.2-dev
+    paths:
+      - 'tools/patch_v042.py'
+      - '.github/workflows/prepare-v042.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-commit-validate:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: v0.4.2-dev
+
+      - name: Apply v0.4.2 patch
+        run: python tools/patch_v042.py
+
+      - name: Remove temporary patch helpers
+        shell: pwsh
+        run: |
+          Remove-Item tools/patch_v042.py -ErrorAction SilentlyContinue
+          Remove-Item .github/workflows/prepare-v042.yml -ErrorAction SilentlyContinue
+
+      - name: Commit patched source
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: v0.4.2 PikPak playback and source preferences"
+          git push origin HEAD:v0.4.2-dev
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Windows runner
+        run: flutter create --platforms=windows --project-name pikora .
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze app sources
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows release
+        run: flutter build windows --release
