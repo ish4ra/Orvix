@@ -29,19 +29,54 @@ class MediaCard extends StatelessWidget {
               aspectRatio: 2 / 3,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(14),
-                child: Container(
-                  color: const Color(0xFF171A23),
-                  child: poster == null || poster.isEmpty
-                      ? const Center(
-                          child: Icon(Icons.movie_outlined, size: 42),
-                        )
-                      : Image.network(
-                          poster,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const Center(
-                            child: Icon(Icons.broken_image_outlined, size: 38),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Container(
+                      color: const Color(0xFF171A23),
+                      child: poster == null || poster.isEmpty
+                          ? const Center(
+                              child: Icon(Icons.movie_outlined, size: 42),
+                            )
+                          : Image.network(
+                              poster,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => const Center(
+                                child: Icon(
+                                  Icons.broken_image_outlined,
+                                  size: 38,
+                                ),
+                              ),
+                            ),
+                    ),
+                    if (item.isUpcoming)
+                      Positioned(
+                        top: 8,
+                        left: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xE6191B24),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                          child: Text(
+                            'UPCOMING',
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.primary,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: .7,
+                            ),
                           ),
                         ),
+                      ),
+                  ],
                 ),
               ),
             ),
@@ -54,7 +89,11 @@ class MediaCard extends StatelessWidget {
             ),
             const SizedBox(height: 3),
             Text(
-              [item.typeLabel, if (item.year != null) item.year!].join(' • '),
+              [
+                item.typeLabel,
+                if (item.year != null) item.year!,
+                if (item.isUpcoming) 'Not released',
+              ].join(' • '),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
