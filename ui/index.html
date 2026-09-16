@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Pikora</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">PIK<i>ORA</i></div>
+    <div class="tag">PikPak cloud media prototype</div>
+    <nav class="nav">
+      <button class="active" data-view="home">Home</button>
+      <button data-view="search">Search</button>
+      <button data-view="watchlist">Watchlist</button>
+      <button data-view="library">My PikPak</button>
+    </nav>
+    <div class="account">
+      <div id="acctState" class="state">PikPak not connected</div>
+      <button id="accountBtn" class="btn primary">Sign in to PikPak</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="top">
+      <div class="searchWrap">
+        <span class="glass">⌕</span>
+        <input id="search" class="search" placeholder="Search movies and TV series…" autocomplete="off">
+        <div id="suggest" class="suggest"></div>
+      </div>
+      <button id="topAccount" class="avatar">P</button>
+    </div>
+
+    <section id="home">
+      <div class="hero">
+        <div class="eyebrow">PIKORA v0.2</div>
+        <h1>Search. Match. Play from PikPak.</h1>
+        <p>Type two or more letters to get instant movie and TV suggestions, then match the title against your PikPak cloud library.</p>
+      </div>
+
+      <div id="detail" class="detail panel" style="display:none">
+        <div class="detailPoster"><img id="dimg" alt=""></div>
+        <div>
+          <div id="dtype" class="eyebrow"></div>
+          <h2 id="dtitle"></h2>
+          <div id="dmeta" class="muted"></div>
+          <p id="dstars" class="muted"></p>
+          <div class="row">
+            <button id="findBtn" class="btn primary">Find in My PikPak</button>
+            <button id="watchBtn" class="btn">+ Watchlist</button>
+          </div>
+          <div id="findStatus" class="notice"></div>
+          <div id="matches"></div>
+        </div>
+      </div>
+
+      <section class="section">
+        <div class="sectionHead"><h2>Recent</h2><span>your latest searches</span></div>
+        <div id="recentGrid" class="grid"></div>
+      </section>
+    </section>
+
+    <section id="library" class="library panel">
+      <div class="row between">
+        <div><h2>My PikPak</h2><div class="muted small">Cloud files from your account</div></div>
+        <button class="btn" id="refreshLib">Refresh</button>
+      </div>
+      <div id="libList" class="libList"><div class="muted">Connect PikPak to load your library.</div></div>
+    </section>
+  </main>
+</div>
+
+<div id="loginModal" class="loginModal">
+  <div class="loginBox">
+    <div class="row between"><h2>Connect PikPak</h2><button class="btn" id="closeLogin">✕</button></div>
+    <label>Email / username</label>
+    <input class="field" id="user">
+    <label>Password</label>
+    <input class="field" id="pass" type="password">
+    <button class="btn primary wide" id="loginBtn">Sign in</button>
+    <div id="loginMsg" class="notice"></div>
+    <div class="muted tiny">Credentials are sent directly from this app to PikPak and are not stored by Pikora.</div>
+  </div>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>
