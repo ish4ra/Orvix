@@ -261,7 +261,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         builder: (context, positionSnapshot) {
                           final position = positionSnapshot.data ?? Duration.zero;
                           final maxMs = duration.inMilliseconds <= 0 ? 1.0 : duration.inMilliseconds.toDouble();
-                          final actualMs = (_seekPreviewMs ?? position.inMilliseconds.toDouble()).clamp(0, maxMs);
+                          final actualMs = (_seekPreviewMs ?? position.inMilliseconds.toDouble())
+                              .clamp(0, maxMs)
+                              .toDouble();
                           return Column(
                             children: [
                               SliderTheme(
