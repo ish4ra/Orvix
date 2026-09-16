@@ -1,4 +1,4 @@
-# Pikora Changelog
+# Orvix Changelog
 
 ## v0.4.2 — PikPak playback rollback, 3D filtering & source preferences
 
@@ -15,12 +15,12 @@
 - Added release-source classification (`REMUX`, `BluRay`, `WEB-DL`, `WEBRip`, `HDTV`, `DVD`, `CAM`).
 - Default source ranking is now strict **release quality → resolution → seeders → file size**.
 - Added fully customizable drag-to-reorder source priority in both the source picker and Source Engine settings.
-- Limited Torrentio Lite / `limit=` profiles are automatically supplemented with a broad request and merged/de-duplicated, so legacy one-result-per-quality profiles no longer starve Pikora's result list.
+- Limited Torrentio Lite / `limit=` profiles are automatically supplemented with a broad request and merged/de-duplicated, so legacy one-result-per-quality profiles no longer starve Orvix's result list.
 - Huge PikPak remuxes now prefer a cloud transcode, with 70GB-class files biased toward a safer 1080p rendition before falling back to the raw origin.
 - Restored patched media_kit's native Windows decoder defaults instead of forcing `auto-safe`.
 - Replaced the always-on 512MiB/300s/cache-pause profile with Debrify's vetted Large + Extended network profile (256MiB/120s + reconnect), avoiding repeated visible cache-pause stalls.
 
-This file tracks user-visible changes to Pikora. GitHub Releases are published automatically for new packaged versions starting with v0.3.2.
+This file tracks user-visible changes to Orvix. GitHub Releases are published automatically for new packaged versions starting with v0.3.2.
 
 ## v0.4.0 — Library, richer Continue Watching & customizable Home
 
@@ -61,7 +61,7 @@ This file tracks user-visible changes to Pikora. GitHub Releases are published a
 
 - Reworked PikPak rendition selection to follow Debrify/PikPak semantics: `is_default` first, then `is_origin`, then the first usable media link, with `web_content_link` only as fallback.
 - Aligned PikPak file-detail requests with Debrify by adding the `_magic=2021` parameter alongside `usage=FETCH`, `thumbnail_size=SIZE_LARGE`, and `with_audit=true` when resolving streaming URLs.
-- Removed Pikora's custom "highest transcode up to 1080p" selection that could choose a non-default/broken PikPak rendition.
+- Removed Orvix's custom "highest transcode up to 1080p" selection that could choose a non-default/broken PikPak rendition.
 - Removed always-on mpv cache/reconnect overrides. The default playback path now uses stock media_kit/libmpv behavior, matching Debrify's `Standard` network preset.
 - Removed the custom forced `hwdec` VideoController configuration from the default path and returned to the stock controller setup used by Debrify on desktop.
 - Added a 12-second startup watchdog: a VOD stream that remains at `0:00 / 0:00` is reported as a stream-start failure instead of showing an endless buffering spinner.
@@ -87,7 +87,7 @@ This file tracks user-visible changes to Pikora. GitHub Releases are published a
 
 ## v0.3.1 — Sources & large-file playback
 
-- Integrated the existing Torrentio-compatible provider configuration into Pikora's Sources experience.
+- Integrated the existing Torrentio-compatible provider configuration into Orvix's Sources experience.
 - Migrates an existing Torrentio-compatible URL from the old manual provider list automatically.
 - Added persistent source sorting by:
   - seeders,
@@ -101,7 +101,7 @@ This file tracks user-visible changes to Pikora. GitHub Releases are published a
 
 ## v0.3.0 — Flutter MVP
 
-- Rebuilt Pikora as a Flutter desktop application.
+- Rebuilt Orvix as a Flutter desktop application.
 - Cinematic dark UI for Home, Search, Movies/TV discovery, details, and episodes.
 - Cinemeta-powered catalog metadata.
 - PikPak sign-in, cloud task handling, library matching, and playback flow.

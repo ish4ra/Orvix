@@ -5,11 +5,13 @@ import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
 import '../services/catalog_service.dart';
+import '../services/cloud_preferences_service.dart';
 import '../services/media_state_service.dart';
 import '../services/pikpak_service.dart';
 import '../services/pikpak_transfer_service.dart';
 import '../services/playback_service.dart';
 import '../services/source_provider_service.dart';
+import '../services/torbox_service.dart';
 import 'player_screen.dart';
 import 'sources_screen.dart';
 
@@ -21,6 +23,8 @@ class DetailsScreen extends StatefulWidget {
     required this.pikpak,
     required this.transfer,
     required this.sources,
+    required this.torbox,
+    required this.cloudPreferences,
     required this.playback,
     required this.mediaState,
   });
@@ -30,6 +34,8 @@ class DetailsScreen extends StatefulWidget {
   final PikPakService pikpak;
   final PikPakTransferService transfer;
   final SourceProviderService sources;
+  final TorBoxService torbox;
+  final CloudPreferencesService cloudPreferences;
   final PlaybackService playback;
   final MediaStateService mediaState;
 
@@ -105,7 +111,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF07090E),
+      backgroundColor: const Color(0xFF050806),
       body: FutureBuilder<MediaItem>(
         future: _detailsFuture,
         builder: (context, snapshot) {
@@ -165,7 +171,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Color(0x2207090E), Color(0xFF07090E)],
+                colors: [Color(0x2207090E), Color(0xFF050806)],
                 stops: [.16, 1],
               ),
             ),
@@ -325,9 +331,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFF10131A),
+        color: const Color(0xFF0B100D),
         borderRadius: BorderRadius.circular(17),
-        border: Border.all(color: const Color(0xFF202635)),
+        border: Border.all(color: const Color(0xFF1D2A20)),
       ),
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
@@ -337,7 +343,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
             borderRadius: BorderRadius.circular(10),
             child: episode.thumbnail == null
                 ? Container(
-                    color: const Color(0xFF191D27),
+                    color: const Color(0xFF121A13),
                     child: const Icon(Icons.movie_outlined),
                   )
                 : CachedNetworkImage(
@@ -391,9 +397,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
             width: 470,
             padding: const EdgeInsets.all(28),
             decoration: BoxDecoration(
-              color: const Color(0xFF11141C),
+              color: const Color(0xFF0D120E),
               borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: const Color(0xFF292F41)),
+              border: Border.all(color: const Color(0xFF263827)),
               boxShadow: const [
                 BoxShadow(
                   color: Color(0x55000000),
@@ -445,6 +451,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
     });
 
     try {
+      final preferred = await widget.cloudPreferences.getPreferred();
+      if (preferred == CloudProvider.torbox && await widget.torbox.isConnected) {
+        final existingTorBox = await _findInTorBox(item, episode: episode);
+        if (existingTorBox != null) {
+          await _openTorBoxItem(existingTorBox, item, episode);
+          return;
+        }
+      }
       final existing = await _findInPikPak(item, episode: episode);
       if (existing != null) {
         if (mounted) {
@@ -490,7 +504,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
       final chosen = await _chooseSource(results);
       if (chosen == null || !mounted) return;
-      await _sendSourceToPikPak(chosen, item, episode);
+      final cloud = await _chooseCloudProvider();
+      if (cloud == null || !mounted) return;
+      if (cloud == CloudProvider.torbox) {
+        await _sendSourceToTorBox(chosen, item, episode);
+      } else {
+        await _sendSourceToPikPak(chosen, item, episode);
+      }
     } catch (e) {
       _showPlayError(e);
     }
@@ -513,7 +533,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         ),
         content: Text(
           configured.isEmpty
-              ? 'This title is not in your PikPak library. Configure a Stremio-compatible source provider, then Pikora can send a returned source to PikPak and play it when ready.'
+              ? 'This title is not in your PikPak library. Configure a Stremio-compatible source provider, then Orvix can send a returned source to your selected cloud service and play it when ready.'
               : 'Your configured providers did not return a source for this title. You can manage providers or try again.',
         ),
         actions: [
@@ -542,13 +562,90 @@ class _DetailsScreenState extends State<DetailsScreen> {
       await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => Scaffold(
-            backgroundColor: const Color(0xFF07090E),
+            backgroundColor: const Color(0xFF050806),
             appBar: AppBar(title: const Text('Source Providers')),
             body: SourcesScreen(sources: widget.sources),
           ),
         ),
       );
     }
+  }
+
+  Future<CloudProvider?> _chooseCloudProvider() async {
+    final preferred = await widget.cloudPreferences.getPreferred();
+    final pikpak = await widget.pikpak.isSignedIn;
+    final torbox = await widget.torbox.isConnected;
+    if (!pikpak && !torbox) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Connect PikPak or TorBox from Clouds first.')),
+        );
+      }
+      return null;
+    }
+    if (pikpak && !torbox) return CloudProvider.pikpak;
+    if (torbox && !pikpak) return CloudProvider.torbox;
+    if (!mounted) return preferred;
+    final chosen = await showDialog<CloudProvider>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Send source to'),
+        content: const Text('Both cloud services are connected. Choose where Orvix should prepare this source.'),
+        actions: [
+          OutlinedButton.icon(
+            onPressed: () => Navigator.pop(context, CloudProvider.pikpak),
+            icon: const Icon(Icons.cloud_outlined),
+            label: const Text('PikPak'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(context, CloudProvider.torbox),
+            icon: const Icon(Icons.bolt_rounded),
+            label: const Text('TorBox'),
+          ),
+        ],
+      ),
+    );
+    if (chosen != null) await widget.cloudPreferences.setPreferred(chosen);
+    return chosen;
+  }
+
+  Future<void> _sendSourceToTorBox(
+    SourceResult chosen,
+    MediaItem item,
+    EpisodeItem? episode,
+  ) async {
+    if (!mounted) return;
+    setState(() {
+      _resolving = true;
+      _resolveProgress = .02;
+      _status = 'Sending ${chosen.quality ?? 'source'} to TorBox…';
+    });
+    final taskName = episode == null ? item.title : '${item.title} ${episode.label}';
+    final added = await widget.torbox.addResource(chosen.resource, name: taskName);
+    for (var attempt = 0; attempt < 90; attempt++) {
+      if (!mounted) return;
+      if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 2));
+      final cloudItem = await widget.torbox.getItem(added.kind, added.id, fresh: true);
+      if (cloudItem == null) continue;
+      setState(() {
+        _resolveProgress = (cloudItem.progress / 100).clamp(0.0, 1.0).toDouble();
+        _status = cloudItem.isReady
+            ? 'TorBox is ready — opening player…'
+            : 'TorBox • ${cloudItem.progress.toStringAsFixed(0)}%${cloudItem.state.isEmpty ? '' : ' • ${cloudItem.state}'}';
+      });
+      if (cloudItem.isError) throw TorBoxException('TorBox: ${cloudItem.state}');
+      if (!cloudItem.isReady) continue;
+      final file = widget.torbox.choosePlayableFile(
+        cloudItem,
+        fileNameHint: chosen.fileNameHint,
+        fileIndex: chosen.torrentFileIndex,
+      );
+      if (file == null) throw const TorBoxException('TorBox finished, but no playable video file was found.');
+      final url = await widget.torbox.requestDownloadUrl(cloudItem, file);
+      await _openPlayerUrl(url, item, episode);
+      return;
+    }
+    throw const TorBoxException('TorBox is still preparing this source. Open Clouds to check its progress.');
   }
 
   Future<void> _sendSourceToPikPak(
@@ -759,7 +856,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
     return showModalBottomSheet<SourceResult>(
       context: context,
-      backgroundColor: const Color(0xFF11141C),
+      backgroundColor: const Color(0xFF0D120E),
       showDragHandle: true,
       isScrollControlled: true,
       constraints: const BoxConstraints(maxWidth: 960),
@@ -856,7 +953,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             subtitle: Padding(
                               padding: const EdgeInsets.only(top: 4),
                               child: Text(
-                                '${result.provider}${result.isMagnet ? ' • PikPak cloud source' : ' • direct URL'}',
+                                '${result.provider}${result.isMagnet ? ' • cloud source' : ' • direct URL'}',
                               ),
                             ),
                             trailing: index == 0
@@ -875,6 +972,24 @@ class _DetailsScreenState extends State<DetailsScreen> {
         },
       ),
     );
+  }
+
+  Future<TorBoxItem?> _findInTorBox(MediaItem item, {EpisodeItem? episode}) async {
+    final items = await widget.torbox.listTorrents();
+    TorBoxItem? best;
+    var score = -1;
+    for (final entry in items.where((e) => e.isReady)) {
+      final s = _matchScore(entry.name, item, episode: episode);
+      if (s > score) { score = s; best = entry; }
+    }
+    return score >= 85 ? best : null;
+  }
+
+  Future<void> _openTorBoxItem(TorBoxItem cloudItem, MediaItem item, EpisodeItem? episode) async {
+    final file = widget.torbox.choosePlayableFile(cloudItem);
+    if (file == null) throw const TorBoxException('No playable video file found in TorBox.');
+    final url = await widget.torbox.requestDownloadUrl(cloudItem, file);
+    await _openPlayerUrl(url, item, episode);
   }
 
   Future<PikPakFile?> _findInPikPak(

@@ -14,5 +14,5 @@ Future<void> main() async {
     await windowManager.ensureInitialized();
   }
 
-  runApp(const PikoraApp());
+  runApp(const OrvixApp());
 }

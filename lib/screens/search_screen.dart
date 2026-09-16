@@ -203,7 +203,7 @@ class _SearchHint extends StatelessWidget {
       constraints: const BoxConstraints(maxWidth: 620),
       padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
-        color: const Color(0xFF10131A),
+        color: const Color(0xFF0B100D),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: const Color(0xFF232837)),
       ),

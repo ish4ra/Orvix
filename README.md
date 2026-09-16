@@ -1,12 +1,12 @@
-# Pikora
+# Orvix
 
-Pikora is a **PikPak-first cinematic media hub** for browsing movies and TV, connecting your PikPak cloud, resolving user-configured sources, and playing media inside one app.
+Orvix is a **PikPak-first cinematic media hub** for browsing movies and TV, connecting your PikPak cloud, resolving user-configured sources, and playing media inside one app.
 
 ## Active development — v0.3 Flutter branch
 
 The original v0.2 Go prototype proved the catalog/PikPak idea, but its UI depended on Microsoft Edge app mode. That prototype remains on `main` for reference.
 
-Active development is now on **`v0.3-flutter`**. Pikora is being built in Flutter/Dart so Windows, Android and Android TV can share the catalog, PikPak, source-resolution and playback code. Android-specific Kotlin can be added later only where native services are genuinely useful.
+Active development is now on **`v0.3-flutter`**. Orvix is being built in Flutter/Dart so Windows, Android and Android TV can share the catalog, PikPak, source-resolution and playback code. Android-specific Kotlin can be added later only where native services are genuinely useful.
 
 ## Current v0.3 foundation
 
@@ -60,17 +60,17 @@ libmpv player
 TV: next-episode countdown → resolve next episode
 ```
 
-Pikora does not bundle a hard-coded torrent-site/indexer list or a preconfigured infringing source configuration. Source providers are added by the user and should only be used for content and services they are authorized to access.
+Orvix does not bundle a hard-coded torrent-site/indexer list or a preconfigured infringing source configuration. Source providers are added by the user and should only be used for content and services they are authorized to access.
 
 ## Source providers
 
-The Sources screen accepts a Stremio-compatible addon base URL or `manifest.json` URL. Pikora stores the configured provider list locally and can query its standard stream endpoint for a selected movie or episode.
+The Sources screen accepts a Stremio-compatible addon base URL or `manifest.json` URL. Orvix stores the configured provider list locally and can query its standard stream endpoint for a selected movie or episode.
 
 The resolver understands direct HTTP/HTTPS stream URLs and Stremio stream results containing an `infoHash`, which can be represented as a magnet resource for the connected PikPak account.
 
 ## Built-in player
 
-Pikora uses `media_kit` / libmpv. The current desktop player includes broad container/codec support through libmpv, seeking, playback-speed control, volume/mute, fullscreen, embedded audio/subtitle switching, external subtitle files, keyboard shortcuts, resume progress and next-episode handling.
+Orvix uses `media_kit` / libmpv. The current desktop player includes broad container/codec support through libmpv, seeking, playback-speed control, volume/mute, fullscreen, embedded audio/subtitle switching, external subtitle files, keyboard shortcuts, resume progress and next-episode handling.
 
 Current shortcuts:
 
@@ -85,7 +85,7 @@ Current shortcuts:
 ```bash
 git checkout v0.3-flutter
 flutter pub get
-flutter create --platforms=windows --project-name pikora .
+flutter create --platforms=windows --project-name orvix .
 flutter run -d windows
 ```
 
@@ -118,10 +118,10 @@ After the Windows flow is stable:
 
 ## Inspiration and licensing
 
-Apps such as Debrify demonstrate this product category across desktop, mobile and TV. Pikora is its own PikPak-focused implementation rather than a copy of Debrify source. Debrify is AGPL-3.0-only, so its source is treated as an architecture/product reference unless Pikora explicitly adopts AGPL-compatible reuse later.
+Apps such as Debrify demonstrate this product category across desktop, mobile and TV. Orvix is its own PikPak-focused implementation rather than a copy of Debrify source. Debrify is AGPL-3.0-only, so its source is treated as an architecture/product reference unless Orvix explicitly adopts AGPL-compatible reuse later.
 
 ## Notes
 
 - PikPak integration relies on community-observed/undocumented web endpoints and may require maintenance if PikPak changes authentication, captcha or drive APIs.
-- Pikora does not persist the PikPak password by default.
+- Orvix does not persist the PikPak password by default.
 - Catalog metadata is independent from the user's PikPak cloud library.

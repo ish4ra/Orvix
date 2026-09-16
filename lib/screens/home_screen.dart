@@ -85,7 +85,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final saved = await showModalBottomSheet<bool>(
       context: context,
-      backgroundColor: const Color(0xFF11141C),
+      backgroundColor: const Color(0xFF0D120E),
       showDragHandle: true,
       isScrollControlled: true,
       constraints: const BoxConstraints(maxWidth: 720),

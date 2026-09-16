@@ -268,7 +268,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF11141C),
+      backgroundColor: const Color(0xFF0D120E),
       showDragHandle: true,
       isScrollControlled: true,
       constraints: const BoxConstraints(maxWidth: 760),

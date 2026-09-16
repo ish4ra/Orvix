@@ -19,6 +19,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
   String? _torrentioUrl;
   bool _busy = true;
   bool _show3D = false;
+  bool _showLowQuality = false;
   String? _message;
 
   @override
@@ -40,12 +41,14 @@ class _SourcesScreenState extends State<SourcesScreen> {
     final torrentio = await widget.sources.getIntegratedTorrentioUrl();
     final show3D = await widget.sources.getShow3D();
     final preferredGroups = await widget.sources.getPreferredGroups();
+    final showLowQuality = await widget.sources.getShowLowQuality();
     if (!mounted) return;
     setState(() {
       _addons = values;
       _priority = priority;
       _torrentioUrl = torrentio;
       _show3D = show3D;
+      _showLowQuality = showLowQuality;
       _preferredGroupsController.text = preferredGroups.join(', ');
       _busy = false;
     });
@@ -59,6 +62,11 @@ class _SourcesScreenState extends State<SourcesScreen> {
   Future<void> _setShow3D(bool value) async {
     setState(() => _show3D = value);
     await widget.sources.setShow3D(value);
+  }
+
+  Future<void> _setShowLowQuality(bool value) async {
+    setState(() => _showLowQuality = value);
+    await widget.sources.setShowLowQuality(value);
   }
 
   Future<void> _savePreferredGroups() async {
@@ -123,7 +131,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
                   ),
                   const SizedBox(height: 7),
                   Text(
-                    'Pikora resolves Stremio-compatible sources natively, ranks them here, and sends your selection to PikPak.',
+                    'Orvix resolves your configured Stremio-compatible providers in parallel, ranks results, then sends your choice to the cloud service you select.',
                     style: TextStyle(
                       color: color.onSurfaceVariant,
                       height: 1.45,
@@ -184,7 +192,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
     return Container(
       padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
-        color: const Color(0xFF11141C),
+        color: const Color(0xFF0D120E),
         borderRadius: BorderRadius.circular(22),
         border: Border.all(
           color: active ? color.primary.withValues(alpha: .5) : const Color(0xFF272D3D),
@@ -276,9 +284,9 @@ class _SourcesScreenState extends State<SourcesScreen> {
     return Container(
       padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
-        color: const Color(0xFF0E1118),
+        color: const Color(0xFF0A0E0B),
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color(0xFF242A39)),
+        border: Border.all(color: const Color(0xFF223125)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -304,7 +312,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
           ),
           const SizedBox(height: 7),
           Text(
-            'Drag to choose exactly how sources are ranked. Default is release quality → resolution → seeders → file size.',
+            'Drag to choose exactly how sources are ranked. Default is resolution → source type → file size → seeders.',
             style: TextStyle(color: color.onSurfaceVariant, height: 1.4),
           ),
           const SizedBox(height: 14),
@@ -327,9 +335,9 @@ class _SourcesScreenState extends State<SourcesScreen> {
                 key: ValueKey(criterion.name),
                 margin: const EdgeInsets.only(bottom: 7),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF151923),
+                  color: const Color(0xFF111912),
                   borderRadius: BorderRadius.circular(13),
-                  border: Border.all(color: const Color(0xFF292F40)),
+                  border: Border.all(color: const Color(0xFF253527)),
                 ),
                 child: ListTile(
                   leading: CircleAvatar(
@@ -353,9 +361,9 @@ class _SourcesScreenState extends State<SourcesScreen> {
     return Container(
       padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
-        color: const Color(0xFF0E1118),
+        color: const Color(0xFF0A0E0B),
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color(0xFF242A39)),
+        border: Border.all(color: const Color(0xFF223125)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -379,6 +387,14 @@ class _SourcesScreenState extends State<SourcesScreen> {
             subtitle: const Text(
               'Off by default. Hides SBS/HSBS/3D/top-bottom encodes that otherwise appear as a double image on a normal display.',
             ),
+          ),
+          const Divider(height: 18),
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            value: _showLowQuality,
+            onChanged: _busy ? null : _setShowLowQuality,
+            title: const Text('Show legacy / low-quality sources'),
+            subtitle: const Text('Off by default when HD sources exist. Hides CAM, DVD and sub-720p clutter without removing them when they are the only results.'),
           ),
           const Divider(height: 26),
           Text(
@@ -424,9 +440,9 @@ class _SourcesScreenState extends State<SourcesScreen> {
     final custom = _addons.where((url) => url != _torrentioUrl).toList();
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF11141C),
+        color: const Color(0xFF0D120E),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFF242938)),
+        border: Border.all(color: const Color(0xFF223125)),
       ),
       child: ExpansionTile(
         initiallyExpanded: _torrentioUrl == null,

@@ -8,24 +8,28 @@ import 'screens/media_library_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/sources_screen.dart';
 import 'services/catalog_service.dart';
+import 'services/cloud_preferences_service.dart';
 import 'services/media_state_service.dart';
 import 'services/pikpak_service.dart';
 import 'services/pikpak_transfer_service.dart';
 import 'services/playback_service.dart';
 import 'services/source_provider_service.dart';
+import 'services/torbox_service.dart';
 
-class PikoraApp extends StatefulWidget {
-  const PikoraApp({super.key});
+class OrvixApp extends StatefulWidget {
+  const OrvixApp({super.key});
 
   @override
-  State<PikoraApp> createState() => _PikoraAppState();
+  State<OrvixApp> createState() => _OrvixAppState();
 }
 
-class _PikoraAppState extends State<PikoraApp> {
+class _OrvixAppState extends State<OrvixApp> {
   late final CatalogService _catalog;
   late final PikPakService _pikpak;
   late final PikPakTransferService _transfer;
   late final SourceProviderService _sources;
+  late final TorBoxService _torbox;
+  late final CloudPreferencesService _cloudPreferences;
   late final PlaybackService _playback;
   late final MediaStateService _mediaState;
 
@@ -36,6 +40,8 @@ class _PikoraAppState extends State<PikoraApp> {
     _pikpak = PikPakService();
     _transfer = PikPakTransferService();
     _sources = SourceProviderService();
+    _torbox = TorBoxService();
+    _cloudPreferences = CloudPreferencesService();
     _playback = PlaybackService();
     _mediaState = MediaStateService();
   }
@@ -46,6 +52,7 @@ class _PikoraAppState extends State<PikoraApp> {
     _pikpak.dispose();
     _transfer.dispose();
     _sources.dispose();
+    _torbox.dispose();
     _playback.dispose();
     super.dispose();
   }
@@ -53,24 +60,24 @@ class _PikoraAppState extends State<PikoraApp> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xFF795CFF),
+      seedColor: const Color(0xFFB9FF45),
       brightness: Brightness.dark,
-      surface: const Color(0xFF0D1017),
+      surface: const Color(0xFF0B0F0C),
     );
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Pikora',
+      title: 'Orvix',
       themeMode: ThemeMode.dark,
       darkTheme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
         colorScheme: colorScheme,
-        scaffoldBackgroundColor: const Color(0xFF07090E),
-        canvasColor: const Color(0xFF090B11),
-        dividerColor: const Color(0xFF202431),
+        scaffoldBackgroundColor: const Color(0xFF050806),
+        canvasColor: const Color(0xFF070A08),
+        dividerColor: const Color(0xFF1B2A1C),
         cardTheme: CardThemeData(
-          color: const Color(0xFF11141C),
+          color: const Color(0xFF0D120E),
           elevation: 0,
           margin: EdgeInsets.zero,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
@@ -79,12 +86,25 @@ class _PikoraAppState extends State<PikoraApp> {
           style: FilledButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+            textStyle: const TextStyle(fontWeight: FontWeight.w900, letterSpacing: .15),
+            backgroundColor: const Color(0xFFB9FF45),
+            foregroundColor: const Color(0xFF081006),
+            shadowColor: const Color(0x553CFF00),
+            elevation: 2,
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFFCBFF75),
+            side: const BorderSide(color: Color(0xFF426B2E)),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             textStyle: const TextStyle(fontWeight: FontWeight.w800),
           ),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: const Color(0xFF12151E),
+          fillColor: const Color(0xFF0F1510),
           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
@@ -92,7 +112,7 @@ class _PikoraAppState extends State<PikoraApp> {
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(color: Color(0xFF252A38)),
+            borderSide: const BorderSide(color: Color(0xFF263627)),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
@@ -100,16 +120,18 @@ class _PikoraAppState extends State<PikoraApp> {
           ),
         ),
         navigationRailTheme: const NavigationRailThemeData(
-          backgroundColor: Color(0xFF090B11),
-          indicatorColor: Color(0xFF282340),
-          selectedIconTheme: IconThemeData(color: Color(0xFF9C87FF)),
+          backgroundColor: Color(0xFF070A08),
+          indicatorColor: Color(0xFF172416),
+          selectedIconTheme: IconThemeData(color: Color(0xFFCBFF75)),
         ),
       ),
-      home: _PikoraShell(
+      home: _OrvixShell(
         catalog: _catalog,
         pikpak: _pikpak,
         transfer: _transfer,
         sources: _sources,
+        torbox: _torbox,
+        cloudPreferences: _cloudPreferences,
         playback: _playback,
         mediaState: _mediaState,
       ),
@@ -117,12 +139,14 @@ class _PikoraAppState extends State<PikoraApp> {
   }
 }
 
-class _PikoraShell extends StatefulWidget {
-  const _PikoraShell({
+class _OrvixShell extends StatefulWidget {
+  const _OrvixShell({
     required this.catalog,
     required this.pikpak,
     required this.transfer,
     required this.sources,
+    required this.torbox,
+    required this.cloudPreferences,
     required this.playback,
     required this.mediaState,
   });
@@ -131,14 +155,16 @@ class _PikoraShell extends StatefulWidget {
   final PikPakService pikpak;
   final PikPakTransferService transfer;
   final SourceProviderService sources;
+  final TorBoxService torbox;
+  final CloudPreferencesService cloudPreferences;
   final PlaybackService playback;
   final MediaStateService mediaState;
 
   @override
-  State<_PikoraShell> createState() => _PikoraShellState();
+  State<_OrvixShell> createState() => _OrvixShellState();
 }
 
-class _PikoraShellState extends State<_PikoraShell> {
+class _OrvixShellState extends State<_OrvixShell> {
   int _index = 0;
   int _authRevision = 0;
   int _libraryRevision = 0;
@@ -152,6 +178,8 @@ class _PikoraShellState extends State<_PikoraShell> {
           pikpak: widget.pikpak,
           transfer: widget.transfer,
           sources: widget.sources,
+          torbox: widget.torbox,
+          cloudPreferences: widget.cloudPreferences,
           playback: widget.playback,
           mediaState: widget.mediaState,
         ),
@@ -179,6 +207,8 @@ class _PikoraShellState extends State<_PikoraShell> {
         key: ValueKey(_authRevision),
         pikpak: widget.pikpak,
         transfer: widget.transfer,
+        torbox: widget.torbox,
+        cloudPreferences: widget.cloudPreferences,
         playback: widget.playback,
         onAuthChanged: () => setState(() => _authRevision++),
       ),
@@ -192,7 +222,7 @@ class _PikoraShellState extends State<_PikoraShell> {
         children: [
           Container(
             decoration: const BoxDecoration(
-              border: Border(right: BorderSide(color: Color(0xFF1B1F2A))),
+              border: Border(right: BorderSide(color: Color(0xFF18251A))),
             ),
             child: NavigationRail(
               selectedIndex: _index,
@@ -206,26 +236,19 @@ class _PikoraShellState extends State<_PikoraShell> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        gradient: const LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [Color(0xFF956CFF), Color(0xFF466CFF)],
-                        ),
-                        boxShadow: const [
-                          BoxShadow(color: Color(0x443F51FF), blurRadius: 22, spreadRadius: 2),
-                        ],
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.asset(
+                        'assets/branding/orvix_icon.png',
+                        width: 40,
+                        height: 40,
+                        fit: BoxFit.cover,
                       ),
-                      child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 27),
                     ),
                     if (extended) ...[
                       const SizedBox(width: 11),
                       const Text(
-                        'PIKORA',
+                        'ORVIX',
                         style: TextStyle(
                           fontWeight: FontWeight.w900,
                           letterSpacing: 1.6,
@@ -255,7 +278,7 @@ class _PikoraShellState extends State<_PikoraShell> {
                 NavigationRailDestination(
                   icon: Icon(Icons.cloud_outlined),
                   selectedIcon: Icon(Icons.cloud_rounded),
-                  label: Text('My PikPak'),
+                  label: Text('Clouds'),
                 ),
                 NavigationRailDestination(
                   icon: Icon(Icons.hub_outlined),
@@ -299,17 +322,17 @@ class _AboutScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Pikora v0.4',
+                'Orvix v0.5',
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w900),
               ),
               const SizedBox(height: 12),
               const Text(
-                'A PikPak-first cinematic media hub built with Flutter. The Windows build is native Flutter — no Microsoft Edge browser dependency.',
+                'A multi-cloud cinematic media hub built with Flutter. Orvix connects your cloud services, source providers, library and player in one native desktop app.',
                 style: TextStyle(height: 1.55),
               ),
               const SizedBox(height: 24),
               const _FeatureLine(Icons.movie_filter_outlined, 'Cinemeta movie & TV discovery with instant type-ahead search'),
-              const _FeatureLine(Icons.cloud_outlined, 'PikPak login, cloud library and cloud-task bridge'),
+              const _FeatureLine(Icons.cloud_outlined, 'PikPak + TorBox cloud connections, cloud libraries and transfer bridge'),
               const _FeatureLine(Icons.hub_outlined, 'User-configured Stremio-compatible source providers'),
               const _FeatureLine(Icons.play_circle_outline_rounded, 'media_kit / libmpv playback with custom controls and resume'),
               const _FeatureLine(Icons.video_library_outlined, 'Personal Library, persistent watchlist, and multi-title Continue Watching'),

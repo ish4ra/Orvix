@@ -13,7 +13,7 @@ extension SourceSortCriterionLabel on SourceSortCriterion {
   String get label {
     switch (this) {
       case SourceSortCriterion.releaseQuality:
-        return 'Quality';
+        return 'Source type';
       case SourceSortCriterion.resolution:
         return 'Resolution';
       case SourceSortCriterion.seeders:
@@ -32,7 +32,7 @@ extension SourceSortModeLabel on SourceSortMode {
       case SourceSortMode.fileSize:
         return 'File size';
       case SourceSortMode.quality:
-        return 'Quality';
+        return 'Source type';
     }
   }
 }
@@ -74,21 +74,21 @@ class SourceResult {
   final String? fileNameHint;
 
   int get qualityRank {
-    switch (quality?.toUpperCase()) {
-      case '2160P':
-      case '4K':
-        return 600;
-      case '1440P':
-        return 500;
-      case '1080P':
-        return 400;
-      case '720P':
-        return 300;
-      case '480P':
-        return 200;
-      default:
-        return 100;
-    }
+    var rank = switch (quality?.toUpperCase()) {
+      '2160P' || '4K' => 600,
+      '1440P' => 500,
+      '1080P' => 400,
+      '720P' => 300,
+      '480P' => 200,
+      _ => 100,
+    };
+    // A tiny file labelled 4K/1080p is usually a low-bitrate re-encode or bad
+    // metadata. Keep it visible, but don't let the label alone beat sane files.
+    final size = sizeBytes ?? 0;
+    const gb = 1024 * 1024 * 1024;
+    if ((quality?.toUpperCase() == '4K' || quality?.toUpperCase() == '2160P') && size > 0 && size < 1 * gb) rank -= 230;
+    if (quality?.toUpperCase() == '1080P' && size > 0 && size < 350 * 1024 * 1024) rank -= 120;
+    return rank;
   }
 
   int get releaseQualityRank {
@@ -163,9 +163,10 @@ class SourceProviderService {
   // v2 intentionally resets the old default. v0.3.7 makes the default order
   // Quality -> Seeders -> Size while still allowing the user to switch it.
   static const _sortKey = 'pikora_source_sort_mode_v2';
-  static const _priorityKey = 'pikora_source_priority_v1';
-  static const _show3DKey = 'pikora_show_3d_sources_v1';
-  static const _preferredGroupsKey = 'pikora_preferred_release_groups_v1';
+  static const _priorityKey = 'orvix_source_priority_v3';
+  static const _show3DKey = 'orvix_show_3d_sources_v1';
+  static const _showLowQualityKey = 'orvix_show_low_quality_sources_v1';
+  static const _preferredGroupsKey = 'orvix_preferred_release_groups_v1';
 
   // A distributor may inject an authorized/self-hosted Stremio-compatible
   // Torrentio endpoint at build time without putting a public index URL in
@@ -222,10 +223,10 @@ class SourceProviderService {
   }
 
   static const defaultPriority = <SourceSortCriterion>[
-    SourceSortCriterion.releaseQuality,
     SourceSortCriterion.resolution,
-    SourceSortCriterion.seeders,
+    SourceSortCriterion.releaseQuality,
     SourceSortCriterion.fileSize,
+    SourceSortCriterion.seeders,
   ];
 
   Future<List<SourceSortCriterion>> getPriorityOrder() async {
@@ -252,6 +253,16 @@ class SourceProviderService {
   Future<void> setShow3D(bool value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_show3DKey, value);
+  }
+
+  Future<bool> getShowLowQuality() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_showLowQualityKey) ?? false;
+  }
+
+  Future<void> setShowLowQuality(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_showLowQualityKey, value);
   }
 
   Future<List<String>> getPreferredGroups() async {
@@ -304,7 +315,7 @@ class SourceProviderService {
   int _criterionValue(SourceResult result, SourceSortCriterion criterion) {
     switch (criterion) {
       case SourceSortCriterion.releaseQuality:
-        return result.releaseQualityRank;
+        return result.releaseQualityRank + (result.preferredGroup ? 50 : 0);
       case SourceSortCriterion.resolution:
         return result.qualityRank;
       case SourceSortCriterion.seeders:
@@ -370,6 +381,7 @@ class SourceProviderService {
     final sortMode = await getSortMode();
     final priority = await getPriorityOrder();
     final show3D = await getShow3D();
+    final showLowQuality = await getShowLowQuality();
     final preferredGroups = await getPreferredGroups();
 
     final type = item.kind == MediaKind.movie ? 'movie' : 'series';
@@ -393,7 +405,17 @@ class SourceProviderService {
         if (seen.add(dedupeKey)) out.add(result);
       }
     }
-    return sortResults(out, priority);
+    var visible = out;
+    if (!showLowQuality) {
+      final hasHd = out.any((r) => r.qualityRank >= 300 && r.releaseQuality?.toUpperCase() != 'CAM');
+      if (hasHd) {
+        visible = out.where((r) {
+          final release = r.releaseQuality?.toUpperCase();
+          return release != 'CAM' && release != 'DVD' && r.qualityRank >= 300;
+        }).toList();
+      }
+    }
+    return sortResults(visible, priority);
   }
 
   SourceResult? bestSource(List<SourceResult> results) {
@@ -467,20 +489,20 @@ class SourceProviderService {
             }
           }
 
-          // Pikora-only metadata is carried on the in-memory magnet URL so the
+          // Orvix metadata is carried on the in-memory magnet URL so the
           // PikPak transfer layer can keep track of the exact torrent child.
           // The transfer layer strips these parameters before sending the
           // magnet to PikPak, so PikPak only sees a normal magnet.
           if (torrentFileIndex != null) {
-            queryParts.add('x-pikora-file-idx=$torrentFileIndex');
+            queryParts.add('x-orvix-file-idx=$torrentFileIndex');
           }
           if (fileNameHint != null) {
             queryParts.add(
-              'x-pikora-file-name=${Uri.encodeComponent(fileNameHint)}',
+              'x-orvix-file-name=${Uri.encodeComponent(fileNameHint)}',
             );
           }
           if (sizeBytes != null && sizeBytes > 0) {
-            queryParts.add('x-pikora-video-size=$sizeBytes');
+            queryParts.add('x-orvix-video-size=$sizeBytes');
           }
 
           final suffix = queryParts.isEmpty ? '' : '&${queryParts.join('&')}';
@@ -624,7 +646,7 @@ class SourceProviderService {
       final parts = segments[i].split('|');
       final filtered = parts.where((part) {
         final key = part.split('=').first.trim().toLowerCase();
-        return key != 'limit';
+        return !const {'limit', 'sizefilter', 'qualityfilter', 'sort', 'priorityforeignlanguage'}.contains(key);
       }).toList();
       if (filtered.length != parts.length) {
         changed = true;

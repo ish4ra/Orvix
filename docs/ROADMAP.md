@@ -1,4 +1,4 @@
-# Pikora Roadmap
+# Orvix Roadmap
 
 ## v0.3 — Flutter desktop foundation
 
@@ -35,7 +35,7 @@
 - [ ] One-click play when the cloud item becomes ready
 - [ ] Stremio-compatible catalog metadata support
 
-Pikora will not bundle a hard-coded piracy index or preconfigured infringing source list. Source integrations must be user-configured and used only with content the user is authorized to access.
+Orvix will not bundle a hard-coded piracy index or preconfigured infringing source list. Source integrations must be user-configured and used only with content the user is authorized to access.
 
 ## v0.6 — Windows polish
 

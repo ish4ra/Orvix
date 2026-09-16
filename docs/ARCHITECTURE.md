@@ -1,12 +1,12 @@
-# Pikora Architecture
+# Orvix Architecture
 
-Pikora is a PikPak-first media hub. The long-term goal is a single product experience across Windows and Android, with Windows shipping first.
+Orvix is a PikPak-first media hub. The long-term goal is a single product experience across Windows and Android, with Windows shipping first.
 
 ## Direction from v0.3
 
-The v0.2 Go prototype proved the PikPak and catalog flow, but its UI depended on launching Microsoft Edge in app mode. From v0.3 onward, Pikora is being rebuilt in **Flutter/Dart** so the same application code can target Windows first and Android/Android TV later without rewriting the product from scratch.
+The v0.2 Go prototype proved the PikPak and catalog flow, but its UI depended on launching Microsoft Edge in app mode. From v0.3 onward, Orvix is being rebuilt in **Flutter/Dart** so the same application code can target Windows first and Android/Android TV later without rewriting the product from scratch.
 
-The design is inspired by the product shape of apps such as Debrify, but Pikora is a clean implementation focused primarily on PikPak rather than a multi-debrid provider matrix.
+The design is inspired by the product shape of apps such as Debrify, but Orvix is a clean implementation focused primarily on PikPak rather than a multi-debrid provider matrix.
 
 ## Product layers
 
@@ -42,19 +42,19 @@ Platform
 
 ## PikPak flow
 
-1. User signs in from the Pikora UI.
-2. Pikora obtains and refreshes PikPak authentication/captcha tokens.
-3. Pikora can browse the user's PikPak cloud files and folders.
+1. User signs in from the Orvix UI.
+2. Orvix obtains and refreshes PikPak authentication/captcha tokens.
+3. Orvix can browse the user's PikPak cloud files and folders.
 4. Selecting a movie or episode first checks the user's PikPak cloud for a matching playable file.
 5. A source resolver may then query only source providers configured by the user and authorized for their use.
-6. If a valid source is available, the provider can hand it to PikPak and Pikora tracks the cloud task until it is playable.
-7. Playback opens in Pikora's built-in player.
+6. If a valid source is available, the provider can hand it to PikPak and Orvix tracks the cloud task until it is playable.
+7. Playback opens in Orvix's built-in player.
 
-Pikora will not ship a hard-coded list of piracy torrent sites or bundled infringing source configurations. The source layer is intentionally pluggable so legitimate/self-hosted/user-authorized sources can be added without changing the core application.
+Orvix will not ship a hard-coded list of piracy torrent sites or bundled infringing source configurations. The source layer is intentionally pluggable so legitimate/self-hosted/user-authorized sources can be added without changing the core application.
 
 ## Authentication
 
-PikPak uses device identity plus captcha/shield tokens around sign-in and many drive operations. Pikora stores long-lived tokens and device state in secure storage and refreshes tokens when possible instead of repeatedly asking for the user's password.
+PikPak uses device identity plus captcha/shield tokens around sign-in and many drive operations. Orvix stores long-lived tokens and device state in secure storage and refreshes tokens when possible instead of repeatedly asking for the user's password.
 
 The password should not be persisted by default.
 

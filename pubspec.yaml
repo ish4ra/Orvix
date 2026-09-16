@@ -1,7 +1,7 @@
-name: pikora
-description: PikPak-first cinematic media hub for Windows and Android.
+name: orvix
+description: Multi-cloud cinematic media hub for Windows and Android.
 publish_to: 'none'
-version: 0.4.2+18
+version: 0.5.0+19
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -21,10 +21,13 @@ dependencies:
   file_picker: ^11.0.3
   window_manager: ^0.5.2
 
+dev_dependencies:
+  flutter_launcher_icons: ^0.14.4
+
 # Debrify carries two media_kit fixes that matter for desktop stability:
 # safer NativeCallable ownership/disposal and waiting for native render-context
 # teardown before libmpv destruction on Windows/Apple. Pin the exact reviewed
-# Debrify commit so a future upstream change cannot silently alter Pikora.
+# Debrify commit so a future upstream change cannot silently alter Orvix.
 dependency_overrides:
   media_kit:
     git:
@@ -39,3 +42,11 @@ dependency_overrides:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/branding/orvix_icon.png
+
+flutter_launcher_icons:
+  windows:
+    generate: true
+    image_path: assets/branding/orvix_icon.png
+    icon_size: 128
