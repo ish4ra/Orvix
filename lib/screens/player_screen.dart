@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart' as mk;
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../models/media_item.dart';
 import '../services/media_state_service.dart';
@@ -18,6 +21,8 @@ class PlayerScreen extends StatefulWidget {
     this.mediaState,
     this.item,
     this.episode,
+    this.nextEpisodeLabel,
+    this.onNext,
   });
 
   final PlaybackService playback;
@@ -26,6 +31,8 @@ class PlayerScreen extends StatefulWidget {
   final MediaStateService? mediaState;
   final MediaItem? item;
   final EpisodeItem? episode;
+  final String? nextEpisodeLabel;
+  final Future<void> Function()? onNext;
 
   @override
   State<PlayerScreen> createState() => _PlayerScreenState();
@@ -36,9 +43,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _controlsVisible = true;
   bool _seeking = false;
   double? _seekPreviewMs;
+  double _lastVolume = 100;
+  int _nextCountdown = 0;
+  bool _advancing = false;
   Timer? _hideTimer;
   Timer? _saveTimer;
+  Timer? _nextTimer;
+  StreamSubscription<bool>? _completedSubscription;
   final FocusNode _focusNode = FocusNode();
+
+  bool get _desktop => Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
   @override
   void initState() {
@@ -46,12 +60,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _open();
     _scheduleHide();
     _saveTimer = Timer.periodic(const Duration(seconds: 10), (_) => _persistProgress());
+    _completedSubscription = widget.playback.player.stream.completed.listen((completed) {
+      if (completed) _startNextCountdown();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) => _focusNode.requestFocus());
   }
 
   Future<void> _open() async {
     try {
       await widget.playback.open(widget.url, title: widget.title);
+      final currentVolume = widget.playback.player.state.volume;
+      if (currentVolume > 0) _lastVolume = currentVolume;
       final item = widget.item;
       final state = widget.mediaState;
       if (item != null && state != null) {
@@ -81,7 +100,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _scheduleHide() {
     _hideTimer?.cancel();
     _hideTimer = Timer(const Duration(seconds: 4), () {
-      if (mounted && !_seeking) setState(() => _controlsVisible = false);
+      if (mounted && !_seeking && _nextCountdown == 0) {
+        setState(() => _controlsVisible = false);
+      }
     });
   }
 
@@ -100,6 +121,33 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _showControls();
   }
 
+  Future<void> _toggleMute() async {
+    final player = widget.playback.player;
+    final volume = player.state.volume;
+    if (volume > 0) {
+      _lastVolume = volume;
+      await player.setVolume(0);
+    } else {
+      await player.setVolume(_lastVolume <= 0 ? 100 : _lastVolume);
+    }
+    _showControls();
+  }
+
+  Future<void> _toggleFullscreen() async {
+    if (!_desktop) return;
+    final fullscreen = await windowManager.isFullScreen();
+    await windowManager.setFullScreen(!fullscreen);
+    _showControls();
+  }
+
+  Future<void> _handleEscape() async {
+    if (_desktop && await windowManager.isFullScreen()) {
+      await windowManager.setFullScreen(false);
+      return;
+    }
+    if (mounted) Navigator.of(context).maybePop();
+  }
+
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     switch (event.logicalKey) {
@@ -114,11 +162,85 @@ class _PlayerScreenState extends State<PlayerScreen> {
       case LogicalKeyboardKey.arrowRight:
         _seekRelative(const Duration(seconds: 10));
         return KeyEventResult.handled;
+      case LogicalKeyboardKey.keyM:
+        _toggleMute();
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.keyF:
+      case LogicalKeyboardKey.f11:
+        _toggleFullscreen();
+        return KeyEventResult.handled;
       case LogicalKeyboardKey.escape:
-        Navigator.of(context).maybePop();
+        _handleEscape();
         return KeyEventResult.handled;
       default:
         return KeyEventResult.ignored;
+    }
+  }
+
+  void _startNextCountdown() {
+    if (widget.onNext == null || _advancing || _nextCountdown > 0) return;
+    _hideTimer?.cancel();
+    if (mounted) {
+      setState(() {
+        _controlsVisible = true;
+        _nextCountdown = 8;
+      });
+    }
+    _nextTimer?.cancel();
+    _nextTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_nextCountdown <= 1) {
+        timer.cancel();
+        _playNext();
+      } else {
+        setState(() => _nextCountdown--);
+      }
+    });
+  }
+
+  void _cancelNext() {
+    _nextTimer?.cancel();
+    if (mounted) {
+      setState(() => _nextCountdown = 0);
+      _scheduleHide();
+    }
+  }
+
+  Future<void> _playNext() async {
+    final callback = widget.onNext;
+    if (callback == null || _advancing) return;
+    _advancing = true;
+    _nextTimer?.cancel();
+    await _persistProgress();
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    await callback();
+  }
+
+  Future<void> _pickExternalSubtitle() async {
+    _hideTimer?.cancel();
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['srt', 'ass', 'ssa', 'vtt'],
+    );
+    final path = result?.files.single.path;
+    if (path == null || path.isEmpty) {
+      if (mounted) _scheduleHide();
+      return;
+    }
+    final name = path.split(RegExp(r'[/\\]')).last;
+    await widget.playback.player.setSubtitleTrack(
+      mk.SubtitleTrack.uri(path, title: name),
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Loaded subtitle: $name')),
+      );
+      _scheduleHide();
     }
   }
 
@@ -151,15 +273,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 children: [
                   Text(
                     'Audio & Subtitles',
-                    style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                    style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w900,
+                        ),
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Tracks exposed by the current file through libmpv.',
-                    style: TextStyle(color: Theme.of(sheetContext).colorScheme.onSurfaceVariant),
+                    'Switch embedded tracks or load a local subtitle file.',
+                    style: TextStyle(
+                      color: Theme.of(sheetContext).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                   const SizedBox(height: 22),
-                  _TrackHeading(icon: Icons.audiotrack_rounded, text: 'Audio'),
+                  const _TrackHeading(icon: Icons.audiotrack_rounded, text: 'Audio'),
                   const SizedBox(height: 8),
                   if (audioTracks.isEmpty)
                     const _EmptyTrackMessage('No selectable audio tracks reported.')
@@ -167,10 +293,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ...audioTracks.map(
                       (track) => _TrackTile(
                         title: _trackLabel(track.title, track.language, track.id),
-                        detail: [track.codec, if (track.channelscount != null) '${track.channelscount} ch']
-                            .whereType<String>()
-                            .where((value) => value.isNotEmpty)
-                            .join(' • '),
+                        detail: [
+                          track.codec,
+                          if (track.channelscount != null) '${track.channelscount} ch',
+                        ].whereType<String>().where((value) => value.isNotEmpty).join(' • '),
                         selected: player.state.track.audio.id == track.id,
                         onTap: () async {
                           await player.setAudioTrack(track);
@@ -179,7 +305,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       ),
                     ),
                   const SizedBox(height: 22),
-                  _TrackHeading(icon: Icons.subtitles_rounded, text: 'Subtitles'),
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: _TrackHeading(
+                          icon: Icons.subtitles_rounded,
+                          text: 'Subtitles',
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          Navigator.pop(sheetContext);
+                          await _pickExternalSubtitle();
+                        },
+                        icon: const Icon(Icons.file_open_outlined),
+                        label: const Text('Load file'),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 8),
                   _TrackTile(
                     title: 'Off',
@@ -229,6 +372,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void dispose() {
     _hideTimer?.cancel();
     _saveTimer?.cancel();
+    _nextTimer?.cancel();
+    _completedSubscription?.cancel();
     _persistProgress();
     _focusNode.dispose();
     widget.playback.stop();
@@ -279,9 +424,57 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     child: _controls(context),
                   ),
                 ),
+                if (_nextCountdown > 0) _nextEpisodeOverlay(),
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _nextEpisodeOverlay() {
+    return Positioned(
+      right: 28,
+      bottom: 116,
+      child: Container(
+        width: 330,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: const Color(0xEE11141C),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFF343A4D)),
+          boxShadow: const [BoxShadow(color: Color(0x77000000), blurRadius: 28)],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Up next', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 5),
+            Text(
+              widget.nextEpisodeLabel ?? 'Next episode',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 6),
+            Text('Playing in $_nextCountdown seconds'),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _playNext,
+                    icon: const Icon(Icons.skip_next_rounded),
+                    label: const Text('Play now'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                TextButton(onPressed: _cancelNext, child: const Text('Cancel')),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -331,7 +524,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 children: [
                   IconButton.filledTonal(
                     tooltip: 'Back (Esc)',
-                    onPressed: () => Navigator.of(context).maybePop(),
+                    onPressed: _handleEscape,
                     icon: const Icon(Icons.arrow_back_rounded),
                   ),
                   const SizedBox(width: 12),
@@ -346,123 +539,168 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   const _KeyboardHint('←/→ 10s'),
                   const SizedBox(width: 8),
                   const _KeyboardHint('Space Play/Pause'),
+                  const SizedBox(width: 8),
+                  const _KeyboardHint('F Fullscreen'),
                 ],
               ),
             ),
             const Spacer(),
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
-              child: Column(
-                children: [
-                  StreamBuilder<Duration>(
-                    stream: player.stream.duration,
-                    initialData: player.state.duration,
-                    builder: (context, durationSnapshot) {
-                      final duration = durationSnapshot.data ?? Duration.zero;
-                      return StreamBuilder<Duration>(
-                        stream: player.stream.position,
-                        initialData: player.state.position,
-                        builder: (context, positionSnapshot) {
-                          final position = positionSnapshot.data ?? Duration.zero;
-                          final maxMs = duration.inMilliseconds <= 0 ? 1.0 : duration.inMilliseconds.toDouble();
-                          final actualMs = (_seekPreviewMs ?? position.inMilliseconds.toDouble())
-                              .clamp(0, maxMs)
-                              .toDouble();
-                          return Column(
+              child: StreamBuilder<Duration>(
+                stream: player.stream.duration,
+                initialData: player.state.duration,
+                builder: (context, durationSnapshot) {
+                  final duration = durationSnapshot.data ?? Duration.zero;
+                  return StreamBuilder<Duration>(
+                    stream: player.stream.position,
+                    initialData: player.state.position,
+                    builder: (context, positionSnapshot) {
+                      final position = positionSnapshot.data ?? Duration.zero;
+                      final maxMs = duration.inMilliseconds <= 0
+                          ? 1.0
+                          : duration.inMilliseconds.toDouble();
+                      final actualMs = (_seekPreviewMs ?? position.inMilliseconds.toDouble())
+                          .clamp(0, maxMs)
+                          .toDouble();
+                      return Column(
+                        children: [
+                          SliderTheme(
+                            data: SliderTheme.of(context).copyWith(
+                              trackHeight: 3.5,
+                              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                            ),
+                            child: Slider(
+                              value: actualMs,
+                              max: maxMs,
+                              onChangeStart: (_) {
+                                _hideTimer?.cancel();
+                                setState(() => _seeking = true);
+                              },
+                              onChanged: (value) => setState(() => _seekPreviewMs = value),
+                              onChangeEnd: (value) async {
+                                await player.seek(Duration(milliseconds: value.round()));
+                                if (!mounted) return;
+                                setState(() {
+                                  _seeking = false;
+                                  _seekPreviewMs = null;
+                                });
+                                _scheduleHide();
+                              },
+                            ),
+                          ),
+                          Row(
                             children: [
-                              SliderTheme(
-                                data: SliderTheme.of(context).copyWith(
-                                  trackHeight: 3.5,
-                                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                                ),
-                                child: Slider(
-                                  value: actualMs,
-                                  max: maxMs,
-                                  onChangeStart: (_) {
-                                    _hideTimer?.cancel();
-                                    setState(() => _seeking = true);
-                                  },
-                                  onChanged: (value) => setState(() => _seekPreviewMs = value),
-                                  onChangeEnd: (value) async {
-                                    await player.seek(Duration(milliseconds: value.round()));
-                                    if (!mounted) return;
-                                    setState(() {
-                                      _seeking = false;
-                                      _seekPreviewMs = null;
-                                    });
-                                    _scheduleHide();
-                                  },
+                              StreamBuilder<bool>(
+                                stream: player.stream.playing,
+                                initialData: player.state.playing,
+                                builder: (context, snapshot) => IconButton.filled(
+                                  tooltip: snapshot.data == true ? 'Pause' : 'Play',
+                                  onPressed: player.playOrPause,
+                                  icon: Icon(
+                                    snapshot.data == true
+                                        ? Icons.pause_rounded
+                                        : Icons.play_arrow_rounded,
+                                    size: 28,
+                                  ),
                                 ),
                               ),
-                              Row(
-                                children: [
-                                  StreamBuilder<bool>(
-                                    stream: player.stream.playing,
-                                    initialData: player.state.playing,
-                                    builder: (context, snapshot) => IconButton.filled(
-                                      tooltip: snapshot.data == true ? 'Pause' : 'Play',
-                                      onPressed: player.playOrPause,
-                                      icon: Icon(
-                                        snapshot.data == true ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                                        size: 28,
+                              const SizedBox(width: 6),
+                              IconButton(
+                                tooltip: 'Back 10 seconds',
+                                onPressed: () => _seekRelative(const Duration(seconds: -10)),
+                                icon: const Icon(Icons.replay_10_rounded),
+                              ),
+                              IconButton(
+                                tooltip: 'Forward 10 seconds',
+                                onPressed: () => _seekRelative(const Duration(seconds: 10)),
+                                icon: const Icon(Icons.forward_10_rounded),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                '${_format(position)} / ${_format(duration)}',
+                                style: const TextStyle(fontWeight: FontWeight.w700),
+                              ),
+                              const SizedBox(width: 14),
+                              StreamBuilder<double>(
+                                stream: player.stream.volume,
+                                initialData: player.state.volume,
+                                builder: (context, snapshot) {
+                                  final volume = (snapshot.data ?? 100).clamp(0, 100).toDouble();
+                                  return Row(
+                                    children: [
+                                      IconButton(
+                                        tooltip: volume <= 0 ? 'Unmute (M)' : 'Mute (M)',
+                                        onPressed: _toggleMute,
+                                        icon: Icon(
+                                          volume <= 0
+                                              ? Icons.volume_off_rounded
+                                              : volume < 50
+                                                  ? Icons.volume_down_rounded
+                                                  : Icons.volume_up_rounded,
+                                        ),
                                       ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  IconButton(
-                                    tooltip: 'Back 10 seconds',
-                                    onPressed: () => _seekRelative(const Duration(seconds: -10)),
-                                    icon: const Icon(Icons.replay_10_rounded),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Forward 10 seconds',
-                                    onPressed: () => _seekRelative(const Duration(seconds: 10)),
-                                    icon: const Icon(Icons.forward_10_rounded),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    '${_format(position)} / ${_format(duration)}',
-                                    style: const TextStyle(fontWeight: FontWeight.w700),
-                                  ),
-                                  const Spacer(),
-                                  IconButton(
-                                    tooltip: 'Audio & subtitles',
-                                    onPressed: _showTracks,
-                                    icon: const Icon(Icons.subtitles_rounded),
-                                  ),
-                                  PopupMenuButton<double>(
-                                    tooltip: 'Playback speed',
-                                    initialValue: player.state.rate,
-                                    onSelected: player.setRate,
-                                    itemBuilder: (_) => const [
-                                      PopupMenuItem(value: .5, child: Text('0.5×')),
-                                      PopupMenuItem(value: .75, child: Text('0.75×')),
-                                      PopupMenuItem(value: 1, child: Text('1×')),
-                                      PopupMenuItem(value: 1.25, child: Text('1.25×')),
-                                      PopupMenuItem(value: 1.5, child: Text('1.5×')),
-                                      PopupMenuItem(value: 2, child: Text('2×')),
+                                      SizedBox(
+                                        width: 92,
+                                        child: Slider(
+                                          min: 0,
+                                          max: 100,
+                                          value: volume,
+                                          onChanged: (value) {
+                                            if (value > 0) _lastVolume = value;
+                                            player.setVolume(value);
+                                          },
+                                        ),
+                                      ),
                                     ],
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0x551A1D26),
-                                        borderRadius: BorderRadius.circular(10),
-                                        border: Border.all(color: const Color(0x44FFFFFF)),
-                                      ),
-                                      child: Text(
-                                        '${player.state.rate.toStringAsFixed(player.state.rate == 1 ? 0 : 2)}×',
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                                  );
+                                },
                               ),
+                              const Spacer(),
+                              IconButton(
+                                tooltip: 'Audio & subtitles',
+                                onPressed: _showTracks,
+                                icon: const Icon(Icons.subtitles_rounded),
+                              ),
+                              PopupMenuButton<double>(
+                                tooltip: 'Playback speed',
+                                initialValue: player.state.rate,
+                                onSelected: player.setRate,
+                                itemBuilder: (_) => const [
+                                  PopupMenuItem(value: .5, child: Text('0.5×')),
+                                  PopupMenuItem(value: .75, child: Text('0.75×')),
+                                  PopupMenuItem(value: 1, child: Text('1×')),
+                                  PopupMenuItem(value: 1.25, child: Text('1.25×')),
+                                  PopupMenuItem(value: 1.5, child: Text('1.5×')),
+                                  PopupMenuItem(value: 2, child: Text('2×')),
+                                ],
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0x551A1D26),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: const Color(0x44FFFFFF)),
+                                  ),
+                                  child: Text(
+                                    '${player.state.rate.toStringAsFixed(player.state.rate == 1 ? 0 : 2)}×',
+                                  ),
+                                ),
+                              ),
+                              if (_desktop) ...[
+                                const SizedBox(width: 6),
+                                IconButton(
+                                  tooltip: 'Fullscreen (F / F11)',
+                                  onPressed: _toggleFullscreen,
+                                  icon: const Icon(Icons.fullscreen_rounded),
+                                ),
+                              ],
                             ],
-                          );
-                        },
+                          ),
+                        ],
                       );
                     },
-                  ),
-                ],
+                  );
+                },
               ),
             ),
           ],
@@ -532,7 +770,10 @@ class _EmptyTrackMessage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Text(text, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+      child: Text(
+        text,
+        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+      ),
     );
   }
 }
