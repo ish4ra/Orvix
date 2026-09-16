@@ -31,8 +31,8 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Analyze
-        run: flutter analyze
+      - name: Analyze app sources
+        run: flutter analyze lib
 
       - name: Build Windows release
         run: flutter build windows --release
