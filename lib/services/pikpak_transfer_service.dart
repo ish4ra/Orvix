@@ -18,10 +18,6 @@ class PikPakTransferService {
   static const _driveBase = 'https://api-drive.mypikpak.com';
   static const _userAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0';
-  static const _hugeFileThreshold = 24 * 1024 * 1024 * 1024;
-  static const _largeUhdThreshold = 18 * 1024 * 1024 * 1024;
-  static const _smoothBitrateCeiling = 24 * 1000 * 1000;
-  static const _ultraHugeThreshold = 40 * 1024 * 1024 * 1024;
 
   static const _algorithms = <String>[
     'C9qPpZLN8ucRTaTiUMWYS9cQvWOE',
@@ -281,9 +277,9 @@ class PikPakTransferService {
     return decoded is Map<String, dynamic> ? decoded : null;
   }
 
-  /// Auto playback follows PikPak's own media renditions, but avoids pushing a
-  /// huge UHD remux through the raw origin URL when a much easier cloud
-  /// transcode is available. Small/normal files retain the provider default.
+  /// Follow PikPak's own rendition choice. The provider's `is_default` media
+  /// is the closest match to playback in the official client; forcing a lower
+  /// transcode based on file size caused buffering regressions on large remuxes.
   String? _selectMediaUrl(Map<String, dynamic> decoded) {
     final medias = decoded['medias'];
     if (medias is! List || medias.isEmpty) return null;
@@ -292,88 +288,18 @@ class PikPakTransferService {
         .whereType<Map<String, dynamic>>()
         .where((media) => _mediaUrl(media) != null)
         .where((media) => media['need_more_quota'] != true)
-        .where((media) => !media.containsKey('is_visible') || media['is_visible'] != false)
+        .where((media) =>
+            !media.containsKey('is_visible') || media['is_visible'] != false)
         .toList(growable: false);
     if (entries.isEmpty) return null;
 
-    Map<String, dynamic>? origin;
-    Map<String, dynamic>? defaultMedia;
     for (final media in entries) {
-      if (origin == null && media['is_origin'] == true) origin = media;
-      if (defaultMedia == null && media['is_default'] == true) defaultMedia = media;
+      if (media['is_default'] == true) return _mediaUrl(media);
     }
-
-    final fileSize = _parseInt(decoded['size']) ?? 0;
-    final originBitRate = origin == null ? 0 : _mediaBitRate(origin);
-    final originHeight = origin == null ? 0 : _mediaHeight(origin);
-    final heavyOrigin = fileSize >= _hugeFileThreshold ||
-        originBitRate >= _smoothBitrateCeiling ||
-        (originHeight >= 2160 && fileSize >= _largeUhdThreshold);
-
-    if (heavyOrigin) {
-      final transcodes = entries.where((media) => media['is_origin'] != true).toList();
-      if (transcodes.isNotEmpty) {
-        // For very large UHD remuxes, prioritize a cloud 1080p rendition. This
-        // mirrors the "smooth first" behavior users see in the PikPak client
-        // and avoids decoding/streaming a 70GB+ DV/HEVC origin inside Flutter.
-        final targetMaxHeight = fileSize >= _ultraHugeThreshold ? 1080 : 2160;
-        final preferred = transcodes.where((media) {
-          final h = _mediaHeight(media);
-          final br = _mediaBitRate(media);
-          return (h <= 0 || h <= targetMaxHeight) &&
-              (br <= 0 || br <= _smoothBitrateCeiling);
-        }).toList();
-
-        final pool = preferred.isNotEmpty ? preferred : transcodes;
-        pool.sort((a, b) => _safeMediaScore(b, targetMaxHeight).compareTo(
-              _safeMediaScore(a, targetMaxHeight),
-            ));
-        final smooth = _mediaUrl(pool.first);
-        if (smooth != null) return smooth;
-      }
+    for (final media in entries) {
+      if (media['is_origin'] == true) return _mediaUrl(media);
     }
-
-    // Normal files follow PikPak's own preferred rendition first.
-    if (defaultMedia != null) return _mediaUrl(defaultMedia);
-    if (origin != null) return _mediaUrl(origin);
     return _mediaUrl(entries.first);
-  }
-
-  int _safeMediaScore(Map<String, dynamic> media, int targetMaxHeight) {
-    final height = _mediaHeight(media);
-    final bitRate = _mediaBitRate(media);
-    final codec = _mediaCodec(media);
-    var score = 0;
-    if (media['is_default'] == true) score += 500000000;
-    if (height > 0 && height <= targetMaxHeight) score += height * 100000;
-    if (bitRate > 0 && bitRate <= _smoothBitrateCeiling) score += bitRate ~/ 1000;
-    if (codec.contains('264') || codec.contains('avc')) score += 80000000;
-    return score;
-  }
-
-  String _mediaCodec(Map<String, dynamic> media) {
-    final video = media['video'];
-    if (video is Map<String, dynamic>) {
-      return (video['codec'] ?? video['codec_name'] ?? '').toString().toLowerCase();
-    }
-    return '';
-  }
-
-  int _smoothMediaScore(Map<String, dynamic> media) {
-    final height = _mediaHeight(media);
-    final bitRate = _mediaBitRate(media);
-    var score = 0;
-
-    // Prefer the best cloud transcode up to UHD. A 2160p cloud rendition wins
-    // over 1080p when both are under the bitrate ceiling, while absurdly large
-    // resolutions are not rewarded beyond 2160p.
-    final boundedHeight = height <= 0 ? 0 : (height > 2160 ? 2160 : height);
-    score += boundedHeight * 100000;
-    if (media['is_default'] == true) score += 20000000;
-    if (bitRate > 0 && bitRate <= _smoothBitrateCeiling) {
-      score += bitRate ~/ 1000;
-    }
-    return score;
   }
 
   int _mediaHeight(Map<String, dynamic> media) {

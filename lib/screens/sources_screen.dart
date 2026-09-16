@@ -13,10 +13,12 @@ class SourcesScreen extends StatefulWidget {
 
 class _SourcesScreenState extends State<SourcesScreen> {
   final _controller = TextEditingController();
+  final _preferredGroupsController = TextEditingController();
   List<String> _addons = const [];
   List<SourceSortCriterion> _priority = [...SourceProviderService.defaultPriority];
   String? _torrentioUrl;
   bool _busy = true;
+  bool _show3D = false;
   String? _message;
 
   @override
@@ -28,6 +30,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
   @override
   void dispose() {
     _controller.dispose();
+    _preferredGroupsController.dispose();
     super.dispose();
   }
 
@@ -35,11 +38,15 @@ class _SourcesScreenState extends State<SourcesScreen> {
     final values = await widget.sources.getAddonUrls();
     final priority = await widget.sources.getPriorityOrder();
     final torrentio = await widget.sources.getIntegratedTorrentioUrl();
+    final show3D = await widget.sources.getShow3D();
+    final preferredGroups = await widget.sources.getPreferredGroups();
     if (!mounted) return;
     setState(() {
       _addons = values;
       _priority = priority;
       _torrentioUrl = torrentio;
+      _show3D = show3D;
+      _preferredGroupsController.text = preferredGroups.join(', ');
       _busy = false;
     });
   }
@@ -47,6 +54,24 @@ class _SourcesScreenState extends State<SourcesScreen> {
   Future<void> _setPriority(List<SourceSortCriterion> priority) async {
     setState(() => _priority = priority);
     await widget.sources.setPriorityOrder(priority);
+  }
+
+  Future<void> _setShow3D(bool value) async {
+    setState(() => _show3D = value);
+    await widget.sources.setShow3D(value);
+  }
+
+  Future<void> _savePreferredGroups() async {
+    final groups = _preferredGroupsController.text
+        .split(RegExp(r'[,;\n]+'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    await widget.sources.setPreferredGroups(groups);
+    if (!mounted) return;
+    setState(() => _message = groups.isEmpty
+        ? 'Preferred release groups cleared.'
+        : 'Preferred release groups saved. Matching rows will be highlighted.');
   }
 
   Future<void> _add() async {
@@ -122,16 +147,18 @@ class _SourcesScreenState extends State<SourcesScreen> {
         _engineCard(context),
         const SizedBox(height: 18),
         _sortCard(context),
+        const SizedBox(height: 18),
+        _resultPreferencesCard(context),
         const SizedBox(height: 26),
         Text(
-          'Advanced providers',
+          'Provider pool',
           style: Theme.of(context).textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.w900,
               ),
         ),
         const SizedBox(height: 5),
         Text(
-          'Optional: add another Stremio-compatible provider you are authorized to use. A saved Torrentio-compatible endpoint is promoted into the integrated slot automatically.',
+          'Add multiple Stremio-compatible providers you are authorized to use. Pikora queries the configured provider pool in parallel, merges the returned streams, then de-duplicates exact rows.',
           style: TextStyle(color: color.onSurfaceVariant, height: 1.45),
         ),
         const SizedBox(height: 13),
@@ -315,6 +342,78 @@ class _SourcesScreenState extends State<SourcesScreen> {
                 ),
               );
             },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _resultPreferencesCard(BuildContext context) {
+    final color = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0E1118),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFF242A39)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.filter_alt_outlined),
+              SizedBox(width: 10),
+              Text(
+                'Result preferences',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            value: _show3D,
+            onChanged: _busy ? null : _setShow3D,
+            title: const Text('Show 3D / SBS releases'),
+            subtitle: const Text(
+              'Off by default. Hides SBS/HSBS/3D/top-bottom encodes that otherwise appear as a double image on a normal display.',
+            ),
+          ),
+          const Divider(height: 26),
+          Text(
+            'Preferred release groups',
+            style: TextStyle(
+              color: color.onSurface,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            'Optional. Enter group names separated by commas. Matching source rows get a ⭐ Preferred badge; this does not invent sources that a provider did not return.',
+            style: TextStyle(color: color.onSurfaceVariant, height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _preferredGroupsController,
+                  enabled: !_busy,
+                  onSubmitted: (_) => _busy ? null : _savePreferredGroups(),
+                  decoration: const InputDecoration(
+                    hintText: 'GROUP-A, GROUP-B',
+                    prefixIcon: Icon(Icons.star_outline_rounded),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.icon(
+                onPressed: _busy ? null : _savePreferredGroups,
+                icon: const Icon(Icons.save_outlined),
+                label: const Text('Save'),
+              ),
+            ],
           ),
         ],
       ),
