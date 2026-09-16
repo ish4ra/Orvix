@@ -1,5 +1,7 @@
 #define MyAppName "Pikora"
-#define MyAppVersion "0.3.2"
+#ifndef MyAppVersion
+#define MyAppVersion "0.3.3"
+#endif
 #define MyAppPublisher "Ishara Lakshan"
 #define MyAppExeName "pikora.exe"
 
