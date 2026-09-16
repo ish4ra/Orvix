@@ -37,15 +37,42 @@ class PikPakTransferService {
     'NhXXU9rg4XXdzo7u5o',
   ];
 
+  static const _videoExtensions = <String>{
+    'mkv',
+    'mp4',
+    'avi',
+    'mov',
+    'wmv',
+    'm4v',
+    'webm',
+    'ts',
+    'm2ts',
+    'mpg',
+    'mpeg',
+    'flv',
+  };
+
   final http.Client _client;
   final FlutterSecureStorage _storage;
   final Map<String, int> _zeroProgressPolls = <String, int>{};
+
+  // Source-provider metadata is kept only in memory. It lets Pikora follow the
+  // exact file selected by a Stremio-compatible addon after PikPak turns a
+  // torrent into a folder/season pack.
+  final Map<String, _TorrentSelection> _selectionByTaskId =
+      <String, _TorrentSelection>{};
+  final Map<String, _TorrentSelection> _selectionByFileId =
+      <String, _TorrentSelection>{};
 
   Future<PikPakAddResult> addResource(
     String resource, {
     String? name,
     String? parentFolderId,
   }) async {
+    final envelope = _extractResourceEnvelope(resource);
+    final cleanResource = envelope.resource;
+    final selection = envelope.selection;
+
     final session = await _session();
     final captcha = await _captcha(
       action: 'POST:/drive/v1/files',
@@ -57,13 +84,14 @@ class PikPakTransferService {
     // particular, parent_id and folder_type are significant for URL/magnet
     // tasks. For magnet resources we deliberately let PikPak obtain the real
     // torrent/folder name from metadata instead of forcing the catalog title.
-    final isMagnet = resource.trimLeft().toLowerCase().startsWith('magnet:');
+    final isMagnet =
+        cleanResource.trimLeft().toLowerCase().startsWith('magnet:');
     final body = <String, dynamic>{
       'kind': 'drive#file',
       'name': isMagnet ? '' : (name?.trim() ?? ''),
       'parent_id': parentFolderId ?? '',
       'upload_type': 'UPLOAD_TYPE_URL',
-      'url': {'url': resource},
+      'url': {'url': cleanResource},
       'folder_type': '',
     };
 
@@ -103,11 +131,18 @@ class PikPakTransferService {
     }
 
     final cleanTaskId = _nonEmpty(taskId);
-    if (cleanTaskId != null) _zeroProgressPolls.remove(cleanTaskId);
+    final cleanFileId = _nonEmpty(fileId);
+    if (cleanTaskId != null) {
+      _zeroProgressPolls.remove(cleanTaskId);
+      if (selection != null) _selectionByTaskId[cleanTaskId] = selection;
+    }
+    if (cleanFileId != null && selection != null) {
+      _selectionByFileId[cleanFileId] = selection;
+    }
 
     return PikPakAddResult(
       taskId: cleanTaskId,
-      fileId: _nonEmpty(fileId),
+      fileId: cleanFileId,
     );
   }
 
@@ -146,6 +181,11 @@ class PikPakTransferService {
       message: decoded['message']?.toString() ?? decoded['error']?.toString(),
     );
 
+    final selection = _selectionByTaskId[taskId];
+    if (selection != null && status.fileId != null) {
+      _selectionByFileId[status.fileId!] = selection;
+    }
+
     if (status.isComplete || status.isError || status.progress > 0) {
       _zeroProgressPolls.remove(taskId);
     } else {
@@ -166,6 +206,45 @@ class PikPakTransferService {
   }
 
   Future<String?> fetchPlayableUrl(String fileId) async {
+    final selection = _selectionByFileId[fileId];
+    return _resolvePlayableUrl(
+      fileId,
+      selection: selection,
+      visited: <String>{},
+    );
+  }
+
+  Future<String?> _resolvePlayableUrl(
+    String fileId, {
+    required _TorrentSelection? selection,
+    required Set<String> visited,
+  }) async {
+    if (!visited.add(fileId)) return null;
+
+    final info = await _fetchFileInfo(fileId);
+    if (info == null) return null;
+
+    final direct = _selectMediaUrl(info);
+    if (direct != null) return direct;
+
+    final kind = info['kind']?.toString().toLowerCase() ?? '';
+    final isFolder = kind.contains('folder');
+    if (!isFolder) return _fallbackDownloadUrl(info);
+
+    final candidate = await _findPlayableDescendant(fileId, selection);
+    if (candidate == null) return null;
+
+    if (selection != null) {
+      _selectionByFileId[candidate.id] = selection;
+    }
+    return _resolvePlayableUrl(
+      candidate.id,
+      selection: selection,
+      visited: visited,
+    );
+  }
+
+  Future<Map<String, dynamic>?> _fetchFileInfo(String fileId) async {
     final session = await _session();
     final captcha = await _captcha(
       action: 'GET:/drive/v1/files/$fileId',
@@ -174,7 +253,13 @@ class PikPakTransferService {
     );
     final uri = Uri.parse(
       '$_driveBase/drive/v1/files/${Uri.encodeComponent(fileId)}',
-    ).replace(queryParameters: const {'usage': 'FETCH'});
+    ).replace(
+      queryParameters: const {
+        'usage': 'FETCH',
+        'thumbnail_size': 'SIZE_LARGE',
+        'with_audit': 'true',
+      },
+    );
     final response = await _client
         .get(
           uri,
@@ -188,45 +273,86 @@ class PikPakTransferService {
     }
 
     final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) return null;
+    return decoded is Map<String, dynamic> ? decoded : null;
+  }
 
-    // For video playback, PikPak's media entries are the streaming-optimized
-    // path. Prefer the default rendition, then the origin rendition, then the
-    // first usable media. web_content_link remains a download-style fallback.
+  /// Pick a streaming-optimized PikPak media rendition. When PikPak exposes a
+  /// visible transcoded rendition, prefer the highest one up to 1080p. This is
+  /// intentionally smoother than blindly opening a huge Blu-ray/Remux origin.
+  /// If no transcode is available, fall back to PikPak's default/origin media.
+  String? _selectMediaUrl(Map<String, dynamic> decoded) {
     final medias = decoded['medias'];
-    if (medias is List && medias.isNotEmpty) {
-      final entries = medias.whereType<Map<String, dynamic>>().toList();
-      Map<String, dynamic>? selected;
-      for (final media in entries) {
-        if (media['is_default'] == true) {
-          selected = media;
-          break;
-        }
-      }
-      if (selected == null) {
-        for (final media in entries) {
-          if (media['is_origin'] == true) {
-            selected = media;
-            break;
-          }
-        }
-      }
+    if (medias is! List || medias.isEmpty) return null;
 
-      final ordered = <Map<String, dynamic>>[
-        if (selected != null) selected,
-        ...entries.where((media) => !identical(media, selected)),
-      ];
-      for (final media in ordered) {
-        final link = media['link'];
-        if (link is Map<String, dynamic>) {
-          final url = link['url']?.toString();
-          if (url != null && url.startsWith('http')) return url;
-        }
-        final url = media['url']?.toString();
-        if (url != null && url.startsWith('http')) return url;
-      }
+    final entries = medias
+        .whereType<Map<String, dynamic>>()
+        .where((media) => _mediaUrl(media) != null)
+        .where((media) => media['is_visible'] != false)
+        .where((media) => media['need_more_quota'] != true)
+        .toList();
+    if (entries.isEmpty) return null;
+
+    final transcodes = entries.where((media) => media['is_origin'] != true).toList();
+    if (transcodes.isNotEmpty) {
+      transcodes.sort((a, b) => _transcodeScore(b).compareTo(_transcodeScore(a)));
+      return _mediaUrl(transcodes.first);
     }
 
+    for (final media in entries) {
+      if (media['is_default'] == true) return _mediaUrl(media);
+    }
+    for (final media in entries) {
+      if (media['is_origin'] == true) return _mediaUrl(media);
+    }
+    return _mediaUrl(entries.first);
+  }
+
+  int _transcodeScore(Map<String, dynamic> media) {
+    final height = _mediaHeight(media);
+    final bitrate = _parseInt(
+          media['video'] is Map<String, dynamic>
+              ? (media['video'] as Map<String, dynamic>)['bit_rate']
+              : null,
+        ) ??
+        0;
+    final defaultBonus = media['is_default'] == true ? 50000 : 0;
+
+    // Prefer 1080p, then 720p, then lower renditions. A transcode above 1080p
+    // is ranked below a normal 1080p rendition because the purpose here is a
+    // smooth default rather than maximum-bitrate playback.
+    if (height > 0 && height <= 1080) {
+      return 10000000 + height * 1000 + bitrate.clamp(0, 999999) + defaultBonus;
+    }
+    if (height > 1080) {
+      return 5000000 - (height - 1080) * 1000 + defaultBonus;
+    }
+    return 1000000 + bitrate.clamp(0, 999999) + defaultBonus;
+  }
+
+  int _mediaHeight(Map<String, dynamic> media) {
+    final video = media['video'];
+    if (video is Map<String, dynamic>) {
+      final parsed = _parseInt(video['height']);
+      if (parsed != null && parsed > 0) return parsed;
+    }
+    final label = '${media['resolution_name'] ?? ''} ${media['media_name'] ?? ''}';
+    final match = RegExp(r'(2160|1440|1080|720|576|540|480|360)[pP]?')
+        .firstMatch(label);
+    return int.tryParse(match?.group(1) ?? '') ?? 0;
+  }
+
+  String? _mediaUrl(Map<String, dynamic> media) {
+    final link = media['link'];
+    if (link is Map<String, dynamic>) {
+      final url = link['url']?.toString();
+      if (url != null && url.startsWith('http')) return url;
+    }
+    final url = media['url']?.toString();
+    if (url != null && url.startsWith('http')) return url;
+    return null;
+  }
+
+  String? _fallbackDownloadUrl(Map<String, dynamic> decoded) {
     final direct = decoded['web_content_link']?.toString();
     if (direct != null && direct.startsWith('http')) return direct;
 
@@ -240,6 +366,179 @@ class PikPakTransferService {
       }
     }
     return null;
+  }
+
+  Future<_CloudFile?> _findPlayableDescendant(
+    String rootId,
+    _TorrentSelection? selection,
+  ) async {
+    final folders = <String>[rootId];
+    final candidates = <_CloudFile>[];
+    var scanned = 0;
+
+    while (folders.isNotEmpty && scanned < 2500) {
+      final parentId = folders.removeAt(0);
+      final children = await _listChildren(parentId);
+      for (final raw in children) {
+        scanned++;
+        final file = _CloudFile.fromJson(raw);
+        if (file.id.isEmpty) continue;
+        if (file.isFolder) {
+          if (folders.length < 250) folders.add(file.id);
+          continue;
+        }
+        if (_looksLikeVideo(file)) candidates.add(file);
+      }
+    }
+
+    if (candidates.isEmpty) return null;
+
+    // Stremio specifies that if no torrent file index is provided the largest
+    // video is the intended default. PikPak often mirrors the torrent's
+    // original_file_index, so fileIdx can be matched directly when available.
+    candidates.sort((a, b) {
+      final score = _candidateScore(b, selection).compareTo(
+        _candidateScore(a, selection),
+      );
+      if (score != 0) return score;
+      return b.size.compareTo(a.size);
+    });
+    return candidates.first;
+  }
+
+  int _candidateScore(_CloudFile file, _TorrentSelection? selection) {
+    var score = 0;
+    if (selection == null) return file.size.clamp(0, 1 << 30);
+
+    if (selection.fileIndex != null && file.originalFileIndex != null) {
+      if (selection.fileIndex == file.originalFileIndex) {
+        score += 1000000000;
+      } else if ((selection.fileIndex! - file.originalFileIndex!).abs() == 1) {
+        // Some third-party APIs have historically exposed one-based indexes.
+        // This is only a weak fallback; filename/size can still override it.
+        score += 5000;
+      }
+    }
+
+    final expectedName = _normalizeFileName(selection.fileName);
+    final actualName = _normalizeFileName(file.name);
+    if (expectedName.isNotEmpty) {
+      if (actualName == expectedName) {
+        score += 500000000;
+      } else if (actualName.contains(expectedName) || expectedName.contains(actualName)) {
+        score += 100000000;
+      }
+    }
+
+    if (selection.videoSize != null && selection.videoSize! > 0 && file.size > 0) {
+      final expected = selection.videoSize!;
+      final delta = (file.size - expected).abs();
+      final ratio = delta / expected;
+      if (ratio <= .01) {
+        score += 300000000;
+      } else if (ratio <= .05) {
+        score += 50000000;
+      }
+    }
+
+    // If the addon did not provide enough metadata, follow Stremio's default
+    // torrent behavior and prefer the largest video within THIS task output.
+    score += (file.size ~/ (1024 * 1024)).clamp(0, 1000000);
+    return score;
+  }
+
+  Future<List<Map<String, dynamic>>> _listChildren(String parentId) async {
+    final session = await _session();
+    final captcha = await _captcha(
+      action: 'GET:/drive/v1/files',
+      deviceId: session.deviceId,
+      userId: session.userId,
+    );
+
+    final out = <Map<String, dynamic>>[];
+    String? pageToken;
+    for (var page = 0; page < 8; page++) {
+      final query = <String, String>{
+        'parent_id': parentId,
+        'thumbnail_size': 'SIZE_MEDIUM',
+        'limit': '500',
+        'with_audit': 'true',
+        if (pageToken != null && pageToken!.isNotEmpty) 'page_token': pageToken!,
+      };
+      final uri = Uri.parse('$_driveBase/drive/v1/files').replace(
+        queryParameters: query,
+      );
+      final response = await _client
+          .get(
+            uri,
+            headers: _driveHeaders(session, captcha, contentType: false),
+          )
+          .timeout(const Duration(seconds: 30));
+      if (response.statusCode != 200) {
+        throw PikPakTransferException(
+          _extractError(response.body, response.statusCode),
+        );
+      }
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) break;
+      final files = decoded['files'];
+      if (files is List) {
+        out.addAll(files.whereType<Map<String, dynamic>>());
+      }
+      pageToken = _nonEmpty(decoded['next_page_token']?.toString());
+      if (pageToken == null) break;
+    }
+    return out;
+  }
+
+  bool _looksLikeVideo(_CloudFile file) {
+    final mime = file.mimeType.toLowerCase().trim();
+    if (mime.isNotEmpty) {
+      if (mime.startsWith('video/')) return true;
+      if (!mime.contains('octet-stream')) return false;
+    }
+    final lower = file.name.toLowerCase();
+    final dot = lower.lastIndexOf('.');
+    if (dot < 0 || dot == lower.length - 1) return true;
+    return _videoExtensions.contains(lower.substring(dot + 1));
+  }
+
+  _ResourceEnvelope _extractResourceEnvelope(String resource) {
+    final trimmed = resource.trim();
+    if (!trimmed.toLowerCase().startsWith('magnet:')) {
+      return _ResourceEnvelope(resource: trimmed);
+    }
+
+    try {
+      final uri = Uri.parse(trimmed);
+      final all = uri.queryParametersAll;
+      final fileIndex = _parseInt(all['x-pikora-file-idx']?.firstOrNull);
+      final fileName = _nonEmpty(all['x-pikora-file-name']?.firstOrNull);
+      final videoSize = _parseInt(all['x-pikora-video-size']?.firstOrNull);
+
+      final cleanParts = <String>[];
+      for (final entry in all.entries) {
+        if (entry.key.startsWith('x-pikora-')) continue;
+        for (final value in entry.value) {
+          cleanParts.add(
+            '${Uri.encodeQueryComponent(entry.key)}=${Uri.encodeQueryComponent(value)}',
+          );
+        }
+      }
+
+      final clean = uri.replace(query: cleanParts.join('&')).toString();
+      final selection = fileIndex == null && fileName == null && videoSize == null
+          ? null
+          : _TorrentSelection(
+              fileIndex: fileIndex,
+              fileName: fileName,
+              videoSize: videoSize,
+            );
+      return _ResourceEnvelope(resource: clean, selection: selection);
+    } catch (_) {
+      return _ResourceEnvelope(resource: trimmed);
+    }
   }
 
   Future<_Session> _session() async {
@@ -346,6 +645,22 @@ class PikPakTransferService {
     return value.clamp(0, 100).toDouble();
   }
 
+  int? _parseInt(dynamic raw) {
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    return int.tryParse(raw?.toString() ?? '');
+  }
+
+  String _normalizeFileName(String? value) {
+    if (value == null || value.trim().isEmpty) return '';
+    final base = value.replaceAll('\\', '/').split('/').last;
+    return base
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
   String? _nonEmpty(String? value) {
     final clean = value?.trim();
     return clean == null || clean.isEmpty ? null : clean;
@@ -404,6 +719,56 @@ class _Session {
   final String token;
   final String deviceId;
   final String? userId;
+}
+
+class _TorrentSelection {
+  const _TorrentSelection({this.fileIndex, this.fileName, this.videoSize});
+  final int? fileIndex;
+  final String? fileName;
+  final int? videoSize;
+}
+
+class _ResourceEnvelope {
+  const _ResourceEnvelope({required this.resource, this.selection});
+  final String resource;
+  final _TorrentSelection? selection;
+}
+
+class _CloudFile {
+  const _CloudFile({
+    required this.id,
+    required this.name,
+    required this.kind,
+    required this.mimeType,
+    required this.size,
+    this.originalFileIndex,
+  });
+
+  final String id;
+  final String name;
+  final String kind;
+  final String mimeType;
+  final int size;
+  final int? originalFileIndex;
+
+  bool get isFolder => kind.toLowerCase().contains('folder');
+
+  factory _CloudFile.fromJson(Map<String, dynamic> json) {
+    int? parseInt(dynamic raw) {
+      if (raw is int) return raw;
+      if (raw is num) return raw.toInt();
+      return int.tryParse(raw?.toString() ?? '');
+    }
+
+    return _CloudFile(
+      id: (json['id'] ?? '').toString(),
+      name: (json['name'] ?? '').toString(),
+      kind: (json['kind'] ?? '').toString(),
+      mimeType: (json['mime_type'] ?? '').toString(),
+      size: parseInt(json['size']) ?? 0,
+      originalFileIndex: parseInt(json['original_file_index']),
+    );
+  }
 }
 
 class PikPakTransferException implements Exception {
