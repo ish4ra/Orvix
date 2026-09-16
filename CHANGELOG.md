@@ -2,6 +2,15 @@
 
 This file tracks user-visible changes to Pikora. GitHub Releases are published automatically for new packaged versions starting with v0.3.2.
 
+## v0.3.7 — richer source browser & quality-first ranking
+
+- Source cards now surface parsed seeder counts and file sizes before the release name.
+- Default ranking is strict `quality → seeders → file size` priority.
+- Added live Quality / Seeders / File size sorting directly inside the source picker; the selected mode is remembered.
+- Removed the 30-row source display cap; every unique result returned by configured providers is shown.
+- Expanded Stremio/Torrentio parsing for seed-count variants, GiB/TiB sizes, comma decimals, behavior hints, and alternate size fields.
+- Keeps identical resources from different configured providers as separate rows so provider-specific metadata is preserved.
+
 ## v0.3.6 — Smooth huge-file streaming
 
 - Added PikPak Auto rendition selection for huge/high-bitrate files. Files around 24 GiB+ (or UHD/high-bitrate origins) now prefer a visible cloud transcode instead of forcing the raw remux when PikPak provides a suitable rendition.

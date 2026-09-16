@@ -1,7 +1,7 @@
 name: pikora
 description: PikPak-first cinematic media hub for Windows and Android.
 publish_to: 'none'
-version: 0.3.6+14
+version: 0.3.7+15
 
 environment:
   sdk: '>=3.4.0 <4.0.0'

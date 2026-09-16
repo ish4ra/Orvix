@@ -661,94 +661,188 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  Future<SourceResult?> _chooseSource(List<SourceResult> results) {
-    final sorted = [...results]
-      ..sort((a, b) => b.preferenceScore.compareTo(a.preferenceScore));
-    final count = sorted.length > 30 ? 30 : sorted.length;
-    final best = widget.sources.bestSource(sorted);
+  Future<SourceResult?> _chooseSource(List<SourceResult> results) async {
+  var activeSort = await widget.sources.getSortMode();
+  if (!mounted) return null;
 
-    return showModalBottomSheet<SourceResult>(
-      context: context,
-      backgroundColor: const Color(0xFF11141C),
-      showDragHandle: true,
-      isScrollControlled: true,
-      constraints: const BoxConstraints(maxWidth: 820),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(22, 4, 22, 26),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+  int score(SourceResult result, SourceSortMode mode) {
+    final seederRank = (result.seeders ?? -1).clamp(-1, 999999).toInt() + 1;
+    final sizeMb = ((result.sizeBytes ?? 0) ~/ (1024 * 1024))
+        .clamp(0, 999999)
+        .toInt();
+    switch (mode) {
+      case SourceSortMode.quality:
+        return result.qualityRank * 1000000000000 +
+            seederRank * 1000000 +
+            sizeMb;
+      case SourceSortMode.seeders:
+        return seederRank * 1000000000000 +
+            result.qualityRank * 1000000 +
+            sizeMb;
+      case SourceSortMode.fileSize:
+        return sizeMb * 1000000000 +
+            result.qualityRank * 1000000 +
+            seederRank;
+    }
+  }
+
+  return showModalBottomSheet<SourceResult>(
+    context: context,
+    backgroundColor: const Color(0xFF11141C),
+    showDragHandle: true,
+    isScrollControlled: true,
+    constraints: const BoxConstraints(maxWidth: 920),
+    builder: (sheetContext) => StatefulBuilder(
+      builder: (context, setSheetState) {
+        final sorted = [...results]
+          ..sort((a, b) => score(b, activeSort).compareTo(score(a, activeSort)));
+        final best = sorted.isEmpty ? null : sorted.first;
+        final color = Theme.of(context).colorScheme;
+
+        return SafeArea(
+          child: SizedBox(
+            height: MediaQuery.sizeOf(context).height * .82,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 4, 22, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Choose source',
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleLarge
-                              ?.copyWith(fontWeight: FontWeight.w900),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Choose source',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleLarge
+                                  ?.copyWith(fontWeight: FontWeight.w900),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${results.length} result${results.length == 1 ? '' : 's'} returned • showing all',
+                              style: TextStyle(color: color.onSurfaceVariant),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '${results.length} result${results.length == 1 ? '' : 's'} • ranked by quality and release markers',
+                      ),
+                      if (best != null)
+                        FilledButton.icon(
+                          onPressed: () => Navigator.pop(sheetContext, best),
+                          icon: const Icon(Icons.bolt_rounded),
+                          label: Text('Quick Play ${best.quality ?? ''}'.trim()),
                         ),
-                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 15),
+                  Row(
+                    children: [
+                      Text(
+                        'Sort by',
+                        style: TextStyle(
+                          color: color.onSurfaceVariant,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: SegmentedButton<SourceSortMode>(
+                          showSelectedIcon: true,
+                          segments: const [
+                            ButtonSegment(
+                              value: SourceSortMode.quality,
+                              icon: Icon(Icons.high_quality_rounded),
+                              label: Text('Quality'),
+                            ),
+                            ButtonSegment(
+                              value: SourceSortMode.seeders,
+                              icon: Icon(Icons.people_alt_rounded),
+                              label: Text('Seeders'),
+                            ),
+                            ButtonSegment(
+                              value: SourceSortMode.fileSize,
+                              icon: Icon(Icons.storage_rounded),
+                              label: Text('File size'),
+                            ),
+                          ],
+                          selected: {activeSort},
+                          onSelectionChanged: (selection) {
+                            if (selection.isEmpty) return;
+                            final next = selection.first;
+                            setSheetState(() => activeSort = next);
+                            widget.sources.setSortMode(next);
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 9),
+                  Text(
+                    activeSort == SourceSortMode.quality
+                        ? 'Priority: quality → seeders → file size'
+                        : activeSort == SourceSortMode.seeders
+                            ? 'Priority: seeders → quality → file size'
+                            : 'Priority: file size → quality → seeders',
+                    style: TextStyle(
+                      color: color.primary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  if (best != null)
-                    FilledButton.icon(
-                      onPressed: () => Navigator.pop(context, best),
-                      icon: const Icon(Icons.bolt_rounded),
-                      label: Text(
-                        'Quick Play ${best.quality ?? ''}'.trim(),
-                      ),
+                  const SizedBox(height: 12),
+                  const Divider(height: 1),
+                  Expanded(
+                    child: ListView.separated(
+                      itemCount: sorted.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final result = sorted[index];
+                        return ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 7,
+                          ),
+                          leading: CircleAvatar(
+                            radius: 25,
+                            child: Text(
+                              result.quality?.replaceAll('P', '') ?? '—',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                          title: Text(
+                            result.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(height: 1.38),
+                          ),
+                          subtitle: Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              '${result.provider}${result.isMagnet ? ' • PikPak cloud source' : ' • direct URL'}',
+                            ),
+                          ),
+                          trailing: index == 0
+                              ? const Chip(label: Text('Best'))
+                              : const Icon(Icons.chevron_right_rounded),
+                          onTap: () => Navigator.pop(sheetContext, result),
+                        );
+                      },
                     ),
+                  ),
                 ],
               ),
-              const SizedBox(height: 14),
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.sizeOf(context).height * .62,
-                ),
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: count,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (context, index) {
-                    final result = sorted[index];
-                    return ListTile(
-                      leading: CircleAvatar(
-                        child: Text(
-                          result.quality?.replaceAll('P', '') ?? '${index + 1}',
-                        ),
-                      ),
-                      title: Text(
-                        result.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(
-                        '${result.provider}${result.isMagnet ? ' • PikPak cloud source' : ' • direct URL'}',
-                      ),
-                      trailing: index == 0
-                          ? const Chip(label: Text('Best'))
-                          : const Icon(Icons.chevron_right),
-                      onTap: () => Navigator.pop(context, result),
-                    );
-                  },
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
-      ),
-    );
-  }
+        );
+      },
+    ),
+  );
+}
 
   Future<PikPakFile?> _findInPikPak(
     MediaItem item, {
