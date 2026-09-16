@@ -12,6 +12,7 @@ class SourceResult {
     required this.resource,
     required this.isMagnet,
     this.quality,
+    this.seeders,
   });
 
   final String provider;
@@ -19,6 +20,7 @@ class SourceResult {
   final String resource;
   final bool isMagnet;
   final String? quality;
+  final int? seeders;
 
   int get qualityRank {
     switch (quality?.toUpperCase()) {
@@ -41,11 +43,34 @@ class SourceResult {
   int get preferenceScore {
     final lower = title.toLowerCase();
     var score = qualityRank;
+
     if (lower.contains('web-dl') || lower.contains('webdl')) score += 35;
     if (lower.contains('bluray') || lower.contains('blu-ray')) score += 30;
-    if (lower.contains('hevc') || lower.contains('x265') || lower.contains('h265')) score += 12;
+    if (lower.contains('hevc') ||
+        lower.contains('x265') ||
+        lower.contains('h265')) {
+      score += 12;
+    }
     if (lower.contains('hdr')) score += 8;
-    if (lower.contains('cam') || lower.contains('telesync') || lower.contains('ts ')) score -= 180;
+    if (lower.contains('cam') ||
+        lower.contains('telesync') ||
+        lower.contains('ts ')) {
+      score -= 180;
+    }
+
+    // Torrent availability matters more than choosing a nominally higher
+    // resolution which PikPak cannot actually fetch. Addons commonly expose
+    // this in the human-readable title (e.g. a people icon or "seeders").
+    if (seeders != null) {
+      if (seeders == 0) {
+        score -= 450;
+      } else {
+        score += seeders!.clamp(0, 250);
+        if (seeders! >= 20) score += 60;
+        if (seeders! >= 100) score += 60;
+      }
+    }
+
     if (!isMagnet) score += 4;
     return score;
   }
@@ -109,7 +134,8 @@ class SourceProviderService {
 
   SourceResult? bestSource(List<SourceResult> results) {
     if (results.isEmpty) return null;
-    final copy = [...results]..sort((a, b) => b.preferenceScore.compareTo(a.preferenceScore));
+    final copy = [...results]
+      ..sort((a, b) => b.preferenceScore.compareTo(a.preferenceScore));
     return copy.first;
   }
 
@@ -119,7 +145,9 @@ class SourceProviderService {
     String mediaId,
   ) async {
     try {
-      final uri = Uri.parse('$addon/stream/$type/${Uri.encodeComponent(mediaId)}.json');
+      final uri = Uri.parse(
+        '$addon/stream/$type/${Uri.encodeComponent(mediaId)}.json',
+      );
       final response = await _client
           .get(uri, headers: const {'Accept': 'application/json'})
           .timeout(const Duration(seconds: 15));
@@ -134,7 +162,7 @@ class SourceProviderService {
       final out = <SourceResult>[];
       for (final raw in streams.whereType<Map<String, dynamic>>()) {
         final directUrl = raw['url']?.toString();
-        final infoHash = raw['infoHash']?.toString();
+        final infoHash = raw['infoHash']?.toString().trim();
         final title = (raw['title'] ?? raw['name'] ?? 'Source').toString();
 
         String? resource;
@@ -146,7 +174,10 @@ class SourceProviderService {
               ? (raw['sources'] as List)
                   .map((e) => e.toString())
                   .where((e) => e.startsWith('tracker:'))
-                  .map((e) => '&tr=${Uri.encodeComponent(e.substring(8))}')
+                  .map(
+                    (e) =>
+                        '&tr=${Uri.encodeComponent(e.substring('tracker:'.length))}',
+                  )
                   .join()
               : '';
           resource = 'magnet:?xt=urn:btih:$infoHash$trackers';
@@ -154,13 +185,16 @@ class SourceProviderService {
         }
 
         if (resource == null) continue;
-        out.add(SourceResult(
-          provider: providerName,
-          title: title,
-          resource: resource,
-          isMagnet: isMagnet,
-          quality: _guessQuality(title),
-        ));
+        out.add(
+          SourceResult(
+            provider: providerName,
+            title: title,
+            resource: resource,
+            isMagnet: isMagnet,
+            quality: _guessQuality(title),
+            seeders: _guessSeeders(title),
+          ),
+        );
       }
       return out;
     } catch (_) {
@@ -184,8 +218,30 @@ class SourceProviderService {
 
   String? _guessQuality(String value) {
     final lower = value.toLowerCase();
-    for (final q in const ['2160p', '4k', '1440p', '1080p', '720p', '480p']) {
+    for (final q in const [
+      '2160p',
+      '4k',
+      '1440p',
+      '1080p',
+      '720p',
+      '480p',
+    ]) {
       if (lower.contains(q)) return q.toUpperCase();
+    }
+    return null;
+  }
+
+  int? _guessSeeders(String value) {
+    final patterns = <RegExp>[
+      RegExp(r'👤\s*(\d+)', caseSensitive: false),
+      RegExp(r'\bseeders?\s*[:=]?\s*(\d+)\b', caseSensitive: false),
+      RegExp(r'\bseeds?\s*[:=]?\s*(\d+)\b', caseSensitive: false),
+      RegExp(r'\bpeers?\s*[:=]?\s*(\d+)\b', caseSensitive: false),
+    ];
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(value);
+      final parsed = match == null ? null : int.tryParse(match.group(1) ?? '');
+      if (parsed != null) return parsed;
     }
     return null;
   }
