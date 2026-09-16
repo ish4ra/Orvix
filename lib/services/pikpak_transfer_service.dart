@@ -20,7 +20,8 @@ class PikPakTransferService {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0';
   static const _hugeFileThreshold = 24 * 1024 * 1024 * 1024;
   static const _largeUhdThreshold = 18 * 1024 * 1024 * 1024;
-  static const _smoothBitrateCeiling = 30 * 1000 * 1000;
+  static const _smoothBitrateCeiling = 24 * 1000 * 1000;
+  static const _ultraHugeThreshold = 40 * 1024 * 1024 * 1024;
 
   static const _algorithms = <String>[
     'C9qPpZLN8ucRTaTiUMWYS9cQvWOE',
@@ -290,15 +291,16 @@ class PikPakTransferService {
     final entries = medias
         .whereType<Map<String, dynamic>>()
         .where((media) => _mediaUrl(media) != null)
+        .where((media) => media['need_more_quota'] != true)
+        .where((media) => !media.containsKey('is_visible') || media['is_visible'] != false)
         .toList(growable: false);
     if (entries.isEmpty) return null;
 
     Map<String, dynamic>? origin;
+    Map<String, dynamic>? defaultMedia;
     for (final media in entries) {
-      if (media['is_origin'] == true) {
-        origin = media;
-        break;
-      }
+      if (origin == null && media['is_origin'] == true) origin = media;
+      if (defaultMedia == null && media['is_default'] == true) defaultMedia = media;
     }
 
     final fileSize = _parseInt(decoded['size']) ?? 0;
@@ -309,44 +311,52 @@ class PikPakTransferService {
         (originHeight >= 2160 && fileSize >= _largeUhdThreshold);
 
     if (heavyOrigin) {
-      final transcodes = entries.where((media) {
-        if (media['is_origin'] == true) return false;
-        if (media['need_more_quota'] == true) return false;
-        if (media.containsKey('is_visible') && media['is_visible'] == false) {
-          return false;
-        }
-        return true;
-      }).toList(growable: false);
-
+      final transcodes = entries.where((media) => media['is_origin'] != true).toList();
       if (transcodes.isNotEmpty) {
-        final knownSafe = transcodes
-            .where((media) {
-              final bitRate = _mediaBitRate(media);
-              return bitRate > 0 && bitRate <= _smoothBitrateCeiling;
-            })
-            .toList();
-        final unknownRate = transcodes
-            .where((media) => _mediaBitRate(media) <= 0)
-            .toList();
-        final pool = knownSafe.isNotEmpty
-            ? knownSafe
-            : (unknownRate.isNotEmpty ? unknownRate : [...transcodes]);
+        // For very large UHD remuxes, prioritize a cloud 1080p rendition. This
+        // mirrors the "smooth first" behavior users see in the PikPak client
+        // and avoids decoding/streaming a 70GB+ DV/HEVC origin inside Flutter.
+        final targetMaxHeight = fileSize >= _ultraHugeThreshold ? 1080 : 2160;
+        final preferred = transcodes.where((media) {
+          final h = _mediaHeight(media);
+          final br = _mediaBitRate(media);
+          return (h <= 0 || h <= targetMaxHeight) &&
+              (br <= 0 || br <= _smoothBitrateCeiling);
+        }).toList();
 
-        pool.sort((a, b) => _smoothMediaScore(b).compareTo(
-              _smoothMediaScore(a),
+        final pool = preferred.isNotEmpty ? preferred : transcodes;
+        pool.sort((a, b) => _safeMediaScore(b, targetMaxHeight).compareTo(
+              _safeMediaScore(a, targetMaxHeight),
             ));
         final smooth = _mediaUrl(pool.first);
         if (smooth != null) return smooth;
       }
     }
 
-    for (final media in entries) {
-      if (media['is_default'] == true) return _mediaUrl(media);
-    }
-    for (final media in entries) {
-      if (media['is_origin'] == true) return _mediaUrl(media);
-    }
+    // Normal files follow PikPak's own preferred rendition first.
+    if (defaultMedia != null) return _mediaUrl(defaultMedia);
+    if (origin != null) return _mediaUrl(origin);
     return _mediaUrl(entries.first);
+  }
+
+  int _safeMediaScore(Map<String, dynamic> media, int targetMaxHeight) {
+    final height = _mediaHeight(media);
+    final bitRate = _mediaBitRate(media);
+    final codec = _mediaCodec(media);
+    var score = 0;
+    if (media['is_default'] == true) score += 500000000;
+    if (height > 0 && height <= targetMaxHeight) score += height * 100000;
+    if (bitRate > 0 && bitRate <= _smoothBitrateCeiling) score += bitRate ~/ 1000;
+    if (codec.contains('264') || codec.contains('avc')) score += 80000000;
+    return score;
+  }
+
+  String _mediaCodec(Map<String, dynamic> media) {
+    final video = media['video'];
+    if (video is Map<String, dynamic>) {
+      return (video['codec'] ?? video['codec_name'] ?? '').toString().toLowerCase();
+    }
+    return '';
   }
 
   int _smoothMediaScore(Map<String, dynamic> media) {

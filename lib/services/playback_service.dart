@@ -5,19 +5,9 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 class PlaybackService {
   PlaybackService() : player = Player() {
-    // v0.3.5 used auto-copy-safe to stop difficult 4K HEVC files from taking
-    // the process down. That path copies decoded frames back through system RAM
-    // and can become the bottleneck on UHD content. Debrify's patched
-    // media_kit_video renderer is now pinned in pubspec, so use mpv's supported
-    // direct hardware path on Windows for substantially better 4K throughput.
-    controller = Platform.isWindows
-        ? VideoController(
-            player,
-            configuration: const VideoControllerConfiguration(
-              hwdec: 'auto-safe',
-            ),
-          )
-        : VideoController(player);
+    // Keep the patched media_kit_video platform defaults. On Windows the
+    // patched controller uses mpv's native auto hardware decoder path.
+    controller = VideoController(player);
   }
 
   final Player player;
@@ -43,23 +33,18 @@ class PlaybackService {
 
   /// Cloud-VOD profile for PikPak playback.
   ///
-  /// The 512 MiB forward packet budget is intentionally much larger than the
-  /// old 256 MiB profile. mpv continuously reads ahead while playback runs, up
-  /// to about five minutes when bitrate and the byte ceiling permit it. If the
-  /// CDN briefly falls behind, cache-pause waits for a small cushion before
-  /// resuming instead of repeatedly stuttering frame-by-frame.
+  /// Uses Debrify's vetted Large/Extended cloud-VOD profile: two minutes of
+  /// read-ahead plus reconnect tolerance, without forcing cache-pause.
   Future<void> _applyNetworkProfile() async {
     final dynamic platform = player.platform;
     const properties = <String, String>{
-      'cache': 'yes',
-      'demuxer-thread': 'yes',
-      'demuxer-max-bytes': '512MiB',
-      'demuxer-max-back-bytes': '32MiB',
-      'demuxer-readahead-secs': '300',
-      'cache-secs': '300',
-      'cache-pause': 'yes',
-      'cache-pause-wait': '3',
-      'network-timeout': '60',
+      // Debrify-vetted Large + Extended profile. Deliberately do not force
+      // cache-pause/cache-pause-wait: those can turn ordinary read-ahead into
+      // repeated visible stalls on fast cloud VOD.
+      'demuxer-max-bytes': '256MiB',
+      'demuxer-readahead-secs': '120',
+      'cache-secs': '120',
+      'network-timeout': '90',
       'stream-lavf-o':
           'reconnect=1,reconnect_on_network_error=1,reconnect_on_http_error=5xx,reconnect_delay_max=10',
     };

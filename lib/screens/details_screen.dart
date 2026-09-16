@@ -689,174 +689,41 @@ class _DetailsScreenState extends State<DetailsScreen> {
   }
 
   Future<SourceResult?> _chooseSource(List<SourceResult> results) async {
-  var activeSort = await widget.sources.getSortMode();
-  if (!mounted) return null;
+    var priority = await widget.sources.getPriorityOrder();
+    if (!mounted) return null;
 
-  int score(SourceResult result, SourceSortMode mode) {
-    final seederRank = (result.seeders ?? -1).clamp(-1, 999999).toInt() + 1;
-    final sizeMb = ((result.sizeBytes ?? 0) ~/ (1024 * 1024))
-        .clamp(0, 999999)
-        .toInt();
-    switch (mode) {
-      case SourceSortMode.quality:
-        return result.qualityRank * 1000000000000 +
-            seederRank * 1000000 +
-            sizeMb;
-      case SourceSortMode.seeders:
-        return seederRank * 1000000000000 +
-            result.qualityRank * 1000000 +
-            sizeMb;
-      case SourceSortMode.fileSize:
-        return sizeMb * 1000000000 +
-            result.qualityRank * 1000000 +
-            seederRank;
-    }
-  }
-
-  return showModalBottomSheet<SourceResult>(
-    context: context,
-    backgroundColor: const Color(0xFF11141C),
-    showDragHandle: true,
-    isScrollControlled: true,
-    constraints: const BoxConstraints(maxWidth: 920),
-    builder: (sheetContext) => StatefulBuilder(
-      builder: (context, setSheetState) {
-        final sorted = [...results]
-          ..sort((a, b) => score(b, activeSort).compareTo(score(a, activeSort)));
-        final best = sorted.isEmpty ? null : sorted.first;
-        final color = Theme.of(context).colorScheme;
-
-        return SafeArea(
-          child: SizedBox(
-            height: MediaQuery.sizeOf(context).height * .82,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(22, 4, 22, 24),
+    Future<void> customizePriority(BuildContext dialogContext, StateSetter setSheetState) async {
+      final working = [...priority];
+      final saved = await showDialog<List<SourceSortCriterion>>(
+        context: dialogContext,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Source priority'),
+            content: SizedBox(
+              width: 430,
+              height: 300,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Choose source',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleLarge
-                                  ?.copyWith(fontWeight: FontWeight.w900),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '${results.length} result${results.length == 1 ? '' : 's'} returned • showing all',
-                              style: TextStyle(color: color.onSurfaceVariant),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (best != null)
-                        FilledButton.icon(
-                          onPressed: () => Navigator.pop(sheetContext, best),
-                          icon: const Icon(Icons.bolt_rounded),
-                          label: Text('Quick Play ${best.quality ?? ''}'.trim()),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 15),
-                  Row(
-                    children: [
-                      Text(
-                        'Sort by',
-                        style: TextStyle(
-                          color: color.onSurfaceVariant,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: SegmentedButton<SourceSortMode>(
-                          showSelectedIcon: true,
-                          segments: const [
-                            ButtonSegment(
-                              value: SourceSortMode.quality,
-                              icon: Icon(Icons.high_quality_rounded),
-                              label: Text('Quality'),
-                            ),
-                            ButtonSegment(
-                              value: SourceSortMode.seeders,
-                              icon: Icon(Icons.people_alt_rounded),
-                              label: Text('Seeders'),
-                            ),
-                            ButtonSegment(
-                              value: SourceSortMode.fileSize,
-                              icon: Icon(Icons.storage_rounded),
-                              label: Text('File size'),
-                            ),
-                          ],
-                          selected: {activeSort},
-                          onSelectionChanged: (selection) {
-                            if (selection.isEmpty) return;
-                            final next = selection.first;
-                            setSheetState(() => activeSort = next);
-                            widget.sources.setSortMode(next);
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 9),
-                  Text(
-                    activeSort == SourceSortMode.quality
-                        ? 'Priority: quality → seeders → file size'
-                        : activeSort == SourceSortMode.seeders
-                            ? 'Priority: seeders → quality → file size'
-                            : 'Priority: file size → quality → seeders',
-                    style: TextStyle(
-                      color: color.primary,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  const Divider(height: 1),
+                  const Text('Drag criteria into the order you want. #1 has the highest priority.'),
+                  const SizedBox(height: 14),
                   Expanded(
-                    child: ListView.separated(
-                      itemCount: sorted.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
+                    child: ReorderableListView.builder(
+                      itemCount: working.length,
+                      onReorder: (oldIndex, newIndex) {
+                        setDialogState(() {
+                          if (newIndex > oldIndex) newIndex--;
+                          final item = working.removeAt(oldIndex);
+                          working.insert(newIndex, item);
+                        });
+                      },
                       itemBuilder: (context, index) {
-                        final result = sorted[index];
+                        final criterion = working[index];
                         return ListTile(
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 7,
-                          ),
-                          leading: CircleAvatar(
-                            radius: 25,
-                            child: Text(
-                              result.quality?.replaceAll('P', '') ?? '—',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
-                          title: Text(
-                            result.title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(height: 1.38),
-                          ),
-                          subtitle: Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text(
-                              '${result.provider}${result.isMagnet ? ' • PikPak cloud source' : ' • direct URL'}',
-                            ),
-                          ),
-                          trailing: index == 0
-                              ? const Chip(label: Text('Best'))
-                              : const Icon(Icons.chevron_right_rounded),
-                          onTap: () => Navigator.pop(sheetContext, result),
+                          key: ValueKey(criterion.name),
+                          leading: CircleAvatar(child: Text('${index + 1}')),
+                          title: Text(criterion.label, style: const TextStyle(fontWeight: FontWeight.w800)),
+                          trailing: const Icon(Icons.drag_indicator_rounded),
                         );
                       },
                     ),
@@ -864,12 +731,151 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 ],
               ),
             ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(
+                  dialogContext,
+                  [...SourceProviderService.defaultPriority],
+                ),
+                child: const Text('Reset best'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, working),
+                child: const Text('Save'),
+              ),
+            ],
           ),
-        );
-      },
-    ),
-  );
-}
+        ),
+      );
+      if (saved != null) {
+        await widget.sources.setPriorityOrder(saved);
+        setSheetState(() => priority = saved);
+      }
+    }
+
+    return showModalBottomSheet<SourceResult>(
+      context: context,
+      backgroundColor: const Color(0xFF11141C),
+      showDragHandle: true,
+      isScrollControlled: true,
+      constraints: const BoxConstraints(maxWidth: 960),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          final sorted = widget.sources.sortResults(results, priority);
+          final best = sorted.isEmpty ? null : sorted.first;
+          final color = Theme.of(context).colorScheme;
+          final priorityText = priority.map((e) => e.label.toLowerCase()).join(' → ');
+
+          return SafeArea(
+            child: SizedBox(
+              height: MediaQuery.sizeOf(context).height * .84,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(22, 4, 22, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Choose source',
+                                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '${results.length} result${results.length == 1 ? '' : 's'} returned • showing all',
+                                style: TextStyle(color: color.onSurfaceVariant),
+                              ),
+                            ],
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () => customizePriority(sheetContext, setSheetState),
+                          icon: const Icon(Icons.tune_rounded),
+                          label: const Text('Sort priority'),
+                        ),
+                        const SizedBox(width: 10),
+                        if (best != null)
+                          FilledButton.icon(
+                            onPressed: () => Navigator.pop(sheetContext, best),
+                            icon: const Icon(Icons.bolt_rounded),
+                            label: Text('Quick Play ${best.quality ?? ''}'.trim()),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                      decoration: BoxDecoration(
+                        color: color.primaryContainer.withValues(alpha: .22),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.sort_rounded, size: 18, color: color.primary),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Priority: $priorityText',
+                              style: TextStyle(color: color.primary, fontSize: 12, fontWeight: FontWeight.w800),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: ListView.separated(
+                        itemCount: sorted.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        itemBuilder: (context, index) {
+                          final result = sorted[index];
+                          return ListTile(
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+                            leading: CircleAvatar(
+                              radius: 25,
+                              child: Text(
+                                result.quality?.replaceAll('P', '') ?? '—',
+                                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
+                              ),
+                            ),
+                            title: Text(
+                              result.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(height: 1.38),
+                            ),
+                            subtitle: Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                '${result.provider}${result.isMagnet ? ' • PikPak cloud source' : ' • direct URL'}',
+                              ),
+                            ),
+                            trailing: index == 0
+                                ? const Chip(label: Text('Best'))
+                                : const Icon(Icons.chevron_right_rounded),
+                            onTap: () => Navigator.pop(sheetContext, result),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
 
   Future<PikPakFile?> _findInPikPak(
     MediaItem item, {
