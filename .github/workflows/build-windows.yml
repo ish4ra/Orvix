@@ -6,6 +6,8 @@ on:
     branches: [main]
     paths:
       - '**.go'
+      - 'ui/**'
+      - 'go.mod'
       - '.github/workflows/build-windows.yml'
 
 jobs:
@@ -18,10 +20,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.x'
+          go-version: '1.23.x'
 
       - name: Build Windows x64
-        run: GOOS=windows GOARCH=amd64 go build -ldflags="-H=windowsgui" -o Pikora-Windows-x64.exe main_windows.go
+        run: GOOS=windows GOARCH=amd64 go build -ldflags="-H=windowsgui" -o Pikora-Windows-x64.exe .
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4
