@@ -1,0 +1,171 @@
+name: Apply Orvix v0.5.1 Source Fix Once
+
+on:
+  push:
+    branches:
+      - orvix-v0.5.1-source-fix
+    paths:
+      - '.github/workflows/orvix-v051-source-fix-once.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: orvix-v051-source-fix-once
+  cancel-in-progress: false
+
+jobs:
+  apply-and-validate:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source-fix branch
+        uses: actions/checkout@v4
+        with:
+          ref: orvix-v0.5.1-source-fix
+          fetch-depth: 0
+
+      - name: Apply source defaults and v0.5.1 metadata
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Read-Lf([string]$Path) {
+            return (Get-Content $Path -Raw).Replace("`r`n", "`n")
+          }
+
+          function Write-Lf([string]$Path, [string]$Text) {
+            [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
+          }
+
+          function Replace-Required([string]$Text, [string]$Old, [string]$New, [string]$Label) {
+            if (-not $Text.Contains($Old)) {
+              throw "Expected source block not found: $Label"
+            }
+            return $Text.Replace($Old, $New)
+          }
+
+          $path = 'lib/services/source_provider_service.dart'
+          $text = Read-Lf $path
+
+          $text = Replace-Required $text "    defaultValue: ''," "    defaultValue: 'https://torrentio.strem.fun'," 'built-in Torrentio default'
+
+          $old = "  static const _preferredGroupsKey = 'orvix_preferred_release_groups_v1';"
+          $new = @"
+  static const _preferredGroupsKey = 'orvix_preferred_release_groups_v1';
+  static const _recommendedProvidersSeedKey =
+      'orvix_recommended_source_pool_seeded_v1';
+  static const _recommendedAddonUrls = <String>[
+    'https://comet.elfhosted.com',
+  ];
+"@.Replace("`r`n", "`n").TrimEnd("`n")
+          $text = Replace-Required $text $old $new 'recommended provider constants'
+
+          $old = "    await _migrateTorrentio(prefs);`n`n    final out = <String>[];"
+          $new = "    await _migrateTorrentio(prefs);`n    await _seedRecommendedProviders(prefs);`n`n    final out = <String>[];"
+          $text = Replace-Required $text $old $new 'provider seeding call'
+
+          $old = @"
+  String providerName(String url) {
+    if (_looksLikeTorrentio(url)) return 'Torrentio';
+    final uri = Uri.tryParse(url);
+    return uri?.host.isNotEmpty == true ? uri!.host : 'Source provider';
+  }
+"@.Replace("`r`n", "`n").TrimEnd("`n")
+          $new = @"
+  String providerName(String url) {
+    if (_looksLikeTorrentio(url)) return 'Torrentio';
+    final uri = Uri.tryParse(url);
+    final host = uri?.host.toLowerCase() ?? '';
+    if (host.contains('comet')) return 'Comet';
+    if (host.contains('mediafusion')) return 'MediaFusion';
+    return host.isNotEmpty ? uri!.host : 'Source provider';
+  }
+"@.Replace("`r`n", "`n").TrimEnd("`n")
+          $text = Replace-Required $text $old $new 'provider display names'
+
+          $old = '  Future<void> _migrateTorrentio(SharedPreferences prefs) async {'
+          $new = @"
+  Future<void> _seedRecommendedProviders(SharedPreferences prefs) async {
+    // Seed curated zero-config providers once. The normal Provider pool UI can
+    // remove them later; the marker prevents a removed provider being re-added
+    // on every launch.
+    if (prefs.getBool(_recommendedProvidersSeedKey) == true) return;
+
+    final current = [...(prefs.getStringList(_prefsKey) ?? const <String>[])];
+    for (final raw in _recommendedAddonUrls) {
+      final value = _normalizeAddonUrl(raw);
+      if (value != null &&
+          !_looksLikeTorrentio(value) &&
+          !current.contains(value)) {
+        current.add(value);
+      }
+    }
+    await prefs.setStringList(_prefsKey, current);
+    await prefs.setBool(_recommendedProvidersSeedKey, true);
+  }
+
+  Future<void> _migrateTorrentio(SharedPreferences prefs) async {
+"@.Replace("`r`n", "`n").TrimEnd("`n")
+          $text = Replace-Required $text $old $new 'recommended provider seeding method'
+
+          Write-Lf $path $text
+
+          $uiPath = 'lib/screens/sources_screen.dart'
+          $ui = Read-Lf $uiPath
+          $ui = $ui.Replace('Pikora', 'Orvix')
+          Write-Lf $uiPath $ui
+
+          $pubPath = 'pubspec.yaml'
+          $pub = Read-Lf $pubPath
+          $pub = Replace-Required $pub 'version: 0.5.0+20' 'version: 0.5.1+21' 'v0.5.1 pubspec version'
+          Write-Lf $pubPath $pub
+
+          $changePath = 'CHANGELOG.md'
+          $change = Read-Lf $changePath
+          $marker = "# Orvix Changelog`n`n"
+          if (-not $change.StartsWith($marker)) {
+            throw 'Unexpected CHANGELOG header.'
+          }
+          $section = @"
+## v0.5.1 — zero-config source pool
+
+- Restored a built-in Torrentio default for fresh installs, so Source Engine no longer starts as NOT CONFIGURED and users do not need to paste a Torrentio URL.
+- Added Comet (ElfHosted public instance) as a second zero-config Stremio-compatible provider, seeded once and still removable from Provider configuration.
+- Kept custom providers and legacy Torrentio migration intact; all configured providers continue to resolve in parallel and merge into one ranked source list.
+- Cleaned remaining Pikora wording from the active Source Engine screen.
+
+"@.Replace("`r`n", "`n")
+          $change = $marker + $section + $change.Substring($marker.Length)
+          Write-Lf $changePath $change
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Windows runner
+        shell: pwsh
+        run: flutter create --platforms=windows --project-name orvix .
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Generate Orvix Windows icon
+        run: dart run flutter_launcher_icons
+
+      - name: Analyze app sources
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Commit validated source fix and remove helper
+        shell: pwsh
+        run: |
+          git config user.name "Ishara Lakshan"
+          git config user.email "ishara@tuta.io"
+          git rm .github/workflows/orvix-v051-source-fix-once.yml
+          git add lib/services/source_provider_service.dart lib/screens/sources_screen.dart pubspec.yaml CHANGELOG.md
+          git commit -m "fix: restore zero-config source pool for Orvix v0.5.1"
+          git push origin HEAD:orvix-v0.5.1-source-fix
