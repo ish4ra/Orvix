@@ -1,0 +1,38 @@
+name: Backfill Pikora Historical Releases
+
+on:
+  push:
+    branches:
+      - v0.3-flutter
+    paths:
+      - '.github/workflows/backfill-historical-releases.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create historical release entries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! gh release view v0.3.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create v0.3.0 \
+              --repo "$GITHUB_REPOSITORY" \
+              --target 822a0908910749e4111093197668092fa14edcb4 \
+              --title "Pikora v0.3.0" \
+              --notes "Flutter MVP: cinematic catalog UI, PikPak cloud integration, Stremio-compatible source-provider support, built-in media_kit/libmpv playback, and the first packaged Windows installer. See CHANGELOG.md for the full project history."
+          fi
+
+          if ! gh release view v0.3.1 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create v0.3.1 \
+              --repo "$GITHUB_REPOSITORY" \
+              --target b764a0dfdb72ad4a2efda4a53a9fdeed984586fc \
+              --title "Pikora v0.3.1" \
+              --notes "Sources and playback update: persistent source sorting by seeders/file size/quality, richer result metadata, PikPak media-stream URL priority, and larger/retrying mpv network buffers for cloud VOD. See CHANGELOG.md for details."
+          fi
