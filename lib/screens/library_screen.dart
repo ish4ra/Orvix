@@ -38,6 +38,30 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   String get _parentId => _crumbs.last.id;
 
+  String _formatFileSize(String? raw) {
+    final bytes = int.tryParse(raw ?? '');
+    if (bytes == null || bytes <= 0) return '';
+    const kb = 1024.0;
+    const mb = kb * 1024;
+    const gb = mb * 1024;
+    const tb = gb * 1024;
+    final value = bytes.toDouble();
+    if (value >= tb) return '${(value / tb).toStringAsFixed(2)} TB';
+    if (value >= gb) return '${(value / gb).toStringAsFixed(2)} GB';
+    if (value >= mb) return '${(value / mb).toStringAsFixed(1)} MB';
+    if (value >= kb) return '${(value / kb).toStringAsFixed(1)} KB';
+    return '$bytes B';
+  }
+
+  String _fileSubtitle(PikPakFile file) {
+    if (file.isFolder) return 'Folder';
+    final parts = <String>[
+      if ((file.mimeType ?? '').trim().isNotEmpty) file.mimeType!.trim() else file.kind,
+      if (_formatFileSize(file.size).isNotEmpty) _formatFileSize(file.size),
+    ].where((part) => part.trim().isNotEmpty).toList(growable: false);
+    return parts.join('  •  ');
+  }
+
   @override
   void initState() {
     super.initState();
@@ -377,7 +401,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           child: Icon(file.isFolder ? Icons.folder_rounded : Icons.movie_rounded),
                         ),
                         title: Text(file.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                        subtitle: Text(file.isFolder ? 'Folder' : (file.mimeType ?? file.kind)),
+                        subtitle: Text(_fileSubtitle(file)),
                         trailing: Icon(file.isFolder ? Icons.chevron_right : Icons.play_circle_fill_rounded),
                         onTap: _busy
                             ? null
