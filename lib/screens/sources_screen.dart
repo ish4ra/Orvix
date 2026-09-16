@@ -166,7 +166,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
         ),
         const SizedBox(height: 5),
         Text(
-          'Add multiple Stremio-compatible providers you are authorized to use. Pikora queries the configured provider pool in parallel, merges the returned streams, then de-duplicates exact rows.',
+          'Add multiple Stremio-compatible providers you are authorized to use. Orvix queries the configured provider pool in parallel, merges the returned streams, then de-duplicates exact rows.',
           style: TextStyle(color: color.onSurfaceVariant, height: 1.45),
         ),
         const SizedBox(height: 13),
@@ -256,8 +256,8 @@ class _SourcesScreenState extends State<SourcesScreen> {
                 const SizedBox(height: 6),
                 Text(
                   active
-                      ? 'Integrated into Pikora. Limited Lite/limit profiles are automatically supplemented with a broad result request, then merged and de-duplicated.'
-                      : 'The resolver is built into Pikora. Add an authorized Torrentio-compatible endpoint once below and Pikora will migrate and reuse it automatically.',
+                      ? 'Integrated into Orvix. Limited Lite/limit profiles are automatically supplemented with a broad result request, then merged and de-duplicated.'
+                      : 'The resolver is built into Orvix. Add an authorized Torrentio-compatible endpoint once below and Orvix will migrate and reuse it automatically.',
                   style: TextStyle(color: color.onSurfaceVariant, height: 1.4),
                 ),
                 if (active) ...[

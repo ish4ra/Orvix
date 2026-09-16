@@ -163,10 +163,16 @@ class SourceProviderService {
   // v2 intentionally resets the old default. v0.3.7 makes the default order
   // Quality -> Seeders -> Size while still allowing the user to switch it.
   static const _sortKey = 'pikora_source_sort_mode_v2';
-  static const _priorityKey = 'orvix_source_priority_v3';
+  static const _priorityKey = 'orvix_source_priority_v4';
   static const _show3DKey = 'orvix_show_3d_sources_v1';
   static const _showLowQualityKey = 'orvix_show_low_quality_sources_v1';
   static const _preferredGroupsKey = 'orvix_preferred_release_groups_v1';
+  static const _recommendedProvidersSeedKey =
+      'orvix_recommended_source_pool_seeded_v1';
+  static const _recommendedAddonUrls = <String>[
+    'https://comet.elfhosted.com',
+    'https://mediafusion.elfhosted.com',
+  ];
 
   // A distributor may inject an authorized/self-hosted Stremio-compatible
   // Torrentio endpoint at build time without putting a public index URL in
@@ -174,7 +180,7 @@ class SourceProviderService {
   // manual provider list, so they do not have to add it again after updating.
   static const _bundledTorrentioProvider = String.fromEnvironment(
     'PIKORA_TORRENTIO_URL',
-    defaultValue: '',
+    defaultValue: 'https://torrentio.strem.fun',
   );
 
   final http.Client _client;
@@ -182,6 +188,7 @@ class SourceProviderService {
   Future<List<String>> getAddonUrls() async {
     final prefs = await SharedPreferences.getInstance();
     await _migrateTorrentio(prefs);
+    await _seedRecommendedProviders(prefs);
 
     final out = <String>[];
     final torrentio = _normalizeAddonUrl(
@@ -223,8 +230,8 @@ class SourceProviderService {
   }
 
   static const defaultPriority = <SourceSortCriterion>[
-    SourceSortCriterion.resolution,
     SourceSortCriterion.releaseQuality,
+    SourceSortCriterion.resolution,
     SourceSortCriterion.seeders,
     SourceSortCriterion.fileSize,
   ];
@@ -369,7 +376,10 @@ class SourceProviderService {
   String providerName(String url) {
     if (_looksLikeTorrentio(url)) return 'Torrentio';
     final uri = Uri.tryParse(url);
-    return uri?.host.isNotEmpty == true ? uri!.host : 'Source provider';
+    final host = uri?.host.toLowerCase() ?? '';
+    if (host.contains('comet')) return 'Comet';
+    if (host.contains('mediafusion')) return 'MediaFusion';
+    return host.isNotEmpty ? uri!.host : 'Source provider';
   }
 
   Future<List<SourceResult>> resolve(
@@ -544,6 +554,25 @@ class SourceProviderService {
     } catch (_) {
       return const [];
     }
+  }
+
+  Future<void> _seedRecommendedProviders(SharedPreferences prefs) async {
+    // Seed curated zero-config providers once. The Provider pool UI can
+    // remove them later; the marker prevents a removed provider being re-added
+    // on every launch.
+    if (prefs.getBool(_recommendedProvidersSeedKey) == true) return;
+
+    final current = [...(prefs.getStringList(_prefsKey) ?? const <String>[])];
+    for (final raw in _recommendedAddonUrls) {
+      final value = _normalizeAddonUrl(raw);
+      if (value != null &&
+          !_looksLikeTorrentio(value) &&
+          !current.contains(value)) {
+        current.add(value);
+      }
+    }
+    await prefs.setStringList(_prefsKey, current);
+    await prefs.setBool(_recommendedProvidersSeedKey, true);
   }
 
   Future<void> _migrateTorrentio(SharedPreferences prefs) async {
