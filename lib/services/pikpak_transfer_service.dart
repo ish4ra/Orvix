@@ -276,10 +276,10 @@ class PikPakTransferService {
     return decoded is Map<String, dynamic> ? decoded : null;
   }
 
-  /// Pick a streaming-optimized PikPak media rendition. When PikPak exposes a
-  /// visible transcoded rendition, prefer the highest one up to 1080p. This is
-  /// intentionally smoother than blindly opening a huge Blu-ray/Remux origin.
-  /// If no transcode is available, fall back to PikPak's default/origin media.
+  /// Follow PikPak/Debrify streaming semantics: prefer the media entry that
+  /// PikPak itself marks as default, then the origin rendition, then the first
+  /// usable media entry. Do not invent a quality ranking here: PikPak's
+  /// `is_default` choice is the provider-selected playback path.
   String? _selectMediaUrl(Map<String, dynamic> decoded) {
     final medias = decoded['medias'];
     if (medias is! List || medias.isEmpty) return null;
@@ -287,16 +287,8 @@ class PikPakTransferService {
     final entries = medias
         .whereType<Map<String, dynamic>>()
         .where((media) => _mediaUrl(media) != null)
-        .where((media) => media['is_visible'] != false)
-        .where((media) => media['need_more_quota'] != true)
-        .toList();
+        .toList(growable: false);
     if (entries.isEmpty) return null;
-
-    final transcodes = entries.where((media) => media['is_origin'] != true).toList();
-    if (transcodes.isNotEmpty) {
-      transcodes.sort((a, b) => _transcodeScore(b).compareTo(_transcodeScore(a)));
-      return _mediaUrl(transcodes.first);
-    }
 
     for (final media in entries) {
       if (media['is_default'] == true) return _mediaUrl(media);
@@ -305,40 +297,6 @@ class PikPakTransferService {
       if (media['is_origin'] == true) return _mediaUrl(media);
     }
     return _mediaUrl(entries.first);
-  }
-
-  int _transcodeScore(Map<String, dynamic> media) {
-    final height = _mediaHeight(media);
-    final bitrate = _parseInt(
-          media['video'] is Map<String, dynamic>
-              ? (media['video'] as Map<String, dynamic>)['bit_rate']
-              : null,
-        ) ??
-        0;
-    final defaultBonus = media['is_default'] == true ? 50000 : 0;
-
-    // Prefer 1080p, then 720p, then lower renditions. A transcode above 1080p
-    // is ranked below a normal 1080p rendition because the purpose here is a
-    // smooth default rather than maximum-bitrate playback.
-    if (height > 0 && height <= 1080) {
-      return 10000000 + height * 1000 + bitrate.clamp(0, 999999) + defaultBonus;
-    }
-    if (height > 1080) {
-      return 5000000 - (height - 1080) * 1000 + defaultBonus;
-    }
-    return 1000000 + bitrate.clamp(0, 999999) + defaultBonus;
-  }
-
-  int _mediaHeight(Map<String, dynamic> media) {
-    final video = media['video'];
-    if (video is Map<String, dynamic>) {
-      final parsed = _parseInt(video['height']);
-      if (parsed != null && parsed > 0) return parsed;
-    }
-    final label = '${media['resolution_name'] ?? ''} ${media['media_name'] ?? ''}';
-    final match = RegExp(r'(2160|1440|1080|720|576|540|480|360)[pP]?')
-        .firstMatch(label);
-    return int.tryParse(match?.group(1) ?? '') ?? 0;
   }
 
   String? _mediaUrl(Map<String, dynamic> media) {

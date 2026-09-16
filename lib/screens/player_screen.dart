@@ -49,6 +49,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Timer? _hideTimer;
   Timer? _saveTimer;
   Timer? _nextTimer;
+  Timer? _startupTimer;
   StreamSubscription<bool>? _completedSubscription;
   final FocusNode _focusNode = FocusNode();
 
@@ -69,6 +70,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _open() async {
     try {
       await widget.playback.open(widget.url, title: widget.title);
+      _startupTimer?.cancel();
+      _startupTimer = Timer(const Duration(seconds: 12), () {
+        if (!mounted) return;
+        final state = widget.playback.player.state;
+        if (state.duration <= Duration.zero &&
+            state.position <= Duration.zero) {
+          setState(() {
+            _error = 'PikPak stream did not initialize (still 0:00/0:00 after 12 seconds). '
+                'This is a stream-start failure, not normal buffering.';
+          });
+        }
+      });
       final currentVolume = widget.playback.player.state.volume;
       if (currentVolume > 0) _lastVolume = currentVolume;
       if (widget.item != null && widget.mediaState != null) {
@@ -363,6 +376,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _hideTimer?.cancel();
     _saveTimer?.cancel();
     _nextTimer?.cancel();
+    _startupTimer?.cancel();
     _completedSubscription?.cancel();
     _persistProgress();
     _focusNode.dispose();

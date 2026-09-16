@@ -2,6 +2,16 @@
 
 This file tracks user-visible changes to Pikora. GitHub Releases are published automatically for new packaged versions starting with v0.3.2.
 
+
+## v0.3.4 — Debrify-aligned PikPak playback
+
+- Reworked PikPak rendition selection to follow Debrify/PikPak semantics: `is_default` first, then `is_origin`, then the first usable media link, with `web_content_link` only as fallback.
+- Removed Pikora's custom "highest transcode up to 1080p" selection that could choose a non-default/broken PikPak rendition.
+- Removed always-on mpv cache/reconnect overrides. The default playback path now uses stock media_kit/libmpv behavior, matching Debrify's `Standard` network preset.
+- Removed the custom forced `hwdec` VideoController configuration from the default path and returned to the stock controller setup used by Debrify on desktop.
+- Added a 12-second startup watchdog: a VOD stream that remains at `0:00 / 0:00` is reported as a stream-start failure instead of showing an endless buffering spinner.
+- Kept v0.3.3's exact `fileIdx`/torrent-child routing, so this playback alignment does not reintroduce cross-source or wrong-episode matching.
+
 ## v0.3.3 — Exact episode routing & smoother PikPak playback
 
 - Preserves Stremio torrent `fileIdx`, filename hints, and video-size metadata instead of discarding them.
