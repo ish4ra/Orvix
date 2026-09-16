@@ -5,9 +5,14 @@ import '../services/catalog_service.dart';
 import '../widgets/media_card.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.catalog});
+  const HomeScreen({
+    super.key,
+    required this.catalog,
+    required this.onOpen,
+  });
 
   final CatalogService catalog;
+  final ValueChanged<MediaItem> onOpen;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -24,9 +29,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _load() {
     _homeFuture = Future.wait([
-      widget.catalog.popularMovies(limit: 24),
-      widget.catalog.popularSeries(limit: 24),
-      widget.catalog.topRatedMovies(limit: 24),
+      widget.catalog.popularMovies(limit: 30),
+      widget.catalog.popularSeries(limit: 30),
+      widget.catalog.topRatedMovies(limit: 30),
+      widget.catalog.topRatedSeries(limit: 30),
     ]);
   }
 
@@ -60,7 +66,8 @@ class _HomeScreenState extends State<HomeScreen> {
         final groups = snapshot.data ?? const <List<MediaItem>>[];
         final movies = groups.isNotEmpty ? groups[0] : const <MediaItem>[];
         final series = groups.length > 1 ? groups[1] : const <MediaItem>[];
-        final rated = groups.length > 2 ? groups[2] : const <MediaItem>[];
+        final ratedMovies = groups.length > 2 ? groups[2] : const <MediaItem>[];
+        final ratedSeries = groups.length > 3 ? groups[3] : const <MediaItem>[];
         final hero = movies.isNotEmpty ? movies.first : null;
 
         return RefreshIndicator(
@@ -71,10 +78,11 @@ class _HomeScreenState extends State<HomeScreen> {
           child: ListView(
             padding: EdgeInsets.zero,
             children: [
-              if (hero != null) _Hero(item: hero),
-              _MediaRail(title: 'Popular Movies', items: movies),
-              _MediaRail(title: 'Popular TV', items: series),
-              _MediaRail(title: 'Top Rated', items: rated),
+              if (hero != null) _Hero(item: hero, onOpen: () => widget.onOpen(hero)),
+              _MediaRail(title: 'Popular Movies', items: movies, onOpen: widget.onOpen),
+              _MediaRail(title: 'Popular TV', items: series, onOpen: widget.onOpen),
+              _MediaRail(title: 'Top Rated Movies', items: ratedMovies, onOpen: widget.onOpen),
+              _MediaRail(title: 'Top Rated TV', items: ratedSeries, onOpen: widget.onOpen),
               const SizedBox(height: 48),
             ],
           ),
@@ -85,13 +93,14 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _Hero extends StatelessWidget {
-  const _Hero({required this.item});
+  const _Hero({required this.item, required this.onOpen});
   final MediaItem item;
+  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 390,
+      height: 430,
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -116,17 +125,17 @@ class _Hero extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.centerLeft,
                 end: Alignment.centerRight,
-                colors: [Color(0xE608090D), Color(0x0008090D)],
-                stops: [0, .72],
+                colors: [Color(0xEF08090D), Color(0x0008090D)],
+                stops: [0, .74],
               ),
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(38, 68, 38, 38),
+            padding: const EdgeInsets.fromLTRB(40, 70, 40, 44),
             child: Align(
               alignment: Alignment.bottomLeft,
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 620),
+                constraints: const BoxConstraints(maxWidth: 640),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -134,15 +143,20 @@ class _Hero extends StatelessWidget {
                     Text(
                       item.title,
                       style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                            fontWeight: FontWeight.w800,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -.8,
                           ),
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      [item.typeLabel, if (item.year != null) item.year!].join(' • '),
+                      [
+                        item.typeLabel,
+                        if (item.year != null) item.year!,
+                        if (item.rating != null) '★ ${item.rating!.toStringAsFixed(1)}',
+                      ].join('  •  '),
                       style: TextStyle(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                     if (item.description != null) ...[
@@ -151,9 +165,15 @@ class _Hero extends StatelessWidget {
                         item.description!,
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(height: 1.45),
+                        style: const TextStyle(height: 1.5),
                       ),
                     ],
+                    const SizedBox(height: 20),
+                    FilledButton.icon(
+                      onPressed: onOpen,
+                      icon: const Icon(Icons.play_arrow_rounded),
+                      label: const Text('View & Play'),
+                    ),
                   ],
                 ),
               ),
@@ -166,10 +186,15 @@ class _Hero extends StatelessWidget {
 }
 
 class _MediaRail extends StatelessWidget {
-  const _MediaRail({required this.title, required this.items});
+  const _MediaRail({
+    required this.title,
+    required this.items,
+    required this.onOpen,
+  });
 
   final String title;
   final List<MediaItem> items;
+  final ValueChanged<MediaItem> onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -184,13 +209,13 @@ class _MediaRail extends StatelessWidget {
             child: Text(
               title,
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w800,
                   ),
             ),
           ),
           const SizedBox(height: 14),
           SizedBox(
-            height: 290,
+            height: 300,
             child: ListView.separated(
               padding: const EdgeInsets.symmetric(horizontal: 32),
               scrollDirection: Axis.horizontal,
@@ -198,10 +223,7 @@ class _MediaRail extends StatelessWidget {
               separatorBuilder: (_, __) => const SizedBox(width: 16),
               itemBuilder: (context, index) {
                 final item = items[index];
-                return MediaCard(
-                  item: item,
-                  onTap: () => _showDetails(context, item),
-                );
+                return MediaCard(item: item, onTap: () => onOpen(item));
               },
             ),
           ),
@@ -209,27 +231,4 @@ class _MediaRail extends StatelessWidget {
       ),
     );
   }
-}
-
-void _showDetails(BuildContext context, MediaItem item) {
-  showDialog<void>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: Text(item.title),
-      content: SizedBox(
-        width: 520,
-        child: Text(
-          item.description?.isNotEmpty == true
-              ? item.description!
-              : 'Movie/TV detail and PikPak matching will be expanded in v0.4.',
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Close'),
-        ),
-      ],
-    ),
-  );
 }
