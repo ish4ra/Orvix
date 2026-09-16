@@ -1,54 +1,90 @@
 # Pikora
 
-Pikora is an experimental Windows desktop media client focused on a simple PikPak-connected workflow.
+Pikora is a **PikPak-first cinematic media hub**. The goal is a streamlined experience similar in product shape to modern media hubs: browse movies and TV, search instantly, connect a PikPak account, match cloud media, and play from one interface.
 
-## Current status — v0.2 prototype
+## Current development — v0.3 Flutter branch
 
-The current prototype includes:
+The original v0.2 Go prototype proved the basic PikPak/catalog idea, but its UI launched Microsoft Edge in app mode. That prototype remains on `main` for reference.
 
-- PikPak sign-in flow with captcha/verification handling
-- PikPak cloud library listing and title matching
-- Movie / TV type-ahead search after 2+ characters
-- Recent searches and a local watchlist
-- Dark media-center style UI
-- Windows x64 build
+Active development is now on the **`v0.3-flutter`** branch.
 
-### Known v0.2 limitation
+Why Flutter/Dart now instead of rewriting later:
 
-The v0.2 executable starts a local Pikora backend and launches the UI using **Microsoft Edge in `--app` mode**. This means the v0.2 build currently requires `msedge.exe` to be installed. This is a prototype shortcut, not a fundamental Pikora requirement.
+- native Windows desktop window — no direct Edge executable dependency
+- the same Dart services/domain code can later target Android and Android TV
+- cinematic custom UI is much easier to evolve
+- the player can move to `media_kit` / libmpv
+- Android-specific Kotlin can still be added later only where a native module is genuinely useful
 
-The next desktop build should remove the direct Edge-browser dependency and use a self-contained/native UI approach (or a bundled runtime).
+## v0.3 foundation
 
-## Build v0.2
+- Flutter Windows shell
+- Home / Search / My PikPak navigation
+- popular Movies / TV catalog rails
+- live movie/TV suggestions after 2+ typed characters
+- PikPak captcha-aware sign-in
+- secure token/device storage
+- PikPak root cloud library browser
+- GitHub Actions Windows build
 
-Requires Go 1.22+ on Windows, Linux, or macOS.
+## Product direction
 
-### Windows
+Pikora is intentionally narrower than multi-provider apps: **PikPak is the primary cloud provider**.
 
-```powershell
-go build -ldflags="-H=windowsgui" -o Pikora-v0.2-Windows-x64.exe main_windows.go
+The intended flow is:
+
+```text
+Catalog / Search
+      ↓
+Movie or TV detail
+      ↓
+Check My PikPak first
+      ↓
+Resolve an authorized/user-configured source when needed
+      ↓
+Send source to PikPak
+      ↓
+Wait for cloud task / cache
+      ↓
+Play inside Pikora
 ```
 
-### Cross-compile for Windows x64
+The source layer is pluggable. Pikora will not bundle a hard-coded piracy torrent-site list or preconfigured infringing source configuration. User-configured/self-hosted/authorized integrations can plug into the resolver without changing the core application.
+
+## Inspiration and implementation
+
+Apps such as Debrify demonstrate that this product category works well with Flutter across Windows, Android/Android TV and other platforms, including cloud-provider integrations and a libmpv-based player. Pikora is being implemented as its own PikPak-focused codebase rather than copying Debrify source directly.
+
+Debrify is AGPL-3.0-only. Copying its implementation would bring AGPL corresponding-source obligations, so Pikora uses it only as a product/architecture reference unless the project explicitly chooses AGPL-compatible reuse later.
+
+## Build v0.3
+
+Checkout the Flutter branch:
 
 ```bash
-GOOS=windows GOARCH=amd64 go build -ldflags="-H=windowsgui" -o Pikora-v0.2-Windows-x64.exe main_windows.go
+git checkout v0.3-flutter
+flutter pub get
+flutter create --platforms=windows --project-name pikora .
+flutter run -d windows
 ```
 
-## Notes
+Release build:
 
-- PikPak integration uses undocumented/community-observed endpoints and can break when PikPak changes its authentication or API behavior.
-- Search metadata in v0.2 uses IMDb's lightweight suggestion endpoint.
-- Pikora does not store the user's PikPak password in v0.2.
+```bash
+flutter build windows --release
+```
+
+The GitHub Actions workflow also produces a Windows build artifact automatically for pushes to `v0.3-flutter`.
 
 ## Roadmap
 
-- Remove the direct Microsoft Edge dependency
-- Improve PikPak verification/login reliability
-- Full Home / Movies / TV browsing UI
-- Rich movie and TV detail pages
-- Seasons and episodes
-- Better PikPak file matching and playback
-- Continue Watching / persistent library improvements
+See:
 
-This repository currently tracks an early prototype and will change frequently.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- [`docs/ROADMAP.md`](docs/ROADMAP.md)
+
+## Notes
+
+- PikPak integration relies on community-observed/undocumented web endpoints and may require maintenance when PikPak changes authentication or captcha behavior.
+- Pikora does not persist the PikPak password by default.
+- Catalog metadata is independent from the user's PikPak cloud library.
