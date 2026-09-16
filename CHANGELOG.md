@@ -3,7 +3,7 @@
 ## v0.5.1 — zero-config source pool
 
 - Restored a built-in Torrentio default for fresh installs, so Source Engine no longer starts as NOT CONFIGURED and users do not need to paste a Torrentio URL.
-- Added Comet (ElfHosted public instance) as a second zero-config Stremio-compatible provider, seeded once and still removable from Provider configuration.
+- Added Comet and MediaFusion (ElfHosted public instances) as additional zero-config Stremio-compatible providers, seeded once and still removable from Provider configuration.
 - Kept custom providers and legacy Torrentio migration intact; all configured providers continue to resolve in parallel and merge into one ranked source list.
 - Cleaned remaining Pikora wording from the active Source Engine screen.
 

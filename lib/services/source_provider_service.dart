@@ -171,6 +171,7 @@ class SourceProviderService {
       'orvix_recommended_source_pool_seeded_v1';
   static const _recommendedAddonUrls = <String>[
     'https://comet.elfhosted.com',
+    'https://mediafusion.elfhosted.com',
   ];
 
   // A distributor may inject an authorized/self-hosted Stremio-compatible
