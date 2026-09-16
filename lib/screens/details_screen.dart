@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
 import '../services/catalog_service.dart';
+import '../services/media_state_service.dart';
 import '../services/pikpak_service.dart';
 import '../services/pikpak_transfer_service.dart';
 import '../services/playback_service.dart';
@@ -20,6 +21,7 @@ class DetailsScreen extends StatefulWidget {
     required this.transfer,
     required this.sources,
     required this.playback,
+    required this.mediaState,
   });
 
   final MediaItem item;
@@ -28,6 +30,7 @@ class DetailsScreen extends StatefulWidget {
   final PikPakTransferService transfer;
   final SourceProviderService sources;
   final PlaybackService playback;
+  final MediaStateService mediaState;
 
   @override
   State<DetailsScreen> createState() => _DetailsScreenState();
@@ -36,7 +39,9 @@ class DetailsScreen extends StatefulWidget {
 class _DetailsScreenState extends State<DetailsScreen> {
   late final Future<MediaItem> _detailsFuture;
   bool _resolving = false;
+  bool _watchlisted = false;
   String _status = '';
+  double? _resolveProgress;
   int? _selectedSeason;
 
   @override
@@ -51,7 +56,18 @@ class _DetailsScreenState extends State<DetailsScreen> {
       final seasons = item.episodes.map((e) => e.season).toList()..sort();
       _selectedSeason = seasons.first;
     }
+    final watchlisted = await widget.mediaState.isWatchlisted(item);
+    if (mounted) setState(() => _watchlisted = watchlisted);
     return item;
+  }
+
+  Future<void> _toggleWatchlist(MediaItem item) async {
+    final added = await widget.mediaState.toggleWatchlist(item);
+    if (!mounted) return;
+    setState(() => _watchlisted = added);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(added ? 'Added to My Watchlist.' : 'Removed from My Watchlist.')),
+    );
   }
 
   @override
@@ -169,7 +185,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
                       ),
                     ],
                     const SizedBox(height: 24),
-                    Row(
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 10,
                       children: [
                         if (item.kind == MediaKind.movie)
                           FilledButton.icon(
@@ -183,13 +201,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             icon: const Icon(Icons.video_library_outlined),
                             label: const Text('Choose an episode below'),
                           ),
-                        const SizedBox(width: 12),
                         OutlinedButton.icon(
-                          onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Watchlist persistence is planned for the next milestone.')),
-                          ),
-                          icon: const Icon(Icons.add_rounded),
-                          label: const Text('Watchlist'),
+                          onPressed: () => _toggleWatchlist(item),
+                          icon: Icon(_watchlisted ? Icons.bookmark_rounded : Icons.bookmark_add_outlined),
+                          label: Text(_watchlisted ? 'In Watchlist' : 'Watchlist'),
                         ),
                       ],
                     ),
@@ -284,26 +299,43 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Widget _busyOverlay() {
     return Positioned.fill(
       child: Container(
-        color: Colors.black.withOpacity(.66),
+        color: Colors.black.withValues(alpha: .66),
         child: Center(
           child: Container(
-            width: 440,
+            width: 460,
             padding: const EdgeInsets.all(28),
             decoration: BoxDecoration(
               color: const Color(0xFF11141C),
               borderRadius: BorderRadius.circular(22),
               border: Border.all(color: const Color(0xFF292F41)),
+              boxShadow: const [
+                BoxShadow(color: Color(0x55000000), blurRadius: 30, spreadRadius: 5),
+              ],
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const CircularProgressIndicator(),
+                if (_resolveProgress == null)
+                  const CircularProgressIndicator()
+                else
+                  SizedBox(
+                    width: 68,
+                    height: 68,
+                    child: CircularProgressIndicator(value: _resolveProgress),
+                  ),
                 const SizedBox(height: 20),
                 Text(
                   _status.isEmpty ? 'Finding the best path to play…' : _status,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontWeight: FontWeight.w700, height: 1.4),
+                  style: const TextStyle(fontWeight: FontWeight.w800, height: 1.4),
                 ),
+                if (_resolveProgress != null) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    '${(_resolveProgress! * 100).round()}%',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ],
               ],
             ),
           ),
@@ -315,6 +347,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Future<void> _play(MediaItem item, {EpisodeItem? episode}) async {
     setState(() {
       _resolving = true;
+      _resolveProgress = null;
       _status = 'Checking your PikPak library…';
     });
     try {
@@ -349,6 +382,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
       setState(() {
         _resolving = true;
+        _resolveProgress = .08;
         _status = 'Sending ${chosen.quality ?? 'source'} to PikPak…';
       });
       final taskName = episode == null ? item.title : '${item.title} ${episode.label}';
@@ -356,17 +390,27 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
       for (var attempt = 1; attempt <= 18; attempt++) {
         if (!mounted) return;
-        setState(() => _status = 'PikPak is preparing the file… ${attempt * 5}s');
+        setState(() {
+          _resolveProgress = (.08 + attempt / 20).clamp(0, .94);
+          _status = 'PikPak is preparing the file… ${attempt * 5}s';
+        });
         await Future<void>.delayed(const Duration(seconds: 5));
         final match = await _findInPikPak(item, episode: episode);
         if (match != null) {
+          setState(() {
+            _resolveProgress = .98;
+            _status = 'Ready — opening player…';
+          });
           await _openPikPakFile(match, item, episode);
           return;
         }
       }
 
       if (!mounted) return;
-      setState(() => _resolving = false);
+      setState(() {
+        _resolving = false;
+        _resolveProgress = null;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Added to PikPak. It is still preparing; open My PikPak shortly to play it.'),
@@ -374,18 +418,22 @@ class _DetailsScreenState extends State<DetailsScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      setState(() => _resolving = false);
+      setState(() {
+        _resolving = false;
+        _resolveProgress = null;
+      });
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not play: $e')));
     }
   }
 
   Future<SourceResult?> _chooseSource(List<SourceResult> results) {
     final count = results.length > 20 ? 20 : results.length;
+    final best = widget.sources.bestSource(results);
     return showModalBottomSheet<SourceResult>(
       context: context,
       backgroundColor: const Color(0xFF11141C),
       showDragHandle: true,
-      constraints: const BoxConstraints(maxWidth: 760),
+      constraints: const BoxConstraints(maxWidth: 780),
       builder: (context) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(22, 4, 22, 26),
@@ -393,15 +441,32 @@ class _DetailsScreenState extends State<DetailsScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Choose source',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Choose source',
+                          style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text('Results are ranked by quality and common release markers.'),
+                      ],
+                    ),
+                  ),
+                  if (best != null)
+                    FilledButton.icon(
+                      onPressed: () => Navigator.pop(context, best),
+                      icon: const Icon(Icons.bolt_rounded),
+                      label: Text('Quick Play ${best.quality ?? ''}'.trim()),
+                    ),
+                ],
               ),
-              const SizedBox(height: 6),
-              const Text('The selected source will be sent to your connected PikPak account.'),
               const SizedBox(height: 14),
               ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 430),
+                constraints: const BoxConstraints(maxHeight: 440),
                 child: ListView.separated(
                   shrinkWrap: true,
                   itemCount: count,
@@ -413,8 +478,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
                         child: Text(result.quality?.replaceAll('P', '') ?? '${index + 1}'),
                       ),
                       title: Text(result.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-                      subtitle: Text('${result.provider}${result.isMagnet ? ' • torrent' : ' • direct'}'),
-                      trailing: const Icon(Icons.chevron_right),
+                      subtitle: Text('${result.provider}${result.isMagnet ? ' • cloud source' : ' • direct'}'),
+                      trailing: index == 0
+                          ? const Chip(label: Text('Best'))
+                          : const Icon(Icons.chevron_right),
                       onTap: () => Navigator.pop(context, result),
                     );
                   },
@@ -466,7 +533,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
       throw Exception('PikPak did not return a playable URL yet.');
     }
     if (!mounted) return;
-    setState(() => _resolving = false);
+    setState(() {
+      _resolving = false;
+      _resolveProgress = null;
+    });
     final title = episode == null ? item.title : '${item.title} • ${episode.label} ${episode.title}';
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -474,6 +544,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
           playback: widget.playback,
           url: url,
           title: title,
+          mediaState: widget.mediaState,
+          item: item,
+          episode: episode,
         ),
       ),
     );
@@ -495,9 +568,9 @@ class _MetaPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(.42),
+        color: Colors.black.withValues(alpha: .42),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withOpacity(.14)),
+        border: Border.all(color: Colors.white.withValues(alpha: .14)),
       ),
       child: Text(
         text,
