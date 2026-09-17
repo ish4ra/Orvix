@@ -1,0 +1,76 @@
+name: Run Orvix v0.5.2 Patcher Once
+
+on:
+  push:
+    branches:
+      - orvix-v0.5.2-priority-icon
+    paths:
+      - '.github/workflows/orvix-v052-run-patcher-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-validate-commit:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: orvix-v0.5.2-priority-icon
+
+      - name: Apply requested source and installer changes
+        run: python .github/patch_v052.py
+
+      - name: Verify icon wiring
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'assets/branding/orvix_icon.png')) { throw 'Orvix icon asset missing.' }
+          if ((Get-Content pubspec.yaml -Raw) -notmatch 'image_path:\s*assets/branding/orvix_icon.png') { throw 'Launcher icon path missing.' }
+          if ((Get-Content installer/orvix.iss -Raw) -notmatch 'SetupIconFile=.*app_icon.ico') { throw 'Installer icon path missing.' }
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Windows runner
+        shell: pwsh
+        run: flutter create --platforms=windows --project-name orvix .
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Generate Orvix Windows icon
+        run: dart run flutter_launcher_icons
+
+      - name: Analyze app sources
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $candidates = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe")
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
+          & $iscc '/DMyAppVersion=0.5.2' 'installer\orvix.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+
+      - name: Commit validated patch and remove helpers
+        shell: pwsh
+        run: |
+          git config user.name 'Ishara Lakshan'
+          git config user.email 'ishara@tuta.io'
+          git rm -f '.github/patch_v052.py' '.github/workflows/orvix-v052-priority-icon-once.yml' '.github/workflows/orvix-v052-finalize-once.yml' '.github/workflows/orvix-v052-run-patcher-once.yml'
+          git add lib/services/source_provider_service.dart lib/screens/sources_screen.dart pubspec.yaml installer/orvix.iss CHANGELOG.md assets/branding/orvix_icon.png
+          git diff --cached --check
+          git commit -m 'feat: Orvix v0.5.2 source priority and app icon'
+          git push origin HEAD:orvix-v0.5.2-priority-icon
