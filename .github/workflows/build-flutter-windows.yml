@@ -10,6 +10,7 @@ on:
     paths:
       - 'lib/**'
       - 'assets/**'
+      - 'windows/**'
       - 'pubspec.yaml'
       - 'installer/**'
       - 'CHANGELOG.md'
@@ -56,15 +57,27 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Preserve pinned Orvix icon hash
+        shell: pwsh
+        run: |
+          $icon = 'windows\runner\resources\app_icon.ico'
+          if (-not (Test-Path $icon)) { throw 'Pinned Orvix app icon is missing.' }
+          $hash = (Get-FileHash $icon -Algorithm SHA256).Hash
+          "ORVIX_ICON_HASH=$hash" >> $env:GITHUB_ENV
+
       - name: Generate Windows runner
         shell: pwsh
         run: flutter create --platforms=windows --project-name orvix .
 
+      - name: Restore exact pinned Orvix icon
+        shell: pwsh
+        run: |
+          git checkout HEAD -- windows/runner/resources/app_icon.ico
+          $hash = (Get-FileHash 'windows\runner\resources\app_icon.ico' -Algorithm SHA256).Hash
+          if ($hash -ne $env:ORVIX_ICON_HASH) { throw 'Orvix icon changed during Flutter runner generation.' }
+
       - name: Get dependencies
         run: flutter pub get
-
-      - name: Generate Orvix Windows icon
-        run: dart run flutter_launcher_icons
 
       - name: Analyze app sources
         run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
