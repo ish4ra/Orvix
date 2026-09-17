@@ -6,6 +6,7 @@ on:
     branches:
       - orvix-v0.5.0-dev
       - orvix-v0.6.0-cloud-sync
+      - orvix-v0.7.0-ai-sinhala
     tags:
       - 'v*'
     paths:
