@@ -1,5 +1,13 @@
 # Orvix Changelog
 
+## v0.5.6 — customizable source browser
+
+- Added a persistent result-count selector in the source picker: Top 25 / 50 / 100 / 200 / All.
+- Added per-title source pinning for movies and series-wide source-family pinning for TV. A pinned result is remembered, moved to the top when it is returned again, and becomes Quick Play's first choice.
+- Series pins prefer Stremio `bingeGroup` when available and otherwise reuse the same torrent-pack infohash across episode file indexes, following Debrify-style source binding without guessing the wrong episode.
+- Compatibility filtering and the existing Cache → Quality → Resolution → Size → Seeders priority continue to apply; pinning only reorders results that survive the active filter.
+- Kept the manually fixed Windows icon resources untouched.
+
 ## v0.5.3 — PikPak magnet reliability
 
 - Fixed Orvix source metadata not being stripped from magnet links before they were sent to PikPak.

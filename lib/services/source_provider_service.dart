@@ -54,6 +54,7 @@ class SourceResult {
     this.sizeBytes,
     this.torrentFileIndex,
     this.fileNameHint,
+    this.bingeGroup,
   });
 
   final String provider;
@@ -76,6 +77,11 @@ class SourceResult {
   /// cloud provider creates a folder for the torrent and the intended episode
   /// has to be located among many child files.
   final String? fileNameHint;
+
+  /// Stable Stremio stream-family identifier when the addon provides one.
+  /// Torrentio/other addons can keep this stable across episodes, which makes
+  /// a series-wide pin possible without guessing from filenames.
+  final String? bingeGroup;
 
   int get qualityRank {
     var rank = switch (quality?.toUpperCase()) {
@@ -196,6 +202,10 @@ class SourceProviderService {
   static const _show3DKey = 'orvix_show_3d_sources_v1';
   static const _showLowQualityKey = 'orvix_show_low_quality_sources_v1';
   static const _preferredGroupsKey = 'orvix_preferred_release_groups_v1';
+  static const _resultLimitKey = 'orvix_source_result_limit_v1';
+  static const _pinnedSourcePrefix = 'orvix_pinned_source_v1_';
+  static const defaultResultLimit = 0; // 0 = show all
+  static const resultLimitOptions = <int>[25, 50, 100, 200, 0];
   static const _recommendedProvidersSeedKey =
       'orvix_recommended_source_pool_seeded_v1';
   static const _recommendedAddonUrls = <String>[
@@ -321,6 +331,119 @@ class SourceProviderService {
     }
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(_preferredGroupsKey, cleaned);
+  }
+
+  Future<int> getResultLimit() async {
+    final prefs = await SharedPreferences.getInstance();
+    final value = prefs.getInt(_resultLimitKey) ?? defaultResultLimit;
+    return value < 0 ? defaultResultLimit : value.clamp(0, 500).toInt();
+  }
+
+  Future<void> setResultLimit(int value) async {
+    final normalized = value < 0 ? defaultResultLimit : value.clamp(0, 500).toInt();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_resultLimitKey, normalized);
+  }
+
+  String sourceTargetKey(MediaItem item, {EpisodeItem? episode}) {
+    // Movies keep one exact pin per title. TV keeps one source-family pin per
+    // series, matching Debrify's source binding model while avoiding a separate
+    // preference for every episode.
+    return '${item.kind.name}:${item.id}';
+  }
+
+  String sourceIdentity(SourceResult result, {bool seriesWide = false}) {
+    final provider = result.provider.trim().toLowerCase();
+
+    final bingeGroup = result.bingeGroup?.trim();
+    if (seriesWide && bingeGroup != null && bingeGroup.isNotEmpty) {
+      final normalizedGroup = bingeGroup
+          .toLowerCase()
+          .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+          .trim();
+      if (normalizedGroup.isNotEmpty) {
+        return '$provider|binge:$normalizedGroup';
+      }
+    }
+
+    if (result.isMagnet) {
+      final match = RegExp(
+        r'xt=urn:btih:([a-z0-9]+)',
+        caseSensitive: false,
+      ).firstMatch(result.resource);
+      final hash = match?.group(1)?.toLowerCase();
+      if (hash != null && hash.isNotEmpty) {
+        // A season/series pack has one infohash but a different file index for
+        // each episode. Ignore the index for a series-wide pin so the same pack
+        // stays preferred as the user moves through episodes.
+        return seriesWide
+            ? '$provider|btih:$hash'
+            : '$provider|btih:$hash|idx:${result.torrentFileIndex ?? -1}';
+      }
+    }
+
+    final fileName = result.fileNameHint?.trim();
+    final raw = fileName != null && fileName.isNotEmpty
+        ? fileName
+        : result.title.split('\n').last.trim();
+    final normalized = raw
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+        .trim();
+    if (normalized.isNotEmpty) return '$provider|title:$normalized';
+    return '$provider|resource:${result.resource}';
+  }
+
+  bool matchesPinned(
+    SourceResult result,
+    String? pinnedIdentity, {
+    bool seriesWide = false,
+  }) {
+    if (pinnedIdentity == null || pinnedIdentity.isEmpty) return false;
+    return sourceIdentity(result, seriesWide: seriesWide) == pinnedIdentity;
+  }
+
+  String _pinPreferenceKey(String targetKey) => '$_pinnedSourcePrefix$targetKey';
+
+  Future<String?> getPinnedSourceIdentity(String targetKey) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_pinPreferenceKey(targetKey));
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        final identity = decoded['identity']?.toString().trim();
+        return identity == null || identity.isEmpty ? null : identity;
+      }
+    } catch (_) {
+      // A future migration can still accept a legacy plain identity value.
+      return raw.trim();
+    }
+    return null;
+  }
+
+  Future<void> pinSource(
+    String targetKey,
+    SourceResult result, {
+    bool seriesWide = false,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final label = result.title.split('\n').last.trim();
+    await prefs.setString(
+      _pinPreferenceKey(targetKey),
+      jsonEncode({
+        'identity': sourceIdentity(result, seriesWide: seriesWide),
+        'provider': result.provider,
+        'label': label,
+        if (result.bingeGroup != null) 'bingeGroup': result.bingeGroup,
+        'pinnedAt': DateTime.now().millisecondsSinceEpoch,
+      }),
+    );
+  }
+
+  Future<void> unpinSource(String targetKey) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_pinPreferenceKey(targetKey));
   }
 
   Future<void> setPriorityOrder(List<SourceSortCriterion> order) async {
@@ -503,6 +626,9 @@ class SourceProviderService {
             ? raw['behaviorHints'] as Map<String, dynamic>
             : null;
         final fileNameHint = _nonEmpty(hints?['filename']?.toString());
+        final bingeGroup = _nonEmpty(
+          hints?['bingeGroup']?.toString() ?? hints?['binge_group']?.toString(),
+        );
         final torrentFileIndex = _parseInt(
           raw['fileIdx'] ?? raw['file_idx'] ?? raw['mapIdx'],
         );
@@ -586,6 +712,7 @@ class SourceProviderService {
             sizeBytes: sizeBytes,
             torrentFileIndex: torrentFileIndex,
             fileNameHint: fileNameHint,
+            bingeGroup: bingeGroup,
           ),
         );
       }
