@@ -840,6 +840,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     var resultLimit = await widget.sources.getResultLimit();
     var compatibilityOnly = false;
     var smoothRanking = false;
+    var freeStreamingRanking = false;
     final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
     final seriesWidePin = item.kind == MediaKind.series;
     var pinnedIdentity = await widget.sources.getPinnedSourceIdentity(pinKey);
@@ -925,9 +926,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
       constraints: const BoxConstraints(maxWidth: 960),
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) {
-          final ranked = smoothRanking
-              ? widget.sources.sortForSmoothPlayback(results)
-              : widget.sources.sortResults(results, priority);
+          final ranked = freeStreamingRanking
+              ? widget.sources.sortForFreeStreaming(results)
+              : smoothRanking
+                  ? widget.sources.sortForSmoothPlayback(results)
+                  : widget.sources.sortResults(results, priority);
           final filtered = compatibilityOnly
               ? ranked
                     .where((result) => result.compatibilityFriendly)
@@ -963,13 +966,16 @@ class _DetailsScreenState extends State<DetailsScreen> {
           final priorityText = priority
               .map((e) => e.label.toLowerCase())
               .join(' → ');
-          final rankingText = smoothRanking
-              ? 'Smooth: compatibility → 1080/720 → efficient codec → seeders → smaller files → cache'
-              : 'Priority: $priorityText';
+          final rankingText = freeStreamingRanking
+              ? 'Free Streaming: seed health → quality → resolution → efficient size → compatibility'
+              : smoothRanking
+                  ? 'Smooth: compatibility → 1080/720 → efficient codec → seeders → smaller files → cache'
+                  : 'Priority: $priorityText';
           final summaryParts = <String>[
             resultLimit > 0
                 ? 'Showing ${sorted.length} of $totalAfterFilter results'
                 : '${sorted.length} result${sorted.length == 1 ? '' : 's'} shown',
+            if (freeStreamingRanking) 'free streaming ranking on',
             if (smoothRanking) 'smooth ranking on',
             if (compatibilityHiddenCount > 0)
               '$compatibilityHiddenCount risky hidden',
@@ -1003,48 +1009,15 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             ],
                           ),
                         ),
-                        PopupMenuButton<int>(
-                          tooltip: 'Results shown',
-                          initialValue: resultLimit,
-                          onSelected: (value) async {
-                            await widget.sources.setResultLimit(value);
-                            if (!context.mounted) return;
-                            setSheetState(() => resultLimit = value);
-                          },
-                          itemBuilder: (context) => [
-                            for (final value
-                                in SourceProviderService.resultLimitOptions)
-                              PopupMenuItem<int>(
-                                value: value,
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      value == resultLimit
-                                          ? Icons.check_rounded
-                                          : Icons.format_list_numbered_rounded,
-                                      size: 18,
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Text(
-                                      value == 0
-                                          ? 'Show all results'
-                                          : 'Show top $value',
-                                    ),
-                                  ],
-                                ),
-                              ),
-                          ],
-                          child: Chip(
-                            avatar: const Icon(
-                              Icons.format_list_numbered_rounded,
-                              size: 18,
-                            ),
-                            label: Text(
-                              resultLimit == 0
-                                  ? 'All results'
-                                  : 'Top $resultLimit',
-                            ),
-                          ),
+                        FilterChip(
+                          selected: freeStreamingRanking,
+                          avatar: const Icon(Icons.bolt_rounded, size: 18),
+                          label: const Text('Free Streaming'),
+                          tooltip: 'Prioritize sources likely to stream smoothly without a paid debrid service: healthy seed swarms first, then quality, resolution, manageable size and compatibility.',
+                          onSelected: (value) => setSheetState(() {
+                            freeStreamingRanking = value;
+                            if (value) smoothRanking = false;
+                          }),
                         ),
                         const SizedBox(width: 10),
                         FilterChip(
@@ -1071,8 +1044,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
                           ),
                           label: const Text('Smooth'),
                           tooltip: 'Prioritize likely smoother playback: compatible formats, 1080p/720p, efficient x265/HEVC encodes, stronger seed counts and then smaller files. Results are reordered, not hidden.',
-                          onSelected: (value) =>
-                              setSheetState(() => smoothRanking = value),
+                          onSelected: (value) => setSheetState(() {
+                            smoothRanking = value;
+                            if (value) freeStreamingRanking = false;
+                          }),
                         ),
                         const SizedBox(width: 10),
                         OutlinedButton.icon(
@@ -1179,7 +1154,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                 else if (index == 0)
                                   Chip(
                                     label: Text(
-                                      smoothRanking ? 'Smooth' : 'Best',
+                                      freeStreamingRanking
+                                          ? 'Free Stream'
+                                          : smoothRanking
+                                              ? 'Smooth'
+                                              : 'Best',
                                     ),
                                   ),
                                 const SizedBox(width: 4),

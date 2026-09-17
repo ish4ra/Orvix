@@ -20,6 +20,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
   bool _busy = true;
   bool _show3D = false;
   bool _showLowQuality = false;
+  int _resultLimit = SourceProviderService.defaultResultLimit;
   String? _message;
 
   @override
@@ -42,6 +43,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
     final show3D = await widget.sources.getShow3D();
     final preferredGroups = await widget.sources.getPreferredGroups();
     final showLowQuality = await widget.sources.getShowLowQuality();
+    final resultLimit = await widget.sources.getResultLimit();
     if (!mounted) return;
     setState(() {
       _addons = values;
@@ -49,6 +51,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
       _torrentioUrl = torrentio;
       _show3D = show3D;
       _showLowQuality = showLowQuality;
+      _resultLimit = resultLimit;
       _preferredGroupsController.text = preferredGroups.join(', ');
       _busy = false;
     });
@@ -67,6 +70,11 @@ class _SourcesScreenState extends State<SourcesScreen> {
   Future<void> _setShowLowQuality(bool value) async {
     setState(() => _showLowQuality = value);
     await widget.sources.setShowLowQuality(value);
+  }
+
+  Future<void> _setResultLimit(int value) async {
+    setState(() => _resultLimit = value);
+    await widget.sources.setResultLimit(value);
   }
 
   Future<void> _savePreferredGroups() async {
@@ -379,6 +387,48 @@ class _SourcesScreenState extends State<SourcesScreen> {
             ],
           ),
           const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Results shown in source picker',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Choose how many ranked sources are displayed when you open the source picker.',
+                      style: TextStyle(
+                        color: color.onSurfaceVariant,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 18),
+              DropdownButton<int>(
+                value: _resultLimit,
+                borderRadius: BorderRadius.circular(12),
+                items: [
+                  for (final value in SourceProviderService.resultLimitOptions)
+                    DropdownMenuItem<int>(
+                      value: value,
+                      child: Text(value == 0 ? 'All results' : 'Top $value'),
+                    ),
+                ],
+                onChanged: _busy
+                    ? null
+                    : (value) {
+                        if (value != null) _setResultLimit(value);
+                      },
+              ),
+            ],
+          ),
+          const Divider(height: 26),
           SwitchListTile.adaptive(
             contentPadding: EdgeInsets.zero,
             value: _show3D,
