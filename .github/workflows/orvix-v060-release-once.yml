@@ -86,5 +86,5 @@ jobs:
             gh release upload v0.6.0 $zip $exe --clobber
             gh release edit v0.6.0 --title "Orvix v0.6.0" --notes "Adds optional Orvix account login with local-first Supabase sync for Library, Watchlist, Continue Watching/resume progress and app preferences. PikPak/TorBox secret credentials remain local."
           } else {
-            gh release create v0.6.0 $zip $exe --target v0.6.0 --title "Orvix v0.6.0" --notes "Adds optional Orvix account login with local-first Supabase sync for Library, Watchlist, Continue Watching/resume progress and app preferences. PikPak/TorBox secret credentials remain local."
+            gh release create v0.6.0 $zip $exe --title "Orvix v0.6.0" --notes "Adds optional Orvix account login with local-first Supabase sync for Library, Watchlist, Continue Watching/resume progress and app preferences. PikPak/TorBox secret credentials remain local."
           }
