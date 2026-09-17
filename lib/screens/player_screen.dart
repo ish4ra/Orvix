@@ -256,7 +256,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   int get _effectiveSyncOffsetMs =>
-      (_autoSyncOffsetMs + _manualSyncOffsetMs).clamp(-15000, 15000);
+      (_autoSyncOffsetMs + _manualSyncOffsetMs).clamp(-15000, 15000).toInt();
 
   Future<void> _loadManualSync() async {
     final prepared = widget.aiSubtitle;
@@ -270,7 +270,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _adjustManualSync(int deltaMs) async {
     final prepared = widget.aiSubtitle;
     if (prepared == null) return;
-    final next = (_manualSyncOffsetMs + deltaMs).clamp(-15000, 15000);
+    final next = (_manualSyncOffsetMs + deltaMs).clamp(-15000, 15000).toInt();
     if (mounted) setState(() => _manualSyncOffsetMs = next);
     await AiSinhalaPreferencesService.setSyncOffsetMs(prepared.key, next);
     _refreshAiSubtitle();
