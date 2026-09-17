@@ -9,6 +9,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../models/media_item.dart';
+import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/media_state_service.dart';
 import '../services/playback_service.dart';
 
@@ -51,13 +52,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Timer? _nextTimer;
   Timer? _startupTimer;
   StreamSubscription<bool>? _completedSubscription;
+  StreamSubscription<List<String>>? _subtitleSubscription;
   final FocusNode _focusNode = FocusNode();
+  final List<String> _subtitleContext = <String>[];
+  bool _aiSinhalaEnabled = false;
+  bool _aiSubtitleBusy = false;
+  String _sourceSubtitle = '';
+  String _aiDisplaySubtitle = '';
+  String? _aiSubtitleError;
+  int _subtitleRequestSerial = 0;
 
   bool get _desktop => Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
   @override
   void initState() {
     super.initState();
+    _subtitleSubscription = widget.playback.player.stream.subtitle.listen(_onSubtitleCue);
     _open();
     _scheduleHide();
     _saveTimer = Timer.periodic(const Duration(seconds: 10), (_) => _persistProgress());
@@ -233,6 +243,215 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await widget.onNext!();
   }
 
+  void _onSubtitleCue(List<String> lines) {
+    final source = lines
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .join('\n')
+        .trim();
+    _sourceSubtitle = source;
+
+    if (!_aiSinhalaEnabled) return;
+
+    final serial = ++_subtitleRequestSerial;
+    if (source.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _aiDisplaySubtitle = '';
+          _aiSubtitleBusy = false;
+          _aiSubtitleError = null;
+        });
+      }
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        // Keep the source cue visible while the AI response is in flight.
+        _aiDisplaySubtitle = source;
+        _aiSubtitleBusy = true;
+        _aiSubtitleError = null;
+      });
+    }
+    _translateSubtitleCue(source, serial);
+  }
+
+  Future<void> _translateSubtitleCue(String source, int serial) async {
+    try {
+      final translated = await AiSinhalaSubtitleService.translate(
+        text: source,
+        title: widget.title,
+        context: List<String>.unmodifiable(_subtitleContext),
+      );
+      if (!mounted ||
+          !_aiSinhalaEnabled ||
+          serial != _subtitleRequestSerial ||
+          _sourceSubtitle != source) {
+        return;
+      }
+      setState(() {
+        _aiDisplaySubtitle = translated;
+        _aiSubtitleBusy = false;
+        _aiSubtitleError = null;
+      });
+      _subtitleContext.add(source);
+      if (_subtitleContext.length > 6) {
+        _subtitleContext.removeRange(0, _subtitleContext.length - 6);
+      }
+    } on AiSubtitleException catch (error) {
+      if (!mounted || serial != _subtitleRequestSerial) return;
+      setState(() {
+        _aiDisplaySubtitle = source;
+        _aiSubtitleBusy = false;
+        _aiSubtitleError = error.message;
+      });
+    } catch (_) {
+      if (!mounted || serial != _subtitleRequestSerial) return;
+      setState(() {
+        _aiDisplaySubtitle = source;
+        _aiSubtitleBusy = false;
+        _aiSubtitleError = 'AI translation unavailable — showing the original subtitle.';
+      });
+    }
+  }
+
+  Future<void> _setAiSinhala(bool enabled) async {
+    final player = widget.playback.player;
+    if (enabled) {
+      if (!AiSinhalaSubtitleService.canTranslate) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Sign in to your Orvix account to use Sinhala (AI Beta).'),
+            ),
+          );
+        }
+        return;
+      }
+      if (player.state.track.subtitle.id.toLowerCase() == 'no') {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Select an English/text subtitle track first, then enable Sinhala (AI Beta).'),
+            ),
+          );
+        }
+        return;
+      }
+      AiSinhalaSubtitleService.clearSessionCache();
+      _subtitleContext.clear();
+      if (mounted) {
+        setState(() {
+          _aiSinhalaEnabled = true;
+          _aiSubtitleError = null;
+        });
+      }
+      _onSubtitleCue(player.state.subtitle);
+    } else {
+      ++_subtitleRequestSerial;
+      if (mounted) {
+        setState(() {
+          _aiSinhalaEnabled = false;
+          _aiSubtitleBusy = false;
+          _aiDisplaySubtitle = '';
+          _aiSubtitleError = null;
+        });
+      }
+      _subtitleContext.clear();
+    }
+    _scheduleHide();
+  }
+
+  Widget _aiSubtitleOverlay() {
+    final error = _aiSubtitleError;
+    return AnimatedPositioned(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      left: 40,
+      right: 40,
+      bottom: _controlsVisible ? 122 : 30,
+      child: IgnorePointer(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 980),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xD9000000),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0x44FFFFFF)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x99000000),
+                    blurRadius: 18,
+                    offset: Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.auto_awesome_rounded,
+                          size: 14,
+                          color: Color(0xFFFFB45B),
+                        ),
+                        const SizedBox(width: 6),
+                        const Text(
+                          'සිංහල • AI Beta',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFFFFD5A0),
+                          ),
+                        ),
+                        if (_aiSubtitleBusy) ...[
+                          const SizedBox(width: 8),
+                          const SizedBox(
+                            width: 11,
+                            height: 11,
+                            child: CircularProgressIndicator(strokeWidth: 1.6),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      _aiDisplaySubtitle,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 27,
+                        height: 1.35,
+                        fontWeight: FontWeight.w700,
+                        shadows: [Shadow(color: Colors.black, blurRadius: 8)],
+                      ),
+                    ),
+                    if (error != null && error.isNotEmpty) ...[
+                      const SizedBox(height: 5),
+                      Text(
+                        error,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 10.5,
+                          color: Color(0xFFFFB4AB),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _pickExternalSubtitle() async {
     _hideTimer?.cancel();
     final result = await FilePicker.pickFiles(
@@ -328,11 +547,35 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
+                Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0x331F7A4D),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0x5544D28A)),
+                  ),
+                  child: SwitchListTile.adaptive(
+                    value: _aiSinhalaEnabled,
+                    secondary: const Icon(Icons.auto_awesome_rounded),
+                    title: const Text(
+                      'Sinhala (AI Beta)',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    subtitle: const Text(
+                      'Translate the selected text subtitle to natural Sri Lankan Sinhala. Requires Orvix sign-in + internet.',
+                    ),
+                    onChanged: (value) async {
+                      Navigator.pop(sheetContext);
+                      await _setAiSinhala(value);
+                    },
+                  ),
+                ),
+                const SizedBox(height: 8),
                 _TrackTile(
                   title: 'Off',
                   detail: 'Disable subtitles',
                   selected: player.state.track.subtitle.id.toLowerCase() == 'no',
                   onTap: () async {
+                    if (_aiSinhalaEnabled) await _setAiSinhala(false);
                     await player.setSubtitleTrack(mk.SubtitleTrack.no());
                     if (sheetContext.mounted) Navigator.pop(sheetContext);
                   },
@@ -378,6 +621,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _nextTimer?.cancel();
     _startupTimer?.cancel();
     _completedSubscription?.cancel();
+    _subtitleSubscription?.cancel();
+    ++_subtitleRequestSerial;
     _persistProgress();
     _focusNode.dispose();
     widget.playback.stop();
@@ -408,6 +653,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     controller: widget.playback.controller,
                     fit: BoxFit.contain,
                     controls: NoVideoControls,
+                    subtitleViewConfiguration: SubtitleViewConfiguration(
+                      visible: !_aiSinhalaEnabled,
+                    ),
                   )
                 else
                   _errorView(context),
@@ -419,6 +667,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         ? const Center(child: CircularProgressIndicator())
                         : const SizedBox.shrink(),
                   ),
+                if (_aiSinhalaEnabled && _aiDisplaySubtitle.isNotEmpty)
+                  _aiSubtitleOverlay(),
                 AnimatedOpacity(
                   opacity: _controlsVisible ? 1 : 0,
                   duration: const Duration(milliseconds: 180),
