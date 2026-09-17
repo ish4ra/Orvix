@@ -1,0 +1,51 @@
+name: Apply Orvix alpha branding + custom result count once
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.3-alpha.1
+    paths:
+      - '.github/workflows/alpha-branding-result-limit-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Apply source patch
+        shell: pwsh
+        run: python tools/apply_alpha_branding_result_limit_patch.py
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Format changed Dart
+        shell: pwsh
+        run: dart format lib/screens/search_screen.dart lib/screens/media_library_screen.dart lib/screens/sources_screen.dart lib/services/source_provider_service.dart
+
+      - name: Analyze app sources
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Commit validated source and clean one-time patch files
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/alpha-branding-result-limit-once.yml tools/apply_alpha_branding_result_limit_patch.py
+          git add lib/screens/search_screen.dart lib/screens/media_library_screen.dart lib/screens/sources_screen.dart lib/services/source_provider_service.dart
+          git commit -m "fix: finish Orvix branding and allow custom source result counts"
+          git push origin HEAD:orvix-v0.7.3-alpha.1
