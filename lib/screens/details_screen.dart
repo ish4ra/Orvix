@@ -787,6 +787,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   Future<SourceResult?> _chooseSource(List<SourceResult> results) async {
     var priority = await widget.sources.getPriorityOrder();
+    var compatibilityOnly = false;
     if (!mounted) return null;
 
     Future<void> customizePriority(BuildContext dialogContext, StateSetter setSheetState) async {
@@ -862,7 +863,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
       constraints: const BoxConstraints(maxWidth: 960),
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) {
-          final sorted = widget.sources.sortResults(results, priority);
+          final ranked = widget.sources.sortResults(results, priority);
+          final sorted = compatibilityOnly
+              ? ranked.where((result) => result.compatibilityFriendly).toList(growable: false)
+              : ranked;
+          final hiddenCount = ranked.length - sorted.length;
           final best = sorted.isEmpty ? null : sorted.first;
           final color = Theme.of(context).colorScheme;
           final priorityText = priority.map((e) => e.label.toLowerCase()).join(' → ');
@@ -887,12 +892,28 @@ class _DetailsScreenState extends State<DetailsScreen> {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                '${results.length} result${results.length == 1 ? '' : 's'} returned • showing all',
+                                compatibilityOnly
+                                    ? '${sorted.length} compatible result${sorted.length == 1 ? '' : 's'}${hiddenCount > 0 ? ' • $hiddenCount risky hidden' : ''}'
+                                    : '${results.length} result${results.length == 1 ? '' : 's'} returned • showing all',
                                 style: TextStyle(color: color.onSurfaceVariant),
                               ),
                             ],
                           ),
                         ),
+                        FilterChip(
+                          selected: compatibilityOnly,
+                          avatar: Icon(
+                            compatibilityOnly
+                                ? Icons.verified_rounded
+                                : Icons.verified_outlined,
+                            size: 18,
+                          ),
+                          label: const Text('Compatibility'),
+                          tooltip: 'Hide known-risk formats such as AV1, 8K, Hi10P and Dolby Vision-only releases. File size is not used.',
+                          onSelected: (value) =>
+                              setSheetState(() => compatibilityOnly = value),
+                        ),
+                        const SizedBox(width: 10),
                         OutlinedButton.icon(
                           onPressed: () => customizePriority(sheetContext, setSheetState),
                           icon: const Icon(Icons.tune_rounded),
@@ -953,7 +974,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             subtitle: Padding(
                               padding: const EdgeInsets.only(top: 4),
                               child: Text(
-                                '${result.provider}${result.isMagnet ? ' • cloud source' : ' • direct URL'}',
+                                '${result.provider}${result.isMagnet ? ' • cloud source' : ' • direct URL'}${result.compatibilityFriendly ? '' : ' • ⚠ compatibility risk'}',
                               ),
                             ),
                             trailing: index == 0

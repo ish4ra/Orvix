@@ -116,6 +116,39 @@ class SourceResult {
     }
   }
 
+  int get compatibilityRisk {
+    final text = '$title ${fileNameHint ?? ''}'.toLowerCase();
+    var risk = 0;
+
+    // File size is intentionally NOT a compatibility signal. Very large
+    // remuxes can still be excellent when the stream path is healthy.
+    if (RegExp(r'(^|[\s._\-\[(])(8k|4320p)(?=$|[\s._\-\])])')
+        .hasMatch(text)) {
+      risk += 100;
+    }
+    if (RegExp(r'(^|[\s._\-\[(])(av1|av01)(?=$|[\s._\-\])])')
+        .hasMatch(text)) {
+      risk += 45;
+    }
+    if (RegExp(
+      r'(^|[\s._\-\[(])(hi10p|h\.?264[ ._-]?10bit|avc[ ._-]?10bit)(?=$|[\s._\-\])])',
+    ).hasMatch(text)) {
+      risk += 40;
+    }
+
+    final hasDolbyVision = RegExp(
+      r'(^|[\s._\-\[(])(dovi|dolby[ ._-]?vision|dv)(?=$|[\s._\-\])])',
+    ).hasMatch(text);
+    final hasHdrFallback = RegExp(
+      r'(^|[\s._\-\[(])(hdr10\+?|hdr)(?=$|[\s._\-\])])',
+    ).hasMatch(text);
+    if (hasDolbyVision && !hasHdrFallback) risk += 30;
+
+    return risk;
+  }
+
+  bool get compatibilityFriendly => compatibilityRisk == 0;
+
   String? get sizeLabel {
     final bytes = sizeBytes;
     if (bytes == null || bytes <= 0) return null;
