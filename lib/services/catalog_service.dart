@@ -8,6 +8,7 @@ class CatalogService {
   CatalogService({http.Client? client}) : _client = client ?? http.Client();
 
   static const _baseUrl = 'https://v3-cinemeta.strem.io';
+  static const _imdbGraphqlUrl = 'https://caching.graphql.imdb.com/';
   final http.Client _client;
 
   Future<List<MediaItem>> popularMovies({int limit = 40}) {
@@ -19,19 +20,19 @@ class CatalogService {
   }
 
   Future<List<MediaItem>> topRatedMovies({int limit = 40}) {
-    return _catalog(MediaKind.movie, 'imdbRating', limit: limit);
+    return _imdbTop(MediaKind.movie, limit: limit);
   }
 
   Future<List<MediaItem>> topRatedSeries({int limit = 40}) {
-    return _catalog(MediaKind.series, 'imdbRating', limit: limit);
+    return _imdbTop(MediaKind.series, limit: limit);
   }
 
   Future<List<MediaItem>> imdbTopMovies({int limit = 40}) {
-    return _imdbChart(MediaKind.movie, 'https://www.imdb.com/chart/top/', limit: limit);
+    return _imdbTop(MediaKind.movie, limit: limit);
   }
 
   Future<List<MediaItem>> imdbTopSeries({int limit = 40}) {
-    return _imdbChart(MediaKind.series, 'https://www.imdb.com/chart/toptv/', limit: limit);
+    return _imdbTop(MediaKind.series, limit: limit);
   }
 
   Future<List<MediaItem>> search(String query, {int limit = 18}) async {
@@ -52,11 +53,6 @@ class CatalogService {
       }
     }
 
-    // Cinemeta's native order is relevance-oriented, but it can place a
-    // similarly named upcoming remake above the exact title a user typed.
-    // Re-rank across movies + series so exact title matches are always first,
-    // followed by starts-with/contains matches. Released titles get a small
-    // tie-break boost, never enough to beat an exact title query.
     merged.sort((a, b) {
       final byScore = _searchScore(b, normalized).compareTo(
         _searchScore(a, normalized),
@@ -75,48 +71,191 @@ class CatalogService {
         .get(uri, headers: const {'Accept': 'application/json'})
         .timeout(const Duration(seconds: 15));
 
-    if (response.statusCode != 200) return null;
+    if (response.statusCode != 200) return item;
     final body = jsonDecode(response.body);
-    if (body is! Map<String, dynamic>) return null;
+    if (body is! Map<String, dynamic>) return item;
     final meta = body['meta'];
-    if (meta is! Map<String, dynamic>) return null;
-    return MediaItem.fromCinemeta(meta, kind: item.kind);
+    if (meta is! Map<String, dynamic>) return item;
+    final resolved = MediaItem.fromCinemeta(meta, kind: item.kind);
+
+    // When a title came from IMDb's live chart, keep the live IMDb rating and
+    // poster/year fields while still enriching it with Cinemeta descriptions,
+    // backgrounds, genres and episodes.
+    return MediaItem(
+      id: resolved.id,
+      kind: resolved.kind,
+      title: resolved.title,
+      year: item.year ?? resolved.year,
+      poster: item.poster ?? resolved.poster,
+      background: resolved.background ?? item.background,
+      description: resolved.description ?? item.description,
+      rating: item.rating ?? resolved.rating,
+      runtime: resolved.runtime ?? item.runtime,
+      genres: resolved.genres.isNotEmpty ? resolved.genres : item.genres,
+      episodes: resolved.episodes.isNotEmpty ? resolved.episodes : item.episodes,
+    );
   }
 
-  Future<List<MediaItem>> _imdbChart(
-    MediaKind kind,
-    String url, {
+  Future<List<MediaItem>> _imdbTop(
+    MediaKind kind, {
     required int limit,
   }) async {
-    try {
-      final response = await _client.get(
-        Uri.parse(url),
-        headers: const {
-          'Accept': 'text/html,application/xhtml+xml',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128 Safari/537.36',
-        },
-      ).timeout(const Duration(seconds: 18));
-      if (response.statusCode != 200) return const [];
+    final first = limit.clamp(1, 250).toInt();
+    final chartType = kind == MediaKind.movie
+        ? 'TOP_RATED_MOVIES'
+        : 'TOP_RATED_TV_SHOWS';
 
-      final ids = <String>[];
-      final seen = <String>{};
-      final pattern = RegExp(r'/title/(tt\d{7,10})/');
-      for (final match in pattern.allMatches(response.body)) {
-        final id = match.group(1);
-        if (id != null && seen.add(id)) ids.add(id);
+    final query = '''
+{
+  chartTitles(chart: {chartType: $chartType}, first: $first) {
+    edges {
+      node {
+        id
+        titleText { text }
+        primaryImage { url }
+        releaseYear { year }
+        ratingsSummary {
+          aggregateRating
+          voteCount
+        }
+        runtime { seconds }
       }
-      if (ids.isEmpty) return const [];
-
-      final selected = ids.take(limit).toList(growable: false);
-      final resolved = await Future.wait(
-        selected.map((id) => _metaByImdbId(id, kind)),
-      );
-      return resolved.whereType<MediaItem>().toList(growable: false);
-    } catch (_) {
-      return const [];
     }
+  }
+}
+''';
+
+    try {
+      final response = await _client
+          .post(
+            Uri.parse(_imdbGraphqlUrl),
+            headers: const {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'Origin': 'https://www.imdb.com',
+              'Referer': 'https://www.imdb.com/',
+              'User-Agent':
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128 Safari/537.36',
+              'x-imdb-client-name': 'imdb-web-next',
+            },
+            body: jsonEncode({'query': query}),
+          )
+          .timeout(const Duration(seconds: 20));
+
+      if (response.statusCode != 200) {
+        return _catalog(kind, 'imdbRating', limit: limit);
+      }
+
+      final body = jsonDecode(response.body);
+      if (body is! Map<String, dynamic>) {
+        return _catalog(kind, 'imdbRating', limit: limit);
+      }
+      final data = body['data'];
+      if (data is! Map<String, dynamic>) {
+        return _catalog(kind, 'imdbRating', limit: limit);
+      }
+      final chart = data['chartTitles'];
+      if (chart is! Map<String, dynamic>) {
+        return _catalog(kind, 'imdbRating', limit: limit);
+      }
+      final edges = chart['edges'];
+      if (edges is! List || edges.isEmpty) {
+        return _catalog(kind, 'imdbRating', limit: limit);
+      }
+
+      final chartRows = <_ImdbChartRow>[];
+      for (final edge in edges.whereType<Map<String, dynamic>>()) {
+        final node = edge['node'];
+        if (node is! Map<String, dynamic>) continue;
+        final id = node['id']?.toString() ?? '';
+        if (!RegExp(r'^tt\d{7,10}$').hasMatch(id)) continue;
+
+        final titleText = node['titleText'];
+        final title = titleText is Map<String, dynamic>
+            ? titleText['text']?.toString()
+            : null;
+        final image = node['primaryImage'];
+        final poster = image is Map<String, dynamic>
+            ? image['url']?.toString()
+            : null;
+        final releaseYear = node['releaseYear'];
+        final yearValue = releaseYear is Map<String, dynamic>
+            ? releaseYear['year']
+            : null;
+        final year = yearValue == null ? null : yearValue.toString();
+        final ratings = node['ratingsSummary'];
+        final rawRating = ratings is Map<String, dynamic>
+            ? ratings['aggregateRating']
+            : null;
+        final rating = rawRating is num
+            ? rawRating.toDouble()
+            : double.tryParse(rawRating?.toString() ?? '');
+        final runtime = node['runtime'];
+        final rawSeconds = runtime is Map<String, dynamic>
+            ? runtime['seconds']
+            : null;
+        final seconds = rawSeconds is num
+            ? rawSeconds.toInt()
+            : int.tryParse(rawSeconds?.toString() ?? '');
+
+        chartRows.add(
+          _ImdbChartRow(
+            id: id,
+            title: title,
+            year: year,
+            poster: poster,
+            rating: rating,
+            runtime: _runtimeLabel(seconds),
+          ),
+        );
+      }
+
+      if (chartRows.isEmpty) {
+        return _catalog(kind, 'imdbRating', limit: limit);
+      }
+
+      final metadata = await Future.wait(
+        chartRows.map((row) => _metaByImdbId(row.id, kind)),
+      );
+
+      final out = <MediaItem>[];
+      for (var i = 0; i < chartRows.length; i++) {
+        final row = chartRows[i];
+        final meta = metadata[i];
+        out.add(
+          MediaItem(
+            id: row.id,
+            kind: kind,
+            title: row.title ?? meta?.title ?? row.id,
+            year: row.year ?? meta?.year,
+            poster: row.poster ?? meta?.poster,
+            background: meta?.background ?? row.poster,
+            description: meta?.description,
+            rating: row.rating ?? meta?.rating,
+            runtime: meta?.runtime ?? row.runtime,
+            genres: meta?.genres ?? const [],
+            episodes: meta?.episodes ?? const [],
+          ),
+        );
+      }
+      return out.take(limit).toList(growable: false);
+    } catch (_) {
+      try {
+        return await _catalog(kind, 'imdbRating', limit: limit);
+      } catch (_) {
+        return const [];
+      }
+    }
+  }
+
+  static String? _runtimeLabel(int? seconds) {
+    if (seconds == null || seconds <= 0) return null;
+    final minutes = (seconds / 60).round();
+    final hours = minutes ~/ 60;
+    final remainder = minutes % 60;
+    if (hours == 0) return '${minutes}m';
+    if (remainder == 0) return '${hours}h';
+    return '${hours}h ${remainder}m';
   }
 
   Future<MediaItem?> _metaByImdbId(String id, MediaKind kind) async {
@@ -219,6 +358,24 @@ class CatalogService {
       .replaceAll(RegExp(r'\s+'), ' ');
 
   void dispose() => _client.close();
+}
+
+class _ImdbChartRow {
+  const _ImdbChartRow({
+    required this.id,
+    this.title,
+    this.year,
+    this.poster,
+    this.rating,
+    this.runtime,
+  });
+
+  final String id;
+  final String? title;
+  final String? year;
+  final String? poster;
+  final double? rating;
+  final String? runtime;
 }
 
 class CatalogException implements Exception {
