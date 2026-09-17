@@ -1,0 +1,463 @@
+name: Orvix v0.5.5 Smart Buffer
+
+on:
+  push:
+    branches:
+      - orvix-v0.5.5-smart-buffer
+    paths:
+      - '.github/workflows/orvix-v055-smart-buffer.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: orvix-v0.5.5-smart-buffer
+          fetch-depth: 0
+
+      - name: Apply smart buffer and compatibility filter
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import re
+
+          def replace_once(text, old, new, label):
+              if old not in text:
+                  raise SystemExit(f'Marker not found: {label}')
+              return text.replace(old, new, 1)
+
+          # Playback: apply a VOD read-ahead profile before opening media.
+          p = Path('lib/services/playback_service.dart')
+          s = p.read_text(encoding='utf-8')
+          s = replace_once(
+              s,
+              "import 'package:media_kit/media_kit.dart';",
+              "import 'dart:io';\n\nimport 'package:media_kit/media_kit.dart';",
+              'playback import')
+          old_ctor = '''  PlaybackService() : player = Player() {
+            // Preserve the patched media_kit platform defaults. In particular, do not
+            // force a global cache/reconnect profile: PikPak's signed media URLs are
+            // already VOD-optimized and mpv's defaults are more reliable across
+            // original files and cloud renditions.
+            controller = VideoController(player);
+          }
+'''
+          new_ctor = '''  PlaybackService() : player = Player() {
+            controller = VideoController(player);
+          }
+'''
+          s = replace_once(s, old_ctor, new_ctor, 'playback constructor')
+          s = replace_once(
+              s,
+              '''  Future<void> open(
+                String url, {
+                String? title,
+                Map<String, String>? httpHeaders,
+              }) async {
+                await player.open(
+''',
+              '''  Future<void> open(
+                String url, {
+                String? title,
+                Map<String, String>? httpHeaders,
+              }) async {
+                await _applySmartVodProfile();
+                await player.open(
+''',
+              'playback open')
+          s = replace_once(
+              s,
+              '''  Future<void> stop() => player.stop();
+''',
+              '''  Future<void> _applySmartVodProfile() async {
+                if (!(Platform.isWindows ||
+                    Platform.isLinux ||
+                    Platform.isMacOS ||
+                    Platform.isAndroid)) {
+                  return;
+                }
+                final native = player.platform;
+                if (native is! NativePlayer) return;
+
+                const properties = <String, String>{
+                  'cache': 'yes',
+                  'demuxer-max-bytes': '512MiB',
+                  'demuxer-max-back-bytes': '64MiB',
+                  'demuxer-readahead-secs': '180',
+                  'cache-secs': '180',
+                  'network-timeout': '90',
+                  'stream-lavf-o':
+                      'reconnect=1,reconnect_on_network_error=1,'
+                      'reconnect_on_http_error=5xx,reconnect_delay_max=10',
+                };
+                for (final entry in properties.entries) {
+                  try {
+                    await native.setProperty(
+                      entry.key,
+                      entry.value,
+                      waitForInitialization: false,
+                    );
+                  } catch (_) {
+                    // A single unsupported mpv/ffmpeg option must never prevent
+                    // playback. The remaining cache settings are still useful.
+                  }
+                }
+              }
+
+              Future<void> stop() => player.stop();
+''',
+              'playback profile')
+          p.write_text(s, encoding='utf-8')
+
+          # Source model + persisted compatibility toggle + conservative risk detector.
+          p = Path('lib/services/source_provider_service.dart')
+          s = p.read_text(encoding='utf-8')
+          s = replace_once(
+              s,
+              '''    this.fileNameHint,
+              });
+''',
+              '''    this.fileNameHint,
+                this.compatibilityGood = true,
+                this.compatibilityNote,
+              });
+''',
+              'source ctor fields')
+          s = replace_once(
+              s,
+              '''  final String? fileNameHint;
+
+              int get qualityRank {
+''',
+              '''  final String? fileNameHint;
+              final bool compatibilityGood;
+              final String? compatibilityNote;
+
+              int get qualityRank {
+''',
+              'source fields')
+          s = replace_once(
+              s,
+              "  static const _preferredGroupsKey = 'orvix_preferred_release_groups_v1';\n",
+              "  static const _preferredGroupsKey = 'orvix_preferred_release_groups_v1';\n  static const _compatibilityFilterKey = 'orvix_compatibility_filter_v1';\n",
+              'compat prefs key')
+          s = replace_once(
+              s,
+              '''  Future<void> setPreferredGroups(List<String> values) async {
+''',
+              '''  Future<bool> getCompatibilityFilter() async {
+                final prefs = await SharedPreferences.getInstance();
+                return prefs.getBool(_compatibilityFilterKey) ?? false;
+              }
+
+              Future<void> setCompatibilityFilter(bool value) async {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setBool(_compatibilityFilterKey, value);
+              }
+
+              Future<void> setPreferredGroups(List<String> values) async {
+''',
+              'compat prefs methods')
+          s = replace_once(
+              s,
+              '''        final sizeBytes = _guessSizeBytes(raw, metadataText);
+
+                String? resource;
+''',
+              '''        final sizeBytes = _guessSizeBytes(raw, metadataText);
+                final compatibility = _assessCompatibility(metadataText);
+
+                String? resource;
+''',
+              'compat assessment')
+          s = replace_once(
+              s,
+              '''            fileNameHint: fileNameHint,
+                  ),
+''',
+              '''            fileNameHint: fileNameHint,
+                    compatibilityGood: compatibility.good,
+                    compatibilityNote: compatibility.note,
+                  ),
+''',
+              'compat result values')
+          insert_marker = '''  bool _is3DRelease(String value) {
+'''
+          compat_helper = r'''  _CompatibilityAssessment _assessCompatibility(String value) {
+            final lower = value.toLowerCase();
+            final risks = <String>[];
+
+            if (RegExp(r'(^|[^a-z0-9])(av1|av01)([^a-z0-9]|$)').hasMatch(lower)) {
+              risks.add('AV1 may require software decoding on older GPUs');
+            }
+            if (RegExp(r'(^|[^a-z0-9])(hi10p|h\.264[ ._-]*10[ ._-]*bit|x264[ ._-]*10[ ._-]*bit)([^a-z0-9]|$)')
+                .hasMatch(lower)) {
+              risks.add('10-bit H.264 commonly falls back to software decoding');
+            }
+            if (RegExp(r'(^|[^a-z0-9])(4320p|8k)([^a-z0-9]|$)').hasMatch(lower)) {
+              risks.add('8K video has a very high decode and bandwidth cost');
+            }
+            if (RegExp(r'(^|[^a-z0-9])(vc[ ._-]?1)([^a-z0-9]|$)').hasMatch(lower)) {
+              risks.add('VC-1 can be less reliable with hardware decoding');
+            }
+            final highFrameRate4k =
+                RegExp(r'(2160p|4k)').hasMatch(lower) &&
+                RegExp(r'(^|[^0-9])(59\.94|60)[ ._-]?(fps|hz)?([^0-9]|$)').hasMatch(lower);
+            if (highFrameRate4k) {
+              risks.add('4K high-frame-rate video is more demanding to decode');
+            }
+
+            if (risks.isEmpty) return const _CompatibilityAssessment(true, null);
+            return _CompatibilityAssessment(false, risks.join(' • '));
+          }
+
+'''
+          s = replace_once(s, insert_marker, compat_helper + insert_marker, 'compat helper')
+          if 'class _CompatibilityAssessment' not in s:
+              s = s.rstrip() + r'''
+
+class _CompatibilityAssessment {
+  const _CompatibilityAssessment(this.good, this.note);
+
+  final bool good;
+  final String? note;
+}
+'''
+          p.write_text(s, encoding='utf-8')
+
+          # Source chooser: persisted filter chip. It only hides explicit decode-risk
+          # releases; file size itself is never treated as incompatible.
+          p = Path('lib/screens/details_screen.dart')
+          s = p.read_text(encoding='utf-8')
+          s = replace_once(
+              s,
+              '''  Future<SourceResult?> _chooseSource(List<SourceResult> results) async {
+                var priority = await widget.sources.getPriorityOrder();
+                if (!mounted) return null;
+''',
+              '''  Future<SourceResult?> _chooseSource(List<SourceResult> results) async {
+                var priority = await widget.sources.getPriorityOrder();
+                var compatibilityOnly = await widget.sources.getCompatibilityFilter();
+                if (!mounted) return null;
+''',
+              'chooser state')
+          s = replace_once(
+              s,
+              '''          final sorted = widget.sources.sortResults(results, priority);
+                  final best = sorted.isEmpty ? null : sorted.first;
+                  final color = Theme.of(context).colorScheme;
+                  final priorityText = priority.map((e) => e.label.toLowerCase()).join(' → ');
+''',
+              '''          final sortedAll = widget.sources.sortResults(results, priority);
+                  final compatible = sortedAll
+                      .where((result) => result.compatibilityGood)
+                      .toList(growable: false);
+                  final filtering = compatibilityOnly && compatible.isNotEmpty;
+                  final sorted = filtering ? compatible : sortedAll;
+                  final best = sorted.isEmpty ? null : sorted.first;
+                  final color = Theme.of(context).colorScheme;
+                  final priorityText = priority.map((e) => e.label.toLowerCase()).join(' → ');
+''',
+              'chooser filtered list')
+          old_row = '''                        OutlinedButton.icon(
+                          onPressed: () => customizePriority(sheetContext, setSheetState),
+                          icon: const Icon(Icons.tune_rounded),
+                          label: const Text('Sort priority'),
+                        ),
+                        const SizedBox(width: 10),
+                        if (best != null)
+'''
+          new_row = '''                        FilterChip(
+                          selected: compatibilityOnly,
+                          avatar: const Icon(Icons.health_and_safety_outlined, size: 18),
+                          label: const Text('Compatibility'),
+                          tooltip: 'Hide releases with explicit decode-risk formats such as AV1, Hi10P and 8K. File size is not penalized.',
+                          onSelected: (value) async {
+                            await widget.sources.setCompatibilityFilter(value);
+                            if (!sheetContext.mounted) return;
+                            setSheetState(() => compatibilityOnly = value);
+                          },
+                        ),
+                        const SizedBox(width: 10),
+                        OutlinedButton.icon(
+                          onPressed: () => customizePriority(sheetContext, setSheetState),
+                          icon: const Icon(Icons.tune_rounded),
+                          label: const Text('Sort priority'),
+                        ),
+                        const SizedBox(width: 10),
+                        if (best != null)
+'''
+          s = replace_once(s, old_row, new_row, 'compat filter chip')
+          s = replace_once(
+              s,
+              '''                                '${results.length} result${results.length == 1 ? '' : 's'} returned • showing all',
+''',
+              '''                                compatibilityOnly
+                                    ? '${sorted.length} of ${results.length} shown • compatibility filter ${filtering ? 'on' : 'found no safe subset'}'
+                                    : '${results.length} result${results.length == 1 ? '' : 's'} returned • showing all',
+''',
+              'chooser count')
+          old_trailing = '''                            trailing: index == 0
+                                ? const Chip(label: Text('Best'))
+                                : const Icon(Icons.chevron_right_rounded),
+'''
+          new_trailing = '''                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (!result.compatibilityGood) ...[
+                                  Tooltip(
+                                    message: result.compatibilityNote ?? 'Possible playback compatibility risk',
+                                    child: const Icon(Icons.warning_amber_rounded, size: 19),
+                                  ),
+                                  const SizedBox(width: 8),
+                                ],
+                                if (index == 0)
+                                  const Chip(label: Text('Best'))
+                                else
+                                  const Icon(Icons.chevron_right_rounded),
+                              ],
+                            ),
+'''
+          s = replace_once(s, old_trailing, new_trailing, 'compat warning')
+          p.write_text(s, encoding='utf-8')
+
+          # Player: show buffered extent behind the seek thumb, like a typical
+          # streaming timeline. media_kit's buffer value is absolute buffered
+          # position, so buffer/duration is the correct secondary progress.
+          p = Path('lib/screens/player_screen.dart')
+          s = p.read_text(encoding='utf-8')
+          old_slider = '''                          SliderTheme(
+                            data: SliderTheme.of(context).copyWith(
+                              trackHeight: 3.5,
+                              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                            ),
+                            child: Slider(
+                              value: actualMs,
+                              max: maxMs,
+                              onChangeStart: (_) {
+                                _hideTimer?.cancel();
+                                setState(() => _seeking = true);
+                              },
+                              onChanged: (value) => setState(() => _seekPreviewMs = value),
+                              onChangeEnd: (value) async {
+                                await player.seek(Duration(milliseconds: value.round()));
+                                if (!mounted) return;
+                                setState(() {
+                                  _seeking = false;
+                                  _seekPreviewMs = null;
+                                });
+                                _scheduleHide();
+                              },
+                            ),
+                          ),
+'''
+          new_slider = '''                          StreamBuilder<Duration>(
+                            stream: player.stream.buffer,
+                            initialData: player.state.buffer,
+                            builder: (context, bufferSnapshot) {
+                              final buffered = bufferSnapshot.data ?? Duration.zero;
+                              final bufferRatio = duration <= Duration.zero
+                                  ? 0.0
+                                  : (buffered.inMilliseconds / duration.inMilliseconds)
+                                      .clamp(0.0, 1.0)
+                                      .toDouble();
+                              final sliderTheme = SliderTheme.of(context);
+                              return SizedBox(
+                                height: 34,
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    Positioned(
+                                      left: 12,
+                                      right: 12,
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(99),
+                                        child: LinearProgressIndicator(
+                                          value: bufferRatio,
+                                          minHeight: 3.5,
+                                          backgroundColor: Colors.white24,
+                                          valueColor: const AlwaysStoppedAnimation<Color>(Colors.white38),
+                                        ),
+                                      ),
+                                    ),
+                                    SliderTheme(
+                                      data: sliderTheme.copyWith(
+                                        trackHeight: 3.5,
+                                        inactiveTrackColor: Colors.transparent,
+                                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                                      ),
+                                      child: Slider(
+                                        value: actualMs,
+                                        max: maxMs,
+                                        onChangeStart: (_) {
+                                          _hideTimer?.cancel();
+                                          setState(() => _seeking = true);
+                                        },
+                                        onChanged: (value) => setState(() => _seekPreviewMs = value),
+                                        onChangeEnd: (value) async {
+                                          await player.seek(Duration(milliseconds: value.round()));
+                                          if (!mounted) return;
+                                          setState(() {
+                                            _seeking = false;
+                                            _seekPreviewMs = null;
+                                          });
+                                          _scheduleHide();
+                                        },
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+'''
+          s = replace_once(s, old_slider, new_slider, 'buffered seek bar')
+          p.write_text(s, encoding='utf-8')
+
+          # Version only; do not touch any icon or branding file.
+          p = Path('pubspec.yaml')
+          s = p.read_text(encoding='utf-8')
+          s = replace_once(s, 'version: 0.5.4+24', 'version: 0.5.5+25', 'version')
+          p.write_text(s, encoding='utf-8')
+
+          p = Path('installer/orvix.iss')
+          s = p.read_text(encoding='utf-8')
+          s = replace_once(s, '#define MyAppVersion "0.5.4"', '#define MyAppVersion "0.5.5"', 'installer version')
+          p.write_text(s, encoding='utf-8')
+          '@ | Set-Content -Path patch_v055.py -Encoding UTF8
+          python patch_v055.py
+          Remove-Item patch_v055.py
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Clean old build artifacts
+        run: flutter clean
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze app sources
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Commit validated changes and remove helper
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/orvix-v055-smart-buffer.yml
+          git add lib/services/playback_service.dart lib/services/source_provider_service.dart lib/screens/details_screen.dart lib/screens/player_screen.dart pubspec.yaml installer/orvix.iss
+          git commit -m "feat: smart playback buffer and compatibility filter"
+          git push origin HEAD:orvix-v0.5.5-smart-buffer
