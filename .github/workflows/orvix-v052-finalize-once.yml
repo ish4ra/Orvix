@@ -1,0 +1,299 @@
+name: Finalize Orvix v0.5.2 Priority + Icon Once
+
+on:
+  push:
+    branches:
+      - orvix-v0.5.2-priority-icon
+    paths:
+      - '.github/workflows/orvix-v052-finalize-once.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: orvix-v052-finalize-once
+  cancel-in-progress: false
+
+jobs:
+  patch-validate-commit:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: orvix-v0.5.2-priority-icon
+
+      - name: Apply requested changes
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+
+          def rep(path, old, new):
+              p = Path(path)
+              t = p.read_text(encoding='utf-8')
+              if old not in t:
+                  raise SystemExit(f'Expected text not found in {path}: {old[:140]!r}')
+              p.write_text(t.replace(old, new, 1), encoding='utf-8')
+
+          src = 'lib/services/source_provider_service.dart'
+          rep(src,
+              'enum SourceSortCriterion { releaseQuality, resolution, seeders, fileSize }',
+              'enum SourceSortCriterion { cache, releaseQuality, resolution, fileSize, seeders }')
+
+          rep(src,
+          '''extension SourceSortCriterionLabel on SourceSortCriterion {
+            String get label {
+              switch (this) {
+                case SourceSortCriterion.releaseQuality:
+                  return 'Source type';
+                case SourceSortCriterion.resolution:
+                  return 'Resolution';
+                case SourceSortCriterion.seeders:
+                  return 'Seeders';
+                case SourceSortCriterion.fileSize:
+                  return 'File size';
+              }
+            }
+          }''',
+          '''extension SourceSortCriterionLabel on SourceSortCriterion {
+            String get label {
+              switch (this) {
+                case SourceSortCriterion.cache:
+                  return 'Cache';
+                case SourceSortCriterion.releaseQuality:
+                  return 'Quality';
+                case SourceSortCriterion.resolution:
+                  return 'Resolution';
+                case SourceSortCriterion.fileSize:
+                  return 'Size';
+                case SourceSortCriterion.seeders:
+                  return 'Seeders';
+              }
+            }
+          }''')
+
+          rep(src,
+              "      case SourceSortMode.quality:\n        return 'Source type';",
+              "      case SourceSortMode.quality:\n        return 'Quality';")
+
+          rep(src,
+          '''    this.releaseQuality,
+              this.preferredGroup = false,
+              this.seeders,''',
+          '''    this.releaseQuality,
+              this.preferredGroup = false,
+              this.cached = false,
+              this.seeders,''')
+
+          rep(src,
+          '''  final String? releaseQuality;
+            final bool preferredGroup;
+            final int? seeders;''',
+          '''  final String? releaseQuality;
+            final bool preferredGroup;
+            final bool cached;
+            final int? seeders;''')
+
+          rep(src,
+              "  static const _priorityKey = 'orvix_source_priority_v4';",
+              "  static const _priorityKey = 'orvix_source_priority_v5';")
+
+          rep(src,
+          '''  static const defaultPriority = <SourceSortCriterion>[
+              SourceSortCriterion.releaseQuality,
+              SourceSortCriterion.resolution,
+              SourceSortCriterion.seeders,
+              SourceSortCriterion.fileSize,
+            ];''',
+          '''  static const defaultPriority = <SourceSortCriterion>[
+              SourceSortCriterion.cache,
+              SourceSortCriterion.releaseQuality,
+              SourceSortCriterion.resolution,
+              SourceSortCriterion.fileSize,
+              SourceSortCriterion.seeders,
+            ];''')
+
+          rep(src,
+          '''  int _criterionValue(SourceResult result, SourceSortCriterion criterion) {
+              switch (criterion) {
+                case SourceSortCriterion.releaseQuality:
+                  return result.releaseQualityRank + (result.preferredGroup ? 50 : 0);
+                case SourceSortCriterion.resolution:
+                  return result.qualityRank;
+                case SourceSortCriterion.seeders:
+                  return result.seeders ?? -1;
+                case SourceSortCriterion.fileSize:
+                  return result.sizeBytes ?? 0;
+              }
+            }''',
+          '''  int _criterionValue(SourceResult result, SourceSortCriterion criterion) {
+              switch (criterion) {
+                case SourceSortCriterion.cache:
+                  return result.cached ? 1 : 0;
+                case SourceSortCriterion.releaseQuality:
+                  return result.releaseQualityRank + (result.preferredGroup ? 50 : 0);
+                case SourceSortCriterion.resolution:
+                  return result.qualityRank;
+                case SourceSortCriterion.fileSize:
+                  return result.sizeBytes ?? 0;
+                case SourceSortCriterion.seeders:
+                  return result.seeders ?? -1;
+              }
+            }''')
+
+          rep(src,
+          '''        final seeders = _guessSeeders(raw, metadataText);
+                final sizeBytes = _guessSizeBytes(raw, metadataText);
+
+                String? resource;''',
+          '''        final seeders = _guessSeeders(raw, metadataText);
+                final sizeBytes = _guessSizeBytes(raw, metadataText);
+                final cacheHint = _guessCached(raw, hints, metadataText);
+
+                String? resource;''')
+
+          rep(src,
+          '''        if (resource == null) continue;
+
+                // Existing source sheet renders two title lines.''',
+          '''        if (resource == null) continue;
+                final cached = cacheHint || !isMagnet;
+
+                // Existing source sheet renders two title lines.''')
+
+          rep(src,
+          '''        final statParts = <String>[
+                  if (preferredGroup) '⭐ Preferred',
+                  if (releaseQuality != null) '🎞 $releaseQuality',
+                  if (quality != null) '📺 $quality',
+                  '👥 ${seeders?.toString() ?? '—'} seeders',
+                  '💾 ${_formatSize(sizeBytes) ?? 'size unknown'}',
+                ];''',
+          '''        final statParts = <String>[
+                  if (cached) '⚡ Cached',
+                  if (releaseQuality != null) '🎞 $releaseQuality',
+                  if (quality != null) '📺 $quality',
+                  '💾 ${_formatSize(sizeBytes) ?? 'size unknown'}',
+                  '👥 ${seeders?.toString() ?? '—'} seeders',
+                  if (preferredGroup) '⭐ Preferred',
+                ];''')
+
+          rep(src,
+          '''            releaseQuality: releaseQuality,
+                    preferredGroup: preferredGroup,
+                    seeders: seeders,''',
+          '''            releaseQuality: releaseQuality,
+                    preferredGroup: preferredGroup,
+                    cached: cached,
+                    seeders: seeders,''')
+
+          rep(src,
+              '  String? _guessReleaseQuality(String value) {',
+          '''  bool _guessCached(
+              Map<String, dynamic> raw,
+              Map<String, dynamic>? hints,
+              String value,
+            ) {
+              final candidates = <dynamic>[
+                raw['cached'], raw['isCached'], raw['is_cached'],
+                raw['instant'], raw['instantAvailability'], raw['instant_availability'],
+                hints?['cached'], hints?['isCached'], hints?['is_cached'],
+                hints?['instant'], hints?['instantAvailability'], hints?['instant_availability'],
+              ];
+              for (final candidate in candidates) {
+                if (_truthy(candidate)) return true;
+              }
+              final lower = value.toLowerCase();
+              if (lower.contains('cached')) return true;
+              return RegExp(
+                r'(^|[\\s._\\-\\[\\(])(?:rd|ad|tb|pm)\\+(?=$|[\\s._\\-\\]\\)])',
+                caseSensitive: false,
+              ).hasMatch(value);
+            }
+
+            bool _truthy(dynamic value) {
+              if (value is bool) return value;
+              if (value is num) return value > 0;
+              final normalized = value?.toString().trim().toLowerCase();
+              return const {'true', '1', 'yes', 'cached', 'instant', 'available'}
+                  .contains(normalized);
+            }
+
+            String? _guessReleaseQuality(String value) {''')
+
+          rep('lib/screens/sources_screen.dart',
+              'Drag to choose exactly how sources are ranked. Default is resolution → source type → file size → seeders.',
+              'Drag to choose exactly how sources are ranked. Default is cache → quality → resolution → size → seeders.')
+
+          rep('pubspec.yaml', 'version: 0.5.1+21', 'version: 0.5.2+22')
+          rep('installer/orvix.iss', '#define MyAppVersion "0.5.0"', '#define MyAppVersion "0.5.2"')
+          rep('installer/orvix.iss',
+              'Name: "{autoprograms}\\Orvix"; Filename: "{app}\\{#MyAppExeName}"; WorkingDir: "{app}"',
+              'Name: "{autoprograms}\\Orvix"; Filename: "{app}\\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\\{#MyAppExeName}"')
+          rep('installer/orvix.iss',
+              'Name: "{autodesktop}\\Orvix"; Filename: "{app}\\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon',
+              'Name: "{autodesktop}\\Orvix"; Filename: "{app}\\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\\{#MyAppExeName}"; Tasks: desktopicon')
+
+          p = Path('CHANGELOG.md')
+          t = p.read_text(encoding='utf-8')
+          marker = '# Orvix Changelog\n\n'
+          entry = '''## v0.5.2 — source priority & app icon\n\n- Default source ranking is now **Cache → Quality → Resolution → Size → Seeders**.\n- Added cache/instant metadata detection and an ⚡ Cached source badge.\n- Replaced the Orvix branding source with the supplied app icon and wired it through the Windows executable, installer and shortcuts.\n- Bumped the app to 0.5.2+22.\n\n'''
+          if '## v0.5.2 — source priority & app icon' not in t:
+              p.write_text(t.replace(marker, marker + entry, 1), encoding='utf-8')
+          '@ | Set-Content -Encoding UTF8 patch_v052.py
+          python patch_v052.py
+          Remove-Item patch_v052.py
+
+      - name: Verify icon wiring
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'assets/branding/orvix_icon.png')) { throw 'Orvix icon asset missing.' }
+          if ((Get-Content pubspec.yaml -Raw) -notmatch 'image_path:\s*assets/branding/orvix_icon.png') { throw 'Launcher icon path missing.' }
+          if ((Get-Content installer/orvix.iss -Raw) -notmatch 'SetupIconFile=.*app_icon.ico') { throw 'Installer icon path missing.' }
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Windows runner
+        shell: pwsh
+        run: flutter create --platforms=windows --project-name orvix .
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Generate Orvix Windows icon
+        run: dart run flutter_launcher_icons
+
+      - name: Analyze app sources
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $candidates = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe")
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
+          & $iscc '/DMyAppVersion=0.5.2' 'installer\orvix.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+
+      - name: Commit validated patch and clean helpers
+        shell: pwsh
+        run: |
+          git config user.name 'Ishara Lakshan'
+          git config user.email 'ishara@tuta.io'
+          git rm -f '.github/workflows/orvix-v052-priority-icon-once.yml' '.github/workflows/orvix-v052-finalize-once.yml'
+          git add lib/services/source_provider_service.dart lib/screens/sources_screen.dart pubspec.yaml installer/orvix.iss CHANGELOG.md assets/branding/orvix_icon.png
+          git diff --cached --check
+          git commit -m 'feat: Orvix v0.5.2 source priority and app icon'
+          git push origin HEAD:orvix-v0.5.2-priority-icon
