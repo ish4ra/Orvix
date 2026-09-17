@@ -54,36 +54,45 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Timer? _saveTimer;
   Timer? _nextTimer;
   Timer? _startupTimer;
+  Timer? _nativeSubtitleClockTimer;
   StreamSubscription<bool>? _completedSubscription;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<List<String>>? _subtitleTimingSubscription;
   final FocusNode _focusNode = FocusNode();
   bool _aiSinhalaEnabled = false;
   bool _timingTrackSelected = false;
+  bool _timingTrackIsText = false;
   String _aiDisplaySubtitle = '';
   int _autoSyncOffsetMs = 0;
   int _manualSyncOffsetMs = 0;
+  int? _lastNativeSubtitleStartMs;
   final List<int> _autoSyncSamples = <int>[];
+  final Map<int, int> _bitmapOffsetVotes = <int, int>{};
 
-  bool get _desktop => Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+  bool get _desktop =>
+      Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
   @override
   void initState() {
     super.initState();
     _aiSinhalaEnabled = widget.aiSubtitle != null;
     if (_aiSinhalaEnabled) {
-      _positionSubscription = widget.playback.player.stream.position.listen(_onPosition);
+      _positionSubscription =
+          widget.playback.player.stream.position.listen(_onPosition);
       _subtitleTimingSubscription =
           widget.playback.player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
       unawaited(_loadManualSync());
     }
     _open();
     _scheduleHide();
-    _saveTimer = Timer.periodic(const Duration(seconds: 10), (_) => _persistProgress());
-    _completedSubscription = widget.playback.player.stream.completed.listen((completed) {
+    _saveTimer =
+        Timer.periodic(const Duration(seconds: 10), (_) => _persistProgress());
+    _completedSubscription =
+        widget.playback.player.stream.completed.listen((completed) {
       if (completed) _startNextCountdown();
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) => _focusNode.requestFocus());
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _focusNode.requestFocus());
   }
 
   Future<void> _open() async {
@@ -99,7 +108,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
         if (state.duration <= Duration.zero &&
             state.position <= Duration.zero) {
           setState(() {
-            _error = 'PikPak stream did not initialize (still 0:00/0:00 after 12 seconds). '
+            _error =
+                'PikPak stream did not initialize (still 0:00/0:00 after 12 seconds). '
                 'This is a stream-start failure, not normal buffering.';
           });
         }
@@ -149,7 +159,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final player = widget.playback.player;
     var target = player.state.position + offset;
     if (target < Duration.zero) target = Duration.zero;
-    if (player.state.duration > Duration.zero && target > player.state.duration) {
+    if (player.state.duration > Duration.zero &&
+        target > player.state.duration) {
       target = player.state.duration;
     }
     await player.seek(target);
@@ -184,7 +195,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final key = event.logicalKey;
-    if (key == LogicalKeyboardKey.space || key == LogicalKeyboardKey.mediaPlayPause) {
+    if (key == LogicalKeyboardKey.space ||
+        key == LogicalKeyboardKey.mediaPlayPause) {
       widget.playback.player.playOrPause();
       _showControls();
       return KeyEventResult.handled;
@@ -306,45 +318,161 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _ensureEnglishTimingTrack() async {
     if (!_aiSinhalaEnabled) return;
     final player = widget.playback.player;
-    for (var attempt = 0; attempt < 8 && mounted; attempt++) {
+    for (var attempt = 0; attempt < 12 && mounted; attempt++) {
       final current = player.state.track.subtitle;
-      if (current.id.toLowerCase() != 'no' && _isEnglishTextTrack(current)) {
-        _timingTrackSelected = true;
-        return;
+      dynamic chosen;
+      if (current.id.toLowerCase() != 'no' && _isEnglishTrack(current)) {
+        chosen = current;
+      } else {
+        final tracks = player.state.tracks.subtitle
+            .where((track) => track.id.toLowerCase() != 'no')
+            .where(_isEnglishTrack)
+            .toList(growable: false)
+          ..sort((a, b) {
+            final aBitmap = _isImageSubtitleTrack(a) ? 1 : 0;
+            final bBitmap = _isImageSubtitleTrack(b) ? 1 : 0;
+            return aBitmap.compareTo(bBitmap);
+          });
+        if (tracks.isNotEmpty) {
+          chosen = tracks.first;
+          await player.setSubtitleTrack(chosen);
+        }
       }
-      final tracks = player.state.tracks.subtitle
-          .where((track) => track.id.toLowerCase() != 'no')
-          .where(_isEnglishTextTrack)
-          .toList(growable: false);
-      if (tracks.isNotEmpty) {
-        await player.setSubtitleTrack(tracks.first);
+
+      if (chosen != null) {
         _timingTrackSelected = true;
+        _timingTrackIsText = !_isImageSubtitleTrack(chosen);
+        await _hideNativeTimingSubtitle();
+        _startNativeSubtitleClock();
         return;
       }
       await Future<void>.delayed(const Duration(milliseconds: 300));
     }
   }
 
-  bool _isEnglishTextTrack(dynamic track) {
+  bool _isEnglishTrack(dynamic track) {
     final language = (track.language ?? '').toString().trim().toLowerCase();
     final title = (track.title ?? '').toString().trim().toLowerCase();
-    final codec = (track.codec ?? '').toString().trim().toLowerCase();
-    final english = language == 'en' ||
+    return language == 'en' ||
         language == 'eng' ||
         language.startsWith('en-') ||
+        language.contains('english') ||
         title.contains('english') ||
         title == 'eng';
-    if (!english) return false;
-    return !codec.contains('pgs') &&
-        !codec.contains('dvd') &&
-        !codec.contains('dvb') &&
-        !codec.contains('vob');
+  }
+
+  bool _isImageSubtitleTrack(dynamic track) {
+    final codec = (track.codec ?? '').toString().trim().toLowerCase();
+    return codec.contains('pgs') ||
+        codec.contains('hdmv') ||
+        codec.contains('dvd') ||
+        codec.contains('dvb') ||
+        codec.contains('vob');
+  }
+
+  bool _isEnglishTextTrack(dynamic track) =>
+      _isEnglishTrack(track) && !_isImageSubtitleTrack(track);
+
+  Future<void> _hideNativeTimingSubtitle() async {
+    final platform = widget.playback.player.platform;
+    if (platform is! mk.NativePlayer) return;
+    try {
+      // mpv keeps the selected subtitle decoded while hiding its native render.
+      // That lets Orvix use both text and PGS/bitmap cue timing as a sync clock.
+      await platform.setProperty(
+        'sub-visibility',
+        'no',
+        waitForInitialization: false,
+      );
+    } catch (_) {
+      // The AI overlay still works even if a platform does not expose this.
+    }
+  }
+
+  void _startNativeSubtitleClock() {
+    _nativeSubtitleClockTimer?.cancel();
+    _nativeSubtitleClockTimer = Timer.periodic(
+      const Duration(milliseconds: 200),
+      (_) => unawaited(_pollNativeSubtitleClock()),
+    );
+  }
+
+  Future<int?> _nativeSubtitleStartMs() async {
+    final platform = widget.playback.player.platform;
+    if (platform is! mk.NativePlayer) return null;
+    try {
+      final raw = (await platform.getProperty(
+        'sub-start/full',
+        waitForInitialization: false,
+      ))
+          .trim();
+      if (raw.isEmpty || raw == 'null' || raw == 'N/A') return null;
+      final seconds = double.tryParse(raw);
+      if (seconds == null || !seconds.isFinite || seconds < 0) return null;
+      return (seconds * 1000).round();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _pollNativeSubtitleClock() async {
+    if (!_aiSinhalaEnabled || !_timingTrackSelected || !mounted) return;
+    final startMs = await _nativeSubtitleStartMs();
+    if (startMs == null || !mounted) return;
+    final previous = _lastNativeSubtitleStartMs;
+    if (previous != null && (startMs - previous).abs() < 40) return;
+    _lastNativeSubtitleStartMs = startMs;
+    if (!_timingTrackIsText) {
+      _voteBitmapTiming(startMs);
+    }
+  }
+
+  void _acceptAutoSyncSample(int sample) {
+    if (sample.abs() > 15000 || !mounted) return;
+    _autoSyncSamples.add(sample);
+    if (_autoSyncSamples.length > 7) _autoSyncSamples.removeAt(0);
+    final ordered = [..._autoSyncSamples]..sort();
+    final median = ordered[ordered.length ~/ 2];
+    if ((median - _autoSyncOffsetMs).abs() < 40) return;
+    setState(() => _autoSyncOffsetMs = median);
+    _refreshAiSubtitle();
+  }
+
+  void _voteBitmapTiming(int sourceStartMs) {
+    final prepared = widget.aiSubtitle;
+    if (prepared == null || prepared.cues.isEmpty) return;
+
+    // PGS/VobSub carries timing but no text. Build a small histogram of the
+    // difference between source cue starts and nearby OpenSubtitles cue starts.
+    // The real release offset repeats across many cues; accidental neighbours do not.
+    const windowMs = 12000;
+    for (final cue in prepared.cues) {
+      final cueStart = cue.start.inMilliseconds;
+      if (cueStart < sourceStartMs - windowMs) continue;
+      if (cueStart > sourceStartMs + windowMs) break;
+      final diff = sourceStartMs - cueStart;
+      final bucket = (diff / 100).round() * 100;
+      _bitmapOffsetVotes[bucket] = (_bitmapOffsetVotes[bucket] ?? 0) + 1;
+    }
+
+    if (_bitmapOffsetVotes.length < 2) return;
+    final ranked = _bitmapOffsetVotes.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final best = ranked.first;
+    final secondVotes = ranked.length > 1 ? ranked[1].value : 0;
+    if (best.value >= 4 && best.value - secondVotes >= 2) {
+      _acceptAutoSyncSample(best.key);
+    }
   }
 
   void _onEmbeddedSubtitleCue(List<String> lines) {
+    unawaited(_handleEmbeddedSubtitleCue(lines));
+  }
+
+  Future<void> _handleEmbeddedSubtitleCue(List<String> lines) async {
     if (!_aiSinhalaEnabled || !_timingTrackSelected || !mounted) return;
     final prepared = widget.aiSubtitle;
-    if (prepared == null) return;
+    if (prepared == null || !_timingTrackIsText) return;
     final source = lines
         .map((line) => line.trim())
         .where((line) => line.isNotEmpty)
@@ -353,16 +481,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (source.isEmpty) return;
     final matched = prepared.matchSourceCue(source);
     if (matched == null) return;
-    final sample = widget.playback.player.state.position.inMilliseconds -
-        matched.start.inMilliseconds;
-    if (sample.abs() > 10000) return;
-    _autoSyncSamples.add(sample);
-    if (_autoSyncSamples.length > 5) _autoSyncSamples.removeAt(0);
-    final ordered = [..._autoSyncSamples]..sort();
-    final median = ordered[ordered.length ~/ 2];
-    if ((median - _autoSyncOffsetMs).abs() < 40) return;
-    setState(() => _autoSyncOffsetMs = median);
-    _refreshAiSubtitle();
+    final nativeStart = await _nativeSubtitleStartMs();
+    if (!mounted) return;
+    final sourceStart =
+        nativeStart ?? widget.playback.player.state.position.inMilliseconds;
+    _acceptAutoSyncSample(sourceStart - matched.start.inMilliseconds);
   }
 
   Widget _aiSubtitleOverlay() {
@@ -389,7 +512,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 ],
               ),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
                 child: Text(
                   _aiDisplaySubtitle,
                   textAlign: TextAlign.center,
@@ -450,7 +574,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       constraints: const BoxConstraints(maxWidth: 760),
       builder: (sheetContext) => SafeArea(
         child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(sheetContext).height * .72),
+          constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(sheetContext).height * .72),
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
             child: Column(
@@ -465,21 +590,29 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 const SizedBox(height: 6),
                 Text(
                   'Switch embedded tracks or load a local subtitle file.',
-                  style: TextStyle(color: Theme.of(sheetContext).colorScheme.onSurfaceVariant),
+                  style: TextStyle(
+                      color:
+                          Theme.of(sheetContext).colorScheme.onSurfaceVariant),
                 ),
                 const SizedBox(height: 22),
-                const _TrackHeading(icon: Icons.audiotrack_rounded, text: 'Audio'),
+                const _TrackHeading(
+                    icon: Icons.audiotrack_rounded, text: 'Audio'),
                 const SizedBox(height: 8),
                 if (audioTracks.isEmpty)
-                  const _EmptyTrackMessage('No selectable audio tracks reported.')
+                  const _EmptyTrackMessage(
+                      'No selectable audio tracks reported.')
                 else
                   ...audioTracks.map(
                     (track) => _TrackTile(
                       title: _trackLabel(track.title, track.language, track.id),
                       detail: [
                         track.codec,
-                        if (track.channelscount != null) '${track.channelscount} ch',
-                      ].whereType<String>().where((value) => value.isNotEmpty).join(' • '),
+                        if (track.channelscount != null)
+                          '${track.channelscount} ch',
+                      ]
+                          .whereType<String>()
+                          .where((value) => value.isNotEmpty)
+                          .join(' • '),
                       selected: player.state.track.audio.id == track.id,
                       onTap: () async {
                         await player.setAudioTrack(track);
@@ -491,7 +624,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 Row(
                   children: [
                     const Expanded(
-                      child: _TrackHeading(icon: Icons.subtitles_rounded, text: 'Subtitles'),
+                      child: _TrackHeading(
+                          icon: Icons.subtitles_rounded, text: 'Subtitles'),
                     ),
                     OutlinedButton.icon(
                       onPressed: () async {
@@ -530,10 +664,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         const SizedBox(height: 5),
                         Text(
                           _autoSyncSamples.isNotEmpty
-                              ? 'Auto-synced from this video’s embedded English timing. Adjust only if it still looks off.'
+                              ? 'Auto-synced from this video’s embedded English subtitle timing. Adjust only if it still looks off.'
                               : 'Orvix is using release-matched timing. Adjust only if this source is still out of sync.',
                           style: TextStyle(
-                            color: Theme.of(sheetContext).colorScheme.onSurfaceVariant,
+                            color: Theme.of(sheetContext)
+                                .colorScheme
+                                .onSurfaceVariant,
                             fontSize: 12,
                           ),
                         ),
@@ -545,21 +681,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
                             OutlinedButton(
                               onPressed: () async {
                                 await _adjustManualSync(-500);
-                                if (sheetContext.mounted) Navigator.pop(sheetContext);
+                                if (sheetContext.mounted)
+                                  Navigator.pop(sheetContext);
                               },
                               child: const Text('Earlier -0.5s'),
                             ),
                             OutlinedButton(
                               onPressed: () async {
                                 await _resetManualSync();
-                                if (sheetContext.mounted) Navigator.pop(sheetContext);
+                                if (sheetContext.mounted)
+                                  Navigator.pop(sheetContext);
                               },
                               child: const Text('Reset manual'),
                             ),
                             OutlinedButton(
                               onPressed: () async {
                                 await _adjustManualSync(500);
-                                if (sheetContext.mounted) Navigator.pop(sheetContext);
+                                if (sheetContext.mounted)
+                                  Navigator.pop(sheetContext);
                               },
                               child: const Text('Later +0.5s'),
                             ),
@@ -573,7 +712,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 _TrackTile(
                   title: 'Off',
                   detail: 'Disable subtitles',
-                  selected: player.state.track.subtitle.id.toLowerCase() == 'no',
+                  selected:
+                      player.state.track.subtitle.id.toLowerCase() == 'no',
                   onTap: () async {
                     await player.setSubtitleTrack(mk.SubtitleTrack.no());
                     if (sheetContext.mounted) Navigator.pop(sheetContext);
@@ -619,6 +759,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _saveTimer?.cancel();
     _nextTimer?.cancel();
     _startupTimer?.cancel();
+    _nativeSubtitleClockTimer?.cancel();
     _completedSubscription?.cancel();
     _positionSubscription?.cancel();
     _subtitleTimingSubscription?.cancel();
@@ -696,13 +837,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
           color: const Color(0xEE11141C),
           borderRadius: BorderRadius.circular(18),
           border: Border.all(color: const Color(0xFF343A4D)),
-          boxShadow: const [BoxShadow(color: Color(0x77000000), blurRadius: 28)],
+          boxShadow: const [
+            BoxShadow(color: Color(0x77000000), blurRadius: 28)
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Up next', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+            const Text('Up next',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
             const SizedBox(height: 5),
             Text(
               widget.nextEpisodeLabel ?? 'Next episode',
@@ -741,7 +885,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
           children: [
             const Icon(Icons.error_outline, size: 54),
             const SizedBox(height: 16),
-            Text('Could not start playback', style: Theme.of(context).textTheme.headlineSmall),
+            Text('Could not start playback',
+                style: Theme.of(context).textTheme.headlineSmall),
             const SizedBox(height: 10),
             Text(_error!, textAlign: TextAlign.center),
             const SizedBox(height: 18),
@@ -785,7 +930,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       widget.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w800),
                     ),
                   ),
                   const _KeyboardHint('←/→ 10s'),
@@ -814,24 +960,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       final maxMs = duration.inMilliseconds <= 0
                           ? 1.0
                           : duration.inMilliseconds.toDouble();
-                      final actualMs = (_seekPreviewMs ?? position.inMilliseconds.toDouble())
-                          .clamp(0, maxMs)
-                          .toDouble();
+                      final actualMs =
+                          (_seekPreviewMs ?? position.inMilliseconds.toDouble())
+                              .clamp(0, maxMs)
+                              .toDouble();
                       return Column(
                         children: [
                           StreamBuilder<Duration>(
                             stream: player.stream.buffer,
                             initialData: player.state.buffer,
                             builder: (context, bufferSnapshot) {
-                              final bufferedMs = (bufferSnapshot.data ?? Duration.zero)
-                                  .inMilliseconds
-                                  .toDouble()
-                                  .clamp(actualMs, maxMs)
-                                  .toDouble();
+                              final bufferedMs =
+                                  (bufferSnapshot.data ?? Duration.zero)
+                                      .inMilliseconds
+                                      .toDouble()
+                                      .clamp(actualMs, maxMs)
+                                      .toDouble();
                               return SliderTheme(
                                 data: SliderTheme.of(context).copyWith(
                                   trackHeight: 3.5,
-                                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                                  thumbShape: const RoundSliderThumbShape(
+                                      enabledThumbRadius: 6),
                                 ),
                                 child: Slider(
                                   value: actualMs,
@@ -841,9 +990,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     _hideTimer?.cancel();
                                     setState(() => _seeking = true);
                                   },
-                                  onChanged: (value) => setState(() => _seekPreviewMs = value),
+                                  onChanged: (value) =>
+                                      setState(() => _seekPreviewMs = value),
                                   onChangeEnd: (value) async {
-                                    await player.seek(Duration(milliseconds: value.round()));
+                                    await player.seek(
+                                        Duration(milliseconds: value.round()));
                                     if (!mounted) return;
                                     setState(() {
                                       _seeking = false;
@@ -860,8 +1011,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                               StreamBuilder<bool>(
                                 stream: player.stream.playing,
                                 initialData: player.state.playing,
-                                builder: (context, snapshot) => IconButton.filled(
-                                  tooltip: snapshot.data == true ? 'Pause' : 'Play',
+                                builder: (context, snapshot) =>
+                                    IconButton.filled(
+                                  tooltip:
+                                      snapshot.data == true ? 'Pause' : 'Play',
                                   onPressed: player.playOrPause,
                                   icon: Icon(
                                     snapshot.data == true
@@ -874,29 +1027,36 @@ class _PlayerScreenState extends State<PlayerScreen> {
                               const SizedBox(width: 6),
                               IconButton(
                                 tooltip: 'Back 10 seconds',
-                                onPressed: () => _seekRelative(const Duration(seconds: -10)),
+                                onPressed: () =>
+                                    _seekRelative(const Duration(seconds: -10)),
                                 icon: const Icon(Icons.replay_10_rounded),
                               ),
                               IconButton(
                                 tooltip: 'Forward 10 seconds',
-                                onPressed: () => _seekRelative(const Duration(seconds: 10)),
+                                onPressed: () =>
+                                    _seekRelative(const Duration(seconds: 10)),
                                 icon: const Icon(Icons.forward_10_rounded),
                               ),
                               const SizedBox(width: 8),
                               Text(
                                 '${_format(position)} / ${_format(duration)}',
-                                style: const TextStyle(fontWeight: FontWeight.w700),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700),
                               ),
                               const SizedBox(width: 14),
                               StreamBuilder<double>(
                                 stream: player.stream.volume,
                                 initialData: player.state.volume,
                                 builder: (context, snapshot) {
-                                  final volume = (snapshot.data ?? 100).clamp(0, 100).toDouble();
+                                  final volume = (snapshot.data ?? 100)
+                                      .clamp(0, 100)
+                                      .toDouble();
                                   return Row(
                                     children: [
                                       IconButton(
-                                        tooltip: volume <= 0 ? 'Unmute (M)' : 'Mute (M)',
+                                        tooltip: volume <= 0
+                                            ? 'Unmute (M)'
+                                            : 'Mute (M)',
                                         onPressed: _toggleMute,
                                         icon: Icon(
                                           volume <= 0
@@ -934,18 +1094,23 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                 onSelected: player.setRate,
                                 itemBuilder: (_) => const [
                                   PopupMenuItem(value: .5, child: Text('0.5×')),
-                                  PopupMenuItem(value: .75, child: Text('0.75×')),
+                                  PopupMenuItem(
+                                      value: .75, child: Text('0.75×')),
                                   PopupMenuItem(value: 1, child: Text('1×')),
-                                  PopupMenuItem(value: 1.25, child: Text('1.25×')),
-                                  PopupMenuItem(value: 1.5, child: Text('1.5×')),
+                                  PopupMenuItem(
+                                      value: 1.25, child: Text('1.25×')),
+                                  PopupMenuItem(
+                                      value: 1.5, child: Text('1.5×')),
                                   PopupMenuItem(value: 2, child: Text('2×')),
                                 ],
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 8),
                                   decoration: BoxDecoration(
                                     color: const Color(0x551A1D26),
                                     borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(color: const Color(0x44FFFFFF)),
+                                    border: Border.all(
+                                        color: const Color(0x44FFFFFF)),
                                   ),
                                   child: Text(
                                     '${player.state.rate.toStringAsFixed(player.state.rate == 1 ? 0 : 2)}×',
@@ -979,7 +1144,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final hours = value.inHours;
     final minutes = value.inMinutes.remainder(60).toString().padLeft(2, '0');
     final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return hours > 0 ? '$hours:$minutes:$seconds' : '${value.inMinutes}:$seconds';
+    return hours > 0
+        ? '$hours:$minutes:$seconds'
+        : '${value.inMinutes}:$seconds';
   }
 }
 
@@ -994,7 +1161,8 @@ class _TrackHeading extends StatelessWidget {
       children: [
         Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
         const SizedBox(width: 9),
-        Text(text, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+        Text(text,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
       ],
     );
   }
@@ -1018,7 +1186,9 @@ class _TrackTile extends StatelessWidget {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: Icon(
-        selected ? Icons.radio_button_checked_rounded : Icons.radio_button_off_rounded,
+        selected
+            ? Icons.radio_button_checked_rounded
+            : Icons.radio_button_off_rounded,
         color: selected ? Theme.of(context).colorScheme.primary : null,
       ),
       title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
@@ -1057,7 +1227,8 @@ class _KeyboardHint extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0x33FFFFFF)),
       ),
-      child: Text(text, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+      child: Text(text,
+          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
     );
   }
 }

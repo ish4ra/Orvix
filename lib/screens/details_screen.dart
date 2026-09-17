@@ -225,9 +225,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     Text(
                       item.title,
                       style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: -.9,
-                      ),
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -.9,
+                          ),
                     ),
                     const SizedBox(height: 14),
                     Wrap(
@@ -325,7 +325,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
             children: [
               Text(
                 'Episodes',
-                style: Theme.of(context).textTheme.headlineSmall
+                style: Theme.of(context)
+                    .textTheme
+                    .headlineSmall
                     ?.copyWith(fontWeight: FontWeight.w900),
               ),
               const Spacer(),
@@ -402,9 +404,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
               label: const Text('Sources'),
             ),
             FilledButton.icon(
-              onPressed: _resolving
-                  ? null
-                  : () => _play(item, episode: episode),
+              onPressed:
+                  _resolving ? null : () => _play(item, episode: episode),
               icon: const Icon(Icons.play_arrow_rounded),
               label: const Text('Play'),
             ),
@@ -651,9 +652,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
       _resolveProgress = .02;
       _status = 'Sending ${chosen.quality ?? 'source'} to TorBox…';
     });
-    final taskName = episode == null
-        ? item.title
-        : '${item.title} ${episode.label}';
+    final taskName =
+        episode == null ? item.title : '${item.title} ${episode.label}';
     final added = await widget.torbox.addResource(
       chosen.resource,
       name: taskName,
@@ -668,9 +668,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
       );
       if (cloudItem == null) continue;
       setState(() {
-        _resolveProgress = (cloudItem.progress / 100)
-            .clamp(0.0, 1.0)
-            .toDouble();
+        _resolveProgress =
+            (cloudItem.progress / 100).clamp(0.0, 1.0).toDouble();
         _status = cloudItem.isReady
             ? 'TorBox is ready — opening player…'
             : 'TorBox • ${cloudItem.progress.toStringAsFixed(0)}%${cloudItem.state.isEmpty ? '' : ' • ${cloudItem.state}'}';
@@ -935,8 +934,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
                   : widget.sources.sortResults(results, priority);
           final filtered = compatibilityOnly
               ? ranked
-                    .where((result) => result.compatibilityFriendly)
-                    .toList(growable: false)
+                  .where((result) => result.compatibilityFriendly)
+                  .toList(growable: false)
               : [...ranked];
           final compatibilityHiddenCount = ranked.length - filtered.length;
 
@@ -961,13 +960,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
               : ordered;
           final limitHiddenCount = totalAfterFilter - sorted.length;
           final best = sorted.isEmpty ? null : sorted.first;
-          final bestIsPinned =
-              best != null &&
+          final bestIsPinned = best != null &&
               widget.sources.matchesPinned(best, pinnedIdentity);
           final color = Theme.of(context).colorScheme;
-          final priorityText = priority
-              .map((e) => e.label.toLowerCase())
-              .join(' → ');
+          final priorityText =
+              priority.map((e) => e.label.toLowerCase()).join(' → ');
           final rankingText = freeStreamingRanking
               ? 'Free Streaming: seed health → quality → resolution → efficient size → compatibility'
               : smoothRanking
@@ -1000,7 +997,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             children: [
                               Text(
                                 'Choose source',
-                                style: Theme.of(context).textTheme.titleLarge
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleLarge
                                     ?.copyWith(fontWeight: FontWeight.w900),
                               ),
                               const SizedBox(height: 4),
@@ -1015,7 +1014,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
                           selected: freeStreamingRanking,
                           avatar: const Icon(Icons.bolt_rounded, size: 18),
                           label: const Text('Free Streaming'),
-                          tooltip: 'Prioritize sources likely to stream smoothly without a paid debrid service: healthy seed swarms first, then quality, resolution, manageable size and compatibility.',
+                          tooltip:
+                              'Prioritize sources likely to stream smoothly without a paid debrid service: healthy seed swarms first, then quality, resolution, manageable size and compatibility.',
                           onSelected: (value) => setSheetState(() {
                             freeStreamingRanking = value;
                             if (value) smoothRanking = false;
@@ -1031,7 +1031,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             size: 18,
                           ),
                           label: const Text('Compatibility'),
-                          tooltip: 'Hide known-risk formats such as AV1, 8K, Hi10P and Dolby Vision-only releases. File size is not used.',
+                          tooltip:
+                              'Hide known-risk formats such as AV1, 8K, Hi10P and Dolby Vision-only releases. File size is not used.',
                           onSelected: (value) =>
                               setSheetState(() => compatibilityOnly = value),
                         ),
@@ -1045,7 +1046,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             size: 18,
                           ),
                           label: const Text('Smooth'),
-                          tooltip: 'Prioritize likely smoother playback: compatible formats, 1080p/720p, efficient x265/HEVC encodes, stronger seed counts and then smaller files. Results are reordered, not hidden.',
+                          tooltip:
+                              'Prioritize likely smoother playback: compatible formats, 1080p/720p, efficient x265/HEVC encodes, stronger seed counts and then smaller files. Results are reordered, not hidden.',
                           onSelected: (value) => setSheetState(() {
                             smoothRanking = value;
                             if (value) freeStreamingRanking = false;
@@ -1165,9 +1167,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                   ),
                                 const SizedBox(width: 4),
                                 IconButton(
-                                  tooltip: isPinned
-                                      ? 'Unpin source'
-                                      : 'Pin source',
+                                  tooltip:
+                                      isPinned ? 'Unpin source' : 'Pin source',
                                   icon: Icon(
                                     isPinned
                                         ? Icons.push_pin_rounded
@@ -1186,11 +1187,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                         result,
                                         seriesWide: seriesWidePin,
                                       );
-                                      final identity = widget.sources
-                                          .sourceIdentity(
-                                            result,
-                                            seriesWide: seriesWidePin,
-                                          );
+                                      final identity =
+                                          widget.sources.sourceIdentity(
+                                        result,
+                                        seriesWide: seriesWidePin,
+                                      );
                                       if (!context.mounted) return;
                                       setSheetState(
                                         () => pinnedIdentity = identity,
@@ -1281,15 +1282,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   int _matchScore(String fileName, MediaItem item, {EpisodeItem? episode}) {
     final normalizedName = _normalize(fileName);
-    final nameTokens = normalizedName
-        .split(' ')
-        .where((e) => e.isNotEmpty)
-        .toSet();
+    final nameTokens =
+        normalizedName.split(' ').where((e) => e.isNotEmpty).toSet();
     final normalizedTitle = _normalize(item.title);
-    final titleTokens = normalizedTitle
-        .split(' ')
-        .where((e) => e.isNotEmpty)
-        .toList();
+    final titleTokens =
+        normalizedTitle.split(' ').where((e) => e.isNotEmpty).toList();
     final meaningful = titleTokens
         .where((word) => !_weakTitleWords.contains(word))
         .toList(growable: false);
@@ -1435,7 +1432,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text(
-                'AI Sinhala could not be prepared for this title. Playing with normal subtitle options.',
+                'AI Sinhala was not ready for this source after automatic retries. Playing normally; you can retry this title at any time.',
               ),
             ),
           );
@@ -1478,8 +1475,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   EpisodeItem? _nextEpisode(MediaItem item, EpisodeItem? current) {
     if (current == null || item.episodes.isEmpty) return null;
-    final episodes = [...item.episodes]
-      ..sort((a, b) {
+    final episodes = [...item.episodes]..sort((a, b) {
         final season = a.season.compareTo(b.season);
         return season != 0 ? season : a.episode.compareTo(b.episode);
       });
