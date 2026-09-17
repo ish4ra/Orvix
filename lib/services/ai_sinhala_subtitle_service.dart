@@ -28,12 +28,14 @@ class AiPreparedSubtitle {
     required this.title,
     required this.sourceUrl,
     required this.cues,
+    required this.sourceMatch,
   });
 
   final String key;
   final String title;
   final String sourceUrl;
   final List<AiSubtitleCue> cues;
+  final String sourceMatch;
 
   int get translatedCount =>
       cues.where((cue) => cue.translation?.isNotEmpty == true).length;
@@ -55,6 +57,34 @@ class AiPreparedSubtitle {
     }
     return '';
   }
+
+  AiSubtitleCue? matchSourceCue(String raw) {
+    final target = _normalizeCue(raw);
+    if (target.isEmpty) return null;
+    for (final cue in cues) {
+      if (_normalizeCue(cue.source) == target) return cue;
+    }
+    if (target.length < 12) return null;
+    AiSubtitleCue? best;
+    var bestScore = 0.0;
+    final targetWords = target.split(' ').where((value) => value.isNotEmpty).toSet();
+    if (targetWords.length < 3) return null;
+    for (final cue in cues) {
+      final source = _normalizeCue(cue.source);
+      if (source.length < 12) continue;
+      final words = source.split(' ').where((value) => value.isNotEmpty).toSet();
+      if (words.length < 3) continue;
+      final intersection = targetWords.intersection(words).length;
+      final union = targetWords.union(words).length;
+      if (union == 0) continue;
+      final score = intersection / union;
+      if (score > bestScore) {
+        bestScore = score;
+        best = cue;
+      }
+    }
+    return bestScore >= .88 ? best : null;
+  }
 }
 
 class AiSinhalaSubtitleService {
@@ -70,14 +100,18 @@ class AiSinhalaSubtitleService {
 
   static Future<AiPreparedSubtitle?> prepareBuffered({
     required MediaItem item,
+    required String videoUrl,
     EpisodeItem? episode,
     void Function(String message)? onStatus,
-  }) {
-    final key = _mediaKey(item, episode);
+  }) async {
+    final probe = await _probeVideo(videoUrl);
+    final identity = probe.hash ??
+        '${probe.size ?? 0}:${probe.fileName ?? Uri.tryParse(videoUrl)?.pathSegments.lastOrNull ?? 'unknown'}';
+    final key = '${_mediaKey(item, episode)}:$identity';
     final cached = _preparedCache[key];
     if (cached != null &&
         cached.translatedCount >= math.min(48, cached.cues.length)) {
-      return Future<AiPreparedSubtitle?>.value(cached);
+      return cached;
     }
     return _inFlight.putIfAbsent(key, () async {
       try {
@@ -85,6 +119,7 @@ class AiSinhalaSubtitleService {
           key: key,
           item: item,
           episode: episode,
+          probe: probe,
           onStatus: onStatus,
         );
       } finally {
@@ -97,6 +132,7 @@ class AiSinhalaSubtitleService {
     required String key,
     required MediaItem item,
     required EpisodeItem? episode,
+    required _VideoProbe probe,
     void Function(String message)? onStatus,
   }) async {
     if (!canTranslate) {
@@ -111,43 +147,54 @@ class AiSinhalaSubtitleService {
       );
     }
 
-    onStatus?.call('Finding a synced English subtitle…');
     final suffix = item.kind == MediaKind.series && episode != null
         ? '$imdbId:${episode.season}:${episode.episode}'
         : imdbId;
     final type = item.kind == MediaKind.movie ? 'movie' : 'series';
-    final endpoint = Uri.parse(
-      'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix.json',
-    );
-    final response =
-        await http.get(endpoint).timeout(const Duration(seconds: 12));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw const AiSubtitleException('Could not load subtitle candidates.');
-    }
-    final decoded =
-        jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
-    final entries = decoded is Map ? decoded['subtitles'] : null;
-    if (entries is! List) {
-      throw const AiSubtitleException(
-        'No compatible subtitle list was returned.',
-      );
-    }
 
-    final candidates = entries
-        .whereType<Map>()
-        .where((entry) {
-          final lang = (entry['lang'] ?? entry['language'] ?? '')
-              .toString()
-              .trim()
-              .toLowerCase();
-          return lang == 'eng' ||
-              lang == 'en' ||
-              lang.startsWith('en-') ||
-              lang.contains('english');
-        })
-        .map((entry) => entry['url']?.toString().trim() ?? '')
-        .where((url) => url.startsWith('http'))
-        .toList(growable: false);
+    final endpoints = <({Uri uri, String match})>[];
+    final extras = <String>[];
+    if (probe.hash != null) extras.add('videoHash=${Uri.encodeComponent(probe.hash!)}');
+    if (probe.size != null) extras.add('videoSize=${probe.size}');
+    if (probe.fileName?.isNotEmpty == true) {
+      extras.add('filename=${Uri.encodeComponent(probe.fileName!)}');
+    }
+    if (extras.isNotEmpty) {
+      endpoints.add((
+        uri: Uri.parse(
+          'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix/${extras.join('&')}.json',
+        ),
+        match: probe.hash != null ? 'video-hash' : 'filename-size',
+      ));
+    }
+    endpoints.add((
+      uri: Uri.parse(
+        'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix.json',
+      ),
+      match: 'title-episode',
+    ));
+
+    List<String> candidates = const [];
+    var sourceMatch = 'title-episode';
+    for (final endpoint in endpoints) {
+      onStatus?.call(
+        endpoint.match == 'video-hash'
+            ? 'Matching subtitles to this exact video file…'
+            : endpoint.match == 'filename-size'
+                ? 'Matching subtitles to this video release…'
+                : 'Finding the best English subtitle…',
+      );
+      try {
+        final found = await _subtitleCandidates(endpoint.uri);
+        if (found.isNotEmpty) {
+          candidates = found;
+          sourceMatch = endpoint.match;
+          break;
+        }
+      } catch (_) {
+        // Fall through to the next matching strategy.
+      }
+    }
 
     if (candidates.isEmpty) {
       throw const AiSubtitleException('No English text subtitle was found.');
@@ -156,9 +203,9 @@ class AiSinhalaSubtitleService {
     List<AiSubtitleCue>? cues;
     String? sourceUrl;
     Object? lastError;
-    for (final url in candidates.take(5)) {
+    for (final url in candidates.take(sourceMatch == 'title-episode' ? 8 : 5)) {
       try {
-        onStatus?.call('Downloading subtitle for Sinhala preparation…');
+        onStatus?.call('Downloading matched subtitle for Sinhala preparation…');
         final text = await _downloadSubtitle(url);
         final parsed = _parseSubtitle(text);
         if (parsed.length >= 8) {
@@ -183,6 +230,7 @@ class AiSinhalaSubtitleService {
       title: episode == null ? item.title : '${item.title} ${episode.label}',
       sourceUrl: sourceUrl,
       cues: cues,
+      sourceMatch: sourceMatch,
     );
     _preparedCache[key] = prepared;
 
@@ -195,6 +243,29 @@ class AiSinhalaSubtitleService {
       unawaited(_translateRemaining(prepared, firstEnd));
     }
     return prepared;
+  }
+
+  static Future<List<String>> _subtitleCandidates(Uri endpoint) async {
+    final response = await http.get(endpoint).timeout(const Duration(seconds: 12));
+    if (response.statusCode < 200 || response.statusCode >= 300) return const [];
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
+    final entries = decoded is Map ? decoded['subtitles'] : null;
+    if (entries is! List) return const [];
+    return entries
+        .whereType<Map>()
+        .where((entry) {
+          final lang = (entry['lang'] ?? entry['language'] ?? '')
+              .toString()
+              .trim()
+              .toLowerCase();
+          return lang == 'eng' ||
+              lang == 'en' ||
+              lang.startsWith('en-') ||
+              lang.contains('english');
+        })
+        .map((entry) => entry['url']?.toString().trim() ?? '')
+        .where((url) => url.startsWith('http'))
+        .toList(growable: false);
   }
 
   static Future<void> _translateRemaining(
@@ -252,6 +323,122 @@ class AiSinhalaSubtitleService {
     }
   }
 
+  static Future<_VideoProbe> _probeVideo(String rawUrl) async {
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https')) {
+      return const _VideoProbe();
+    }
+    final client = http.Client();
+    try {
+      final first = await _readRange(client, uri, 0, 65535);
+      if (first == null) return _VideoProbe(fileName: _fileNameFromUri(uri));
+      final fileName = _fileNameFromHeaders(first.headers) ?? _fileNameFromUri(uri);
+      final size = _totalSize(first.statusCode, first.headers);
+      if (first.statusCode != 206 ||
+          size == null ||
+          size < 131072 ||
+          first.bytes.length < 65536) {
+        return _VideoProbe(fileName: fileName, size: size);
+      }
+      final tail = await _readRange(client, uri, size - 65536, size - 1);
+      if (tail == null || tail.statusCode != 206 || tail.bytes.length < 65536) {
+        return _VideoProbe(fileName: fileName, size: size);
+      }
+      return _VideoProbe(
+        fileName: fileName,
+        size: size,
+        hash: _openSubtitlesHash(size, first.bytes, tail.bytes),
+      );
+    } catch (_) {
+      return _VideoProbe(fileName: _fileNameFromUri(uri));
+    } finally {
+      client.close();
+    }
+  }
+
+  static Future<_RangeRead?> _readRange(
+    http.Client client,
+    Uri uri,
+    int start,
+    int end,
+  ) async {
+    final request = http.Request('GET', uri)
+      ..headers['Range'] = 'bytes=$start-$end'
+      ..headers['Accept-Encoding'] = 'identity';
+    final response = await client.send(request).timeout(const Duration(seconds: 10));
+    if (response.statusCode < 200 || response.statusCode >= 400) return null;
+    final limit = end - start + 1;
+    final bytes = <int>[];
+    await for (final chunk in response.stream) {
+      final remaining = limit - bytes.length;
+      if (remaining <= 0) break;
+      if (chunk.length <= remaining) {
+        bytes.addAll(chunk);
+      } else {
+        bytes.addAll(chunk.take(remaining));
+      }
+      if (bytes.length >= limit) break;
+    }
+    return _RangeRead(
+      statusCode: response.statusCode,
+      headers: response.headers,
+      bytes: bytes,
+    );
+  }
+
+  static int? _totalSize(int statusCode, Map<String, String> headers) {
+    final contentRange = headers['content-range'];
+    if (contentRange != null) {
+      final match = RegExp(r'/(\d+)\s*$').firstMatch(contentRange);
+      final value = match == null ? null : int.tryParse(match.group(1)!);
+      if (value != null && value > 0) return value;
+    }
+    if (statusCode == 200) {
+      final length = int.tryParse(headers['content-length'] ?? '');
+      if (length != null && length > 0) return length;
+    }
+    return null;
+  }
+
+  static String? _fileNameFromHeaders(Map<String, String> headers) {
+    final disposition = headers['content-disposition'];
+    if (disposition == null || disposition.isEmpty) return null;
+    final utf = RegExp(r"filename\*=UTF-8''([^;]+)", caseSensitive: false)
+        .firstMatch(disposition);
+    if (utf != null) return Uri.decodeComponent(utf.group(1)!.trim());
+    final plain = RegExp(r'filename="?([^";]+)"?', caseSensitive: false)
+        .firstMatch(disposition);
+    return plain?.group(1)?.trim();
+  }
+
+  static String? _fileNameFromUri(Uri uri) {
+    if (uri.pathSegments.isEmpty) return null;
+    final value = Uri.decodeComponent(uri.pathSegments.last).trim();
+    return value.isEmpty ? null : value;
+  }
+
+  static String _openSubtitlesHash(
+    int size,
+    List<int> first,
+    List<int> last,
+  ) {
+    const mask = 0xFFFFFFFFFFFFFFFF;
+    var hash = size & mask;
+    for (var offset = 0; offset + 7 < 65536; offset += 8) {
+      hash = (hash + _littleEndian64(first, offset)) & mask;
+      hash = (hash + _littleEndian64(last, offset)) & mask;
+    }
+    return hash.toRadixString(16).padLeft(16, '0');
+  }
+
+  static int _littleEndian64(List<int> bytes, int offset) {
+    var value = 0;
+    for (var i = 0; i < 8; i++) {
+      value |= (bytes[offset + i] & 0xff) << (8 * i);
+    }
+    return value;
+  }
+
   static Future<String> _downloadSubtitle(String url) async {
     final response =
         await http.get(Uri.parse(url)).timeout(const Duration(seconds: 15));
@@ -276,8 +463,10 @@ class AiSinhalaSubtitleService {
     final blocks = text.split(RegExp(r'\n\s*\n'));
     final cues = <AiSubtitleCue>[];
     for (final block in blocks) {
-      final lines =
-          block.split('\n').map((line) => line.trimRight()).toList(growable: false);
+      final lines = block
+          .split('\n')
+          .map((line) => line.trimRight())
+          .toList(growable: false);
       final timingIndex = lines.indexWhere((line) => line.contains('-->'));
       if (timingIndex < 0) continue;
       final timing = lines[timingIndex].split('-->');
@@ -330,6 +519,37 @@ class AiSinhalaSubtitleService {
       : '${item.kind.name}:${item.id}:${episode.season}:${episode.episode}';
 
   static void clearPreparedCache() => _preparedCache.clear();
+}
+
+class _VideoProbe {
+  const _VideoProbe({this.fileName, this.size, this.hash});
+
+  final String? fileName;
+  final int? size;
+  final String? hash;
+}
+
+class _RangeRead {
+  const _RangeRead({
+    required this.statusCode,
+    required this.headers,
+    required this.bytes,
+  });
+
+  final int statusCode;
+  final Map<String, String> headers;
+  final List<int> bytes;
+}
+
+String _normalizeCue(String value) => value
+    .toLowerCase()
+    .replaceAll(RegExp(r'<[^>]+>'), '')
+    .replaceAll(RegExp(r"[^a-z0-9\s'’-]"), ' ')
+    .replaceAll(RegExp(r'\s+'), ' ')
+    .trim();
+
+extension<T> on List<T> {
+  T? get lastOrNull => isEmpty ? null : last;
 }
 
 class AiSubtitleException implements Exception {
