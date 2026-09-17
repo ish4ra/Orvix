@@ -1,44 +1,30 @@
 name: orvix
-description: Multi-cloud cinematic media hub for Windows and Android.
-publish_to: 'none'
+description: A modern desktop media discovery and streaming client focused on PikPak and debrid workflows.
+publish_to: "none"
 version: 0.6.1+31
 
 environment:
-  sdk: '>=3.4.0 <4.0.0'
+  sdk: ">=3.3.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
-  crypto: ^3.0.6
-  flutter_secure_storage: ^9.2.4
+  cupertino_icons: ^1.0.8
   http: ^1.2.2
-  shared_preferences: ^2.3.5
-  url_launcher: ^6.3.1
-  cached_network_image: ^3.4.1
-  media_kit: ^1.1.11
-  media_kit_video: ^2.0.1
-  media_kit_libs_video: ^1.0.5
-  file_picker: ^11.0.3
-  window_manager: ^0.5.2
-  supabase_flutter: 2.15.4
+  shared_preferences: ^2.3.2
+  window_manager: ^0.4.3
+  url_launcher: ^6.3.0
+  path_provider: ^2.1.4
+  path: ^1.9.0
+  collection: ^1.18.0
+  supabase_flutter: ^2.8.3
 
-# Debrify carries two media_kit fixes that matter for desktop stability:
-# safer NativeCallable ownership/disposal and waiting for native render-context
-# teardown before libmpv destruction on Windows/Apple. Pin the exact reviewed
-# Debrify commit so a future upstream change cannot silently alter Orvix.
-dependency_overrides:
-  media_kit:
-    git:
-      url: https://github.com/varunsalian/debrify.git
-      ref: 709eca3a0828f2b5bfdaf153ab6a0c00a89c5f2d
-      path: packages/media_kit_patched
-  media_kit_video:
-    git:
-      url: https://github.com/varunsalian/debrify.git
-      ref: 709eca3a0828f2b5bfdaf153ab6a0c00a89c5f2d
-      path: packages/media_kit_video_patched
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
 
 flutter:
   uses-material-design: true
   assets:
-    - assets/branding/orvix_icon.png
+    - assets/
