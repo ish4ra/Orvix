@@ -1,4 +1,4 @@
-name: Validate and Tag Orvix v0.5.8 Once
+name: Build and Publish Orvix v0.5.8 Once
 
 on:
   push:
@@ -11,13 +11,11 @@ permissions:
   contents: write
 
 jobs:
-  validate-and-tag:
-    runs-on: ubuntu-latest
+  build-and-release:
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -25,18 +23,68 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Preserve pinned Orvix icon hash
+        shell: pwsh
+        run: |
+          $icon = 'windows\runner\resources\app_icon.ico'
+          if (-not (Test-Path $icon)) { throw 'Pinned Orvix app icon is missing.' }
+          $hash = (Get-FileHash $icon -Algorithm SHA256).Hash
+          "ORVIX_ICON_HASH=$hash" >> $env:GITHUB_ENV
+
+      - name: Generate Windows runner
+        shell: pwsh
+        run: flutter create --platforms=windows --project-name orvix .
+
+      - name: Restore exact pinned Orvix icon
+        shell: pwsh
+        run: |
+          git checkout HEAD -- windows/runner/resources/app_icon.ico
+          $hash = (Get-FileHash 'windows\runner\resources\app_icon.ico' -Algorithm SHA256).Hash
+          if ($hash -ne $env:ORVIX_ICON_HASH) { throw 'Orvix icon changed during Flutter runner generation.' }
+
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Analyze app sources
-        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+      - name: Build Windows release
+        run: flutter build windows --release
 
-      - name: Tag v0.5.8
-        shell: bash
+      - name: Verify icon stayed byte-identical
+        shell: pwsh
         run: |
-          if git ls-remote --exit-code --tags origin refs/tags/v0.5.8 >/dev/null 2>&1; then
-            echo 'v0.5.8 already exists; nothing to do.'
-            exit 0
-          fi
-          git tag v0.5.8
-          git push origin v0.5.8
+          $hash = (Get-FileHash 'windows\runner\resources\app_icon.ico' -Algorithm SHA256).Hash
+          if ($hash -ne $env:ORVIX_ICON_HASH) { throw 'Orvix icon changed during build.' }
+
+      - name: Pack portable Windows build
+        shell: pwsh
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath 'Orvix-v0.5.8-Windows-x64.zip' -Force
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
+          & $iscc '/DMyAppVersion=0.5.8' 'installer\orvix.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'v0.5.8'
+          $zip = 'Orvix-v0.5.8-Windows-x64.zip'
+          $exe = 'installer-output/Orvix-Setup-v0.5.8-Windows-x64.exe'
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $zip $exe --clobber
+          } else {
+            gh release create $tag $zip $exe --title 'Orvix v0.5.8' --notes 'Adds default AIOMetadata rich metadata with Cinemeta fallback and IMDb episode ratings.'
+          }
