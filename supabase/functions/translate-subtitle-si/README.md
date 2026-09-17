@@ -1,0 +1,1 @@
+Placeholder for the AI Sinhala subtitle Edge Function. The deployable function is managed from this repository feature branch.
