@@ -1,7 +1,7 @@
 name: orvix
 description: Multi-cloud cinematic media hub for Windows and Android.
 publish_to: 'none'
-version: 0.5.3+23
+version: 0.5.4+24
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -20,9 +20,6 @@ dependencies:
   media_kit_libs_video: ^1.0.5
   file_picker: ^11.0.3
   window_manager: ^0.5.2
-
-dev_dependencies:
-  flutter_launcher_icons: ^0.14.4
 
 # Debrify carries two media_kit fixes that matter for desktop stability:
 # safer NativeCallable ownership/disposal and waiting for native render-context
@@ -44,9 +41,3 @@ flutter:
   uses-material-design: true
   assets:
     - assets/branding/orvix_icon.png
-
-flutter_launcher_icons:
-  windows:
-    generate: true
-    image_path: assets/branding/orvix_icon.png
-    icon_size: 256
