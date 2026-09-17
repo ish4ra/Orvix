@@ -143,6 +143,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               CustomScrollView(
                 slivers: [
                   SliverToBoxAdapter(child: _hero(item)),
+                  SliverToBoxAdapter(child: _metadataSection(item)),
                   if (item.kind == MediaKind.series && item.episodes.isNotEmpty)
                     SliverToBoxAdapter(child: _episodeSection(item)),
                   if (item.kind == MediaKind.series && item.episodes.isEmpty)
@@ -307,6 +308,140 @@ class _DetailsScreenState extends State<DetailsScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _metadataSection(MediaItem item) {
+    final hasCredits = item.cast.isNotEmpty || item.directors.isNotEmpty;
+    final hasFacts = item.country?.trim().isNotEmpty == true ||
+        item.certification?.trim().isNotEmpty == true ||
+        item.genres.isNotEmpty;
+    final pinKey = widget.sources.sourceTargetKey(item);
+
+    return FutureBuilder<String?>(
+      future: widget.sources.getPinnedSourceIdentity(pinKey),
+      builder: (context, snapshot) {
+        final pinned = snapshot.data;
+        if (!hasCredits && !hasFacts && (pinned == null || pinned.isEmpty)) {
+          return const SizedBox.shrink();
+        }
+
+        final provider = pinned == null || pinned.isEmpty
+            ? null
+            : pinned.split('|').first.trim();
+        final providerLabel = provider == null || provider.isEmpty
+            ? null
+            : '${provider[0].toUpperCase()}${provider.substring(1)}';
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(40, 18, 40, 20),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1180),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (pinned != null && pinned.isNotEmpty) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 15,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0D150F),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFF2D492F)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.push_pin_rounded),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Pinned source',
+                                style: TextStyle(fontWeight: FontWeight.w900),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                item.kind == MediaKind.series
+                                    ? '${providerLabel ?? 'Pinned provider'} is preferred across this series when a matching release is available.'
+                                    : '${providerLabel ?? 'Pinned provider'} is preferred for this title.',
+                                style: TextStyle(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                ],
+                if (hasCredits || hasFacts) ...[
+                  Text(
+                    'Details',
+                    style: Theme.of(context)
+                        .textTheme
+                        .headlineSmall
+                        ?.copyWith(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 14),
+                  if (item.directors.isNotEmpty)
+                    Text(
+                      'Director${item.directors.length > 1 ? 's' : ''}  •  ${item.directors.join(', ')}',
+                      style: const TextStyle(fontSize: 15, height: 1.5),
+                    ),
+                  if (item.country?.trim().isNotEmpty == true ||
+                      item.certification?.trim().isNotEmpty == true) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      [
+                        if (item.country?.trim().isNotEmpty == true)
+                          item.country!.trim(),
+                        if (item.certification?.trim().isNotEmpty == true)
+                          'Rated ${item.certification!.trim()}',
+                      ].join('  •  '),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                  if (item.cast.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    const Text(
+                      'Cast',
+                      style: TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: item.cast
+                          .take(24)
+                          .map(
+                            (name) => Chip(
+                              avatar: const Icon(
+                                Icons.person_outline_rounded,
+                                size: 17,
+                              ),
+                              label: Text(name),
+                            ),
+                          )
+                          .toList(growable: false),
+                    ),
+                  ],
+                ],
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

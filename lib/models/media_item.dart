@@ -62,8 +62,8 @@ class EpisodeItem {
     final overview = rating == null
         ? rawOverview
         : (rawOverview == null || rawOverview.isEmpty
-              ? '★ ${rating.toStringAsFixed(1)}'
-              : '★ ${rating.toStringAsFixed(1)}  $rawOverview');
+            ? '★ ${rating.toStringAsFixed(1)}'
+            : '★ ${rating.toStringAsFixed(1)}  $rawOverview');
 
     return EpisodeItem(
       id: (json['id'] ?? '').toString(),
@@ -153,24 +153,32 @@ class MediaItem {
     }
 
     final rawGenres = json['genres'];
-    final genres = rawGenres is List
+    final legacyGenres = rawGenres is List
         ? rawGenres
-              .map((e) => e.toString())
-              .where((e) => e.isNotEmpty)
-              .toList(growable: false)
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList(growable: false)
         : const <String>[];
+    final linkedGenres = _linkNames(json['links'], const {'genre'});
+    final genres = legacyGenres.isNotEmpty ? legacyGenres : linkedGenres;
 
     final rawVideos = json['videos'];
     final episodes = rawVideos is List
         ? rawVideos
-              .whereType<Map<String, dynamic>>()
-              .map(EpisodeItem.fromCinemeta)
-              .where((e) => e.season > 0 && e.episode > 0)
-              .toList(growable: false)
+            .whereType<Map<String, dynamic>>()
+            .map(EpisodeItem.fromCinemeta)
+            .where((e) => e.season > 0 && e.episode > 0)
+            .toList(growable: false)
         : const <EpisodeItem>[];
 
-    final cast = _stringList(json['cast']);
-    final directors = _stringList(json['director'] ?? json['directors']);
+    final legacyCast = _stringList(json['cast']);
+    final linkedCast = _linkNames(json['links'], const {'actor', 'cast'});
+    final cast = legacyCast.isNotEmpty ? legacyCast : linkedCast;
+
+    final legacyDirectors = _stringList(json['director'] ?? json['directors']);
+    final linkedDirectors = _linkNames(json['links'], const {'director'});
+    final directors =
+        legacyDirectors.isNotEmpty ? legacyDirectors : linkedDirectors;
 
     return MediaItem(
       id: (json['id'] ?? '').toString(),
@@ -191,6 +199,22 @@ class MediaItem {
         json['certification'] ?? json['ageRating'] ?? json['rated'],
       ),
     );
+  }
+
+  static List<String> _linkNames(dynamic value, Set<String> categories) {
+    if (value is! List) return const <String>[];
+    final out = <String>[];
+    final seen = <String>{};
+    for (final entry in value) {
+      if (entry is! Map) continue;
+      final category = entry['category']?.toString().trim().toLowerCase() ?? '';
+      if (!categories.contains(category)) continue;
+      final name = entry['name']?.toString().trim() ?? '';
+      if (name.isEmpty) continue;
+      final key = name.toLowerCase();
+      if (seen.add(key)) out.add(name);
+    }
+    return out;
   }
 
   static List<String> _stringList(dynamic value) {
