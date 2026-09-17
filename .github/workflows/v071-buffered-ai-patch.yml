@@ -1,0 +1,31 @@
+name: Apply v0.7.1 buffered AI subtitle patch
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.1-ai-sinhala-buffered
+    paths:
+      - '.github/workflows/v071-buffered-ai-patch.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: orvix-v0.7.1-ai-sinhala-buffered
+
+      - name: Apply source patch
+        run: python3 tools/apply_v071_buffered_ai_patch.py
+
+      - name: Commit source changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib pubspec.yaml
+          git commit -m "feat: make AI Sinhala subtitles buffered and settings-driven"
+          git push origin HEAD:orvix-v0.7.1-ai-sinhala-buffered
