@@ -23,6 +23,9 @@ class PlaybackService {
       'demuxer-readahead-secs': '180',
       'cache-secs': '180',
       'network-timeout': '90',
+      // Prefer English whenever the file exposes language-tagged audio tracks.
+      // Users can still switch to any other track from Audio & Subtitles.
+      'alang': 'eng,en,en-US,en-GB',
       'stream-lavf-o':
           'reconnect=1,reconnect_on_network_error=1,reconnect_on_http_error=5xx,reconnect_delay_max=10',
     };
