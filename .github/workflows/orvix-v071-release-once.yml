@@ -89,16 +89,16 @@ jobs:
           $zip = 'Orvix-v0.7.1-Windows-x64.zip'
           $exe = 'installer-output/Orvix-Setup-v0.7.1-Windows-x64.exe'
           $notes = @'
-Orvix v0.7.1 improves AI Sinhala subtitles for smooth playback.
+          Orvix v0.7.1 improves AI Sinhala subtitles for smooth playback.
 
-- Prepares a synced English text subtitle before playback when AI Sinhala is enabled.
-- Translates an initial subtitle buffer before opening the player.
-- Continues translating upcoming cues in background batches so playback stays ahead of translation.
-- Shows prepared Sinhala cues directly on the original subtitle timestamps instead of translating each cue live.
-- Removes the Sinhala AI Beta label from the video overlay.
-- Adds a persistent Settings toggle for AI Sinhala subtitles.
-- Removes the live English-to-Sinhala subtitle flash/delay path used in v0.7.0.
-'@
+          - Prepares a synced English text subtitle before playback when AI Sinhala is enabled.
+          - Translates an initial subtitle buffer before opening the player.
+          - Continues translating upcoming cues in background batches so playback stays ahead of translation.
+          - Shows prepared Sinhala cues directly on the original subtitle timestamps instead of translating each cue live.
+          - Removes the Sinhala AI Beta label from the video overlay.
+          - Adds a persistent Settings toggle for AI Sinhala subtitles.
+          - Removes the live English-to-Sinhala subtitle flash/delay path used in v0.7.0.
+          '@
 
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
