@@ -1,0 +1,99 @@
+name: Release Orvix v0.6.2 Once
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/orvix-v062-release-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate v0.6.2 version
+        shell: pwsh
+        run: |
+          $line = Get-Content pubspec.yaml | Where-Object { $_ -match '^version:' } | Select-Object -First 1
+          if (-not $line) { throw 'Version not found in pubspec.yaml' }
+          $version = (($line -replace '^version:\s*', '').Split('+')[0]).Trim()
+          if ($version -ne '0.6.2') { throw "Expected pubspec version 0.6.2 but found $version" }
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Preserve pinned Orvix icon hash
+        shell: pwsh
+        run: |
+          $icon = 'windows\runner\resources\app_icon.ico'
+          if (-not (Test-Path $icon)) { throw 'Pinned Orvix app icon is missing.' }
+          $hash = (Get-FileHash $icon -Algorithm SHA256).Hash
+          "ORVIX_ICON_HASH=$hash" >> $env:GITHUB_ENV
+
+      - name: Generate Windows runner
+        shell: pwsh
+        run: flutter create --platforms=windows --project-name orvix .
+
+      - name: Restore exact pinned Orvix icon
+        shell: pwsh
+        run: |
+          git checkout HEAD -- windows/runner/resources/app_icon.ico
+          $hash = (Get-FileHash 'windows\runner\resources\app_icon.ico' -Algorithm SHA256).Hash
+          if ($hash -ne $env:ORVIX_ICON_HASH) { throw 'Orvix icon changed during Flutter runner generation.' }
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze app sources
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Pack portable Windows build
+        shell: pwsh
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath "Orvix-v0.6.2-Windows-x64.zip" -Force
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
+          & $iscc "/DMyAppVersion=0.6.2" "installer\orvix.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'v0.6.2'
+          $zip = 'Orvix-v0.6.2-Windows-x64.zip'
+          $exe = 'installer-output/Orvix-Setup-v0.6.2-Windows-x64.exe'
+          $notes = 'Fixes Orvix account email verification by verifying the six-digit code as an email OTP while keeping signup resend behavior unchanged.'
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $zip $exe --clobber
+            gh release edit $tag --title 'Orvix v0.6.2' --notes $notes
+          } else {
+            gh release create $tag $zip $exe --target "${{ github.sha }}" --title 'Orvix v0.6.2' --notes $notes
+          }

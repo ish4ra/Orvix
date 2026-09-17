@@ -45,8 +45,11 @@ class OrvixAccountService {
     required String email,
     required String token,
   }) async {
+    // Supabase's six-digit email OTP flow is verified as an email OTP.
+    // `signup` is still required by resend(), but using it here can make a
+    // freshly generated email code fail with the generic otp_expired error.
     final response = await _client.auth.verifyOTP(
-      type: OtpType.signup,
+      type: OtpType.email,
       email: email.trim(),
       token: token.trim(),
     );
@@ -59,6 +62,7 @@ class OrvixAccountService {
   static Future<ResendResponse> resendSignupConfirmation({
     required String email,
   }) {
+    // Supabase resend only accepts the signup type for signup confirmations.
     return _client.auth.resend(
       type: OtpType.signup,
       email: email.trim(),
