@@ -20,16 +20,16 @@ jobs:
         with:
           ref: orvix-v0.7.2-smart-sub-sync
 
-      - name: Apply smart sync source patch
+      - name: Apply final smart-sync type fix
         run: python tools/v072_smart_sync_patch.py
 
-      - name: Commit smart sync patch
+      - name: Commit final sync fix
         shell: pwsh
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add lib pubspec.yaml
-          git commit -m "feat: add exact-match and automatic AI subtitle sync"
+          git add lib
+          git commit -m "fix: keep AI subtitle sync offsets strongly typed"
           git push origin HEAD:orvix-v0.7.2-smart-sub-sync
 
       - name: Set up Flutter
