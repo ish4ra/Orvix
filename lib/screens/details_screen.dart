@@ -502,7 +502,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         return;
       }
 
-      final chosen = await _chooseSource(results);
+      final chosen = await _chooseSource(results, item, episode);
       if (chosen == null || !mounted) return;
       final cloud = await _chooseCloudProvider();
       if (cloud == null || !mounted) return;
@@ -785,9 +785,16 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  Future<SourceResult?> _chooseSource(List<SourceResult> results) async {
+  Future<SourceResult?> _chooseSource(
+    List<SourceResult> results,
+    MediaItem item,
+    EpisodeItem? episode,
+  ) async {
     var priority = await widget.sources.getPriorityOrder();
+    var resultLimit = await widget.sources.getResultLimit();
     var compatibilityOnly = false;
+    final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
+    var pinnedIdentity = await widget.sources.getPinnedSourceIdentity(pinKey);
     if (!mounted) return null;
 
     Future<void> customizePriority(BuildContext dialogContext, StateSetter setSheetState) async {
@@ -864,13 +871,40 @@ class _DetailsScreenState extends State<DetailsScreen> {
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) {
           final ranked = widget.sources.sortResults(results, priority);
-          final sorted = compatibilityOnly
+          final filtered = compatibilityOnly
               ? ranked.where((result) => result.compatibilityFriendly).toList(growable: false)
-              : ranked;
-          final hiddenCount = ranked.length - sorted.length;
+              : [...ranked];
+          final compatibilityHiddenCount = ranked.length - filtered.length;
+
+          final ordered = [...filtered];
+          if (pinnedIdentity != null) {
+            final pinnedIndex = ordered.indexWhere(
+              (result) => widget.sources.matchesPinned(result, pinnedIdentity),
+            );
+            if (pinnedIndex > 0) {
+              final pinned = ordered.removeAt(pinnedIndex);
+              ordered.insert(0, pinned);
+            }
+          }
+
+          final totalAfterFilter = ordered.length;
+          final sorted = resultLimit > 0 && ordered.length > resultLimit
+              ? ordered.take(resultLimit).toList(growable: false)
+              : ordered;
+          final limitHiddenCount = totalAfterFilter - sorted.length;
           final best = sorted.isEmpty ? null : sorted.first;
+          final bestIsPinned = best != null &&
+              widget.sources.matchesPinned(best, pinnedIdentity);
           final color = Theme.of(context).colorScheme;
           final priorityText = priority.map((e) => e.label.toLowerCase()).join(' → ');
+          final summaryParts = <String>[
+            resultLimit > 0
+                ? 'Showing ${sorted.length} of $totalAfterFilter results'
+                : '${sorted.length} result${sorted.length == 1 ? '' : 's'} shown',
+            if (compatibilityHiddenCount > 0)
+              '$compatibilityHiddenCount risky hidden',
+            if (limitHiddenCount > 0) '$limitHiddenCount beyond limit',
+          ];
 
           return SafeArea(
             child: SizedBox(
@@ -892,14 +926,44 @@ class _DetailsScreenState extends State<DetailsScreen> {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                compatibilityOnly
-                                    ? '${sorted.length} compatible result${sorted.length == 1 ? '' : 's'}${hiddenCount > 0 ? ' • $hiddenCount risky hidden' : ''}'
-                                    : '${results.length} result${results.length == 1 ? '' : 's'} returned • showing all',
+                                summaryParts.join(' • '),
                                 style: TextStyle(color: color.onSurfaceVariant),
                               ),
                             ],
                           ),
                         ),
+                        PopupMenuButton<int>(
+                          tooltip: 'Results shown',
+                          initialValue: resultLimit,
+                          onSelected: (value) async {
+                            await widget.sources.setResultLimit(value);
+                            if (!context.mounted) return;
+                            setSheetState(() => resultLimit = value);
+                          },
+                          itemBuilder: (context) => [
+                            for (final value in SourceProviderService.resultLimitOptions)
+                              PopupMenuItem<int>(
+                                value: value,
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      value == resultLimit
+                                          ? Icons.check_rounded
+                                          : Icons.format_list_numbered_rounded,
+                                      size: 18,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Text(value == 0 ? 'Show all results' : 'Show top $value'),
+                                  ],
+                                ),
+                              ),
+                          ],
+                          child: Chip(
+                            avatar: const Icon(Icons.format_list_numbered_rounded, size: 18),
+                            label: Text(resultLimit == 0 ? 'All results' : 'Top $resultLimit'),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
                         FilterChip(
                           selected: compatibilityOnly,
                           avatar: Icon(
@@ -924,7 +988,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
                           FilledButton.icon(
                             onPressed: () => Navigator.pop(sheetContext, best),
                             icon: const Icon(Icons.bolt_rounded),
-                            label: Text('Quick Play ${best.quality ?? ''}'.trim()),
+                            label: Text(
+                              bestIsPinned
+                                  ? 'Quick Play Pinned'
+                                  : 'Quick Play ${best.quality ?? ''}'.trim(),
+                            ),
                           ),
                       ],
                     ),
@@ -956,6 +1024,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
                         separatorBuilder: (_, __) => const Divider(height: 1),
                         itemBuilder: (context, index) {
                           final result = sorted[index];
+                          final isPinned = widget.sources.matchesPinned(
+                            result,
+                            pinnedIdentity,
+                          );
                           return ListTile(
                             contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
                             leading: CircleAvatar(
@@ -977,9 +1049,39 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                 '${result.provider}${result.isMagnet ? ' • cloud source' : ' • direct URL'}${result.compatibilityFriendly ? '' : ' • ⚠ compatibility risk'}',
                               ),
                             ),
-                            trailing: index == 0
-                                ? const Chip(label: Text('Best'))
-                                : const Icon(Icons.chevron_right_rounded),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (isPinned)
+                                  const Chip(
+                                    avatar: Icon(Icons.push_pin_rounded, size: 16),
+                                    label: Text('Pinned'),
+                                  )
+                                else if (index == 0)
+                                  const Chip(label: Text('Best')),
+                                const SizedBox(width: 4),
+                                IconButton(
+                                  tooltip: isPinned ? 'Unpin source' : 'Pin source',
+                                  icon: Icon(
+                                    isPinned
+                                        ? Icons.push_pin_rounded
+                                        : Icons.push_pin_outlined,
+                                  ),
+                                  onPressed: () async {
+                                    if (isPinned) {
+                                      await widget.sources.unpinSource(pinKey);
+                                      if (!context.mounted) return;
+                                      setSheetState(() => pinnedIdentity = null);
+                                    } else {
+                                      await widget.sources.pinSource(pinKey, result);
+                                      final identity = widget.sources.sourceIdentity(result);
+                                      if (!context.mounted) return;
+                                      setSheetState(() => pinnedIdentity = identity);
+                                    }
+                                  },
+                                ),
+                              ],
+                            ),
                             onTap: () => Navigator.pop(sheetContext, result),
                           );
                         },
