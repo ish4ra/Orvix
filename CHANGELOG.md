@@ -1,5 +1,13 @@
 # Orvix Changelog
 
+## v0.5.7 — live IMDb top-rated catalogs
+
+- Fixed the Home Top Rated Movies and Top Rated TV shelves so they use IMDb's live ranked charts instead of Cinemeta's misleading imdbRating catalog order.
+- Reads current IMDb chart order, ratings, vote-backed titles, posters, release years and runtimes from IMDb GraphQL, then enriches each IMDb ID with Cinemeta descriptions, backgrounds, genres and episode metadata.
+- The optional IMDb Top 250 shelves now use the same live chart source instead of HTML scraping, which had become unreliable behind IMDb's web protections.
+- Falls back to the previous Cinemeta catalog if the live IMDb chart endpoint is temporarily unavailable.
+- Preserved the v0.5.6 source count, pinning, Smooth ranking, buffering and manually fixed Windows icon behavior.
+
 ## v0.5.6 — customizable source browser
 
 - Added a **Smooth** source-ranking toggle that prioritizes likely easier-to-stream results instead of the normal size-descending priority: compatible formats first, then 1080p/720p, efficient x265/HEVC encodes, stronger seed counts, smaller files and cache. It only reorders results; it does not hide large releases.
@@ -163,3 +171,4 @@ This file tracks user-visible changes to Orvix. GitHub Releases are published au
 - Patch releases contain fixes and incremental UX/playback improvements.
 - Each packaged release should include a Windows installer and portable ZIP.
 - User-facing changes should be recorded here before a release is published.
+

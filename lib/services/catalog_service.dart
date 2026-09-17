@@ -54,9 +54,10 @@ class CatalogService {
     }
 
     merged.sort((a, b) {
-      final byScore = _searchScore(b, normalized).compareTo(
-        _searchScore(a, normalized),
-      );
+      final byScore = _searchScore(
+        b,
+        normalized,
+      ).compareTo(_searchScore(a, normalized));
       if (byScore != 0) return byScore;
       return a.title.toLowerCase().compareTo(b.title.toLowerCase());
     });
@@ -92,20 +93,20 @@ class CatalogService {
       rating: item.rating ?? resolved.rating,
       runtime: resolved.runtime ?? item.runtime,
       genres: resolved.genres.isNotEmpty ? resolved.genres : item.genres,
-      episodes: resolved.episodes.isNotEmpty ? resolved.episodes : item.episodes,
+      episodes: resolved.episodes.isNotEmpty
+          ? resolved.episodes
+          : item.episodes,
     );
   }
 
-  Future<List<MediaItem>> _imdbTop(
-    MediaKind kind, {
-    required int limit,
-  }) async {
+  Future<List<MediaItem>> _imdbTop(MediaKind kind, {required int limit}) async {
     final first = limit.clamp(1, 250).toInt();
     final chartType = kind == MediaKind.movie
         ? 'TOP_RATED_MOVIES'
         : 'TOP_RATED_TV_SHOWS';
 
-    final query = '''
+    final query =
+        '''
 {
   chartTitles(chart: {chartType: $chartType}, first: $first) {
     edges {
@@ -134,8 +135,7 @@ class CatalogService {
               'Content-Type': 'application/json',
               'Origin': 'https://www.imdb.com',
               'Referer': 'https://www.imdb.com/',
-              'User-Agent':
-                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128 Safari/537.36',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128 Safari/537.36',
               'x-imdb-client-name': 'imdb-web-next',
             },
             body: jsonEncode({'query': query}),
@@ -295,9 +295,7 @@ class CatalogService {
   }) async {
     final type = kind == MediaKind.movie ? 'movie' : 'series';
     final encoded = Uri.encodeComponent(query);
-    final uri = Uri.parse(
-      '$_baseUrl/catalog/$type/top/search=$encoded.json',
-    );
+    final uri = Uri.parse('$_baseUrl/catalog/$type/top/search=$encoded.json');
     return _fetchMetas(uri, kind, limit);
   }
 
