@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - orvix-v0.5.0-dev
+      - orvix-v0.5.7-imdb-top
     tags:
       - 'v*'
     paths:
@@ -121,7 +122,7 @@ jobs:
           path: installer-output/Orvix-Setup-v${{ steps.version.outputs.version }}-Windows-x64.exe
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/orvix-v0.5.7-imdb-top'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
