@@ -45,12 +45,32 @@ class DetailsScreen extends StatefulWidget {
 
 class _DetailsScreenState extends State<DetailsScreen> {
   static const _videoExtensions = <String>{
-    'mkv', 'mp4', 'avi', 'mov', 'wmv', 'm4v', 'webm', 'ts', 'm2ts', 'mpg',
-    'mpeg', 'flv',
+    'mkv',
+    'mp4',
+    'avi',
+    'mov',
+    'wmv',
+    'm4v',
+    'webm',
+    'ts',
+    'm2ts',
+    'mpg',
+    'mpeg',
+    'flv',
   };
 
   static const _weakTitleWords = <String>{
-    'a', 'an', 'the', 'of', 'and', 'or', 'to', 'in', 'on', 'for', 'with',
+    'a',
+    'an',
+    'the',
+    'of',
+    'and',
+    'or',
+    'to',
+    'in',
+    'on',
+    'for',
+    'with',
   };
 
   late final Future<MediaItem> _detailsFuture;
@@ -203,9 +223,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     Text(
                       item.title,
                       style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: -.9,
-                          ),
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -.9,
+                      ),
                     ),
                     const SizedBox(height: 14),
                     Wrap(
@@ -261,7 +281,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                 ? Icons.video_library_rounded
                                 : Icons.library_add_outlined,
                           ),
-                          label: Text(_inLibrary ? 'In Library' : 'Add to Library'),
+                          label: Text(
+                            _inLibrary ? 'In Library' : 'Add to Library',
+                          ),
                         ),
                         OutlinedButton.icon(
                           onPressed: () => _toggleWatchlist(item),
@@ -301,9 +323,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
             children: [
               Text(
                 'Episodes',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w900,
-                    ),
+                style: Theme.of(context).textTheme.headlineSmall
+                    ?.copyWith(fontWeight: FontWeight.w900),
               ),
               const Spacer(),
               DropdownButton<int>(
@@ -336,7 +357,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
         border: Border.all(color: const Color(0xFF1D2A20)),
       ),
       child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 18,
+          vertical: 10,
+        ),
         leading: SizedBox(
           width: 104,
           child: ClipRRect(
@@ -452,7 +476,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
     try {
       final preferred = await widget.cloudPreferences.getPreferred();
-      if (preferred == CloudProvider.torbox && await widget.torbox.isConnected) {
+      if (preferred == CloudProvider.torbox &&
+          await widget.torbox.isConnected) {
         final existingTorBox = await _findInTorBox(item, episode: episode);
         if (existingTorBox != null) {
           await _openTorBoxItem(existingTorBox, item, episode);
@@ -578,7 +603,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
     if (!pikpak && !torbox) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Connect PikPak or TorBox from Clouds first.')),
+          const SnackBar(
+            content: Text('Connect PikPak or TorBox from Clouds first.'),
+          ),
         );
       }
       return null;
@@ -590,7 +617,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Send source to'),
-        content: const Text('Both cloud services are connected. Choose where Orvix should prepare this source.'),
+        content: const Text(
+          'Both cloud services are connected. Choose where Orvix should prepare this source.',
+        ),
         actions: [
           OutlinedButton.icon(
             onPressed: () => Navigator.pop(context, CloudProvider.pikpak),
@@ -620,32 +649,49 @@ class _DetailsScreenState extends State<DetailsScreen> {
       _resolveProgress = .02;
       _status = 'Sending ${chosen.quality ?? 'source'} to TorBox…';
     });
-    final taskName = episode == null ? item.title : '${item.title} ${episode.label}';
-    final added = await widget.torbox.addResource(chosen.resource, name: taskName);
+    final taskName = episode == null
+        ? item.title
+        : '${item.title} ${episode.label}';
+    final added = await widget.torbox.addResource(
+      chosen.resource,
+      name: taskName,
+    );
     for (var attempt = 0; attempt < 90; attempt++) {
       if (!mounted) return;
       if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 2));
-      final cloudItem = await widget.torbox.getItem(added.kind, added.id, fresh: true);
+      final cloudItem = await widget.torbox.getItem(
+        added.kind,
+        added.id,
+        fresh: true,
+      );
       if (cloudItem == null) continue;
       setState(() {
-        _resolveProgress = (cloudItem.progress / 100).clamp(0.0, 1.0).toDouble();
+        _resolveProgress = (cloudItem.progress / 100)
+            .clamp(0.0, 1.0)
+            .toDouble();
         _status = cloudItem.isReady
             ? 'TorBox is ready — opening player…'
             : 'TorBox • ${cloudItem.progress.toStringAsFixed(0)}%${cloudItem.state.isEmpty ? '' : ' • ${cloudItem.state}'}';
       });
-      if (cloudItem.isError) throw TorBoxException('TorBox: ${cloudItem.state}');
+      if (cloudItem.isError)
+        throw TorBoxException('TorBox: ${cloudItem.state}');
       if (!cloudItem.isReady) continue;
       final file = widget.torbox.choosePlayableFile(
         cloudItem,
         fileNameHint: chosen.fileNameHint,
         fileIndex: chosen.torrentFileIndex,
       );
-      if (file == null) throw const TorBoxException('TorBox finished, but no playable video file was found.');
+      if (file == null)
+        throw const TorBoxException(
+          'TorBox finished, but no playable video file was found.',
+        );
       final url = await widget.torbox.requestDownloadUrl(cloudItem, file);
       await _openPlayerUrl(url, item, episode);
       return;
     }
-    throw const TorBoxException('TorBox is still preparing this source. Open Clouds to check its progress.');
+    throw const TorBoxException(
+      'TorBox is still preparing this source. Open Clouds to check its progress.',
+    );
   }
 
   Future<void> _sendSourceToPikPak(
@@ -793,12 +839,16 @@ class _DetailsScreenState extends State<DetailsScreen> {
     var priority = await widget.sources.getPriorityOrder();
     var resultLimit = await widget.sources.getResultLimit();
     var compatibilityOnly = false;
+    var smoothRanking = false;
     final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
     final seriesWidePin = item.kind == MediaKind.series;
     var pinnedIdentity = await widget.sources.getPinnedSourceIdentity(pinKey);
     if (!mounted) return null;
 
-    Future<void> customizePriority(BuildContext dialogContext, StateSetter setSheetState) async {
+    Future<void> customizePriority(
+      BuildContext dialogContext,
+      StateSetter setSheetState,
+    ) async {
       final working = [...priority];
       final saved = await showDialog<List<SourceSortCriterion>>(
         context: dialogContext,
@@ -811,7 +861,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Drag criteria into the order you want. #1 has the highest priority.'),
+                  const Text(
+                    'Drag criteria into the order you want. #1 has the highest priority.',
+                  ),
                   const SizedBox(height: 14),
                   Expanded(
                     child: ReorderableListView.builder(
@@ -828,7 +880,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
                         return ListTile(
                           key: ValueKey(criterion.name),
                           leading: CircleAvatar(child: Text('${index + 1}')),
-                          title: Text(criterion.label, style: const TextStyle(fontWeight: FontWeight.w800)),
+                          title: Text(
+                            criterion.label,
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
                           trailing: const Icon(Icons.drag_indicator_rounded),
                         );
                       },
@@ -843,10 +898,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 child: const Text('Cancel'),
               ),
               TextButton(
-                onPressed: () => Navigator.pop(
-                  dialogContext,
-                  [...SourceProviderService.defaultPriority],
-                ),
+                onPressed: () => Navigator.pop(dialogContext, [
+                  ...SourceProviderService.defaultPriority,
+                ]),
                 child: const Text('Reset best'),
               ),
               FilledButton(
@@ -871,9 +925,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
       constraints: const BoxConstraints(maxWidth: 960),
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) {
-          final ranked = widget.sources.sortResults(results, priority);
+          final ranked = smoothRanking
+              ? widget.sources.sortForSmoothPlayback(results)
+              : widget.sources.sortResults(results, priority);
           final filtered = compatibilityOnly
-              ? ranked.where((result) => result.compatibilityFriendly).toList(growable: false)
+              ? ranked
+                    .where((result) => result.compatibilityFriendly)
+                    .toList(growable: false)
               : [...ranked];
           final compatibilityHiddenCount = ranked.length - filtered.length;
 
@@ -898,14 +956,21 @@ class _DetailsScreenState extends State<DetailsScreen> {
               : ordered;
           final limitHiddenCount = totalAfterFilter - sorted.length;
           final best = sorted.isEmpty ? null : sorted.first;
-          final bestIsPinned = best != null &&
+          final bestIsPinned =
+              best != null &&
               widget.sources.matchesPinned(best, pinnedIdentity);
           final color = Theme.of(context).colorScheme;
-          final priorityText = priority.map((e) => e.label.toLowerCase()).join(' → ');
+          final priorityText = priority
+              .map((e) => e.label.toLowerCase())
+              .join(' → ');
+          final rankingText = smoothRanking
+              ? 'Smooth: compatibility → 1080/720 → efficient codec → seeders → smaller files → cache'
+              : 'Priority: $priorityText';
           final summaryParts = <String>[
             resultLimit > 0
                 ? 'Showing ${sorted.length} of $totalAfterFilter results'
                 : '${sorted.length} result${sorted.length == 1 ? '' : 's'} shown',
+            if (smoothRanking) 'smooth ranking on',
             if (compatibilityHiddenCount > 0)
               '$compatibilityHiddenCount risky hidden',
             if (limitHiddenCount > 0) '$limitHiddenCount beyond limit',
@@ -927,7 +992,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             children: [
                               Text(
                                 'Choose source',
-                                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                                style: Theme.of(context).textTheme.titleLarge
+                                    ?.copyWith(fontWeight: FontWeight.w900),
                               ),
                               const SizedBox(height: 4),
                               Text(
@@ -946,7 +1012,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             setSheetState(() => resultLimit = value);
                           },
                           itemBuilder: (context) => [
-                            for (final value in SourceProviderService.resultLimitOptions)
+                            for (final value
+                                in SourceProviderService.resultLimitOptions)
                               PopupMenuItem<int>(
                                 value: value,
                                 child: Row(
@@ -958,14 +1025,25 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                       size: 18,
                                     ),
                                     const SizedBox(width: 10),
-                                    Text(value == 0 ? 'Show all results' : 'Show top $value'),
+                                    Text(
+                                      value == 0
+                                          ? 'Show all results'
+                                          : 'Show top $value',
+                                    ),
                                   ],
                                 ),
                               ),
                           ],
                           child: Chip(
-                            avatar: const Icon(Icons.format_list_numbered_rounded, size: 18),
-                            label: Text(resultLimit == 0 ? 'All results' : 'Top $resultLimit'),
+                            avatar: const Icon(
+                              Icons.format_list_numbered_rounded,
+                              size: 18,
+                            ),
+                            label: Text(
+                              resultLimit == 0
+                                  ? 'All results'
+                                  : 'Top $resultLimit',
+                            ),
                           ),
                         ),
                         const SizedBox(width: 10),
@@ -983,8 +1061,23 @@ class _DetailsScreenState extends State<DetailsScreen> {
                               setSheetState(() => compatibilityOnly = value),
                         ),
                         const SizedBox(width: 10),
+                        FilterChip(
+                          selected: smoothRanking,
+                          avatar: Icon(
+                            smoothRanking
+                                ? Icons.speed_rounded
+                                : Icons.speed_outlined,
+                            size: 18,
+                          ),
+                          label: const Text('Smooth'),
+                          tooltip: 'Prioritize likely smoother playback: compatible formats, 1080p/720p, efficient x265/HEVC encodes, stronger seed counts and then smaller files. Results are reordered, not hidden.',
+                          onSelected: (value) =>
+                              setSheetState(() => smoothRanking = value),
+                        ),
+                        const SizedBox(width: 10),
                         OutlinedButton.icon(
-                          onPressed: () => customizePriority(sheetContext, setSheetState),
+                          onPressed: () =>
+                              customizePriority(sheetContext, setSheetState),
                           icon: const Icon(Icons.tune_rounded),
                           label: const Text('Sort priority'),
                         ),
@@ -1003,19 +1096,30 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     ),
                     const SizedBox(height: 12),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 9,
+                      ),
                       decoration: BoxDecoration(
                         color: color.primaryContainer.withValues(alpha: .22),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.sort_rounded, size: 18, color: color.primary),
+                          Icon(
+                            Icons.sort_rounded,
+                            size: 18,
+                            color: color.primary,
+                          ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Priority: $priorityText',
-                              style: TextStyle(color: color.primary, fontSize: 12, fontWeight: FontWeight.w800),
+                              rankingText,
+                              style: TextStyle(
+                                color: color.primary,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           ),
                         ],
@@ -1035,12 +1139,18 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             seriesWide: seriesWidePin,
                           );
                           return ListTile(
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 7,
+                            ),
                             leading: CircleAvatar(
                               radius: 25,
                               child: Text(
                                 result.quality?.replaceAll('P', '') ?? '—',
-                                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w900,
+                                ),
                               ),
                             ),
                             title: Text(
@@ -1060,14 +1170,23 @@ class _DetailsScreenState extends State<DetailsScreen> {
                               children: [
                                 if (isPinned)
                                   const Chip(
-                                    avatar: Icon(Icons.push_pin_rounded, size: 16),
+                                    avatar: Icon(
+                                      Icons.push_pin_rounded,
+                                      size: 16,
+                                    ),
                                     label: Text('Pinned'),
                                   )
                                 else if (index == 0)
-                                  const Chip(label: Text('Best')),
+                                  Chip(
+                                    label: Text(
+                                      smoothRanking ? 'Smooth' : 'Best',
+                                    ),
+                                  ),
                                 const SizedBox(width: 4),
                                 IconButton(
-                                  tooltip: isPinned ? 'Unpin source' : 'Pin source',
+                                  tooltip: isPinned
+                                      ? 'Unpin source'
+                                      : 'Pin source',
                                   icon: Icon(
                                     isPinned
                                         ? Icons.push_pin_rounded
@@ -1077,19 +1196,24 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                     if (isPinned) {
                                       await widget.sources.unpinSource(pinKey);
                                       if (!context.mounted) return;
-                                      setSheetState(() => pinnedIdentity = null);
+                                      setSheetState(
+                                        () => pinnedIdentity = null,
+                                      );
                                     } else {
                                       await widget.sources.pinSource(
                                         pinKey,
                                         result,
                                         seriesWide: seriesWidePin,
                                       );
-                                      final identity = widget.sources.sourceIdentity(
-                                        result,
-                                        seriesWide: seriesWidePin,
-                                      );
+                                      final identity = widget.sources
+                                          .sourceIdentity(
+                                            result,
+                                            seriesWide: seriesWidePin,
+                                          );
                                       if (!context.mounted) return;
-                                      setSheetState(() => pinnedIdentity = identity);
+                                      setSheetState(
+                                        () => pinnedIdentity = identity,
+                                      );
                                     }
                                   },
                                 ),
@@ -1110,20 +1234,31 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  Future<TorBoxItem?> _findInTorBox(MediaItem item, {EpisodeItem? episode}) async {
+  Future<TorBoxItem?> _findInTorBox(
+    MediaItem item, {
+    EpisodeItem? episode,
+  }) async {
     final items = await widget.torbox.listTorrents();
     TorBoxItem? best;
     var score = -1;
     for (final entry in items.where((e) => e.isReady)) {
       final s = _matchScore(entry.name, item, episode: episode);
-      if (s > score) { score = s; best = entry; }
+      if (s > score) {
+        score = s;
+        best = entry;
+      }
     }
     return score >= 85 ? best : null;
   }
 
-  Future<void> _openTorBoxItem(TorBoxItem cloudItem, MediaItem item, EpisodeItem? episode) async {
+  Future<void> _openTorBoxItem(
+    TorBoxItem cloudItem,
+    MediaItem item,
+    EpisodeItem? episode,
+  ) async {
     final file = widget.torbox.choosePlayableFile(cloudItem);
-    if (file == null) throw const TorBoxException('No playable video file found in TorBox.');
+    if (file == null)
+      throw const TorBoxException('No playable video file found in TorBox.');
     final url = await widget.torbox.requestDownloadUrl(cloudItem, file);
     await _openPlayerUrl(url, item, episode);
   }
@@ -1163,15 +1298,17 @@ class _DetailsScreenState extends State<DetailsScreen> {
     return bestScore >= 85 ? bestMatch : null;
   }
 
-  int _matchScore(
-    String fileName,
-    MediaItem item, {
-    EpisodeItem? episode,
-  }) {
+  int _matchScore(String fileName, MediaItem item, {EpisodeItem? episode}) {
     final normalizedName = _normalize(fileName);
-    final nameTokens = normalizedName.split(' ').where((e) => e.isNotEmpty).toSet();
+    final nameTokens = normalizedName
+        .split(' ')
+        .where((e) => e.isNotEmpty)
+        .toSet();
     final normalizedTitle = _normalize(item.title);
-    final titleTokens = normalizedTitle.split(' ').where((e) => e.isNotEmpty).toList();
+    final titleTokens = normalizedTitle
+        .split(' ')
+        .where((e) => e.isNotEmpty)
+        .toList();
     final meaningful = titleTokens
         .where((word) => !_weakTitleWords.contains(word))
         .toList(growable: false);
@@ -1185,7 +1322,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
       // This is intentionally strict: every meaningful title token must exist.
       // It prevents e.g. "The Whisper Man" from matching "Spider-Man Noir".
       if (!requiredTokens.every(nameTokens.contains)) return -1;
-      if (requiredTokens.length == 1 && !nameTokens.contains(requiredTokens.first)) {
+      if (requiredTokens.length == 1 &&
+          !nameTokens.contains(requiredTokens.first)) {
         return -1;
       }
     }
@@ -1278,8 +1416,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
   ) async {
     if (!mounted) return;
     setState(() => _status = 'Resolving PikPak streaming URL…');
-    final url = await widget.transfer.fetchPlayableUrl(file.id) ??
-        file.webContentLink;
+    final url =
+        await widget.transfer.fetchPlayableUrl(file.id) ?? file.webContentLink;
     if (url == null || url.isEmpty) {
       throw Exception('PikPak did not return a playable URL yet.');
     }
@@ -1356,9 +1494,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
       _resolving = false;
       _resolveProgress = null;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Could not play: $error')),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('Could not play: $error')));
   }
 }
 

@@ -7,7 +7,13 @@ import '../models/media_item.dart';
 
 enum SourceSortMode { seeders, fileSize, quality }
 
-enum SourceSortCriterion { cache, releaseQuality, resolution, fileSize, seeders }
+enum SourceSortCriterion {
+  cache,
+  releaseQuality,
+  resolution,
+  fileSize,
+  seeders,
+}
 
 extension SourceSortCriterionLabel on SourceSortCriterion {
   String get label {
@@ -96,8 +102,14 @@ class SourceResult {
     // metadata. Keep it visible, but don't let the label alone beat sane files.
     final size = sizeBytes ?? 0;
     const gb = 1024 * 1024 * 1024;
-    if ((quality?.toUpperCase() == '4K' || quality?.toUpperCase() == '2160P') && size > 0 && size < 1 * gb) rank -= 230;
-    if (quality?.toUpperCase() == '1080P' && size > 0 && size < 350 * 1024 * 1024) rank -= 120;
+    if ((quality?.toUpperCase() == '4K' || quality?.toUpperCase() == '2160P') &&
+        size > 0 &&
+        size < 1 * gb)
+      rank -= 230;
+    if (quality?.toUpperCase() == '1080P' &&
+        size > 0 &&
+        size < 350 * 1024 * 1024)
+      rank -= 120;
     return rank;
   }
 
@@ -128,12 +140,10 @@ class SourceResult {
 
     // File size is intentionally NOT a compatibility signal. Very large
     // remuxes can still be excellent when the stream path is healthy.
-    if (RegExp(r'(^|[\s._\-\[(])(8k|4320p)(?=$|[\s._\-\])])')
-        .hasMatch(text)) {
+    if (RegExp(r'(^|[\s._\-\[(])(8k|4320p)(?=$|[\s._\-\])])').hasMatch(text)) {
       risk += 100;
     }
-    if (RegExp(r'(^|[\s._\-\[(])(av1|av01)(?=$|[\s._\-\])])')
-        .hasMatch(text)) {
+    if (RegExp(r'(^|[\s._\-\[(])(av1|av01)(?=$|[\s._\-\])])').hasMatch(text)) {
       risk += 45;
     }
     if (RegExp(
@@ -177,9 +187,7 @@ class SourceResult {
   int get preferenceScore {
     final cacheRank = cached ? 1 : 0;
     final seederRank = (seeders ?? -1).clamp(-1, 999999).toInt() + 1;
-    final sizeMb = ((sizeBytes ?? 0) ~/ (1024 * 1024))
-        .clamp(0, 999999)
-        .toInt();
+    final sizeMb = ((sizeBytes ?? 0) ~/ (1024 * 1024)).clamp(0, 999999).toInt();
 
     return cacheRank * 1000000000000000000 +
         releaseQualityRank * 1000000000000000 +
@@ -190,7 +198,8 @@ class SourceResult {
 }
 
 class SourceProviderService {
-  SourceProviderService({http.Client? client}) : _client = client ?? http.Client();
+  SourceProviderService({http.Client? client})
+    : _client = client ?? http.Client();
 
   static const _prefsKey = 'pikora_source_addons';
   static const _torrentioKey = 'pikora_integrated_torrentio_url_v1';
@@ -283,7 +292,8 @@ class SourceProviderService {
     final out = <SourceSortCriterion>[];
     for (final value in stored) {
       for (final criterion in SourceSortCriterion.values) {
-        if (criterion.name == value && !out.contains(criterion)) out.add(criterion);
+        if (criterion.name == value && !out.contains(criterion))
+          out.add(criterion);
       }
     }
     for (final criterion in defaultPriority) {
@@ -340,7 +350,9 @@ class SourceProviderService {
   }
 
   Future<void> setResultLimit(int value) async {
-    final normalized = value < 0 ? defaultResultLimit : value.clamp(0, 500).toInt();
+    final normalized = value < 0
+        ? defaultResultLimit
+        : value.clamp(0, 500).toInt();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_resultLimitKey, normalized);
   }
@@ -403,7 +415,8 @@ class SourceProviderService {
     return sourceIdentity(result, seriesWide: seriesWide) == pinnedIdentity;
   }
 
-  String _pinPreferenceKey(String targetKey) => '$_pinnedSourcePrefix$targetKey';
+  String _pinPreferenceKey(String targetKey) =>
+      '$_pinnedSourcePrefix$targetKey';
 
   Future<String?> getPinnedSourceIdentity(String targetKey) async {
     final prefs = await SharedPreferences.getInstance();
@@ -455,7 +468,10 @@ class SourceProviderService {
       if (!normalized.contains(criterion)) normalized.add(criterion);
     }
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(_priorityKey, normalized.map((e) => e.name).toList());
+    await prefs.setStringList(
+      _priorityKey,
+      normalized.map((e) => e.name).toList(),
+    );
   }
 
   int compareResults(
@@ -496,10 +512,88 @@ class SourceProviderService {
     return out;
   }
 
+  /// Optional playback-focused ordering for users who care more about a
+  /// stream starting and staying smooth than about the normal release-size
+  /// preference. Nothing is hidden here; this only changes the order.
+  ///
+  /// The order deliberately favors common 1080p/720p playback targets,
+  /// efficient HEVC/x265 encodes, healthy swarms, then smaller files. Cache is
+  /// still useful, but it is not allowed to dominate playback characteristics.
+  List<SourceResult> sortForSmoothPlayback(Iterable<SourceResult> results) {
+    final out = results.toList();
+    out.sort(_compareSmoothPlayback);
+    return out;
+  }
+
+  int _compareSmoothPlayback(SourceResult a, SourceResult b) {
+    final riskCmp = a.compatibilityRisk.compareTo(b.compatibilityRisk);
+    if (riskCmp != 0) return riskCmp;
+
+    final resolutionCmp = _smoothResolutionRank(b)
+        .compareTo(_smoothResolutionRank(a));
+    if (resolutionCmp != 0) return resolutionCmp;
+
+    final codecCmp = _smoothCodecRank(b).compareTo(_smoothCodecRank(a));
+    if (codecCmp != 0) return codecCmp;
+
+    final seedCmp = (b.seeders ?? -1).compareTo(a.seeders ?? -1);
+    if (seedCmp != 0) return seedCmp;
+
+    final aSize = a.sizeBytes;
+    final bSize = b.sizeBytes;
+    if (aSize != null && bSize != null && aSize != bSize) {
+      return aSize.compareTo(bSize);
+    }
+    if (aSize != null && bSize == null) return -1;
+    if (aSize == null && bSize != null) return 1;
+
+    final cacheCmp = (b.cached ? 1 : 0).compareTo(a.cached ? 1 : 0);
+    if (cacheCmp != 0) return cacheCmp;
+
+    final releaseCmp = b.releaseQualityRank.compareTo(a.releaseQualityRank);
+    if (releaseCmp != 0) return releaseCmp;
+
+    return a.title.compareTo(b.title);
+  }
+
+  int _smoothResolutionRank(SourceResult result) {
+    switch (result.quality?.toUpperCase()) {
+      case '1080P':
+        return 600;
+      case '720P':
+        return 560;
+      case '1440P':
+        return 520;
+      case '2160P':
+      case '4K':
+        return 480;
+      case '480P':
+        return 300;
+      default:
+        return 200;
+    }
+  }
+
+  int _smoothCodecRank(SourceResult result) {
+    final text = '${result.title} ${result.fileNameHint ?? ''}'.toLowerCase();
+    if (RegExp(r'\b(?:x265|h[ ._-]?265|hevc)\b').hasMatch(text)) {
+      return 300;
+    }
+    if (RegExp(r'\b(?:x264|h[ ._-]?264|avc)\b').hasMatch(text)) {
+      return 250;
+    }
+    if (RegExp(r'\b(?:av1|av01)\b').hasMatch(text)) {
+      return 100;
+    }
+    return 180;
+  }
+
   Future<void> addAddonUrl(String raw) async {
     final normalized = _normalizeAddonUrl(raw);
     if (normalized == null) {
-      throw const FormatException('Enter a valid http/https Stremio addon URL.');
+      throw const FormatException(
+        'Enter a valid http/https Stremio addon URL.',
+      );
     }
     final prefs = await SharedPreferences.getInstance();
     if (_looksLikeTorrentio(normalized)) {
@@ -555,8 +649,16 @@ class SourceProviderService {
         : '${item.id}:${episode.season}:${episode.episode}';
 
     final groups = await Future.wait(
-      addons.map((addon) => _resolveAddon(
-            addon, type, mediaId, sortMode, show3D, preferredGroups)),
+      addons.map(
+        (addon) => _resolveAddon(
+          addon,
+          type,
+          mediaId,
+          sortMode,
+          show3D,
+          preferredGroups,
+        ),
+      ),
     );
 
     final out = <SourceResult>[];
@@ -576,7 +678,9 @@ class SourceProviderService {
     // sources merely because they are cached.
     var visible = out;
     if (!showLowQuality) {
-      final hasHd = out.any((r) => r.qualityRank >= 300 && r.releaseQuality?.toUpperCase() != 'CAM');
+      final hasHd = out.any(
+        (r) => r.qualityRank >= 300 && r.releaseQuality?.toUpperCase() != 'CAM',
+      );
       if (hasHd) {
         visible = out.where((r) {
           final release = r.releaseQuality?.toUpperCase();
@@ -639,7 +743,10 @@ class SourceProviderService {
         ].where((value) => value.trim().isNotEmpty).join('\n');
         final cached = _guessCached(raw, metadataText);
         if (!show3D && _is3DRelease(metadataText)) continue;
-        final preferredGroup = _matchesPreferredGroup(metadataText, preferredGroups);
+        final preferredGroup = _matchesPreferredGroup(
+          metadataText,
+          preferredGroups,
+        );
         final quality = _guessQuality(metadataText);
         final releaseQuality = _guessReleaseQuality(metadataText);
         final seeders = _guessSeeders(raw, metadataText);
@@ -695,7 +802,8 @@ class SourceProviderService {
           '👥 ${seeders?.toString() ?? '—'} seeders',
           '💾 ${_formatSize(sizeBytes) ?? 'size unknown'}',
         ];
-        final displayTitle = '${statParts.join('  •  ')}\n${_compactTitle(rawTitle)}';
+        final displayTitle =
+            '${statParts.join('  •  ')}\n${_compactTitle(rawTitle)}';
 
         out.add(
           SourceResult(
@@ -779,14 +887,17 @@ class SourceProviderService {
 
   bool _is3DRelease(String value) {
     final lower = value.toLowerCase();
-    if (RegExp(r'(^|[\s._\-\[\(])(3d|sbs|hsbs|h-sbs|half[ ._-]?sbs|full[ ._-]?sbs|tab|top[ ._-]?and[ ._-]?bottom)(?=$|[\s._\-\]\)])')
-        .hasMatch(lower)) {
+    if (RegExp(
+      r'(^|[\s._\-\[\(])(3d|sbs|hsbs|h-sbs|half[ ._-]?sbs|full[ ._-]?sbs|tab|top[ ._-]?and[ ._-]?bottom)(?=$|[\s._\-\]\)])',
+    ).hasMatch(lower)) {
       return true;
     }
     // MVC is predominantly used by frame-packed Blu-ray 3D releases. Require
     // a Blu-ray/3D context so an unrelated token cannot hide a normal file.
     return RegExp(r'\bmvc\b').hasMatch(lower) &&
-        (lower.contains('bluray') || lower.contains('blu-ray') || lower.contains('3d'));
+        (lower.contains('bluray') ||
+            lower.contains('blu-ray') ||
+            lower.contains('3d'));
   }
 
   bool _matchesPreferredGroup(String value, List<String> groups) {
@@ -800,7 +911,8 @@ class SourceProviderService {
           .toLowerCase()
           .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
           .trim();
-      if (token.isNotEmpty && (' $normalized ').contains(' $token ')) return true;
+      if (token.isNotEmpty && (' $normalized ').contains(' $token '))
+        return true;
     }
     return false;
   }
@@ -836,19 +948,23 @@ class SourceProviderService {
   String? _guessReleaseQuality(String value) {
     final lower = value.toLowerCase();
     if (RegExp(r'\bremux\b').hasMatch(lower)) return 'REMUX';
-    if (lower.contains('blu-ray') || lower.contains('bluray') ||
+    if (lower.contains('blu-ray') ||
+        lower.contains('bluray') ||
         RegExp(r'\b(?:bdremux|bdrip|brrip)\b').hasMatch(lower)) {
       return 'BluRay';
     }
-    if (RegExp(r'\bweb[ ._-]?dl\b').hasMatch(lower) || lower.contains('webdl')) {
+    if (RegExp(r'\bweb[ ._-]?dl\b').hasMatch(lower) ||
+        lower.contains('webdl')) {
       return 'WEB-DL';
     }
-    if (RegExp(r'\bweb[ ._-]?rip\b').hasMatch(lower) || lower.contains('webrip')) {
+    if (RegExp(r'\bweb[ ._-]?rip\b').hasMatch(lower) ||
+        lower.contains('webrip')) {
       return 'WEBRip';
     }
     if (RegExp(r'\b(?:hdtv|hdrip|ppv|dsr)\b').hasMatch(lower)) return 'HDTV';
     if (RegExp(r'\b(?:dvdrip|dvd-rip|dvd)\b').hasMatch(lower)) return 'DVD';
-    if (RegExp(r'\b(?:cam|hdcam|camrip|telesync|telecine)\b').hasMatch(lower)) return 'CAM';
+    if (RegExp(r'\b(?:cam|hdcam|camrip|telesync|telecine)\b').hasMatch(lower))
+      return 'CAM';
     return null;
   }
 
@@ -869,7 +985,13 @@ class SourceProviderService {
       final parts = segments[i].split('|');
       final filtered = parts.where((part) {
         final key = part.split('=').first.trim().toLowerCase();
-        return !const {'limit', 'sizefilter', 'qualityfilter', 'sort', 'priorityforeignlanguage'}.contains(key);
+        return !const {
+          'limit',
+          'sizefilter',
+          'qualityfilter',
+          'sort',
+          'priorityforeignlanguage',
+        }.contains(key);
       }).toList();
       if (filtered.length != parts.length) {
         changed = true;
@@ -883,19 +1005,15 @@ class SourceProviderService {
     }
 
     if (!changed) return value;
-    return uri.replace(pathSegments: segments).toString().replaceAll(RegExp(r'/$'), '');
+    return uri
+        .replace(pathSegments: segments)
+        .toString()
+        .replaceAll(RegExp(r'/$'), '');
   }
 
   String? _guessQuality(String value) {
     final lower = value.toLowerCase();
-    for (final q in const [
-      '2160p',
-      '4k',
-      '1440p',
-      '1080p',
-      '720p',
-      '480p',
-    ]) {
+    for (final q in const ['2160p', '4k', '1440p', '1080p', '720p', '480p']) {
       if (lower.contains(q)) return q.toUpperCase();
     }
     return null;
@@ -966,7 +1084,9 @@ class SourceProviderService {
     // largest explicit size is the safest value for source ranking/display.
     int? largest;
     for (final match in matches) {
-      final number = double.tryParse((match.group(1) ?? '').replaceAll(',', '.'));
+      final number = double.tryParse(
+        (match.group(1) ?? '').replaceAll(',', '.'),
+      );
       final unit = (match.group(2) ?? '').toUpperCase();
       if (number == null) continue;
       final multiplier = switch (unit) {
@@ -989,7 +1109,8 @@ class SourceProviderService {
     const gb = mb * 1024;
     const tb = gb * 1024;
     if (bytes >= tb) return '${(bytes / tb).toStringAsFixed(2)} TB';
-    if (bytes >= gb) return '${(bytes / gb).toStringAsFixed(bytes >= 10 * gb ? 1 : 2)} GB';
+    if (bytes >= gb)
+      return '${(bytes / gb).toStringAsFixed(bytes >= 10 * gb ? 1 : 2)} GB';
     if (bytes >= mb) return '${(bytes / mb).toStringAsFixed(0)} MB';
     return '${(bytes / kb).toStringAsFixed(0)} KB';
   }
