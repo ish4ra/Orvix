@@ -159,7 +159,7 @@ class SourceProviderService {
   // v2 intentionally resets the old default. v0.3.7 makes the default order
   // Quality -> Seeders -> Size while still allowing the user to switch it.
   static const _sortKey = 'pikora_source_sort_mode_v2';
-  static const _priorityKey = 'orvix_source_priority_v5';
+  static const _priorityKey = 'orvix_source_priority_v6';
   static const _show3DKey = 'orvix_show_3d_sources_v1';
   static const _showLowQualityKey = 'orvix_show_low_quality_sources_v1';
   static const _preferredGroupsKey = 'orvix_preferred_release_groups_v1';
@@ -414,6 +414,10 @@ class SourceProviderService {
         if (seen.add(dedupeKey)) out.add(result);
       }
     }
+    // Apply the quality floor BEFORE cache ranking. Cache is the first
+    // ranking criterion only among sources that survive the normal quality
+    // filter, so cached CAM/DVD/sub-720p rows cannot jump ahead of good HD
+    // sources merely because they are cached.
     var visible = out;
     if (!showLowQuality) {
       final hasHd = out.any((r) => r.qualityRank >= 300 && r.releaseQuality?.toUpperCase() != 'CAM');

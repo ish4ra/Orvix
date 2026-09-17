@@ -1,6 +1,6 @@
 #define MyAppName "Orvix"
 #ifndef MyAppVersion
-#define MyAppVersion "0.5.2"
+#define MyAppVersion "0.5.3"
 #endif
 #define MyAppPublisher "Ishara Lakshan"
 #define MyAppExeName "orvix.exe"
