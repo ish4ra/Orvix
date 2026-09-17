@@ -570,29 +570,41 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           .toDouble();
                       return Column(
                         children: [
-                          SliderTheme(
-                            data: SliderTheme.of(context).copyWith(
-                              trackHeight: 3.5,
-                              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                            ),
-                            child: Slider(
-                              value: actualMs,
-                              max: maxMs,
-                              onChangeStart: (_) {
-                                _hideTimer?.cancel();
-                                setState(() => _seeking = true);
-                              },
-                              onChanged: (value) => setState(() => _seekPreviewMs = value),
-                              onChangeEnd: (value) async {
-                                await player.seek(Duration(milliseconds: value.round()));
-                                if (!mounted) return;
-                                setState(() {
-                                  _seeking = false;
-                                  _seekPreviewMs = null;
-                                });
-                                _scheduleHide();
-                              },
-                            ),
+                          StreamBuilder<Duration>(
+                            stream: player.stream.buffer,
+                            initialData: player.state.buffer,
+                            builder: (context, bufferSnapshot) {
+                              final bufferedMs = (bufferSnapshot.data ?? Duration.zero)
+                                  .inMilliseconds
+                                  .toDouble()
+                                  .clamp(actualMs, maxMs)
+                                  .toDouble();
+                              return SliderTheme(
+                                data: SliderTheme.of(context).copyWith(
+                                  trackHeight: 3.5,
+                                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                                ),
+                                child: Slider(
+                                  value: actualMs,
+                                  max: maxMs,
+                                  secondaryTrackValue: bufferedMs,
+                                  onChangeStart: (_) {
+                                    _hideTimer?.cancel();
+                                    setState(() => _seeking = true);
+                                  },
+                                  onChanged: (value) => setState(() => _seekPreviewMs = value),
+                                  onChangeEnd: (value) async {
+                                    await player.seek(Duration(milliseconds: value.round()));
+                                    if (!mounted) return;
+                                    setState(() {
+                                      _seeking = false;
+                                      _seekPreviewMs = null;
+                                    });
+                                    _scheduleHide();
+                                  },
+                                ),
+                              );
+                            },
                           ),
                           Row(
                             children: [
