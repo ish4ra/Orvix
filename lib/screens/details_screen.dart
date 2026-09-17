@@ -1424,6 +1424,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         preparedAiSubtitle = await AiSinhalaSubtitleService.prepareBuffered(
           item: item,
           episode: episode,
+          videoUrl: url,
           onStatus: (message) {
             if (!mounted) return;
             setState(() => _status = message);
