@@ -15,6 +15,7 @@ class SourcesScreen extends StatefulWidget {
 class _SourcesScreenState extends State<SourcesScreen> {
   final _controller = TextEditingController();
   final _aioStreamsController = TextEditingController();
+  final _resultLimitController = TextEditingController();
   final _preferredGroupsController = TextEditingController();
   List<String> _addons = const [];
   List<SourceSortCriterion> _priority = [
@@ -38,6 +39,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
   void dispose() {
     _controller.dispose();
     _aioStreamsController.dispose();
+    _resultLimitController.dispose();
     _preferredGroupsController.dispose();
     super.dispose();
   }
@@ -63,6 +65,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
       _show3D = show3D;
       _showLowQuality = showLowQuality;
       _resultLimit = resultLimit;
+      _resultLimitController.text = resultLimit == 0 ? '' : '$resultLimit';
       _preferredGroupsController.text = preferredGroups.join(', ');
       _busy = false;
     });
@@ -86,6 +89,35 @@ class _SourcesScreenState extends State<SourcesScreen> {
   Future<void> _setResultLimit(int value) async {
     setState(() => _resultLimit = value);
     await widget.sources.setResultLimit(value);
+  }
+
+  Future<void> _saveResultLimit() async {
+    final raw = _resultLimitController.text.trim();
+    if (raw.isEmpty) {
+      await _setResultLimit(0);
+      if (!mounted) return;
+      setState(() => _message = 'Source picker will show all ranked results.');
+      return;
+    }
+
+    final value = int.tryParse(raw);
+    if (value == null || value < 1 || value > 500) {
+      setState(() => _message =
+          'Enter any result count from 1 to 500, or leave the field empty for all results.');
+      return;
+    }
+
+    await _setResultLimit(value);
+    if (!mounted) return;
+    setState(() => _message =
+        'Source picker will show the top $value ranked result${value == 1 ? '' : 's'}.');
+  }
+
+  Future<void> _showAllResults() async {
+    _resultLimitController.clear();
+    await _setResultLimit(0);
+    if (!mounted) return;
+    setState(() => _message = 'Source picker will show all ranked results.');
   }
 
   Future<void> _savePreferredGroups() async {
@@ -553,44 +585,53 @@ class _SourcesScreenState extends State<SourcesScreen> {
             ],
           ),
           const SizedBox(height: 10),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Results shown in source picker',
-                      style: TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Choose how many ranked sources are displayed when you open the source picker.',
-                      style: TextStyle(
-                        color: color.onSurfaceVariant,
-                        height: 1.35,
-                      ),
-                    ),
-                  ],
+              const Text(
+                'Results shown in source picker',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Choose any result count you want. Enter 1 for one result, 3 for three results, or leave it empty to show everything.',
+                style: TextStyle(
+                  color: color.onSurfaceVariant,
+                  height: 1.35,
                 ),
               ),
-              const SizedBox(width: 18),
-              DropdownButton<int>(
-                value: _resultLimit,
-                borderRadius: BorderRadius.circular(12),
-                items: [
-                  for (final value in SourceProviderService.resultLimitOptions)
-                    DropdownMenuItem<int>(
-                      value: value,
-                      child: Text(value == 0 ? 'All results' : 'Top $value'),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 190,
+                    child: TextField(
+                      controller: _resultLimitController,
+                      enabled: !_busy,
+                      keyboardType: TextInputType.number,
+                      onSubmitted: (_) => _busy ? null : _saveResultLimit(),
+                      decoration: InputDecoration(
+                        labelText: _resultLimit == 0
+                            ? 'All results'
+                            : 'Top $_resultLimit',
+                        hintText: 'e.g. 3',
+                        prefixIcon: const Icon(Icons.numbers_rounded),
+                      ),
                     ),
+                  ),
+                  FilledButton.icon(
+                    onPressed: _busy ? null : _saveResultLimit,
+                    icon: const Icon(Icons.check_rounded),
+                    label: const Text('Apply'),
+                  ),
+                  TextButton(
+                    onPressed: _busy ? null : _showAllResults,
+                    child: const Text('All results'),
+                  ),
                 ],
-                onChanged: _busy
-                    ? null
-                    : (value) {
-                        if (value != null) _setResultLimit(value);
-                      },
               ),
             ],
           ),

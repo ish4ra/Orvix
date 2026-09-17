@@ -215,7 +215,6 @@ class SourceProviderService {
   static const _resultLimitKey = 'orvix_source_result_limit_v1';
   static const _pinnedSourcePrefix = 'orvix_pinned_source_v1_';
   static const defaultResultLimit = 0; // 0 = show all
-  static const resultLimitOptions = <int>[25, 50, 100, 200, 0];
   static const _recommendedProvidersSeedKey =
       'orvix_recommended_source_pool_seeded_v1';
   static const _recommendedAddonUrls = <String>[

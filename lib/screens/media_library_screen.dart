@@ -76,15 +76,18 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
                   children: [
                     Text(
                       'Library',
-                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: -.5,
-                          ),
+                      style:
+                          Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: -.5,
+                              ),
                     ),
                     const SizedBox(height: 5),
                     Text(
-                      '${_items.length} saved title${_items.length == 1 ? '' : 's'} • your local Pikora collection',
-                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                      '${_items.length} saved title${_items.length == 1 ? '' : 's'} • your local Orvix collection',
+                      style: TextStyle(
+                          color:
+                              Theme.of(context).colorScheme.onSurfaceVariant),
                     ),
                   ],
                 ),
@@ -124,10 +127,12 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
                     ? _EmptyLibrary(hasItems: _items.isNotEmpty)
                     : LayoutBuilder(
                         builder: (context, constraints) {
-                          final count = (constraints.maxWidth / 190).floor().clamp(2, 8);
+                          final count =
+                              (constraints.maxWidth / 190).floor().clamp(2, 8);
                           return GridView.builder(
                             itemCount: visible.length,
-                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                            gridDelegate:
+                                SliverGridDelegateWithFixedCrossAxisCount(
                               crossAxisCount: count,
                               crossAxisSpacing: 18,
                               mainAxisSpacing: 22,
@@ -150,7 +155,9 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
                                     child: IconButton.filledTonal(
                                       tooltip: 'Remove from Library',
                                       onPressed: () => _remove(item),
-                                      icon: const Icon(Icons.bookmark_remove_outlined, size: 19),
+                                      icon: const Icon(
+                                          Icons.bookmark_remove_outlined,
+                                          size: 19),
                                     ),
                                   ),
                                 ],
@@ -177,21 +184,27 @@ class _EmptyLibrary extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            hasItems ? Icons.filter_alt_off_rounded : Icons.video_library_outlined,
+            hasItems
+                ? Icons.filter_alt_off_rounded
+                : Icons.video_library_outlined,
             size: 54,
             color: Theme.of(context).colorScheme.primary,
           ),
           const SizedBox(height: 14),
           Text(
             hasItems ? 'Nothing in this filter' : 'Your Library is empty',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+            style: Theme.of(context)
+                .textTheme
+                .titleLarge
+                ?.copyWith(fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 7),
           Text(
             hasItems
                 ? 'Try another Library filter.'
                 : 'Open a movie or series and choose Add to Library.',
-            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+            style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
         ],
       ),

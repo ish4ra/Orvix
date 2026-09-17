@@ -32,7 +32,8 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _focusNode.requestFocus());
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _focusNode.requestFocus());
   }
 
   @override
@@ -116,7 +117,8 @@ class _SearchScreenState extends State<SearchScreen> {
               textInputAction: TextInputAction.search,
               style: const TextStyle(fontSize: 17),
               decoration: InputDecoration(
-                hintText: 'Start typing — suggestions appear after 2 characters…',
+                hintText:
+                    'Start typing — suggestions appear after 2 characters…',
                 prefixIcon: const Icon(Icons.search_rounded),
                 suffixIcon: _controller.text.isEmpty
                     ? null
@@ -213,7 +215,7 @@ class _SearchHint extends StatelessWidget {
           SizedBox(width: 14),
           Expanded(
             child: Text(
-              'Type two or more characters. Pikora searches movies and TV together and updates suggestions automatically as you type.',
+              'Type two or more characters. Orvix searches movies and TV together and updates suggestions automatically as you type.',
               style: TextStyle(height: 1.45),
             ),
           ),
