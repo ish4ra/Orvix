@@ -5,6 +5,10 @@ on:
     branches:
       - orvix-v0.7.1-ai-sinhala-buffered
     paths:
+      - 'lib/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'windows/**'
       - '.github/workflows/v071-buffered-ai-build.yml'
 
 permissions:
