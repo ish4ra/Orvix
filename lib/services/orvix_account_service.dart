@@ -41,6 +41,30 @@ class OrvixAccountService {
     return response;
   }
 
+  static Future<AuthResponse> verifySignupOtp({
+    required String email,
+    required String token,
+  }) async {
+    final response = await _client.auth.verifyOTP(
+      type: OtpType.signup,
+      email: email.trim(),
+      token: token.trim(),
+    );
+    if (response.session != null) {
+      await mergeCloudIntoLocal();
+    }
+    return response;
+  }
+
+  static Future<ResendResponse> resendSignupConfirmation({
+    required String email,
+  }) {
+    return _client.auth.resend(
+      type: OtpType.signup,
+      email: email.trim(),
+    );
+  }
+
   static Future<void> signOut() => _client.auth.signOut();
 
   static Future<void> restoreSignedInState() async {
