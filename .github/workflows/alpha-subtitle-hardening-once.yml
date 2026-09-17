@@ -1,0 +1,51 @@
+name: Apply Orvix alpha subtitle hardening once
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.3-alpha.1
+    paths:
+      - '.github/workflows/alpha-subtitle-hardening-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Apply source patch
+        shell: pwsh
+        run: python tools/apply_alpha_subtitle_hardening.py
+
+      - name: Format changed Dart
+        shell: pwsh
+        run: dart format lib/screens/player_screen.dart lib/screens/details_screen.dart lib/services/ai_sinhala_subtitle_service.dart
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze app sources
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Commit validated source and clean temporary patch files
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/alpha-subtitle-hardening-once.yml tools/apply_alpha_subtitle_hardening.py
+          git add lib/screens/player_screen.dart lib/screens/details_screen.dart lib/services/ai_sinhala_subtitle_service.dart
+          git commit -m "fix: harden AI Sinhala subtitle matching and sync"
+          git push origin HEAD:orvix-v0.7.3-alpha.1
