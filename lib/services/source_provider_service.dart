@@ -54,6 +54,7 @@ class SourceResult {
     this.sizeBytes,
     this.torrentFileIndex,
     this.fileNameHint,
+    this.bingeGroup,
   });
 
   final String provider;
@@ -76,6 +77,11 @@ class SourceResult {
   /// cloud provider creates a folder for the torrent and the intended episode
   /// has to be located among many child files.
   final String? fileNameHint;
+
+  /// Stable Stremio stream-family identifier when the addon provides one.
+  /// Torrentio/other addons can keep this stable across episodes, which makes
+  /// a series-wide pin possible without guessing from filenames.
+  final String? bingeGroup;
 
   int get qualityRank {
     var rank = switch (quality?.toUpperCase()) {
@@ -340,13 +346,26 @@ class SourceProviderService {
   }
 
   String sourceTargetKey(MediaItem item, {EpisodeItem? episode}) {
-    final base = '${item.kind.name}:${item.id}';
-    if (episode == null) return base;
-    return '$base:${episode.season}:${episode.episode}';
+    // Movies keep one exact pin per title. TV keeps one source-family pin per
+    // series, matching Debrify's source binding model while avoiding a separate
+    // preference for every episode.
+    return '${item.kind.name}:${item.id}';
   }
 
-  String sourceIdentity(SourceResult result) {
+  String sourceIdentity(SourceResult result, {bool seriesWide = false}) {
     final provider = result.provider.trim().toLowerCase();
+
+    final bingeGroup = result.bingeGroup?.trim();
+    if (seriesWide && bingeGroup != null && bingeGroup.isNotEmpty) {
+      final normalizedGroup = bingeGroup
+          .toLowerCase()
+          .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+          .trim();
+      if (normalizedGroup.isNotEmpty) {
+        return '$provider|binge:$normalizedGroup';
+      }
+    }
+
     if (result.isMagnet) {
       final match = RegExp(
         r'xt=urn:btih:([a-z0-9]+)',
@@ -354,7 +373,12 @@ class SourceProviderService {
       ).firstMatch(result.resource);
       final hash = match?.group(1)?.toLowerCase();
       if (hash != null && hash.isNotEmpty) {
-        return '$provider|btih:$hash|idx:${result.torrentFileIndex ?? -1}';
+        // A season/series pack has one infohash but a different file index for
+        // each episode. Ignore the index for a series-wide pin so the same pack
+        // stays preferred as the user moves through episodes.
+        return seriesWide
+            ? '$provider|btih:$hash'
+            : '$provider|btih:$hash|idx:${result.torrentFileIndex ?? -1}';
       }
     }
 
@@ -370,9 +394,13 @@ class SourceProviderService {
     return '$provider|resource:${result.resource}';
   }
 
-  bool matchesPinned(SourceResult result, String? pinnedIdentity) {
+  bool matchesPinned(
+    SourceResult result,
+    String? pinnedIdentity, {
+    bool seriesWide = false,
+  }) {
     if (pinnedIdentity == null || pinnedIdentity.isEmpty) return false;
-    return sourceIdentity(result) == pinnedIdentity;
+    return sourceIdentity(result, seriesWide: seriesWide) == pinnedIdentity;
   }
 
   String _pinPreferenceKey(String targetKey) => '$_pinnedSourcePrefix$targetKey';
@@ -394,15 +422,20 @@ class SourceProviderService {
     return null;
   }
 
-  Future<void> pinSource(String targetKey, SourceResult result) async {
+  Future<void> pinSource(
+    String targetKey,
+    SourceResult result, {
+    bool seriesWide = false,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     final label = result.title.split('\n').last.trim();
     await prefs.setString(
       _pinPreferenceKey(targetKey),
       jsonEncode({
-        'identity': sourceIdentity(result),
+        'identity': sourceIdentity(result, seriesWide: seriesWide),
         'provider': result.provider,
         'label': label,
+        if (result.bingeGroup != null) 'bingeGroup': result.bingeGroup,
         'pinnedAt': DateTime.now().millisecondsSinceEpoch,
       }),
     );
@@ -593,6 +626,9 @@ class SourceProviderService {
             ? raw['behaviorHints'] as Map<String, dynamic>
             : null;
         final fileNameHint = _nonEmpty(hints?['filename']?.toString());
+        final bingeGroup = _nonEmpty(
+          hints?['bingeGroup']?.toString() ?? hints?['binge_group']?.toString(),
+        );
         final torrentFileIndex = _parseInt(
           raw['fileIdx'] ?? raw['file_idx'] ?? raw['mapIdx'],
         );
@@ -676,6 +712,7 @@ class SourceProviderService {
             sizeBytes: sizeBytes,
             torrentFileIndex: torrentFileIndex,
             fileNameHint: fileNameHint,
+            bingeGroup: bingeGroup,
           ),
         );
       }

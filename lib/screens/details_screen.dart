@@ -794,6 +794,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     var resultLimit = await widget.sources.getResultLimit();
     var compatibilityOnly = false;
     final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
+    final seriesWidePin = item.kind == MediaKind.series;
     var pinnedIdentity = await widget.sources.getPinnedSourceIdentity(pinKey);
     if (!mounted) return null;
 
@@ -879,7 +880,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
           final ordered = [...filtered];
           if (pinnedIdentity != null) {
             final pinnedIndex = ordered.indexWhere(
-              (result) => widget.sources.matchesPinned(result, pinnedIdentity),
+              (result) => widget.sources.matchesPinned(
+                result,
+                pinnedIdentity,
+                seriesWide: seriesWidePin,
+              ),
             );
             if (pinnedIndex > 0) {
               final pinned = ordered.removeAt(pinnedIndex);
@@ -1027,6 +1032,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                           final isPinned = widget.sources.matchesPinned(
                             result,
                             pinnedIdentity,
+                            seriesWide: seriesWidePin,
                           );
                           return ListTile(
                             contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
@@ -1073,8 +1079,15 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                       if (!context.mounted) return;
                                       setSheetState(() => pinnedIdentity = null);
                                     } else {
-                                      await widget.sources.pinSource(pinKey, result);
-                                      final identity = widget.sources.sourceIdentity(result);
+                                      await widget.sources.pinSource(
+                                        pinKey,
+                                        result,
+                                        seriesWide: seriesWidePin,
+                                      );
+                                      final identity = widget.sources.sourceIdentity(
+                                        result,
+                                        seriesWide: seriesWidePin,
+                                      );
                                       if (!context.mounted) return;
                                       setSheetState(() => pinnedIdentity = identity);
                                     }
