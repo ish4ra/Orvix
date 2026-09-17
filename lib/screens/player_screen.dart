@@ -570,29 +570,60 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           .toDouble();
                       return Column(
                         children: [
-                          SliderTheme(
-                            data: SliderTheme.of(context).copyWith(
-                              trackHeight: 3.5,
-                              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                            ),
-                            child: Slider(
-                              value: actualMs,
-                              max: maxMs,
-                              onChangeStart: (_) {
-                                _hideTimer?.cancel();
-                                setState(() => _seeking = true);
-                              },
-                              onChanged: (value) => setState(() => _seekPreviewMs = value),
-                              onChangeEnd: (value) async {
-                                await player.seek(Duration(milliseconds: value.round()));
-                                if (!mounted) return;
-                                setState(() {
-                                  _seeking = false;
-                                  _seekPreviewMs = null;
-                                });
-                                _scheduleHide();
-                              },
-                            ),
+                          StreamBuilder<Duration>(
+                            stream: player.stream.buffer,
+                            initialData: player.state.buffer,
+                            builder: (context, bufferSnapshot) {
+                              final buffered = bufferSnapshot.data ?? Duration.zero;
+                              final bufferedMs = buffered.inMilliseconds
+                                  .clamp(0, maxMs.round())
+                                  .toDouble();
+                              return Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  Positioned.fill(
+                                    left: 10,
+                                    right: 10,
+                                    child: Center(
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(99),
+                                        child: LinearProgressIndicator(
+                                          minHeight: 3.5,
+                                          value: maxMs <= 1 ? 0 : bufferedMs / maxMs,
+                                          backgroundColor: Colors.white24,
+                                          valueColor: const AlwaysStoppedAnimation<Color>(Colors.white38),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  SliderTheme(
+                                    data: SliderTheme.of(context).copyWith(
+                                      trackHeight: 3.5,
+                                      inactiveTrackColor: Colors.transparent,
+                                      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                                    ),
+                                    child: Slider(
+                                      value: actualMs,
+                                      max: maxMs,
+                                      onChangeStart: (_) {
+                                        _hideTimer?.cancel();
+                                        setState(() => _seeking = true);
+                                      },
+                                      onChanged: (value) => setState(() => _seekPreviewMs = value),
+                                      onChangeEnd: (value) async {
+                                        await player.seek(Duration(milliseconds: value.round()));
+                                        if (!mounted) return;
+                                        setState(() {
+                                          _seeking = false;
+                                          _seekPreviewMs = null;
+                                        });
+                                        _scheduleHide();
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
                           ),
                           Row(
                             children: [

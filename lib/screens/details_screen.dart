@@ -787,6 +787,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   Future<SourceResult?> _chooseSource(List<SourceResult> results) async {
     var priority = await widget.sources.getPriorityOrder();
+    var compatibilityOnly = false;
     if (!mounted) return null;
 
     Future<void> customizePriority(BuildContext dialogContext, StateSetter setSheetState) async {
@@ -862,7 +863,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
       constraints: const BoxConstraints(maxWidth: 960),
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) {
-          final sorted = widget.sources.sortResults(results, priority);
+          final filtered = compatibilityOnly
+              ? results.where((result) => result.compatibilityFriendly).toList(growable: false)
+              : results;
+          final sorted = widget.sources.sortResults(filtered, priority);
           final best = sorted.isEmpty ? null : sorted.first;
           final color = Theme.of(context).colorScheme;
           final priorityText = priority.map((e) => e.label.toLowerCase()).join(' → ');
@@ -887,12 +891,24 @@ class _DetailsScreenState extends State<DetailsScreen> {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                '${results.length} result${results.length == 1 ? '' : 's'} returned • showing all',
+                                compatibilityOnly
+                                    ? '${sorted.length} compatible of ${results.length} results'
+                                    : '${results.length} result${results.length == 1 ? '' : 's'} returned • showing all',
                                 style: TextStyle(color: color.onSurfaceVariant),
                               ),
                             ],
                           ),
                         ),
+                        FilterChip(
+                          selected: compatibilityOnly,
+                          onSelected: (value) => setSheetState(() => compatibilityOnly = value),
+                          avatar: Icon(
+                            compatibilityOnly ? Icons.verified_rounded : Icons.shield_outlined,
+                            size: 18,
+                          ),
+                          label: const Text('Compatibility'),
+                        ),
+                        const SizedBox(width: 10),
                         OutlinedButton.icon(
                           onPressed: () => customizePriority(sheetContext, setSheetState),
                           icon: const Icon(Icons.tune_rounded),
@@ -958,7 +974,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             ),
                             trailing: index == 0
                                 ? const Chip(label: Text('Best'))
-                                : const Icon(Icons.chevron_right_rounded),
+                                : result.compatibilityFriendly
+                                    ? const Icon(Icons.verified_outlined, size: 20)
+                                    : const Icon(Icons.warning_amber_rounded, size: 20),
                             onTap: () => Navigator.pop(sheetContext, result),
                           );
                         },

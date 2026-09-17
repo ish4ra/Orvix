@@ -133,6 +133,23 @@ class SourceResult {
     return '${(bytes / kb).toStringAsFixed(0)} KB';
   }
 
+  int get compatibilityScore {
+    final name = title.toLowerCase();
+    var score = 100;
+    if (RegExp(r'\b(?:4320p|8k)\b').hasMatch(name)) score -= 45;
+    if (RegExp(r'\b(?:vvc|h[ ._-]?266)\b').hasMatch(name)) score -= 55;
+    if (RegExp(r'\bav1\b').hasMatch(name)) score -= 30;
+    if (RegExp(r'\bvp9\b').hasMatch(name)) score -= 20;
+    if (RegExp(r'\bhi10p\b').hasMatch(name)) score -= 15;
+    if (RegExp(r'\b(?:dolby[ ._-]?vision|dovi)\b').hasMatch(name) &&
+        !RegExp(r'\b(?:hdr10|hdr)\b').hasMatch(name)) {
+      score -= 20;
+    }
+    return score.clamp(0, 100).toInt();
+  }
+
+  bool get compatibilityFriendly => compatibilityScore >= 70;
+
   /// Auto-pick follows the same default priority shown in Source Engine:
   /// cache -> quality/source type -> resolution -> size -> seeders.
   int get preferenceScore {
