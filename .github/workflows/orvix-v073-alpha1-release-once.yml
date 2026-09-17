@@ -1,0 +1,148 @@
+name: Release Orvix v0.7.3-alpha.1 Once
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.3-alpha.1
+    paths:
+      - '.github/workflows/orvix-v073-alpha1-release-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate alpha version
+        shell: pwsh
+        run: |
+          $line = Get-Content pubspec.yaml | Where-Object { $_ -match '^version:' } | Select-Object -First 1
+          if (-not $line) { throw 'Version not found in pubspec.yaml' }
+          $version = (($line -replace '^version:\s*', '').Split('+')[0]).Trim()
+          if ($version -ne '0.7.3-alpha.1') { throw "Expected pubspec version 0.7.3-alpha.1 but found $version" }
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Preserve pinned Orvix icon hash
+        shell: pwsh
+        run: |
+          $icon = 'windows\runner\resources\app_icon.ico'
+          if (-not (Test-Path $icon)) { throw 'Pinned Orvix app icon is missing.' }
+          $hash = (Get-FileHash $icon -Algorithm SHA256).Hash
+          "ORVIX_ICON_HASH=$hash" >> $env:GITHUB_ENV
+
+      - name: Generate Windows runner
+        shell: pwsh
+        run: flutter create --platforms=windows --project-name orvix .
+
+      - name: Restore exact pinned Orvix icon
+        shell: pwsh
+        run: |
+          git checkout HEAD -- windows/runner/resources/app_icon.ico
+          $hash = (Get-FileHash 'windows\runner\resources\app_icon.ico' -Algorithm SHA256).Hash
+          if ($hash -ne $env:ORVIX_ICON_HASH) { throw 'Orvix icon changed during Flutter runner generation.' }
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze app sources
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Pack portable Windows build
+        shell: pwsh
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath "Orvix-v0.7.3-alpha.1-Windows-x64.zip" -Force
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
+          & $iscc "/DMyAppVersion=0.7.3-alpha.1" "installer\orvix.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+
+      - name: Publish GitHub prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = 'v0.7.3-alpha.1'
+          $zip = 'Orvix-v0.7.3-alpha.1-Windows-x64.zip'
+          $exe = 'installer-output/Orvix-Setup-v0.7.3-alpha.1-Windows-x64.exe'
+          $notes = @(
+            'Orvix v0.7.3-alpha.1 is a test prerelease for the current stabilization cycle.',
+            '',
+            'Highlights:',
+            '- Buffered AI Sinhala subtitles with automatic source timing calibration and manual sync fallback.',
+            '- English audio is preferred automatically when a correctly tagged English track exists.',
+            '- Richer title metadata, cast/director details, pinned-source continuity and improved account sync feedback.',
+            '- AIOStreams manifest integration and safer local-only storage for source credentials.',
+            '- Custom source result count instead of fixed 25/50/100/200 limits.',
+            '- Clearer Orvix branding in the navigation rail with the app icon beside the ORVIX wordmark.',
+            '- Direct / Free HTTP streams can play without PikPak or TorBox; torrent/magnet sources still require a connected cloud/debrid service.',
+            '',
+            'This is an alpha build. Keep v0.7.2 if you prefer the current stable build.'
+          ) -join "`n"
+
+          function Invoke-GhRetry {
+            param(
+              [Parameter(Mandatory=$true)][scriptblock]$Command,
+              [string]$Label = 'GitHub operation'
+            )
+            for ($attempt = 1; $attempt -le 5; $attempt++) {
+              & $Command
+              if ($LASTEXITCODE -eq 0) { return }
+              if ($attempt -eq 5) { throw "$Label failed after $attempt attempts." }
+              $delay = 5 * $attempt
+              Write-Host "$Label failed on attempt $attempt. Retrying in $delay seconds..."
+              Start-Sleep -Seconds $delay
+            }
+          }
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            Invoke-GhRetry -Label 'Create prerelease' -Command {
+              gh release create $tag --target "${{ github.sha }}" --title 'Orvix v0.7.3-alpha.1' --notes $notes --prerelease
+            }
+          } else {
+            Invoke-GhRetry -Label 'Update prerelease notes' -Command {
+              gh release edit $tag --title 'Orvix v0.7.3-alpha.1' --notes $notes --prerelease
+            }
+          }
+
+          Invoke-GhRetry -Label 'Upload portable build' -Command {
+            gh release upload $tag $zip --clobber
+          }
+          Invoke-GhRetry -Label 'Upload installer' -Command {
+            gh release upload $tag $exe --clobber
+          }
+
+      - name: Clean one-time release workflow from branch
+        if: success()
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/orvix-v073-alpha1-release-once.yml
+          git commit -m "chore: clean v0.7.3-alpha.1 one-time release workflow"
+          git push origin HEAD:orvix-v0.7.3-alpha.1
