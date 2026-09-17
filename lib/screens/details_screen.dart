@@ -4,6 +4,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
+import '../services/ai_sinhala_preferences_service.dart';
+import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/catalog_service.dart';
 import '../services/cloud_preferences_service.dart';
 import '../services/media_state_service.dart';
@@ -1409,6 +1411,38 @@ class _DetailsScreenState extends State<DetailsScreen> {
     EpisodeItem? episode,
   ) async {
     if (!mounted) return;
+
+    AiPreparedSubtitle? preparedAiSubtitle;
+    final aiEnabled = await AiSinhalaPreferencesService.isEnabled();
+    if (aiEnabled && AiSinhalaSubtitleService.canTranslate) {
+      setState(() {
+        _resolving = true;
+        _resolveProgress = null;
+        _status = 'Preparing Sinhala subtitles…';
+      });
+      try {
+        preparedAiSubtitle = await AiSinhalaSubtitleService.prepareBuffered(
+          item: item,
+          episode: episode,
+          onStatus: (message) {
+            if (!mounted) return;
+            setState(() => _status = message);
+          },
+        );
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'AI Sinhala could not be prepared for this title. Playing with normal subtitle options.',
+              ),
+            ),
+          );
+        }
+      }
+    }
+
+    if (!mounted) return;
     setState(() {
       _resolving = false;
       _resolveProgress = null;
@@ -1428,6 +1462,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
           mediaState: widget.mediaState,
           item: item,
           episode: episode,
+          aiSubtitle: preparedAiSubtitle,
           nextEpisodeLabel: next == null ? null : '${next.label} ${next.title}',
           onNext: next == null
               ? null

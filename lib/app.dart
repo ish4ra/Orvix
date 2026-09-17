@@ -7,6 +7,7 @@ import 'screens/home_screen.dart';
 import 'screens/library_screen.dart';
 import 'screens/media_library_screen.dart';
 import 'screens/search_screen.dart';
+import 'screens/settings_screen.dart';
 import 'screens/sources_screen.dart';
 import 'services/catalog_service.dart';
 import 'services/cloud_preferences_service.dart';
@@ -231,6 +232,7 @@ class _OrvixShellState extends State<_OrvixShell> {
         onAuthChanged: () => setState(() => _authRevision++),
       ),
       SourcesScreen(sources: widget.sources),
+      const SettingsScreen(),
       AccountScreen(
         key: ValueKey('account-$_authRevision'),
         onAuthChanged: _refreshAfterAccountChange,
@@ -308,6 +310,11 @@ class _OrvixShellState extends State<_OrvixShell> {
                   label: Text('Sources'),
                 ),
                 NavigationRailDestination(
+                  icon: Icon(Icons.settings_outlined),
+                  selectedIcon: Icon(Icons.settings_rounded),
+                  label: Text('Settings'),
+                ),
+                NavigationRailDestination(
                   icon: Icon(Icons.person_outline_rounded),
                   selectedIcon: Icon(Icons.person_rounded),
                   label: Text('Account'),
@@ -349,7 +356,7 @@ class _AboutScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Orvix v0.6',
+                'Orvix v0.7',
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w900),
               ),
               const SizedBox(height: 12),
