@@ -9,6 +9,7 @@ class EpisodeItem {
     this.overview,
     this.thumbnail,
     this.released,
+    this.rating,
   });
 
   final String id;
@@ -18,8 +19,10 @@ class EpisodeItem {
   final String? overview;
   final String? thumbnail;
   final String? released;
+  final double? rating;
 
-  String get label => 'S${season.toString().padLeft(2, '0')}E${episode.toString().padLeft(2, '0')}';
+  String get label =>
+      'S${season.toString().padLeft(2, '0')}E${episode.toString().padLeft(2, '0')}';
 
   DateTime? get releaseDate {
     final raw = released?.trim();
@@ -32,16 +35,56 @@ class EpisodeItem {
     return date != null && date.isAfter(DateTime.now());
   }
 
+  EpisodeItem withRating(double? value) {
+    if (value == null) return this;
+    final cleanOverview = _stripRatingPrefix(overview);
+    final decorated = cleanOverview == null || cleanOverview.isEmpty
+        ? '★ ${value.toStringAsFixed(1)}'
+        : '★ ${value.toStringAsFixed(1)}  $cleanOverview';
+    return EpisodeItem(
+      id: id,
+      season: season,
+      episode: episode,
+      title: title,
+      overview: decorated,
+      thumbnail: thumbnail,
+      released: released,
+      rating: value,
+    );
+  }
+
   factory EpisodeItem.fromCinemeta(Map<String, dynamic> json) {
+    final rawOverview =
+        json['overview']?.toString() ?? json['description']?.toString();
+    final rating = _readRating(
+      json['imdbRating'] ?? json['rating'] ?? json['vote_average'],
+    );
+    final overview = rating == null
+        ? rawOverview
+        : (rawOverview == null || rawOverview.isEmpty
+              ? '★ ${rating.toStringAsFixed(1)}'
+              : '★ ${rating.toStringAsFixed(1)}  $rawOverview');
+
     return EpisodeItem(
       id: (json['id'] ?? '').toString(),
       season: int.tryParse((json['season'] ?? '0').toString()) ?? 0,
       episode: int.tryParse((json['episode'] ?? '0').toString()) ?? 0,
       title: (json['title'] ?? json['name'] ?? 'Episode').toString(),
-      overview: json['overview']?.toString() ?? json['description']?.toString(),
+      overview: overview,
       thumbnail: json['thumbnail']?.toString(),
       released: json['released']?.toString(),
+      rating: rating,
     );
+  }
+
+  static double? _readRating(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '');
+  }
+
+  static String? _stripRatingPrefix(String? value) {
+    if (value == null) return null;
+    return value.replaceFirst(RegExp(r'^★\s*\d+(?:\.\d+)?\s*'), '').trim();
   }
 }
 
@@ -58,6 +101,10 @@ class MediaItem {
     this.runtime,
     this.genres = const [],
     this.episodes = const [],
+    this.cast = const [],
+    this.directors = const [],
+    this.country,
+    this.certification,
   });
 
   final String id;
@@ -71,6 +118,10 @@ class MediaItem {
   final String? runtime;
   final List<String> genres;
   final List<EpisodeItem> episodes;
+  final List<String> cast;
+  final List<String> directors;
+  final String? country;
+  final String? certification;
 
   int? get startYear {
     final match = RegExp(r'\b(?:19|20)\d{2}\b').firstMatch(year ?? '');
@@ -103,17 +154,23 @@ class MediaItem {
 
     final rawGenres = json['genres'];
     final genres = rawGenres is List
-        ? rawGenres.map((e) => e.toString()).where((e) => e.isNotEmpty).toList(growable: false)
+        ? rawGenres
+              .map((e) => e.toString())
+              .where((e) => e.isNotEmpty)
+              .toList(growable: false)
         : const <String>[];
 
     final rawVideos = json['videos'];
     final episodes = rawVideos is List
         ? rawVideos
-            .whereType<Map<String, dynamic>>()
-            .map(EpisodeItem.fromCinemeta)
-            .where((e) => e.season > 0 && e.episode > 0)
-            .toList(growable: false)
+              .whereType<Map<String, dynamic>>()
+              .map(EpisodeItem.fromCinemeta)
+              .where((e) => e.season > 0 && e.episode > 0)
+              .toList(growable: false)
         : const <EpisodeItem>[];
+
+    final cast = _stringList(json['cast']);
+    final directors = _stringList(json['director'] ?? json['directors']);
 
     return MediaItem(
       id: (json['id'] ?? '').toString(),
@@ -127,6 +184,40 @@ class MediaItem {
       runtime: json['runtime']?.toString(),
       genres: genres,
       episodes: episodes,
+      cast: cast,
+      directors: directors,
+      country: _stringValue(json['country']),
+      certification: _stringValue(
+        json['certification'] ?? json['ageRating'] ?? json['rated'],
+      ),
     );
+  }
+
+  static List<String> _stringList(dynamic value) {
+    if (value is List) {
+      return value
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList(growable: false);
+    }
+    final text = value?.toString().trim() ?? '';
+    if (text.isEmpty) return const [];
+    return text
+        .split(RegExp(r'\s*,\s*'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  static String? _stringValue(dynamic value) {
+    if (value is List) {
+      final items = value
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList(growable: false);
+      return items.isEmpty ? null : items.join(', ');
+    }
+    final text = value?.toString().trim() ?? '';
+    return text.isEmpty ? null : text;
   }
 }
