@@ -2,6 +2,7 @@
 
 ## v0.5.6 — customizable source browser
 
+- Added a **Smooth** source-ranking toggle that prioritizes likely easier-to-stream results instead of the normal size-descending priority: compatible formats first, then 1080p/720p, efficient x265/HEVC encodes, stronger seed counts, smaller files and cache. It only reorders results; it does not hide large releases.
 - Added a persistent result-count selector in the source picker: Top 25 / 50 / 100 / 200 / All.
 - Added per-title source pinning for movies and series-wide source-family pinning for TV. A pinned result is remembered, moved to the top when it is returned again, and becomes Quick Play's first choice.
 - Series pins prefer Stremio `bingeGroup` when available and otherwise reuse the same torrent-pack infohash across episode file indexes, following Debrify-style source binding without guessing the wrong episode.
