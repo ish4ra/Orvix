@@ -127,6 +127,8 @@ class CloudSyncService extends ChangeNotifier {
       final remoteLibrary = _map(remote['library']);
       final remoteProgress = _map(remote['progress']);
 
+      // Account settings win on first sign-in. Guest library/watch state is
+      // merged so a user does not lose items collected before creating/login.
       await _applySettings(prefs, remoteSettings);
       settings = _captureSettings(prefs);
 
@@ -243,8 +245,9 @@ class CloudSyncService extends ChangeNotifier {
     final timestampKey = _metaKey(userId, '${category}_at');
     final currentHash = _hash(snapshot);
     final previousHash = prefs.getString(hashKey);
-    var timestamp = DateTime.tryParse(prefs.getString(timestampKey) ?? '')?.toUtc() ??
-        DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    var timestamp =
+        DateTime.tryParse(prefs.getString(timestampKey) ?? '')?.toUtc() ??
+            DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
     if (previousHash != currentHash) {
       timestamp = DateTime.now().toUtc();
       await prefs.setString(hashKey, currentHash);
@@ -426,10 +429,14 @@ class CloudSyncService extends ChangeNotifier {
 
   Future<void> prepareForSignOut() async {
     if (!account.signedIn) return;
+    final userId = account.currentUser!.id;
     await syncNow();
     final prefs = await SharedPreferences.getInstance();
     await _clearSyncedLocalData(prefs);
+    await _clearSyncMetadata(prefs, userId);
     await prefs.remove(_lastUserKey);
+    _lastSyncedAt = null;
+    _lastError = null;
     notifyListeners();
   }
 
@@ -441,6 +448,17 @@ class CloudSyncService extends ChangeNotifier {
     await prefs.remove(_libraryKey);
     await prefs.remove(_watchlistKey);
     await prefs.remove(_progressKey);
+  }
+
+  Future<void> _clearSyncMetadata(
+    SharedPreferences prefs,
+    String userId,
+  ) async {
+    final prefix = 'orvix_sync_meta_${userId}_';
+    final keys = prefs.getKeys().where((key) => key.startsWith(prefix)).toList();
+    for (final key in keys) {
+      await prefs.remove(key);
+    }
   }
 
   bool _isSyncableSettingKey(String key) =>
@@ -479,12 +497,16 @@ class CloudSyncService extends ChangeNotifier {
 
   dynamic _canonicalize(dynamic value) {
     if (value is Map) {
-      final keys = value.keys.map((key) => key.toString()).toList()..sort();
+      final entries = value.entries.toList()
+        ..sort((a, b) => a.key.toString().compareTo(b.key.toString()));
       return <String, dynamic>{
-        for (final key in keys) key: _canonicalize(value[key]),
+        for (final entry in entries)
+          entry.key.toString(): _canonicalize(entry.value),
       };
     }
-    if (value is List) return value.map(_canonicalize).toList(growable: false);
+    if (value is List) {
+      return value.map(_canonicalize).toList(growable: false);
+    }
     return value;
   }
 
