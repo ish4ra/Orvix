@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 
 import 'models/media_item.dart';
+import 'screens/account_screen.dart';
 import 'screens/details_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/library_screen.dart';
 import 'screens/media_library_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/sources_screen.dart';
+import 'services/account_service.dart';
 import 'services/catalog_service.dart';
 import 'services/cloud_preferences_service.dart';
+import 'services/cloud_sync_service.dart';
 import 'services/media_state_service.dart';
 import 'services/pikpak_service.dart';
 import 'services/pikpak_transfer_service.dart';
@@ -32,6 +35,8 @@ class _OrvixAppState extends State<OrvixApp> {
   late final CloudPreferencesService _cloudPreferences;
   late final PlaybackService _playback;
   late final MediaStateService _mediaState;
+  late final AccountService _account;
+  late final CloudSyncService _cloudSync;
 
   @override
   void initState() {
@@ -44,10 +49,14 @@ class _OrvixAppState extends State<OrvixApp> {
     _cloudPreferences = CloudPreferencesService();
     _playback = PlaybackService();
     _mediaState = MediaStateService();
+    _account = AccountService();
+    _cloudSync = CloudSyncService(_account)..start();
   }
 
   @override
   void dispose() {
+    _cloudSync.dispose();
+    _account.dispose();
     _catalog.dispose();
     _pikpak.dispose();
     _transfer.dispose();
@@ -134,6 +143,8 @@ class _OrvixAppState extends State<OrvixApp> {
         cloudPreferences: _cloudPreferences,
         playback: _playback,
         mediaState: _mediaState,
+        account: _account,
+        cloudSync: _cloudSync,
       ),
     );
   }
@@ -149,6 +160,8 @@ class _OrvixShell extends StatefulWidget {
     required this.cloudPreferences,
     required this.playback,
     required this.mediaState,
+    required this.account,
+    required this.cloudSync,
   });
 
   final CatalogService catalog;
@@ -159,6 +172,8 @@ class _OrvixShell extends StatefulWidget {
   final CloudPreferencesService cloudPreferences;
   final PlaybackService playback;
   final MediaStateService mediaState;
+  final AccountService account;
+  final CloudSyncService cloudSync;
 
   @override
   State<_OrvixShell> createState() => _OrvixShellState();
@@ -168,6 +183,31 @@ class _OrvixShellState extends State<_OrvixShell> {
   int _index = 0;
   int _authRevision = 0;
   int _libraryRevision = 0;
+  int _settingsRevision = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.account.addListener(_accountChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.account.removeListener(_accountChanged);
+    super.dispose();
+  }
+
+  void _accountChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _cloudDataChanged() {
+    if (!mounted) return;
+    setState(() {
+      _libraryRevision++;
+      _settingsRevision++;
+    });
+  }
 
   Future<void> _openMedia(MediaItem item) async {
     await Navigator.of(context).push(
@@ -192,7 +232,7 @@ class _OrvixShellState extends State<_OrvixShell> {
   Widget build(BuildContext context) {
     final screens = <Widget>[
       HomeScreen(
-        key: ValueKey(_libraryRevision),
+        key: ValueKey('home-$_libraryRevision-$_settingsRevision'),
         catalog: widget.catalog,
         mediaState: widget.mediaState,
         onOpen: _openMedia,
@@ -212,7 +252,15 @@ class _OrvixShellState extends State<_OrvixShell> {
         playback: widget.playback,
         onAuthChanged: () => setState(() => _authRevision++),
       ),
-      SourcesScreen(sources: widget.sources),
+      SourcesScreen(
+        key: ValueKey('sources-$_settingsRevision'),
+        sources: widget.sources,
+      ),
+      AccountScreen(
+        account: widget.account,
+        cloudSync: widget.cloudSync,
+        onDataChanged: _cloudDataChanged,
+      ),
       const _AboutScreen(),
     ];
 
@@ -259,35 +307,48 @@ class _OrvixShellState extends State<_OrvixShell> {
                   ],
                 ),
               ),
-              destinations: const [
-                NavigationRailDestination(
+              destinations: [
+                const NavigationRailDestination(
                   icon: Icon(Icons.home_outlined),
                   selectedIcon: Icon(Icons.home_rounded),
                   label: Text('Home'),
                 ),
-                NavigationRailDestination(
+                const NavigationRailDestination(
                   icon: Icon(Icons.search_rounded),
                   selectedIcon: Icon(Icons.manage_search_rounded),
                   label: Text('Search'),
                 ),
-                NavigationRailDestination(
+                const NavigationRailDestination(
                   icon: Icon(Icons.video_library_outlined),
                   selectedIcon: Icon(Icons.video_library_rounded),
                   label: Text('Library'),
                 ),
-                NavigationRailDestination(
+                const NavigationRailDestination(
                   icon: Icon(Icons.cloud_outlined),
                   selectedIcon: Icon(Icons.cloud_rounded),
                   label: Text('Clouds'),
                 ),
-                NavigationRailDestination(
+                const NavigationRailDestination(
                   icon: Icon(Icons.hub_outlined),
                   selectedIcon: Icon(Icons.hub_rounded),
                   label: Text('Sources'),
                 ),
                 NavigationRailDestination(
-                  icon: Icon(Icons.settings_outlined),
-                  selectedIcon: Icon(Icons.settings_rounded),
+                  icon: Icon(
+                    widget.account.signedIn
+                        ? Icons.account_circle_outlined
+                        : Icons.person_outline_rounded,
+                  ),
+                  selectedIcon: Icon(
+                    widget.account.signedIn
+                        ? Icons.account_circle_rounded
+                        : Icons.person_rounded,
+                  ),
+                  label: Text(widget.account.signedIn ? 'Account' : 'Sign in'),
+                ),
+                const NavigationRailDestination(
+                  icon: Icon(Icons.info_outline_rounded),
+                  selectedIcon: Icon(Icons.info_rounded),
                   label: Text('About'),
                 ),
               ],
@@ -322,7 +383,7 @@ class _AboutScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Orvix v0.5',
+                'Orvix v0.6',
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w900),
               ),
               const SizedBox(height: 12),
@@ -331,6 +392,7 @@ class _AboutScreen extends StatelessWidget {
                 style: TextStyle(height: 1.55),
               ),
               const SizedBox(height: 24),
+              const _FeatureLine(Icons.person_outline_rounded, 'Optional Orvix account with local-first cloud sync for library, watch state and preferences'),
               const _FeatureLine(Icons.movie_filter_outlined, 'Cinemeta movie & TV discovery with instant type-ahead search'),
               const _FeatureLine(Icons.cloud_outlined, 'PikPak + TorBox cloud connections, cloud libraries and transfer bridge'),
               const _FeatureLine(Icons.hub_outlined, 'User-configured Stremio-compatible source providers'),
