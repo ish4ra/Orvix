@@ -609,7 +609,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     setState(() {
       _resolving = true;
       _resolveProgress = null;
-      _status = 'Checking your PikPak library for an exact match…';
+      _status = 'Checking connected libraries and playable sources…';
     });
 
     try {
@@ -670,6 +670,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
         return;
       }
 
+      final pikpakConnected = await widget.pikpak.isSignedIn;
+      final torboxConnected = await widget.torbox.isConnected;
+      final hasCloudConnection = pikpakConnected || torboxConnected;
+      final directResults =
+          results.where((result) => !result.isMagnet).toList(growable: false);
+
       SourceResult? chosen;
       if (autoUsePinned) {
         final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
@@ -687,8 +693,30 @@ class _DetailsScreenState extends State<DetailsScreen> {
           }
         }
       }
+      // A user without a cloud/debrid account should still get a one-click
+      // path when an addon returned a direct/free stream. Normal Play prefers
+      // the best direct result in that case; Find Sources still lets the user
+      // choose manually.
+      if (autoUsePinned &&
+          !hasCloudConnection &&
+          (chosen == null || chosen.isMagnet) &&
+          directResults.isNotEmpty) {
+        chosen = directResults.first;
+      }
+
       chosen ??= await _chooseSource(results, item, episode);
       if (chosen == null || !mounted) return;
+
+      if (!chosen.isMagnet) {
+        setState(() {
+          _resolving = true;
+          _resolveProgress = null;
+          _status = 'Opening direct stream…';
+        });
+        await _openPlayerUrl(chosen.resource, item, episode);
+        return;
+      }
+
       final cloud = await _chooseCloudProvider();
       if (cloud == null || !mounted) return;
       if (cloud == CloudProvider.torbox) {
@@ -718,7 +746,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         ),
         content: Text(
           configured.isEmpty
-              ? 'This title is not in your PikPak library. Configure a Stremio-compatible source provider, then Orvix can send a returned source to your selected cloud service and play it when ready.'
+              ? 'Configure a Stremio-compatible source provider. Direct / Free HTTP streams can play immediately without a cloud account; torrent or magnet sources still require PikPak or TorBox.'
               : 'Your configured providers did not return a source for this title. You can manage providers or try again.',
         ),
         actions: [
@@ -764,7 +792,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Connect PikPak or TorBox from Clouds first.'),
+            content: Text(
+              'This torrent source needs PikPak or TorBox. Direct / Free sources play without a debrid account.',
+            ),
           ),
         );
       }

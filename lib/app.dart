@@ -83,13 +83,16 @@ class _OrvixAppState extends State<OrvixApp> {
           color: const Color(0xFF0D120E),
           elevation: 0,
           margin: EdgeInsets.zero,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         ),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
-            textStyle: const TextStyle(fontWeight: FontWeight.w900, letterSpacing: .15),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+            textStyle: const TextStyle(
+                fontWeight: FontWeight.w900, letterSpacing: .15),
             backgroundColor: const Color(0xFFB9FF45),
             foregroundColor: const Color(0xFF081006),
             shadowColor: const Color(0x553CFF00),
@@ -101,14 +104,16 @@ class _OrvixAppState extends State<OrvixApp> {
             foregroundColor: const Color(0xFFCBFF75),
             side: const BorderSide(color: Color(0xFF426B2E)),
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             textStyle: const TextStyle(fontWeight: FontWeight.w800),
           ),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: const Color(0xFF0F1510),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
             borderSide: BorderSide.none,
@@ -260,13 +265,31 @@ class _OrvixShellState extends State<_OrvixShell> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.asset(
-                        'assets/branding/orvix_icon.png',
-                        width: 40,
-                        height: 40,
-                        fit: BoxFit.cover,
+                    Container(
+                      width: 52,
+                      height: 52,
+                      padding: const EdgeInsets.all(3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF081008),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: const Color(0xFF8FD43D),
+                          width: .8,
+                        ),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x443CFF00),
+                            blurRadius: 16,
+                            spreadRadius: 1,
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(13),
+                        child: Image.asset(
+                          'assets/branding/orvix_icon.png',
+                          fit: BoxFit.cover,
+                        ),
                       ),
                     ),
                     if (extended) ...[
@@ -275,8 +298,8 @@ class _OrvixShellState extends State<_OrvixShell> {
                         'ORVIX',
                         style: TextStyle(
                           fontWeight: FontWeight.w900,
-                          letterSpacing: 1.6,
-                          fontSize: 18,
+                          letterSpacing: 2.1,
+                          fontSize: 20,
                         ),
                       ),
                     ],
@@ -356,8 +379,11 @@ class _AboutScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Orvix v0.7',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w900),
+                'Orvix v0.7.3-alpha.1',
+                style: Theme.of(context)
+                    .textTheme
+                    .headlineMedium
+                    ?.copyWith(fontWeight: FontWeight.w900),
               ),
               const SizedBox(height: 12),
               const Text(
@@ -365,14 +391,22 @@ class _AboutScreen extends StatelessWidget {
                 style: TextStyle(height: 1.55),
               ),
               const SizedBox(height: 24),
-              const _FeatureLine(Icons.movie_filter_outlined, 'Rich movie & TV discovery with AIOMetadata/Cinemeta fallback'),
-              const _FeatureLine(Icons.cloud_outlined, 'PikPak + TorBox cloud connections, cloud libraries and transfer bridge'),
-              const _FeatureLine(Icons.person_outline_rounded, 'Optional Orvix account for Library, progress and preference sync'),
-              const _FeatureLine(Icons.hub_outlined, 'User-configured Stremio-compatible source providers'),
-              const _FeatureLine(Icons.play_circle_outline_rounded, 'media_kit / libmpv playback with custom controls and resume'),
-              const _FeatureLine(Icons.video_library_outlined, 'Personal Library, persistent watchlist, and multi-title Continue Watching'),
-              const _FeatureLine(Icons.dashboard_customize_outlined, 'Customizable Home rows including optional IMDb Top 250 shelves'),
-              const _FeatureLine(Icons.phone_android_outlined, 'Shared Flutter foundation for future Android & Android TV builds'),
+              const _FeatureLine(Icons.movie_filter_outlined,
+                  'Rich movie & TV discovery with AIOMetadata/Cinemeta fallback'),
+              const _FeatureLine(Icons.cloud_outlined,
+                  'PikPak + TorBox cloud connections, cloud libraries and transfer bridge'),
+              const _FeatureLine(Icons.person_outline_rounded,
+                  'Optional Orvix account for Library, progress and preference sync'),
+              const _FeatureLine(Icons.hub_outlined,
+                  'User-configured Stremio-compatible source providers'),
+              const _FeatureLine(Icons.play_circle_outline_rounded,
+                  'media_kit / libmpv playback with custom controls and resume'),
+              const _FeatureLine(Icons.video_library_outlined,
+                  'Personal Library, persistent watchlist, and multi-title Continue Watching'),
+              const _FeatureLine(Icons.dashboard_customize_outlined,
+                  'Customizable Home rows including optional IMDb Top 250 shelves'),
+              const _FeatureLine(Icons.phone_android_outlined,
+                  'Shared Flutter foundation for future Android & Android TV builds'),
             ],
           ),
         ),
