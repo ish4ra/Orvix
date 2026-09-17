@@ -34,20 +34,17 @@ jobs:
               p = Path(path)
               text = p.read_text(encoding='utf-8')
               if old not in text:
-                  raise SystemExit(f'Expected block not found in {path}: {old[:120]!r}')
+                  raise SystemExit(f'Expected block not found in {path}: {old[:160]!r}')
               p.write_text(text.replace(old, new, 1), encoding='utf-8')
 
           source = 'lib/services/source_provider_service.dart'
 
-          replace_once(
-              source,
+          replace_once(source,
               'enum SourceSortCriterion { releaseQuality, resolution, seeders, fileSize }',
-              'enum SourceSortCriterion { cache, releaseQuality, resolution, fileSize, seeders }',
-          )
+              'enum SourceSortCriterion { cache, releaseQuality, resolution, fileSize, seeders }')
 
-          replace_once(
-              source,
-              '''extension SourceSortCriterionLabel on SourceSortCriterion {
+          replace_once(source,
+          '''extension SourceSortCriterionLabel on SourceSortCriterion {
             String get label {
               switch (this) {
                 case SourceSortCriterion.releaseQuality:
@@ -61,7 +58,7 @@ jobs:
               }
             }
           }''',
-              '''extension SourceSortCriterionLabel on SourceSortCriterion {
+          '''extension SourceSortCriterionLabel on SourceSortCriterion {
             String get label {
               switch (this) {
                 case SourceSortCriterion.cache:
@@ -76,63 +73,51 @@ jobs:
                   return 'Seeders';
               }
             }
-          }''',
-          )
+          }''')
 
-          replace_once(
-              source,
+          replace_once(source,
               "      case SourceSortMode.quality:\n        return 'Source type';",
-              "      case SourceSortMode.quality:\n        return 'Quality';",
-          )
+              "      case SourceSortMode.quality:\n        return 'Quality';")
 
-          replace_once(
-              source,
-              '''    this.releaseQuality,
+          replace_once(source,
+          '''    this.releaseQuality,
               this.preferredGroup = false,
               this.seeders,''',
-              '''    this.releaseQuality,
+          '''    this.releaseQuality,
               this.preferredGroup = false,
               this.cached = false,
-              this.seeders,''',
-          )
+              this.seeders,''')
 
-          replace_once(
-              source,
-              '''  final String? releaseQuality;
+          replace_once(source,
+          '''  final String? releaseQuality;
             final bool preferredGroup;
             final int? seeders;''',
-              '''  final String? releaseQuality;
+          '''  final String? releaseQuality;
             final bool preferredGroup;
             final bool cached;
-            final int? seeders;''',
-          )
+            final int? seeders;''')
 
-          replace_once(
-              source,
+          replace_once(source,
               "  static const _priorityKey = 'orvix_source_priority_v4';",
-              "  static const _priorityKey = 'orvix_source_priority_v5';",
-          )
+              "  static const _priorityKey = 'orvix_source_priority_v5';")
 
-          replace_once(
-              source,
-              '''  static const defaultPriority = <SourceSortCriterion>[
+          replace_once(source,
+          '''  static const defaultPriority = <SourceSortCriterion>[
               SourceSortCriterion.releaseQuality,
               SourceSortCriterion.resolution,
               SourceSortCriterion.seeders,
               SourceSortCriterion.fileSize,
             ];''',
-              '''  static const defaultPriority = <SourceSortCriterion>[
+          '''  static const defaultPriority = <SourceSortCriterion>[
               SourceSortCriterion.cache,
               SourceSortCriterion.releaseQuality,
               SourceSortCriterion.resolution,
               SourceSortCriterion.fileSize,
               SourceSortCriterion.seeders,
-            ];''',
-          )
+            ];''')
 
-          replace_once(
-              source,
-              '''  int _criterionValue(SourceResult result, SourceSortCriterion criterion) {
+          replace_once(source,
+          '''  int _criterionValue(SourceResult result, SourceSortCriterion criterion) {
               switch (criterion) {
                 case SourceSortCriterion.releaseQuality:
                   return result.releaseQualityRank + (result.preferredGroup ? 50 : 0);
@@ -144,7 +129,7 @@ jobs:
                   return result.sizeBytes ?? 0;
               }
             }''',
-              '''  int _criterionValue(SourceResult result, SourceSortCriterion criterion) {
+          '''  int _criterionValue(SourceResult result, SourceSortCriterion criterion) {
               switch (criterion) {
                 case SourceSortCriterion.cache:
                   return result.cached ? 1 : 0;
@@ -157,139 +142,114 @@ jobs:
                 case SourceSortCriterion.seeders:
                   return result.seeders ?? -1;
               }
-            }''',
-          )
+            }''')
 
-          replace_once(
-              source,
-              '''    final seederRank = (seeders ?? -1).clamp(-1, 999999).toInt() + 1;
+          replace_once(source,
+          '''    final seederRank = (seeders ?? -1).clamp(-1, 999999).toInt() + 1;
               final sizeMb = ((sizeBytes ?? 0) ~/ (1024 * 1024))
                   .clamp(0, 999999)
                   .toInt();
 
               switch (sortMode) {''',
-              '''    final seederRank = (seeders ?? -1).clamp(-1, 999999).toInt() + 1;
+          '''    final seederRank = (seeders ?? -1).clamp(-1, 999999).toInt() + 1;
               final sizeMb = ((sizeBytes ?? 0) ~/ (1024 * 1024))
                   .clamp(0, 999999)
                   .toInt();
               final cacheRank = cached ? 1000000000000000000 : 0;
 
-              switch (sortMode) {''',
-          )
+              switch (sortMode) {''')
 
-          replace_once(
-              source,
-              '''        return qualityRank * 1000000000000 +
-                    seederRank * 1000000 +
-                    sizeMb;''',
-              '''        return cacheRank +
-                    qualityRank * 1000000000000 +
-                    seederRank * 1000000 +
-                    sizeMb;''',
-          )
-          replace_once(
-              source,
-              '''        return seederRank * 1000000000000 +
-                    qualityRank * 1000000 +
-                    sizeMb;''',
-              '''        return cacheRank +
-                    seederRank * 1000000000000 +
-                    qualityRank * 1000000 +
-                    sizeMb;''',
-          )
-          replace_once(
-              source,
-              '''        return sizeMb * 1000000000 +
-                    qualityRank * 1000000 +
-                    seederRank;''',
-              '''        return cacheRank +
-                    sizeMb * 1000000000 +
-                    qualityRank * 1000000 +
-                    seederRank;''',
-          )
+          replace_once(source,
+          '''        return qualityRank * 1000000000000 +
+                  seederRank * 1000000 +
+                  sizeMb;''',
+          '''        return cacheRank +
+                  qualityRank * 1000000000000 +
+                  seederRank * 1000000 +
+                  sizeMb;''')
 
-          replace_once(
-              source,
-              '''        final seeders = _guessSeeders(raw, metadataText);
+          replace_once(source,
+          '''        return seederRank * 1000000000000 +
+                  qualityRank * 1000000 +
+                  sizeMb;''',
+          '''        return cacheRank +
+                  seederRank * 1000000000000 +
+                  qualityRank * 1000000 +
+                  sizeMb;''')
+
+          replace_once(source,
+          '''        return sizeMb * 1000000000 +
+                  qualityRank * 1000000 +
+                  seederRank;''',
+          '''        return cacheRank +
+                  sizeMb * 1000000000 +
+                  qualityRank * 1000000 +
+                  seederRank;''')
+
+          replace_once(source,
+          '''        final seeders = _guessSeeders(raw, metadataText);
                 final sizeBytes = _guessSizeBytes(raw, metadataText);
 
                 String? resource;''',
-              '''        final seeders = _guessSeeders(raw, metadataText);
+          '''        final seeders = _guessSeeders(raw, metadataText);
                 final sizeBytes = _guessSizeBytes(raw, metadataText);
                 final cacheHint = _guessCached(raw, hints, metadataText);
 
-                String? resource;''',
-          )
+                String? resource;''')
 
-          replace_once(
-              source,
-              '''        if (resource == null) continue;
+          replace_once(source,
+          '''        if (resource == null) continue;
 
                 // Existing source sheet renders two title lines.''',
-              '''        if (resource == null) continue;
-                // Direct Stremio streams are immediately playable, so treat them
-                // as instant/cached alongside explicit addon cache metadata.
+          '''        if (resource == null) continue;
+                // Direct Stremio streams are immediately playable. Treat them
+                // as instant/cached together with explicit addon cache metadata.
                 final cached = cacheHint || !isMagnet;
 
-                // Existing source sheet renders two title lines.''',
-          )
+                // Existing source sheet renders two title lines.''')
 
-          replace_once(
-              source,
-              '''        final statParts = <String>[
+          replace_once(source,
+          '''        final statParts = <String>[
                   if (preferredGroup) '⭐ Preferred',
                   if (releaseQuality != null) '🎞 $releaseQuality',
                   if (quality != null) '📺 $quality',
                   '👥 ${seeders?.toString() ?? '—'} seeders',
                   '💾 ${_formatSize(sizeBytes) ?? 'size unknown'}',
                 ];''',
-              '''        final statParts = <String>[
+          '''        final statParts = <String>[
                   if (cached) '⚡ Cached',
                   if (releaseQuality != null) '🎞 $releaseQuality',
                   if (quality != null) '📺 $quality',
                   '💾 ${_formatSize(sizeBytes) ?? 'size unknown'}',
                   '👥 ${seeders?.toString() ?? '—'} seeders',
                   if (preferredGroup) '⭐ Preferred',
-                ];''',
-          )
+                ];''')
 
-          replace_once(
-              source,
-              '''            releaseQuality: releaseQuality,
+          replace_once(source,
+          '''            releaseQuality: releaseQuality,
                     preferredGroup: preferredGroup,
                     seeders: seeders,''',
-              '''            releaseQuality: releaseQuality,
+          '''            releaseQuality: releaseQuality,
                     preferredGroup: preferredGroup,
                     cached: cached,
-                    seeders: seeders,''',
-          )
+                    seeders: seeders,''')
 
-          replace_once(
-              source,
-              '''  String? _guessReleaseQuality(String value) {''',
-              '''  bool _guessCached(
+          replace_once(source,
+          '''  String? _guessReleaseQuality(String value) {''',
+          '''  bool _guessCached(
               Map<String, dynamic> raw,
               Map<String, dynamic>? hints,
               String value,
             ) {
               final candidates = <dynamic>[
-                raw['cached'],
-                raw['isCached'],
-                raw['is_cached'],
-                raw['instant'],
-                raw['instantAvailability'],
-                raw['instant_availability'],
-                hints?['cached'],
-                hints?['isCached'],
-                hints?['is_cached'],
-                hints?['instant'],
-                hints?['instantAvailability'],
-                hints?['instant_availability'],
+                raw['cached'], raw['isCached'], raw['is_cached'],
+                raw['instant'], raw['instantAvailability'], raw['instant_availability'],
+                hints?['cached'], hints?['isCached'], hints?['is_cached'],
+                hints?['instant'], hints?['instantAvailability'], hints?['instant_availability'],
               ];
               for (final candidate in candidates) {
                 if (_truthy(candidate)) return true;
               }
-
               final lower = value.toLowerCase();
               if (lower.contains('cached')) return true;
               return RegExp(
@@ -306,36 +266,20 @@ jobs:
                   .contains(normalized);
             }
 
-            String? _guessReleaseQuality(String value) {''',
-          )
+            String? _guessReleaseQuality(String value) {''')
 
-          replace_once(
-              'lib/screens/sources_screen.dart',
+          replace_once('lib/screens/sources_screen.dart',
               'Drag to choose exactly how sources are ranked. Default is resolution → source type → file size → seeders.',
-              'Drag to choose exactly how sources are ranked. Default is cache → quality → resolution → size → seeders.',
-          )
+              'Drag to choose exactly how sources are ranked. Default is cache → quality → resolution → size → seeders.')
 
-          replace_once(
-              'pubspec.yaml',
-              'version: 0.5.1+21',
-              'version: 0.5.2+22',
-          )
-
-          replace_once(
-              'installer/orvix.iss',
-              '#define MyAppVersion "0.5.0"',
-              '#define MyAppVersion "0.5.2"',
-          )
-          replace_once(
-              'installer/orvix.iss',
+          replace_once('pubspec.yaml', 'version: 0.5.1+21', 'version: 0.5.2+22')
+          replace_once('installer/orvix.iss', '#define MyAppVersion "0.5.0"', '#define MyAppVersion "0.5.2"')
+          replace_once('installer/orvix.iss',
               'Name: "{autoprograms}\\Orvix"; Filename: "{app}\\{#MyAppExeName}"; WorkingDir: "{app}"',
-              'Name: "{autoprograms}\\Orvix"; Filename: "{app}\\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\\{#MyAppExeName}"',
-          )
-          replace_once(
-              'installer/orvix.iss',
+              'Name: "{autoprograms}\\Orvix"; Filename: "{app}\\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\\{#MyAppExeName}"')
+          replace_once('installer/orvix.iss',
               'Name: "{autodesktop}\\Orvix"; Filename: "{app}\\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon',
-              'Name: "{autodesktop}\\Orvix"; Filename: "{app}\\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\\{#MyAppExeName}"; Tasks: desktopicon',
-          )
+              'Name: "{autodesktop}\\Orvix"; Filename: "{app}\\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\\{#MyAppExeName}"; Tasks: desktopicon')
 
           changelog = Path('CHANGELOG.md')
           text = changelog.read_text(encoding='utf-8')
@@ -356,7 +300,7 @@ jobs:
           $pubspec = Get-Content pubspec.yaml -Raw
           if ($pubspec -notmatch 'image_path:\s*assets/branding/orvix_icon.png') { throw 'Launcher icon is not wired to the supplied Orvix icon.' }
           $iss = Get-Content installer/orvix.iss -Raw
-          if ($iss -notmatch 'SetupIconFile=.*app_icon.ico') { throw 'Installer icon is not wired to the generated app icon.' }
+          if ($iss -notmatch 'SetupIconFile=.*app_icon.ico') { throw 'Installer icon is not wired to generated app icon.' }
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -388,12 +332,12 @@ jobs:
         shell: pwsh
         run: |
           $candidates = @(
-            "${env:ProgramFiles(x86)}\\Inno Setup 6\\ISCC.exe",
-            "$env:ProgramFiles\\Inno Setup 6\\ISCC.exe"
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
           )
           $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
-          & $iscc '/DMyAppVersion=0.5.2' 'installer\\orvix.iss'
+          & $iscc '/DMyAppVersion=0.5.2' 'installer\orvix.iss'
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
 
       - name: Commit validated v0.5.2 patch and remove helper
