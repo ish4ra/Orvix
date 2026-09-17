@@ -1,0 +1,52 @@
+name: Apply Orvix alpha.2 local P2P patch once
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.3-alpha.2
+    paths:
+      - '.github/workflows/alpha2-local-p2p-patch-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: orvix-v0.7.3-alpha.2
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Apply local P2P integration
+        run: python tools/patch_alpha2_local_p2p.py
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Format changed Dart
+        run: dart format lib/app.dart lib/screens/details_screen.dart lib/services/local_torrent_service.dart
+
+      - name: Analyze app sources
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Commit validated source and clean patch helpers
+        shell: pwsh
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lib/app.dart lib/screens/details_screen.dart lib/services/local_torrent_service.dart pubspec.yaml licenses/stream-server
+          git commit -m 'feat: add built-in local P2P torrent streaming' || echo 'No source changes to commit'
+          git rm tools/patch_alpha2_local_p2p.py .github/workflows/alpha2-local-p2p-patch-once.yml
+          git commit -m 'chore: clean alpha.2 one-time patch helpers'
+          git push origin HEAD:orvix-v0.7.3-alpha.2
