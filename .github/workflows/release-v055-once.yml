@@ -1,0 +1,113 @@
+name: Release Orvix v0.5.5 Once
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/release-v055-once.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: orvix-v055-release-once
+  cancel-in-progress: false
+
+jobs:
+  build-release-cleanup:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Preserve current Windows icon hash
+        shell: pwsh
+        run: |
+          $icon = 'windows\runner\resources\app_icon.ico'
+          if (-not (Test-Path $icon)) { throw 'Orvix Windows icon is missing.' }
+          $hash = (Get-FileHash $icon -Algorithm SHA256).Hash
+          "ORVIX_ICON_HASH=$hash" >> $env:GITHUB_ENV
+
+      - name: Clean old build artifacts
+        run: flutter clean
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze app sources
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Verify icon source was untouched
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash 'windows\runner\resources\app_icon.ico' -Algorithm SHA256).Hash
+          if ($hash -ne $env:ORVIX_ICON_HASH) { throw 'Windows icon changed during the build.' }
+
+      - name: Pack portable Windows build
+        shell: pwsh
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath 'Orvix-v0.5.5-Windows-x64.zip' -Force
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
+          & $iscc '/DMyAppVersion=0.5.5' 'installer\orvix.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+
+      - name: Publish v0.5.5 release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = 'Orvix-v0.5.5-Windows-x64.zip'
+          $exe = 'installer-output/Orvix-Setup-v0.5.5-Windows-x64.exe'
+          @'
+          Orvix v0.5.5
+
+          - Adds a 512 MiB smart VOD buffer with roughly 3 minutes of read-ahead.
+          - Adds longer network patience and reconnect handling for transient stream drops.
+          - Shows buffered-ahead progress on the player timeline.
+          - Adds an optional Compatibility filter in the source picker for known-risk formats such as AV1, 8K, Hi10P/H.264 10-bit, and Dolby Vision-only releases.
+          - File size is not treated as a compatibility problem, so large healthy remuxes remain eligible.
+          - Keeps the existing manually fixed Windows icon untouched.
+          '@ | Set-Content release-notes.md
+
+          gh release view v0.5.5 *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload v0.5.5 $zip $exe --clobber
+          } else {
+            gh release create v0.5.5 $zip $exe `
+              --target 'b1a4577f4fc9181ecb16009ac0d3b688dde563d3' `
+              --title 'Orvix v0.5.5' `
+              --notes-file release-notes.md
+          }
+
+      - name: Remove one-time workflow
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/release-v055-once.yml
+          git commit -m "ci: remove one-time v0.5.5 release helper"
+          git push origin HEAD:main
