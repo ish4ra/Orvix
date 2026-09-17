@@ -26,6 +26,9 @@ concurrency:
 jobs:
   build-windows:
     runs-on: windows-latest
+    env:
+      ORVIX_SUPABASE_URL: ${{ secrets.ORVIX_SUPABASE_URL }}
+      ORVIX_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.ORVIX_SUPABASE_PUBLISHABLE_KEY }}
 
     steps:
       - name: Checkout
@@ -49,6 +52,17 @@ jobs:
           $actual = "${{ github.ref_name }}"
           if ($actual -ne $expected) {
             throw "Release tag $actual does not match pubspec version $expected"
+          }
+
+      - name: Validate account backend for release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:ORVIX_SUPABASE_URL)) {
+            throw 'Missing repository secret ORVIX_SUPABASE_URL.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:ORVIX_SUPABASE_PUBLISHABLE_KEY)) {
+            throw 'Missing repository secret ORVIX_SUPABASE_PUBLISHABLE_KEY.'
           }
 
       - name: Set up Flutter
@@ -83,7 +97,11 @@ jobs:
         run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
 
       - name: Build Windows release
-        run: flutter build windows --release
+        shell: pwsh
+        run: |
+          flutter build windows --release `
+            "--dart-define=ORVIX_SUPABASE_URL=$env:ORVIX_SUPABASE_URL" `
+            "--dart-define=ORVIX_SUPABASE_PUBLISHABLE_KEY=$env:ORVIX_SUPABASE_PUBLISHABLE_KEY"
 
       - name: Pack portable Windows build
         shell: pwsh
