@@ -588,6 +588,111 @@ class SourceProviderService {
     return 180;
   }
 
+
+  /// Playback ordering aimed at users who are not relying on a paid debrid
+  /// cache. Seeder HEALTH is the strongest signal, but raw seeder counts do
+  /// not grow forever: once a swarm is healthy, release quality and resolution
+  /// decide the order so a heavily-seeded low-quality encode cannot dominate.
+  List<SourceResult> sortForFreeStreaming(Iterable<SourceResult> results) {
+    final out = results.toList();
+    out.sort(_compareFreeStreaming);
+    return out;
+  }
+
+  int _compareFreeStreaming(SourceResult a, SourceResult b) {
+    final scoreCmp = _freeStreamingScore(b).compareTo(_freeStreamingScore(a));
+    if (scoreCmp != 0) return scoreCmp;
+
+    // Inside the same health/quality bucket, prefer the stronger swarm.
+    final seedCmp = (b.seeders ?? -1).compareTo(a.seeders ?? -1);
+    if (seedCmp != 0) return seedCmp;
+
+    // Then prefer the smaller payload as a final bandwidth-friendly tie break.
+    final aSize = a.sizeBytes;
+    final bSize = b.sizeBytes;
+    if (aSize != null && bSize != null && aSize != bSize) {
+      return aSize.compareTo(bSize);
+    }
+    if (aSize != null && bSize == null) return -1;
+    if (aSize == null && bSize != null) return 1;
+
+    return a.title.compareTo(b.title);
+  }
+
+  int _freeStreamingScore(SourceResult result) {
+    final seedHealth = _freeSeederHealthRank(result.seeders);
+    final release = _freeReleaseRank(result);
+    final resolution = _freeResolutionRank(result);
+    final size = _freeSizeEfficiencyRank(result);
+    final compatibility = result.compatibilityFriendly ? 1 : 0;
+
+    // Seeder health dominates. The remaining factors refine results within a
+    // health tier instead of allowing a 300-seeder CAM/480p row to win merely
+    // because its raw seeder number is enormous.
+    return seedHealth * 100000 +
+        release * 1000 +
+        resolution * 100 +
+        size * 10 +
+        compatibility;
+  }
+
+  int _freeSeederHealthRank(int? seeders) {
+    final value = seeders ?? 0;
+    if (value >= 100) return 6;
+    if (value >= 50) return 5;
+    if (value >= 25) return 4;
+    if (value >= 10) return 3;
+    if (value >= 3) return 2;
+    if (value >= 1) return 1;
+    return 0;
+  }
+
+  int _freeReleaseRank(SourceResult result) {
+    var rank = switch (result.releaseQuality?.toUpperCase()) {
+      'WEB-DL' => 8,
+      'WEBRIP' => 7,
+      'BLURAY' => 7,
+      'HDTV' => 5,
+      // Remux is excellent quality but commonly too large for free real-time
+      // torrent playback, so it deliberately sits below efficient encodes.
+      'REMUX' => 4,
+      'DVD' => 2,
+      'CAM' => 0,
+      _ => 3,
+    };
+    if (result.preferredGroup) rank += 1;
+    return rank;
+  }
+
+  int _freeResolutionRank(SourceResult result) {
+    switch (result.quality?.toUpperCase()) {
+      case '1080P':
+        return 6;
+      case '720P':
+        return 5;
+      case '1440P':
+        return 4;
+      case '2160P':
+      case '4K':
+        return 3;
+      case '480P':
+        return 1;
+      default:
+        return 2;
+    }
+  }
+
+  int _freeSizeEfficiencyRank(SourceResult result) {
+    final bytes = result.sizeBytes;
+    if (bytes == null || bytes <= 0) return 3;
+    const gb = 1024 * 1024 * 1024;
+    if (bytes < 150 * 1024 * 1024) return 1;
+    if (bytes <= 8 * gb) return 5;
+    if (bytes <= 15 * gb) return 4;
+    if (bytes <= 30 * gb) return 2;
+    return 0;
+  }
+
   Future<void> addAddonUrl(String raw) async {
     final normalized = _normalizeAddonUrl(raw);
     if (normalized == null) {

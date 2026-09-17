@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'models/media_item.dart';
+import 'screens/account_screen.dart';
 import 'screens/details_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/library_screen.dart';
@@ -10,6 +11,7 @@ import 'screens/sources_screen.dart';
 import 'services/catalog_service.dart';
 import 'services/cloud_preferences_service.dart';
 import 'services/media_state_service.dart';
+import 'services/orvix_account_service.dart';
 import 'services/pikpak_service.dart';
 import 'services/pikpak_transfer_service.dart';
 import 'services/playback_service.dart';
@@ -169,6 +171,14 @@ class _OrvixShellState extends State<_OrvixShell> {
   int _authRevision = 0;
   int _libraryRevision = 0;
 
+  void _refreshAfterAccountChange() {
+    if (!mounted) return;
+    setState(() {
+      _authRevision++;
+      _libraryRevision++;
+    });
+  }
+
   Future<void> _openMedia(MediaItem item) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -185,7 +195,15 @@ class _OrvixShellState extends State<_OrvixShell> {
         ),
       ),
     );
+    try {
+      await OrvixAccountService.pushLocalStateIfSignedIn();
+    } catch (_) {}
     if (mounted) setState(() => _libraryRevision++);
+  }
+
+  void _selectDestination(int value) {
+    setState(() => _index = value);
+    OrvixAccountService.pushLocalStateIfSignedIn().catchError((_) {});
   }
 
   @override
@@ -213,6 +231,10 @@ class _OrvixShellState extends State<_OrvixShell> {
         onAuthChanged: () => setState(() => _authRevision++),
       ),
       SourcesScreen(sources: widget.sources),
+      AccountScreen(
+        key: ValueKey('account-$_authRevision'),
+        onAuthChanged: _refreshAfterAccountChange,
+      ),
       const _AboutScreen(),
     ];
 
@@ -226,7 +248,7 @@ class _OrvixShellState extends State<_OrvixShell> {
             ),
             child: NavigationRail(
               selectedIndex: _index,
-              onDestinationSelected: (value) => setState(() => _index = value),
+              onDestinationSelected: _selectDestination,
               extended: extended,
               minWidth: 78,
               minExtendedWidth: 218,
@@ -286,8 +308,13 @@ class _OrvixShellState extends State<_OrvixShell> {
                   label: Text('Sources'),
                 ),
                 NavigationRailDestination(
-                  icon: Icon(Icons.settings_outlined),
-                  selectedIcon: Icon(Icons.settings_rounded),
+                  icon: Icon(Icons.person_outline_rounded),
+                  selectedIcon: Icon(Icons.person_rounded),
+                  label: Text('Account'),
+                ),
+                NavigationRailDestination(
+                  icon: Icon(Icons.info_outline_rounded),
+                  selectedIcon: Icon(Icons.info_rounded),
                   label: Text('About'),
                 ),
               ],
@@ -322,7 +349,7 @@ class _AboutScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Orvix v0.5',
+                'Orvix v0.6',
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w900),
               ),
               const SizedBox(height: 12),
@@ -331,8 +358,9 @@ class _AboutScreen extends StatelessWidget {
                 style: TextStyle(height: 1.55),
               ),
               const SizedBox(height: 24),
-              const _FeatureLine(Icons.movie_filter_outlined, 'Cinemeta movie & TV discovery with instant type-ahead search'),
+              const _FeatureLine(Icons.movie_filter_outlined, 'Rich movie & TV discovery with AIOMetadata/Cinemeta fallback'),
               const _FeatureLine(Icons.cloud_outlined, 'PikPak + TorBox cloud connections, cloud libraries and transfer bridge'),
+              const _FeatureLine(Icons.person_outline_rounded, 'Optional Orvix account for Library, progress and preference sync'),
               const _FeatureLine(Icons.hub_outlined, 'User-configured Stremio-compatible source providers'),
               const _FeatureLine(Icons.play_circle_outline_rounded, 'media_kit / libmpv playback with custom controls and resume'),
               const _FeatureLine(Icons.video_library_outlined, 'Personal Library, persistent watchlist, and multi-title Continue Watching'),
