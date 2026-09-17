@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - orvix-v0.5.0-dev
+      - orvix-v0.6.0-cloud-sync
     tags:
       - 'v*'
     paths:
