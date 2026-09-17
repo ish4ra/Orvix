@@ -1,0 +1,408 @@
+name: Apply Orvix v0.5.2 Priority + Icon Once
+
+on:
+  push:
+    branches:
+      - orvix-v0.5.2-priority-icon
+    paths:
+      - '.github/workflows/orvix-v052-priority-icon-once.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: orvix-v052-priority-icon-once
+  cancel-in-progress: false
+
+jobs:
+  patch-and-validate:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: orvix-v0.5.2-priority-icon
+
+      - name: Apply source priority, cache metadata, icon wiring, and version bump
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'Expected block not found in {path}: {old[:120]!r}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          source = 'lib/services/source_provider_service.dart'
+
+          replace_once(
+              source,
+              'enum SourceSortCriterion { releaseQuality, resolution, seeders, fileSize }',
+              'enum SourceSortCriterion { cache, releaseQuality, resolution, fileSize, seeders }',
+          )
+
+          replace_once(
+              source,
+              '''extension SourceSortCriterionLabel on SourceSortCriterion {
+            String get label {
+              switch (this) {
+                case SourceSortCriterion.releaseQuality:
+                  return 'Source type';
+                case SourceSortCriterion.resolution:
+                  return 'Resolution';
+                case SourceSortCriterion.seeders:
+                  return 'Seeders';
+                case SourceSortCriterion.fileSize:
+                  return 'File size';
+              }
+            }
+          }''',
+              '''extension SourceSortCriterionLabel on SourceSortCriterion {
+            String get label {
+              switch (this) {
+                case SourceSortCriterion.cache:
+                  return 'Cache';
+                case SourceSortCriterion.releaseQuality:
+                  return 'Quality';
+                case SourceSortCriterion.resolution:
+                  return 'Resolution';
+                case SourceSortCriterion.fileSize:
+                  return 'Size';
+                case SourceSortCriterion.seeders:
+                  return 'Seeders';
+              }
+            }
+          }''',
+          )
+
+          replace_once(
+              source,
+              "      case SourceSortMode.quality:\n        return 'Source type';",
+              "      case SourceSortMode.quality:\n        return 'Quality';",
+          )
+
+          replace_once(
+              source,
+              '''    this.releaseQuality,
+              this.preferredGroup = false,
+              this.seeders,''',
+              '''    this.releaseQuality,
+              this.preferredGroup = false,
+              this.cached = false,
+              this.seeders,''',
+          )
+
+          replace_once(
+              source,
+              '''  final String? releaseQuality;
+            final bool preferredGroup;
+            final int? seeders;''',
+              '''  final String? releaseQuality;
+            final bool preferredGroup;
+            final bool cached;
+            final int? seeders;''',
+          )
+
+          replace_once(
+              source,
+              "  static const _priorityKey = 'orvix_source_priority_v4';",
+              "  static const _priorityKey = 'orvix_source_priority_v5';",
+          )
+
+          replace_once(
+              source,
+              '''  static const defaultPriority = <SourceSortCriterion>[
+              SourceSortCriterion.releaseQuality,
+              SourceSortCriterion.resolution,
+              SourceSortCriterion.seeders,
+              SourceSortCriterion.fileSize,
+            ];''',
+              '''  static const defaultPriority = <SourceSortCriterion>[
+              SourceSortCriterion.cache,
+              SourceSortCriterion.releaseQuality,
+              SourceSortCriterion.resolution,
+              SourceSortCriterion.fileSize,
+              SourceSortCriterion.seeders,
+            ];''',
+          )
+
+          replace_once(
+              source,
+              '''  int _criterionValue(SourceResult result, SourceSortCriterion criterion) {
+              switch (criterion) {
+                case SourceSortCriterion.releaseQuality:
+                  return result.releaseQualityRank + (result.preferredGroup ? 50 : 0);
+                case SourceSortCriterion.resolution:
+                  return result.qualityRank;
+                case SourceSortCriterion.seeders:
+                  return result.seeders ?? -1;
+                case SourceSortCriterion.fileSize:
+                  return result.sizeBytes ?? 0;
+              }
+            }''',
+              '''  int _criterionValue(SourceResult result, SourceSortCriterion criterion) {
+              switch (criterion) {
+                case SourceSortCriterion.cache:
+                  return result.cached ? 1 : 0;
+                case SourceSortCriterion.releaseQuality:
+                  return result.releaseQualityRank + (result.preferredGroup ? 50 : 0);
+                case SourceSortCriterion.resolution:
+                  return result.qualityRank;
+                case SourceSortCriterion.fileSize:
+                  return result.sizeBytes ?? 0;
+                case SourceSortCriterion.seeders:
+                  return result.seeders ?? -1;
+              }
+            }''',
+          )
+
+          replace_once(
+              source,
+              '''    final seederRank = (seeders ?? -1).clamp(-1, 999999).toInt() + 1;
+              final sizeMb = ((sizeBytes ?? 0) ~/ (1024 * 1024))
+                  .clamp(0, 999999)
+                  .toInt();
+
+              switch (sortMode) {''',
+              '''    final seederRank = (seeders ?? -1).clamp(-1, 999999).toInt() + 1;
+              final sizeMb = ((sizeBytes ?? 0) ~/ (1024 * 1024))
+                  .clamp(0, 999999)
+                  .toInt();
+              final cacheRank = cached ? 1000000000000000000 : 0;
+
+              switch (sortMode) {''',
+          )
+
+          replace_once(
+              source,
+              '''        return qualityRank * 1000000000000 +
+                    seederRank * 1000000 +
+                    sizeMb;''',
+              '''        return cacheRank +
+                    qualityRank * 1000000000000 +
+                    seederRank * 1000000 +
+                    sizeMb;''',
+          )
+          replace_once(
+              source,
+              '''        return seederRank * 1000000000000 +
+                    qualityRank * 1000000 +
+                    sizeMb;''',
+              '''        return cacheRank +
+                    seederRank * 1000000000000 +
+                    qualityRank * 1000000 +
+                    sizeMb;''',
+          )
+          replace_once(
+              source,
+              '''        return sizeMb * 1000000000 +
+                    qualityRank * 1000000 +
+                    seederRank;''',
+              '''        return cacheRank +
+                    sizeMb * 1000000000 +
+                    qualityRank * 1000000 +
+                    seederRank;''',
+          )
+
+          replace_once(
+              source,
+              '''        final seeders = _guessSeeders(raw, metadataText);
+                final sizeBytes = _guessSizeBytes(raw, metadataText);
+
+                String? resource;''',
+              '''        final seeders = _guessSeeders(raw, metadataText);
+                final sizeBytes = _guessSizeBytes(raw, metadataText);
+                final cacheHint = _guessCached(raw, hints, metadataText);
+
+                String? resource;''',
+          )
+
+          replace_once(
+              source,
+              '''        if (resource == null) continue;
+
+                // Existing source sheet renders two title lines.''',
+              '''        if (resource == null) continue;
+                // Direct Stremio streams are immediately playable, so treat them
+                // as instant/cached alongside explicit addon cache metadata.
+                final cached = cacheHint || !isMagnet;
+
+                // Existing source sheet renders two title lines.''',
+          )
+
+          replace_once(
+              source,
+              '''        final statParts = <String>[
+                  if (preferredGroup) '⭐ Preferred',
+                  if (releaseQuality != null) '🎞 $releaseQuality',
+                  if (quality != null) '📺 $quality',
+                  '👥 ${seeders?.toString() ?? '—'} seeders',
+                  '💾 ${_formatSize(sizeBytes) ?? 'size unknown'}',
+                ];''',
+              '''        final statParts = <String>[
+                  if (cached) '⚡ Cached',
+                  if (releaseQuality != null) '🎞 $releaseQuality',
+                  if (quality != null) '📺 $quality',
+                  '💾 ${_formatSize(sizeBytes) ?? 'size unknown'}',
+                  '👥 ${seeders?.toString() ?? '—'} seeders',
+                  if (preferredGroup) '⭐ Preferred',
+                ];''',
+          )
+
+          replace_once(
+              source,
+              '''            releaseQuality: releaseQuality,
+                    preferredGroup: preferredGroup,
+                    seeders: seeders,''',
+              '''            releaseQuality: releaseQuality,
+                    preferredGroup: preferredGroup,
+                    cached: cached,
+                    seeders: seeders,''',
+          )
+
+          replace_once(
+              source,
+              '''  String? _guessReleaseQuality(String value) {''',
+              '''  bool _guessCached(
+              Map<String, dynamic> raw,
+              Map<String, dynamic>? hints,
+              String value,
+            ) {
+              final candidates = <dynamic>[
+                raw['cached'],
+                raw['isCached'],
+                raw['is_cached'],
+                raw['instant'],
+                raw['instantAvailability'],
+                raw['instant_availability'],
+                hints?['cached'],
+                hints?['isCached'],
+                hints?['is_cached'],
+                hints?['instant'],
+                hints?['instantAvailability'],
+                hints?['instant_availability'],
+              ];
+              for (final candidate in candidates) {
+                if (_truthy(candidate)) return true;
+              }
+
+              final lower = value.toLowerCase();
+              if (lower.contains('cached')) return true;
+              return RegExp(
+                r'(^|[\\s._\\-\\[\\(])(?:rd|ad|tb|pm)\\+(?=$|[\\s._\\-\\]\\)])',
+                caseSensitive: false,
+              ).hasMatch(value);
+            }
+
+            bool _truthy(dynamic value) {
+              if (value is bool) return value;
+              if (value is num) return value > 0;
+              final normalized = value?.toString().trim().toLowerCase();
+              return const {'true', '1', 'yes', 'cached', 'instant', 'available'}
+                  .contains(normalized);
+            }
+
+            String? _guessReleaseQuality(String value) {''',
+          )
+
+          replace_once(
+              'lib/screens/sources_screen.dart',
+              'Drag to choose exactly how sources are ranked. Default is resolution → source type → file size → seeders.',
+              'Drag to choose exactly how sources are ranked. Default is cache → quality → resolution → size → seeders.',
+          )
+
+          replace_once(
+              'pubspec.yaml',
+              'version: 0.5.1+21',
+              'version: 0.5.2+22',
+          )
+
+          replace_once(
+              'installer/orvix.iss',
+              '#define MyAppVersion "0.5.0"',
+              '#define MyAppVersion "0.5.2"',
+          )
+          replace_once(
+              'installer/orvix.iss',
+              'Name: "{autoprograms}\\Orvix"; Filename: "{app}\\{#MyAppExeName}"; WorkingDir: "{app}"',
+              'Name: "{autoprograms}\\Orvix"; Filename: "{app}\\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\\{#MyAppExeName}"',
+          )
+          replace_once(
+              'installer/orvix.iss',
+              'Name: "{autodesktop}\\Orvix"; Filename: "{app}\\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon',
+              'Name: "{autodesktop}\\Orvix"; Filename: "{app}\\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\\{#MyAppExeName}"; Tasks: desktopicon',
+          )
+
+          changelog = Path('CHANGELOG.md')
+          text = changelog.read_text(encoding='utf-8')
+          marker = '# Orvix Changelog\n\n'
+          entry = '''## v0.5.2 — source priority & app icon\n\n- Changed the default source ranking to **Cache → Quality → Resolution → Size → Seeders** and reset the stored priority key so existing installs receive the new default.\n- Added cache/instant detection from Stremio stream metadata and direct-play streams, plus an ⚡ Cached badge in source rows.\n- Replaced the Orvix branding source with the supplied neon-green app icon and wired the generated Windows EXE icon through setup, Start Menu, desktop and uninstall entries.\n- Bumped the app to 0.5.2+22.\n\n'''
+          if '## v0.5.2 — source priority & app icon' not in text:
+              if marker not in text:
+                  raise SystemExit('CHANGELOG marker not found')
+              changelog.write_text(text.replace(marker, marker + entry, 1), encoding='utf-8')
+          '@ | Set-Content -Encoding UTF8 patch_v052.py
+          python patch_v052.py
+          Remove-Item patch_v052.py
+
+      - name: Verify supplied icon is wired
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'assets/branding/orvix_icon.png')) { throw 'Orvix icon asset missing.' }
+          $pubspec = Get-Content pubspec.yaml -Raw
+          if ($pubspec -notmatch 'image_path:\s*assets/branding/orvix_icon.png') { throw 'Launcher icon is not wired to the supplied Orvix icon.' }
+          $iss = Get-Content installer/orvix.iss -Raw
+          if ($iss -notmatch 'SetupIconFile=.*app_icon.ico') { throw 'Installer icon is not wired to the generated app icon.' }
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Windows runner
+        shell: pwsh
+        run: flutter create --platforms=windows --project-name orvix .
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Generate Orvix Windows icon
+        run: dart run flutter_launcher_icons
+
+      - name: Analyze app sources
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Validate installer build and icon wiring
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\\Inno Setup 6\\ISCC.exe",
+            "$env:ProgramFiles\\Inno Setup 6\\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
+          & $iscc '/DMyAppVersion=0.5.2' 'installer\\orvix.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+
+      - name: Commit validated v0.5.2 patch and remove helper
+        shell: pwsh
+        run: |
+          git config user.name 'Ishara Lakshan'
+          git config user.email 'ishara@tuta.io'
+          git rm '.github/workflows/orvix-v052-priority-icon-once.yml'
+          git add lib/services/source_provider_service.dart lib/screens/sources_screen.dart pubspec.yaml installer/orvix.iss CHANGELOG.md assets/branding/orvix_icon.png
+          git diff --cached --check
+          git commit -m 'feat: Orvix v0.5.2 source priority and app icon'
+          git push origin HEAD:orvix-v0.5.2-priority-icon
