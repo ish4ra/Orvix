@@ -1,0 +1,90 @@
+name: Release Orvix v0.5.3 Once
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/release-v053-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release-cleanup:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Windows runner
+        shell: pwsh
+        run: flutter create --platforms=windows --project-name orvix .
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Generate Orvix Windows icon
+        run: dart run flutter_launcher_icons
+
+      - name: Analyze app sources
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Pack portable build
+        shell: pwsh
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath 'Orvix-v0.5.3-Windows-x64.zip' -Force
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
+          & $iscc '/DMyAppVersion=0.5.3' 'installer\orvix.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+
+      - name: Publish v0.5.3 release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = 'Orvix-v0.5.3-Windows-x64.zip'
+          $exe = 'installer-output/Orvix-Setup-v0.5.3-Windows-x64.exe'
+          $notes = @'
+          Orvix v0.5.3
+
+          - Source priority is Cache → Quality → Resolution → Size → Seeders.
+          - Low-quality filtering is applied before cache ranking, so cached CAM/DVD/sub-720p does not beat good HD sources.
+          - Fixed PikPak magnet handling: Orvix-only metadata is stripped before upload and genuine magnet parameters are preserved exactly.
+          - Malformed magnets are rejected instead of creating tiny magnet-text files in PikPak.
+          - Removed tracked Flutter build metadata and hardened .gitignore.
+          '@
+          Set-Content -Path release-notes.md -Value $notes
+          gh release create v0.5.3 $zip $exe --target 'ae9117b34392bce60731666f2d32275c9e02a822' --title 'Orvix v0.5.3' --notes-file release-notes.md
+
+      - name: Remove one-time workflow
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/release-v053-once.yml
+          git commit -m "ci: remove one-time v0.5.3 release helper"
+          git push origin HEAD:main
