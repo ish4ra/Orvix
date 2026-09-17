@@ -35,7 +35,8 @@ class AiPreparedSubtitle {
   final String sourceUrl;
   final List<AiSubtitleCue> cues;
 
-  int get translatedCount => cues.where((cue) => cue.translation?.isNotEmpty == true).length;
+  int get translatedCount =>
+      cues.where((cue) => cue.translation?.isNotEmpty == true).length;
 
   String subtitleAt(Duration position) {
     if (cues.isEmpty) return '';
@@ -74,7 +75,8 @@ class AiSinhalaSubtitleService {
   }) {
     final key = _mediaKey(item, episode);
     final cached = _preparedCache[key];
-    if (cached != null && cached.translatedCount >= math.min(48, cached.cues.length)) {
+    if (cached != null &&
+        cached.translatedCount >= math.min(48, cached.cues.length)) {
       return Future<AiPreparedSubtitle?>.value(cached);
     }
     return _inFlight.putIfAbsent(key, () async {
@@ -117,14 +119,18 @@ class AiSinhalaSubtitleService {
     final endpoint = Uri.parse(
       'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix.json',
     );
-    final response = await http.get(endpoint).timeout(const Duration(seconds: 12));
+    final response =
+        await http.get(endpoint).timeout(const Duration(seconds: 12));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw const AiSubtitleException('Could not load subtitle candidates.');
     }
-    final decoded = jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
+    final decoded =
+        jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
     final entries = decoded is Map ? decoded['subtitles'] : null;
     if (entries is! List) {
-      throw const AiSubtitleException('No compatible subtitle list was returned.');
+      throw const AiSubtitleException(
+        'No compatible subtitle list was returned.',
+      );
     }
 
     final candidates = entries
@@ -226,7 +232,8 @@ class AiSinhalaSubtitleService {
     );
     if (response.status < 200 || response.status >= 300) {
       final data = response.data;
-      if (response.status == 429 || (data is Map && data['error'] == 'rate_limited')) {
+      if (response.status == 429 ||
+          (data is Map && data['error'] == 'rate_limited')) {
         throw const AiSubtitleException(
           'AI Sinhala subtitle limit reached.',
           rateLimited: true,
@@ -246,13 +253,12 @@ class AiSinhalaSubtitleService {
   }
 
   static Future<String> _downloadSubtitle(String url) async {
-    final response = await http
-        .get(Uri.parse(url))
-        .timeout(const Duration(seconds: 15));
+    final response =
+        await http.get(Uri.parse(url)).timeout(const Duration(seconds: 15));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw const AiSubtitleException('Subtitle download failed.');
     }
-    var bytes = response.bodyBytes;
+    List<int> bytes = response.bodyBytes;
     if (bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
       bytes = gzip.decode(bytes);
     }
@@ -260,17 +266,18 @@ class AiSinhalaSubtitleService {
   }
 
   static List<AiSubtitleCue> _parseSubtitle(String input) {
-    var text = input.replaceFirst('\uFEFF', '').replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    var text = input
+        .replaceFirst('\uFEFF', '')
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n');
     if (text.trimLeft().startsWith('WEBVTT')) {
       text = text.replaceFirst(RegExp(r'^\s*WEBVTT[^\n]*\n'), '');
     }
     final blocks = text.split(RegExp(r'\n\s*\n'));
     final cues = <AiSubtitleCue>[];
     for (final block in blocks) {
-      final lines = block
-          .split('\n')
-          .map((line) => line.trimRight())
-          .toList(growable: false);
+      final lines =
+          block.split('\n').map((line) => line.trimRight()).toList(growable: false);
       final timingIndex = lines.indexWhere((line) => line.contains('-->'));
       if (timingIndex < 0) continue;
       final timing = lines[timingIndex].split('-->');
@@ -304,7 +311,8 @@ class AiSinhalaSubtitleService {
     if (secondPieces.length > 1) {
       final fraction = secondPieces[1].replaceAll(RegExp(r'\D'), '');
       if (fraction.isNotEmpty) {
-        milliseconds = int.tryParse(fraction.padRight(3, '0').substring(0, 3)) ?? 0;
+        milliseconds =
+            int.tryParse(fraction.padRight(3, '0').substring(0, 3)) ?? 0;
       }
     }
     final minutes = int.tryParse(parts[parts.length - 2]) ?? 0;
