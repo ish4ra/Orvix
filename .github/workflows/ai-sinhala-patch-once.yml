@@ -19,9 +19,10 @@ jobs:
         with:
           ref: orvix-v0.7.0-ai-sinhala
 
-      - name: Patch player and enable feature-branch build
-        shell: python
+      - name: Patch player and enable branch build
+        shell: bash
         run: |
+          python3 - <<'PY'
           from pathlib import Path
 
           player_path = Path('lib/screens/player_screen.dart')
@@ -80,7 +81,6 @@ jobs:
 
             if (mounted) {
               setState(() {
-                // Show the original cue immediately so slow AI never leaves a gap.
                 _aiDisplaySubtitle = source;
                 _aiSubtitleBusy = true;
                 _aiSubtitleError = null;
@@ -251,7 +251,6 @@ jobs:
           }
 
 '''
-          # Normalize indentation from the raw block above.
           ai_methods = '\n'.join(line[10:] if line.startswith('          ') else line for line in ai_methods.splitlines()) + '\n'
           text = text.replace(marker, ai_methods + marker, 1)
 
@@ -304,7 +303,7 @@ jobs:
           replace_once(
               "                    fit: BoxFit.contain,\n                    controls: NoVideoControls,",
               "                    fit: BoxFit.contain,\n                    controls: NoVideoControls,\n                    subtitleViewConfiguration: SubtitleViewConfiguration(\n                      visible: !_aiSinhalaEnabled,\n                    ),",
-              'hide native subtitles during AI mode',
+              'native subtitle visibility',
           )
 
           overlay_marker = """                AnimatedOpacity(
@@ -327,9 +326,8 @@ jobs:
 
           pubspec = Path('pubspec.yaml')
           pub = pubspec.read_text(encoding='utf-8')
-          old_version = 'version: 0.6.2+32'
-          if old_version in pub:
-              pub = pub.replace(old_version, 'version: 0.7.0+33', 1)
+          if 'version: 0.6.2+32' in pub:
+              pub = pub.replace('version: 0.6.2+32', 'version: 0.7.0+33', 1)
           elif 'version: 0.7.0+33' not in pub:
               raise SystemExit('Unexpected pubspec version')
           pubspec.write_text(pub, encoding='utf-8')
@@ -347,6 +345,7 @@ jobs:
           placeholder = Path('docs/.branch-placeholder')
           if placeholder.exists():
               placeholder.unlink()
+          PY
 
       - name: Remove one-time patch workflow
         shell: bash
