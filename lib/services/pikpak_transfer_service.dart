@@ -56,7 +56,7 @@ class PikPakTransferService {
   final FlutterSecureStorage _storage;
   final Map<String, int> _zeroProgressPolls = <String, int>{};
 
-  // Source-provider metadata is kept only in memory. It lets Pikora follow the
+  // Source-provider metadata is kept only in memory. It lets Orvix follow the
   // exact file selected by a Stremio-compatible addon after PikPak turns a
   // torrent into a folder/season pack.
   final Map<String, _TorrentSelection> _selectionByTaskId =
@@ -494,23 +494,67 @@ class PikPakTransferService {
     }
 
     try {
-      final uri = Uri.parse(trimmed);
-      final all = uri.queryParametersAll;
-      final fileIndex = _parseInt(all['x-pikora-file-idx']?.firstOrNull);
-      final fileName = _nonEmpty(all['x-pikora-file-name']?.firstOrNull);
-      final videoSize = _parseInt(all['x-pikora-video-size']?.firstOrNull);
-
-      final cleanParts = <String>[];
-      for (final entry in all.entries) {
-        if (entry.key.startsWith('x-pikora-')) continue;
-        for (final value in entry.value) {
-          cleanParts.add(
-            '${Uri.encodeQueryComponent(entry.key)}=${Uri.encodeQueryComponent(value)}',
-          );
-        }
+      final question = trimmed.indexOf('?');
+      if (question < 0 || question == trimmed.length - 1) {
+        throw const PikPakTransferException(
+          'Invalid magnet source returned by provider.',
+        );
       }
 
-      final clean = uri.replace(query: cleanParts.join('&')).toString();
+      final rawParts = trimmed.substring(question + 1)
+          .split('&')
+          .where((part) => part.trim().isNotEmpty)
+          .toList(growable: false);
+
+      int? fileIndex;
+      String? fileName;
+      int? videoSize;
+      String? infoHash;
+      final cleanParts = <String>[];
+
+      for (final part in rawParts) {
+        final equals = part.indexOf('=');
+        final rawKey = equals < 0 ? part : part.substring(0, equals);
+        final rawValue = equals < 0 ? '' : part.substring(equals + 1);
+        final key = Uri.decodeQueryComponent(rawKey).toLowerCase();
+        final value = Uri.decodeQueryComponent(rawValue);
+
+        switch (key) {
+          case 'x-orvix-file-idx':
+          case 'x-pikora-file-idx':
+            fileIndex ??= _parseInt(value);
+            continue;
+          case 'x-orvix-file-name':
+          case 'x-pikora-file-name':
+            fileName ??= _nonEmpty(value);
+            continue;
+          case 'x-orvix-video-size':
+          case 'x-pikora-video-size':
+            videoSize ??= _parseInt(value);
+            continue;
+        }
+
+        if (key == 'xt') {
+          final lower = value.toLowerCase();
+          if (lower.startsWith('urn:btih:')) {
+            final hash = value.substring('urn:btih:'.length).trim();
+            final valid = RegExp(
+              r'^(?:[A-Fa-f0-9]{40}|[A-Za-z2-7]{32}|[A-Fa-f0-9]{64})$',
+            ).hasMatch(hash);
+            if (valid) infoHash = hash;
+          }
+        }
+
+        cleanParts.add(part);
+      }
+
+      if (infoHash == null) {
+        throw const PikPakTransferException(
+          'Invalid magnet source: no usable BTIH hash was returned. Choose another source.',
+        );
+      }
+
+      final clean = 'magnet:?${cleanParts.join('&')}';
       final selection = fileIndex == null && fileName == null && videoSize == null
           ? null
           : _TorrentSelection(
@@ -519,8 +563,12 @@ class PikPakTransferService {
               videoSize: videoSize,
             );
       return _ResourceEnvelope(resource: clean, selection: selection);
+    } on PikPakTransferException {
+      rethrow;
     } catch (_) {
-      return _ResourceEnvelope(resource: trimmed);
+      throw const PikPakTransferException(
+        'Invalid magnet source returned by provider. Choose another source.',
+      );
     }
   }
 

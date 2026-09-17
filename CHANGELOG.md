@@ -1,5 +1,13 @@
 # Orvix Changelog
 
+## v0.5.3 — PikPak magnet reliability
+
+- Fixed Orvix source metadata not being stripped from magnet links before they were sent to PikPak.
+- Preserves genuine magnet parameters exactly, validates the BTIH hash, and rejects malformed provider magnets instead of letting PikPak save tiny `magnet...` text files.
+- Resets source priority to Cache → Quality → Resolution → Size → Seeders.
+- Low-quality filtering still runs before cache ranking, so cached CAM/DVD/sub-720p results do not outrank good HD sources.
+- Added generated Flutter metadata to `.gitignore` to prevent build output from polluting the repository again.
+
 ## v0.5.2 — cache-first source ordering & refreshed icon
 
 - Source ranking now defaults to Cache → Quality → Resolution → Size → Seeders.
