@@ -1,0 +1,107 @@
+name: Apply Orvix v0.5.2 Once
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/orvix-v052-once.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: orvix-v052-once
+  cancel-in-progress: false
+
+jobs:
+  patch-build-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Apply source order and icon patch
+        run: python .github/scripts/orvix_v052_patch.py
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Windows runner
+        shell: pwsh
+        run: flutter create --platforms=windows --project-name orvix .
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Generate Orvix Windows icon
+        run: dart run flutter_launcher_icons
+
+      - name: Analyze app sources
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Commit validated changes and remove helpers
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: cache-first source order and refreshed Orvix icon"
+          git push origin HEAD:main
+
+      - name: Pack portable Windows build
+        shell: pwsh
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath 'Orvix-v0.5.2-Windows-x64.zip' -Force
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
+          & $iscc '/DMyAppVersion=0.5.2' 'installer\orvix.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+
+      - name: Publish v0.5.2 release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $sha = git rev-parse HEAD
+          $zip = 'Orvix-v0.5.2-Windows-x64.zip'
+          $exe = 'installer-output/Orvix-Setup-v0.5.2-Windows-x64.exe'
+          $notes = @'
+          Orvix v0.5.2
+
+          - Default source order is Cache → Quality → Resolution → Size → Seeders.
+          - Added cache detection and a visible Cached badge.
+          - Auto-pick follows the same cache-first ordering.
+          - Replaced the Windows app and installer icon with the supplied green Orvix artwork.
+          '@
+          Set-Content -Path release-notes.md -Value $notes
+
+          gh release view v0.5.2 *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload v0.5.2 $zip $exe --clobber
+          } else {
+            gh release create v0.5.2 $zip $exe `
+              --target $sha `
+              --title 'Orvix v0.5.2' `
+              --notes-file release-notes.md
+          }
