@@ -7,19 +7,21 @@ import '../models/media_item.dart';
 
 enum SourceSortMode { seeders, fileSize, quality }
 
-enum SourceSortCriterion { releaseQuality, resolution, seeders, fileSize }
+enum SourceSortCriterion { cache, releaseQuality, resolution, fileSize, seeders }
 
 extension SourceSortCriterionLabel on SourceSortCriterion {
   String get label {
     switch (this) {
+      case SourceSortCriterion.cache:
+        return 'Cache';
       case SourceSortCriterion.releaseQuality:
-        return 'Source type';
+        return 'Quality';
       case SourceSortCriterion.resolution:
         return 'Resolution';
+      case SourceSortCriterion.fileSize:
+        return 'Size';
       case SourceSortCriterion.seeders:
         return 'Seeders';
-      case SourceSortCriterion.fileSize:
-        return 'File size';
     }
   }
 }
@@ -47,6 +49,7 @@ class SourceResult {
     this.quality,
     this.releaseQuality,
     this.preferredGroup = false,
+    this.cached = false,
     this.seeders,
     this.sizeBytes,
     this.torrentFileIndex,
@@ -61,6 +64,7 @@ class SourceResult {
   final String? quality;
   final String? releaseQuality;
   final bool preferredGroup;
+  final bool cached;
   final int? seeders;
   final int? sizeBytes;
 
@@ -129,28 +133,20 @@ class SourceResult {
     return '${(bytes / kb).toStringAsFixed(0)} KB';
   }
 
-  /// Ranking is deliberately lexicographic rather than a vague weighted mix.
-  /// Quality mode means exactly: quality > seeders > size.
+  /// Auto-pick follows the same default priority shown in Source Engine:
+  /// cache -> quality/source type -> resolution -> size -> seeders.
   int get preferenceScore {
+    final cacheRank = cached ? 1 : 0;
     final seederRank = (seeders ?? -1).clamp(-1, 999999).toInt() + 1;
     final sizeMb = ((sizeBytes ?? 0) ~/ (1024 * 1024))
         .clamp(0, 999999)
         .toInt();
 
-    switch (sortMode) {
-      case SourceSortMode.quality:
-        return qualityRank * 1000000000000 +
-            seederRank * 1000000 +
-            sizeMb;
-      case SourceSortMode.seeders:
-        return seederRank * 1000000000000 +
-            qualityRank * 1000000 +
-            sizeMb;
-      case SourceSortMode.fileSize:
-        return sizeMb * 1000000000 +
-            qualityRank * 1000000 +
-            seederRank;
-    }
+    return cacheRank * 1000000000000000000 +
+        releaseQualityRank * 1000000000000000 +
+        qualityRank * 1000000000000 +
+        sizeMb * 1000000 +
+        seederRank;
   }
 }
 
@@ -163,7 +159,7 @@ class SourceProviderService {
   // v2 intentionally resets the old default. v0.3.7 makes the default order
   // Quality -> Seeders -> Size while still allowing the user to switch it.
   static const _sortKey = 'pikora_source_sort_mode_v2';
-  static const _priorityKey = 'orvix_source_priority_v4';
+  static const _priorityKey = 'orvix_source_priority_v5';
   static const _show3DKey = 'orvix_show_3d_sources_v1';
   static const _showLowQualityKey = 'orvix_show_low_quality_sources_v1';
   static const _preferredGroupsKey = 'orvix_preferred_release_groups_v1';
@@ -230,10 +226,11 @@ class SourceProviderService {
   }
 
   static const defaultPriority = <SourceSortCriterion>[
+    SourceSortCriterion.cache,
     SourceSortCriterion.releaseQuality,
     SourceSortCriterion.resolution,
-    SourceSortCriterion.seeders,
     SourceSortCriterion.fileSize,
+    SourceSortCriterion.seeders,
   ];
 
   Future<List<SourceSortCriterion>> getPriorityOrder() async {
@@ -321,6 +318,8 @@ class SourceProviderService {
 
   int _criterionValue(SourceResult result, SourceSortCriterion criterion) {
     switch (criterion) {
+      case SourceSortCriterion.cache:
+        return result.cached ? 1 : 0;
       case SourceSortCriterion.releaseQuality:
         return result.releaseQualityRank + (result.preferredGroup ? 50 : 0);
       case SourceSortCriterion.resolution:
@@ -475,6 +474,7 @@ class SourceProviderService {
           rawTitle,
           fileNameHint ?? '',
         ].where((value) => value.trim().isNotEmpty).join('\n');
+        final cached = _guessCached(raw, metadataText);
         if (!show3D && _is3DRelease(metadataText)) continue;
         final preferredGroup = _matchesPreferredGroup(metadataText, preferredGroups);
         final quality = _guessQuality(metadataText);
@@ -525,6 +525,7 @@ class SourceProviderService {
         // Existing source sheet renders two title lines. Put the useful stats
         // first so they remain visible even when a long release name truncates.
         final statParts = <String>[
+          if (cached) '⚡ Cached',
           if (preferredGroup) '⭐ Preferred',
           if (releaseQuality != null) '🎞 $releaseQuality',
           if (quality != null) '📺 $quality',
@@ -543,6 +544,7 @@ class SourceProviderService {
             quality: quality,
             releaseQuality: releaseQuality,
             preferredGroup: preferredGroup,
+            cached: cached,
             seeders: seeders,
             sizeBytes: sizeBytes,
             torrentFileIndex: torrentFileIndex,
@@ -637,6 +639,34 @@ class SourceProviderService {
       if (token.isNotEmpty && (' $normalized ').contains(' $token ')) return true;
     }
     return false;
+  }
+
+  bool _guessCached(Map<String, dynamic> raw, String value) {
+    final hints = raw['behaviorHints'];
+    final candidates = <dynamic>[
+      raw['cached'],
+      raw['isCached'],
+      raw['is_cached'],
+      if (hints is Map<String, dynamic>) hints['cached'],
+      if (hints is Map<String, dynamic>) hints['isCached'],
+      if (hints is Map<String, dynamic>) hints['is_cached'],
+    ];
+
+    for (final candidate in candidates) {
+      if (candidate is bool) return candidate;
+      final normalized = candidate?.toString().trim().toLowerCase();
+      if (normalized == 'true' ||
+          normalized == '1' ||
+          normalized == 'yes' ||
+          normalized == 'cached') {
+        return true;
+      }
+    }
+
+    return RegExp(
+      r'(^|[\s|•\[\(])(cached|rd\+|ad\+|tb\+|pm\+)(?=$|[\s|•\]\)])',
+      caseSensitive: false,
+    ).hasMatch(value);
   }
 
   String? _guessReleaseQuality(String value) {

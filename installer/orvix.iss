@@ -1,6 +1,6 @@
 #define MyAppName "Orvix"
 #ifndef MyAppVersion
-#define MyAppVersion "0.5.0"
+#define MyAppVersion "0.5.2"
 #endif
 #define MyAppPublisher "Ishara Lakshan"
 #define MyAppExeName "orvix.exe"
@@ -35,8 +35,8 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 Source: "..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\Orvix"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
-Name: "{autodesktop}\Orvix"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\Orvix"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"
+Name: "{autodesktop}\Orvix"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Orvix"; Flags: nowait postinstall skipifsilent

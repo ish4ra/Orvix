@@ -1,5 +1,14 @@
 # Orvix Changelog
 
+## v0.5.2 — cache-first source ordering & refreshed icon
+
+- Source ranking now defaults to Cache → Quality → Resolution → Size → Seeders.
+- Added cache detection from structured add-on metadata and common cached debrid stream labels, plus a visible ⚡ Cached badge.
+- Auto-pick ranking follows the same cache-first order as the Source Engine list.
+- Replaced the packaged Orvix app icon with the supplied green Orvix artwork and regenerated Windows executable/installer icon assets.
+- Reset the stored source-priority key so existing installs receive the new default order once.
+
+
 ## v0.5.1 — zero-config source pool
 
 - Restored a built-in Torrentio default for fresh installs, so Source Engine no longer starts as NOT CONFIGURED and users do not need to paste a Torrentio URL.

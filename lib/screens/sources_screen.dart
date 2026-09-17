@@ -312,7 +312,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
           ),
           const SizedBox(height: 7),
           Text(
-            'Drag to choose exactly how sources are ranked. Default is resolution → source type → file size → seeders.',
+            'Drag to choose exactly how sources are ranked. Default is cache → quality → resolution → file size → seeders.',
             style: TextStyle(color: color.onSurfaceVariant, height: 1.4),
           ),
           const SizedBox(height: 14),
