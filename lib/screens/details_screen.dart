@@ -636,7 +636,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
         _resolving = false;
         _resolveProgress = null;
       });
-      await _findSourcesAndPlay(item, episode: episode);
+      await _findSourcesAndPlay(
+        item,
+        episode: episode,
+        autoUsePinned: true,
+      );
     } catch (e) {
       _showPlayError(e);
     }
@@ -645,6 +649,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Future<void> _findSourcesAndPlay(
     MediaItem item, {
     EpisodeItem? episode,
+    bool autoUsePinned = false,
   }) async {
     if (!mounted) return;
     setState(() {
@@ -665,7 +670,24 @@ class _DetailsScreenState extends State<DetailsScreen> {
         return;
       }
 
-      final chosen = await _chooseSource(results, item, episode);
+      SourceResult? chosen;
+      if (autoUsePinned) {
+        final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
+        final pinned = await widget.sources.getPinnedSourceIdentity(pinKey);
+        if (pinned != null && pinned.isNotEmpty) {
+          for (final result in results) {
+            if (widget.sources.matchesPinned(
+              result,
+              pinned,
+              seriesWide: item.kind == MediaKind.series,
+            )) {
+              chosen = result;
+              break;
+            }
+          }
+        }
+      }
+      chosen ??= await _chooseSource(results, item, episode);
       if (chosen == null || !mounted) return;
       final cloud = await _chooseCloudProvider();
       if (cloud == null || !mounted) return;

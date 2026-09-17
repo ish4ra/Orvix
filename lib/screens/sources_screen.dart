@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/source_provider_service.dart';
 
@@ -13,10 +14,14 @@ class SourcesScreen extends StatefulWidget {
 
 class _SourcesScreenState extends State<SourcesScreen> {
   final _controller = TextEditingController();
+  final _aioStreamsController = TextEditingController();
   final _preferredGroupsController = TextEditingController();
   List<String> _addons = const [];
-  List<SourceSortCriterion> _priority = [...SourceProviderService.defaultPriority];
+  List<SourceSortCriterion> _priority = [
+    ...SourceProviderService.defaultPriority
+  ];
   String? _torrentioUrl;
+  String? _aioStreamsUrl;
   bool _busy = true;
   bool _show3D = false;
   bool _showLowQuality = false;
@@ -32,6 +37,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
   @override
   void dispose() {
     _controller.dispose();
+    _aioStreamsController.dispose();
     _preferredGroupsController.dispose();
     super.dispose();
   }
@@ -40,15 +46,20 @@ class _SourcesScreenState extends State<SourcesScreen> {
     final values = await widget.sources.getAddonUrls();
     final priority = await widget.sources.getPriorityOrder();
     final torrentio = await widget.sources.getIntegratedTorrentioUrl();
+    final aioStreams = await widget.sources.getAioStreamsManifestUrl();
     final show3D = await widget.sources.getShow3D();
     final preferredGroups = await widget.sources.getPreferredGroups();
     final showLowQuality = await widget.sources.getShowLowQuality();
     final resultLimit = await widget.sources.getResultLimit();
     if (!mounted) return;
     setState(() {
-      _addons = values;
+      _addons =
+          values.where((value) => value != aioStreams).toList(growable: false);
       _priority = priority;
       _torrentioUrl = torrentio;
+      _aioStreamsUrl = aioStreams;
+      _aioStreamsController.text =
+          aioStreams == null ? '' : '$aioStreams/manifest.json';
       _show3D = show3D;
       _showLowQuality = showLowQuality;
       _resultLimit = resultLimit;
@@ -90,6 +101,47 @@ class _SourcesScreenState extends State<SourcesScreen> {
         : 'Preferred release groups saved. Matching rows will be highlighted.');
   }
 
+  Future<void> _saveAioStreams() async {
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      await widget.sources.setAioStreamsManifestUrl(_aioStreamsController.text);
+      await _reload();
+      if (mounted) {
+        setState(() => _message =
+            'AIOStreams connected. Its profile stays local on this device.');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _message = e.toString();
+      });
+    }
+  }
+
+  Future<void> _clearAioStreams() async {
+    setState(() => _busy = true);
+    await widget.sources.clearAioStreamsManifestUrl();
+    _aioStreamsController.clear();
+    await _reload();
+    if (mounted) {
+      setState(() => _message = 'AIOStreams disconnected from Orvix.');
+    }
+  }
+
+  Future<void> _openMidnightAioStreamsSetup() async {
+    final uri = Uri.parse(
+      'https://aiostreamsfortheweebsstable.midnightignite.me/stremio/configure',
+    );
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      setState(() => _message = 'Could not open the AIOStreams setup page.');
+    }
+  }
+
   Future<void> _add() async {
     setState(() {
       _busy = true;
@@ -100,7 +152,8 @@ class _SourcesScreenState extends State<SourcesScreen> {
       _controller.clear();
       await _reload();
       if (mounted) {
-        setState(() => _message = 'Provider saved. It will be reused automatically.');
+        setState(() =>
+            _message = 'Provider saved. It will be reused automatically.');
       }
     } catch (e) {
       if (!mounted) return;
@@ -162,6 +215,8 @@ class _SourcesScreenState extends State<SourcesScreen> {
         const SizedBox(height: 24),
         _engineCard(context),
         const SizedBox(height: 18),
+        _aioStreamsCard(context),
+        const SizedBox(height: 18),
         _sortCard(context),
         const SizedBox(height: 18),
         _resultPreferencesCard(context),
@@ -203,10 +258,13 @@ class _SourcesScreenState extends State<SourcesScreen> {
         color: const Color(0xFF0D120E),
         borderRadius: BorderRadius.circular(22),
         border: Border.all(
-          color: active ? color.primary.withValues(alpha: .5) : const Color(0xFF272D3D),
+          color: active
+              ? color.primary.withValues(alpha: .5)
+              : const Color(0xFF272D3D),
         ),
         boxShadow: const [
-          BoxShadow(color: Color(0x33000000), blurRadius: 28, offset: Offset(0, 12)),
+          BoxShadow(
+              color: Color(0x33000000), blurRadius: 28, offset: Offset(0, 12)),
         ],
       ),
       child: Row(
@@ -236,11 +294,13 @@ class _SourcesScreenState extends State<SourcesScreen> {
                   children: [
                     const Text(
                       'Torrentio-compatible engine',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
                     ),
                     const SizedBox(width: 10),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 9, vertical: 4),
                       decoration: BoxDecoration(
                         color: active
                             ? const Color(0xFF173A2B)
@@ -287,6 +347,109 @@ class _SourcesScreenState extends State<SourcesScreen> {
     );
   }
 
+  Widget _aioStreamsCard(BuildContext context) {
+    final color = Theme.of(context).colorScheme;
+    final active = _aioStreamsUrl != null;
+    return Container(
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A0E0B),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: active
+              ? color.primary.withValues(alpha: .5)
+              : const Color(0xFF223125),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.stream_rounded),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'AIOStreams',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                decoration: BoxDecoration(
+                  color: active
+                      ? const Color(0xFF173A2B)
+                      : const Color(0xFF34303A),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  active ? 'ACTIVE' : 'OPTIONAL',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: .7,
+                    color: active
+                        ? const Color(0xFF83F0B8)
+                        : color.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            active
+                ? 'Orvix is querying your configured AIOStreams profile as an additional source aggregator.'
+                : 'Configure a public or self-hosted AIOStreams profile, then paste the generated manifest URL here.',
+            style: TextStyle(color: color.onSurfaceVariant, height: 1.4),
+          ),
+          const SizedBox(height: 7),
+          Text(
+            'Privacy: the manifest can act like a credential, so Orvix stores it only on this device and never cloud-syncs it.',
+            style: TextStyle(
+              color: color.onSurfaceVariant,
+              fontSize: 12.5,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _aioStreamsController,
+            enabled: !_busy,
+            decoration: const InputDecoration(
+              labelText: 'AIOStreams manifest URL',
+              hintText: 'https://…/stremio/…/manifest.json',
+              prefixIcon: Icon(Icons.link_rounded),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _openMidnightAioStreamsSetup,
+                icon: const Icon(Icons.open_in_new_rounded),
+                label: const Text('Open Midnight Stable setup'),
+              ),
+              FilledButton.icon(
+                onPressed: _busy ? null : _saveAioStreams,
+                icon: const Icon(Icons.save_outlined),
+                label: Text(active ? 'Update manifest' : 'Connect manifest'),
+              ),
+              if (active)
+                TextButton.icon(
+                  onPressed: _busy ? null : _clearAioStreams,
+                  icon: const Icon(Icons.link_off_rounded),
+                  label: const Text('Disconnect'),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _sortCard(BuildContext context) {
     final color = Theme.of(context).colorScheme;
     return Container(
@@ -312,7 +475,8 @@ class _SourcesScreenState extends State<SourcesScreen> {
               TextButton.icon(
                 onPressed: _busy
                     ? null
-                    : () => _setPriority([...SourceProviderService.defaultPriority]),
+                    : () => _setPriority(
+                        [...SourceProviderService.defaultPriority]),
                 icon: const Icon(Icons.restart_alt_rounded),
                 label: const Text('Reset best'),
               ),
@@ -351,9 +515,11 @@ class _SourcesScreenState extends State<SourcesScreen> {
                   leading: CircleAvatar(
                     radius: 16,
                     backgroundColor: color.primaryContainer,
-                    child: Text('${index + 1}', style: const TextStyle(fontWeight: FontWeight.w900)),
+                    child: Text('${index + 1}',
+                        style: const TextStyle(fontWeight: FontWeight.w900)),
                   ),
-                  title: Text(criterion.label, style: const TextStyle(fontWeight: FontWeight.w800)),
+                  title: Text(criterion.label,
+                      style: const TextStyle(fontWeight: FontWeight.w800)),
                   trailing: const Icon(Icons.drag_indicator_rounded),
                 ),
               );
@@ -444,7 +610,8 @@ class _SourcesScreenState extends State<SourcesScreen> {
             value: _showLowQuality,
             onChanged: _busy ? null : _setShowLowQuality,
             title: const Text('Show legacy / low-quality sources'),
-            subtitle: const Text('Off by default when HD sources exist. Hides CAM, DVD and sub-720p clutter without removing them when they are the only results.'),
+            subtitle: const Text(
+                'Off by default when HD sources exist. Hides CAM, DVD and sub-720p clutter without removing them when they are the only results.'),
           ),
           const Divider(height: 26),
           Text(
@@ -552,7 +719,9 @@ class _SourcesScreenState extends State<SourcesScreen> {
                     style: const TextStyle(fontWeight: FontWeight.w800),
                   ),
                   subtitle: Text(
-                    isTorrentio ? 'Integrated • ${Uri.tryParse(url)?.host ?? url}' : url,
+                    isTorrentio
+                        ? 'Integrated • ${Uri.tryParse(url)?.host ?? url}'
+                        : url,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),

@@ -10,6 +10,10 @@ class OrvixAccountService {
   static const _watchlistKey = 'pikora_watchlist_v1';
   static const _libraryKey = 'pikora_media_library_v1';
   static const _progressKey = 'pikora_continue_watching_v1';
+  static const _localOnlyPreferenceKeys = <String>{
+    'pikora_source_addons',
+    'pikora_integrated_torrentio_url_v1',
+  };
 
   static SupabaseClient get _client => Supabase.instance.client;
   static User? get currentUser => _client.auth.currentUser;
@@ -85,9 +89,12 @@ class OrvixAccountService {
     if (user == null) return;
 
     final prefs = await SharedPreferences.getInstance();
-    final watchlist = _decodeJsonValue(prefs.getString(_watchlistKey), const <dynamic>[]);
-    final library = _decodeJsonValue(prefs.getString(_libraryKey), const <dynamic>[]);
-    final progress = _decodeJsonValue(prefs.getString(_progressKey), const <String, dynamic>{});
+    final watchlist =
+        _decodeJsonValue(prefs.getString(_watchlistKey), const <dynamic>[]);
+    final library =
+        _decodeJsonValue(prefs.getString(_libraryKey), const <dynamic>[]);
+    final progress = _decodeJsonValue(
+        prefs.getString(_progressKey), const <String, dynamic>{});
     final preferences = _collectAppPreferences(prefs);
 
     await _client.from(table).upsert({
@@ -95,8 +102,10 @@ class OrvixAccountService {
       'watchlist': watchlist,
       'library': library,
       'progress': progress,
-      'home_sections': preferences['pikora_home_sections_v1'] ?? const <dynamic>[],
-      'preferred_cloud': preferences['orvix_preferred_cloud_v1']?.toString() ?? 'pikpak',
+      'home_sections':
+          preferences['pikora_home_sections_v1'] ?? const <dynamic>[],
+      'preferred_cloud':
+          preferences['orvix_preferred_cloud_v1']?.toString() ?? 'pikpak',
       'preferences': preferences,
     }, onConflict: 'user_id');
   }
@@ -106,7 +115,8 @@ class OrvixAccountService {
     if (user == null) return;
 
     final prefs = await SharedPreferences.getInstance();
-    final rows = await _client.from(table).select().eq('user_id', user.id).limit(1);
+    final rows =
+        await _client.from(table).select().eq('user_id', user.id).limit(1);
 
     if (rows.isEmpty) {
       await pushLocalStateIfSignedIn();
@@ -114,19 +124,26 @@ class OrvixAccountService {
     }
 
     final remote = Map<String, dynamic>.from(rows.first);
-    final localWatchlist = _asList(_decodeJsonValue(prefs.getString(_watchlistKey), const <dynamic>[]));
-    final localLibrary = _asList(_decodeJsonValue(prefs.getString(_libraryKey), const <dynamic>[]));
-    final localProgress = _asMap(_decodeJsonValue(prefs.getString(_progressKey), const <String, dynamic>{}));
+    final localWatchlist = _asList(
+        _decodeJsonValue(prefs.getString(_watchlistKey), const <dynamic>[]));
+    final localLibrary = _asList(
+        _decodeJsonValue(prefs.getString(_libraryKey), const <dynamic>[]));
+    final localProgress = _asMap(_decodeJsonValue(
+        prefs.getString(_progressKey), const <String, dynamic>{}));
 
-    final mergedWatchlist = _mergeMediaLists(_asList(remote['watchlist']), localWatchlist);
-    final mergedLibrary = _mergeMediaLists(_asList(remote['library']), localLibrary);
-    final mergedProgress = _mergeProgress(_asMap(remote['progress']), localProgress);
+    final mergedWatchlist =
+        _mergeMediaLists(_asList(remote['watchlist']), localWatchlist);
+    final mergedLibrary =
+        _mergeMediaLists(_asList(remote['library']), localLibrary);
+    final mergedProgress =
+        _mergeProgress(_asMap(remote['progress']), localProgress);
 
     await prefs.setString(_watchlistKey, jsonEncode(mergedWatchlist));
     await prefs.setString(_libraryKey, jsonEncode(mergedLibrary));
     await prefs.setString(_progressKey, jsonEncode(mergedProgress));
 
-    final remotePreferences = _asMap(remote['preferences']);
+    final remotePreferences = _asMap(remote['preferences'])
+      ..removeWhere((key, _) => _localOnlyPreferenceKeys.contains(key));
     await _restorePreferences(prefs, remotePreferences);
 
     // Local keys win only when they actually exist on this device. This keeps
@@ -141,8 +158,10 @@ class OrvixAccountService {
       'watchlist': mergedWatchlist,
       'library': mergedLibrary,
       'progress': mergedProgress,
-      'home_sections': mergedPreferences['pikora_home_sections_v1'] ?? const <dynamic>[],
-      'preferred_cloud': mergedPreferences['orvix_preferred_cloud_v1']?.toString() ?? 'pikpak',
+      'home_sections':
+          mergedPreferences['pikora_home_sections_v1'] ?? const <dynamic>[],
+      'preferred_cloud':
+          mergedPreferences['orvix_preferred_cloud_v1']?.toString() ?? 'pikpak',
       'preferences': mergedPreferences,
     }, onConflict: 'user_id');
   }
@@ -156,7 +175,8 @@ class OrvixAccountService {
     }
   }
 
-  static List<dynamic> _asList(dynamic value) => value is List ? List<dynamic>.from(value) : <dynamic>[];
+  static List<dynamic> _asList(dynamic value) =>
+      value is List ? List<dynamic>.from(value) : <dynamic>[];
 
   static Map<String, dynamic> _asMap(dynamic value) {
     if (value is Map<String, dynamic>) return Map<String, dynamic>.from(value);
@@ -166,7 +186,8 @@ class OrvixAccountService {
     return <String, dynamic>{};
   }
 
-  static List<dynamic> _mergeMediaLists(List<dynamic> remote, List<dynamic> local) {
+  static List<dynamic> _mergeMediaLists(
+      List<dynamic> remote, List<dynamic> local) {
     final merged = <String, dynamic>{};
 
     void addAll(List<dynamic> values) {
@@ -196,10 +217,14 @@ class OrvixAccountService {
         merged[entry.key] = entry.value;
         continue;
       }
-      final existingMap = existing.map((key, value) => MapEntry(key.toString(), value));
-      final localMap = (entry.value as Map).map((key, value) => MapEntry(key.toString(), value));
-      final remoteAt = DateTime.tryParse(existingMap['updatedAt']?.toString() ?? '');
-      final localAt = DateTime.tryParse(localMap['updatedAt']?.toString() ?? '');
+      final existingMap =
+          existing.map((key, value) => MapEntry(key.toString(), value));
+      final localMap = (entry.value as Map)
+          .map((key, value) => MapEntry(key.toString(), value));
+      final remoteAt =
+          DateTime.tryParse(existingMap['updatedAt']?.toString() ?? '');
+      final localAt =
+          DateTime.tryParse(localMap['updatedAt']?.toString() ?? '');
       if (remoteAt == null || (localAt != null && localAt.isAfter(remoteAt))) {
         merged[entry.key] = localMap;
       }
@@ -211,9 +236,15 @@ class OrvixAccountService {
     final out = <String, dynamic>{};
     for (final key in prefs.getKeys()) {
       if (!key.startsWith('orvix_') && !key.startsWith('pikora_')) continue;
-      if (key == _watchlistKey || key == _libraryKey || key == _progressKey) continue;
+      if (key == _watchlistKey || key == _libraryKey || key == _progressKey)
+        continue;
+      if (_localOnlyPreferenceKeys.contains(key)) continue;
       final value = prefs.get(key);
-      if (value is String || value is bool || value is int || value is double || value is List<String>) {
+      if (value is String ||
+          value is bool ||
+          value is int ||
+          value is double ||
+          value is List<String>) {
         out[key] = value;
       }
     }
@@ -227,6 +258,7 @@ class OrvixAccountService {
     for (final entry in values.entries) {
       final key = entry.key;
       if (!key.startsWith('orvix_') && !key.startsWith('pikora_')) continue;
+      if (_localOnlyPreferenceKeys.contains(key)) continue;
       if (prefs.containsKey(key)) continue;
       final value = entry.value;
       if (value is String) {
@@ -238,7 +270,8 @@ class OrvixAccountService {
       } else if (value is double) {
         await prefs.setDouble(key, value);
       } else if (value is List) {
-        await prefs.setStringList(key, value.map((e) => e.toString()).toList(growable: false));
+        await prefs.setStringList(
+            key, value.map((e) => e.toString()).toList(growable: false));
       }
     }
   }
