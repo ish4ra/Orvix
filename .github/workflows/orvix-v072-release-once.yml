@@ -85,6 +85,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $ErrorActionPreference = 'Stop'
           $tag = 'v0.7.2'
           $zip = 'Orvix-v0.7.2-Windows-x64.zip'
           $exe = 'installer-output/Orvix-Setup-v0.7.2-Windows-x64.exe'
@@ -98,10 +99,35 @@ jobs:
             '- Keeps image-based subtitles such as PGS/VobSub excluded from automatic text timing calibration.'
           ) -join "`n"
 
+          function Invoke-GhRetry {
+            param(
+              [Parameter(Mandatory=$true)][scriptblock]$Command,
+              [string]$Label = 'GitHub operation'
+            )
+            for ($attempt = 1; $attempt -le 5; $attempt++) {
+              & $Command
+              if ($LASTEXITCODE -eq 0) { return }
+              if ($attempt -eq 5) { throw "$Label failed after $attempt attempts." }
+              $delay = 5 * $attempt
+              Write-Host "$Label failed on attempt $attempt. Retrying in $delay seconds..."
+              Start-Sleep -Seconds $delay
+            }
+          }
+
           gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag $zip $exe --clobber
-            gh release edit $tag --title 'Orvix v0.7.2' --notes $notes
+          if ($LASTEXITCODE -ne 0) {
+            Invoke-GhRetry -Label 'Create release' -Command {
+              gh release create $tag --target "${{ github.sha }}" --title 'Orvix v0.7.2' --notes $notes
+            }
           } else {
-            gh release create $tag $zip $exe --target "${{ github.sha }}" --title 'Orvix v0.7.2' --notes $notes
+            Invoke-GhRetry -Label 'Update release notes' -Command {
+              gh release edit $tag --title 'Orvix v0.7.2' --notes $notes
+            }
+          }
+
+          Invoke-GhRetry -Label 'Upload portable build' -Command {
+            gh release upload $tag $zip --clobber
+          }
+          Invoke-GhRetry -Label 'Upload installer' -Command {
+            gh release upload $tag $exe --clobber
           }
