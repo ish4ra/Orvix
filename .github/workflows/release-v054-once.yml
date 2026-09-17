@@ -1,0 +1,95 @@
+name: Release Orvix v0.5.4 Once
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/release-v054-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release-cleanup:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Preserve pinned Orvix icon hash
+        shell: pwsh
+        run: |
+          $icon = 'windows\runner\resources\app_icon.ico'
+          if (-not (Test-Path $icon)) { throw 'Pinned Orvix icon is missing.' }
+          $hash = (Get-FileHash $icon -Algorithm SHA256).Hash
+          "ORVIX_ICON_HASH=$hash" >> $env:GITHUB_ENV
+
+      - name: Generate Windows runner
+        shell: pwsh
+        run: flutter create --platforms=windows --project-name orvix .
+
+      - name: Restore exact pinned Orvix icon
+        shell: pwsh
+        run: |
+          git checkout HEAD -- windows/runner/resources/app_icon.ico
+          $hash = (Get-FileHash 'windows\runner\resources\app_icon.ico' -Algorithm SHA256).Hash
+          if ($hash -ne $env:ORVIX_ICON_HASH) { throw 'Pinned icon changed during runner generation.' }
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze app sources
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Pack portable build
+        shell: pwsh
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath 'Orvix-v0.5.4-Windows-x64.zip' -Force
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'Inno Setup compiler not found.' }
+          & $iscc '/DMyAppVersion=0.5.4' 'installer\orvix.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+
+      - name: Publish v0.5.4 release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = 'Orvix-v0.5.4-Windows-x64.zip'
+          $exe = 'installer-output/Orvix-Setup-v0.5.4-Windows-x64.exe'
+          @'
+          Orvix v0.5.4
+
+          - Pins the Orvix Windows ICO as the source of truth for both the installed app and installer.
+          - Stops Flutter launcher-icon regeneration from replacing the Windows icon.
+          - Restores and hash-verifies the pinned icon after Flutter runner generation before every Windows build.
+          '@ | Set-Content release-notes.md
+          gh release create v0.5.4 $zip $exe --target 'e244614990e2317416539f5268548afe380eb198' --title 'Orvix v0.5.4' --notes-file release-notes.md
+
+      - name: Remove one-time workflow
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/release-v054-once.yml
+          git commit -m "ci: remove one-time v0.5.4 release helper"
+          git push origin HEAD:main
