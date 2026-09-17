@@ -8,6 +8,7 @@ import '../services/ai_sinhala_preferences_service.dart';
 import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/catalog_service.dart';
 import '../services/cloud_preferences_service.dart';
+import '../services/local_torrent_service.dart';
 import '../services/media_state_service.dart';
 import '../services/pikpak_service.dart';
 import '../services/pikpak_transfer_service.dart';
@@ -673,8 +674,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
       final pikpakConnected = await widget.pikpak.isSignedIn;
       final torboxConnected = await widget.torbox.isConnected;
       final hasCloudConnection = pikpakConnected || torboxConnected;
-      final directResults =
-          results.where((result) => !result.isMagnet).toList(growable: false);
 
       SourceResult? chosen;
       if (autoUsePinned) {
@@ -693,15 +692,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
           }
         }
       }
-      // A user without a cloud/debrid account should still get a one-click
-      // path when an addon returned a direct/free stream. Normal Play prefers
-      // the best direct result in that case; Find Sources still lets the user
-      // choose manually.
-      if (autoUsePinned &&
-          !hasCloudConnection &&
-          (chosen == null || chosen.isMagnet) &&
-          directResults.isNotEmpty) {
-        chosen = directResults.first;
+      // With no debrid/cloud connection, Normal Play behaves like a
+      // Stremio-style free path: rank direct and torrent/P2P results together
+      // and pick the healthiest source automatically. Find Sources remains
+      // fully manual.
+      if (autoUsePinned && !hasCloudConnection && chosen == null) {
+        final freeResults = widget.sources.sortForFreeStreaming(results);
+        if (freeResults.isNotEmpty) chosen = freeResults.first;
       }
 
       chosen ??= await _chooseSource(results, item, episode);
@@ -714,6 +711,19 @@ class _DetailsScreenState extends State<DetailsScreen> {
           _status = 'Opening direct stream…';
         });
         await _openPlayerUrl(chosen.resource, item, episode);
+        return;
+      }
+
+      if (!hasCloudConnection) {
+        setState(() {
+          _resolving = true;
+          _resolveProgress = null;
+          _status = 'Starting local P2P torrent stream…';
+        });
+        final localUrl = await LocalTorrentService.instance.resolve(chosen);
+        if (!mounted) return;
+        setState(() => _status = 'Torrent metadata ready — opening player…');
+        await _openPlayerUrl(localUrl, item, episode);
         return;
       }
 
@@ -746,7 +756,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         ),
         content: Text(
           configured.isEmpty
-              ? 'Configure a Stremio-compatible source provider. Direct / Free HTTP streams can play immediately without a cloud account; torrent or magnet sources still require PikPak or TorBox.'
+              ? 'Configure a Stremio-compatible source provider. Direct HTTP streams play immediately, and torrent/magnet sources can use Orvix built-in local P2P engine on Windows. PikPak/TorBox are optional cloud paths.'
               : 'Your configured providers did not return a source for this title. You can manage providers or try again.',
         ),
         actions: [
@@ -1328,7 +1338,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             subtitle: Padding(
                               padding: const EdgeInsets.only(top: 4),
                               child: Text(
-                                '${result.provider}${result.isMagnet ? ' • cloud source' : ' • direct URL'}${result.compatibilityFriendly ? '' : ' • ⚠ compatibility risk'}',
+                                '${result.provider}${result.isMagnet ? ' • torrent / P2P' : ' • direct URL'}${result.compatibilityFriendly ? '' : ' • ⚠ compatibility risk'}',
                               ),
                             ),
                             trailing: Row(

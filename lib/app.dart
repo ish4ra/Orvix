@@ -11,6 +11,7 @@ import 'screens/settings_screen.dart';
 import 'screens/sources_screen.dart';
 import 'services/catalog_service.dart';
 import 'services/cloud_preferences_service.dart';
+import 'services/local_torrent_service.dart';
 import 'services/media_state_service.dart';
 import 'services/orvix_account_service.dart';
 import 'services/pikpak_service.dart';
@@ -56,6 +57,7 @@ class _OrvixAppState extends State<OrvixApp> {
     _transfer.dispose();
     _sources.dispose();
     _torbox.dispose();
+    LocalTorrentService.instance.dispose();
     _playback.dispose();
     super.dispose();
   }
@@ -379,7 +381,7 @@ class _AboutScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Orvix v0.7.3-alpha.1',
+                'Orvix v0.7.3-alpha.2',
                 style: Theme.of(context)
                     .textTheme
                     .headlineMedium
@@ -399,6 +401,8 @@ class _AboutScreen extends StatelessWidget {
                   'Optional Orvix account for Library, progress and preference sync'),
               const _FeatureLine(Icons.hub_outlined,
                   'User-configured Stremio-compatible source providers'),
+              const _FeatureLine(Icons.hub_rounded,
+                  'Built-in local BitTorrent/P2P streaming on Windows when no debrid account is connected'),
               const _FeatureLine(Icons.play_circle_outline_rounded,
                   'media_kit / libmpv playback with custom controls and resume'),
               const _FeatureLine(Icons.video_library_outlined,
