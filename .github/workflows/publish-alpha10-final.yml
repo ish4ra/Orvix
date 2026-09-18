@@ -1,0 +1,129 @@
+name: Publish final Orvix alpha.10 artifacts
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.3-alpha.10
+    paths:
+      - '.github/workflows/publish-alpha10-final.yml'
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for final platform validation run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 160); do
+            status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/35356692243" --jq '.status')"
+            conclusion="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/35356692243" --jq '.conclusion // ""')"
+            echo "Final alpha.10 run: status=${status} conclusion=${conclusion}"
+            if [ "$status" = "completed" ]; then
+              if [ "$conclusion" != "success" ] && [ "$conclusion" != "failure" ]; then
+                echo "::error::Final validation run ended with ${conclusion}."
+                exit 1
+              fi
+              break
+            fi
+            if [ "$i" -eq 160 ]; then
+              echo "::error::Timed out waiting for final validation run."
+              exit 1
+            fi
+            sleep 15
+          done
+
+          names="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/35356692243/artifacts" --jq '.artifacts[].name')"
+          for required in windows android-mobile android-tv macos; do
+            if ! printf '%s\n' "$names" | grep -qx "$required"; then
+              echo "::error::Missing required artifact: $required"
+              exit 1
+            fi
+          done
+
+      - name: Download Windows
+        uses: actions/download-artifact@v4
+        with:
+          name: windows
+          path: dist/windows
+          github-token: ${{ github.token }}
+          run-id: 35356692243
+
+      - name: Download Android mobile
+        uses: actions/download-artifact@v4
+        with:
+          name: android-mobile
+          path: dist/android-mobile
+          github-token: ${{ github.token }}
+          run-id: 35356692243
+
+      - name: Download Android TV
+        uses: actions/download-artifact@v4
+        with:
+          name: android-tv
+          path: dist/android-tv
+          github-token: ${{ github.token }}
+          run-id: 35356692243
+
+      - name: Download macOS
+        uses: actions/download-artifact@v4
+        with:
+          name: macos
+          path: dist/macos
+          github-token: ${{ github.token }}
+          run-id: 35356692243
+
+      - name: Publish final alpha.10 assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find dist -type f \( \
+            -name 'Orvix-v0.7.3-alpha.10-Windows-x64.zip' -o \
+            -name 'Orvix-Setup-v0.7.3-alpha.10-Windows-x64.exe' -o \
+            -name 'Orvix-v0.7.3-alpha.10-Android-Mobile*.apk' -o \
+            -name 'Orvix-v0.7.3-alpha.10-Android-TV.apk' -o \
+            -name 'Orvix-v0.7.3-alpha.10-macOS.dmg' \
+          \) -print)
+          if [ "${#files[@]}" -lt 8 ]; then
+            printf 'Found assets:\n'
+            printf '%s\n' "${files[@]}"
+            echo "::error::Final alpha.10 asset set is incomplete."
+            exit 1
+          fi
+
+          notes="$(cat <<'EOF'
+Orvix alpha.10 focuses on AI Sinhala subtitle reliability across Windows, macOS, Android mobile and Android TV.
+
+- AI Sinhala now follows seeks/jumps by translating around the new playback position.
+- Whole-title background translation was replaced by a sliding window, reducing quota/rate-limit failures later in playback.
+- Failed translation windows are retried instead of becoming permanent subtitle gaps.
+- When AI Sinhala is enabled, an English subtitle track may be used internally for timing but is kept hidden.
+- If release-matched subtitles are unavailable or do not match the actual file, Orvix switches to live AI translation of the file's embedded English text track.
+- In-flight live subtitle requests are invalidated after seeking so stale pre-seek lines cannot remain visible.
+- Regression tests cover timeline lookup, untranslated-cue behavior, and normalized source matching.
+- Retains alpha.9 Android signing/P2P, TV focus/branding and macOS Keychain fixes.
+EOF
+)"
+
+          if gh release view v0.7.3-alpha.10 >/dev/null 2>&1; then
+            gh release upload v0.7.3-alpha.10 --clobber "${files[@]}"
+            gh release edit v0.7.3-alpha.10 \
+              --title 'Orvix v0.7.3-alpha.10 — Subtitle Reliability' \
+              --prerelease \
+              --notes "$notes"
+          else
+            gh release create v0.7.3-alpha.10 \
+              --verify-tag \
+              --title 'Orvix v0.7.3-alpha.10 — Subtitle Reliability' \
+              --prerelease \
+              --notes "$notes" \
+              "${files[@]}"
+          fi
