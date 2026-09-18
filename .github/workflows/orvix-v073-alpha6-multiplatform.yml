@@ -1,0 +1,459 @@
+name: Release Orvix v0.7.3-alpha.6 Multi-platform
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.3-alpha.6
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Build Windows
+        run: flutter build windows --release
+
+      - name: Bundle local P2P engine
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseDir = 'build\windows\x64\runner\Release'
+          $url = 'https://github.com/stremio-native/stream-server/releases/download/v0.1.8/stream-server-windows-amd64.exe'
+          $dest = Join-Path $releaseDir 'orvix-stream-server.exe'
+          Invoke-WebRequest -Uri $url -OutFile $dest
+          $expected = '90B7A14B282A9E649FBA5ADB6112C2C191DBA884EC762F8650F45CCF06E17E09'
+          $actual = (Get-FileHash $dest -Algorithm SHA256).Hash
+          if ($actual -ne $expected) { throw "stream-server checksum mismatch: $actual" }
+          $licenseDir = Join-Path $releaseDir 'licenses\stream-server'
+          New-Item -ItemType Directory -Force -Path $licenseDir | Out-Null
+          Copy-Item 'licenses\stream-server\LICENSE' (Join-Path $licenseDir 'LICENSE.txt')
+          Copy-Item 'licenses\stream-server\NOTICE.md' (Join-Path $licenseDir 'NOTICE.md')
+
+      - name: Pack portable build
+        shell: pwsh
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath 'Orvix-v0.7.3-alpha.6-Windows-x64.zip' -Force
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
+          & $iscc '/DMyAppVersion=0.7.3-alpha.6' 'installer\orvix.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            Orvix-v0.7.3-alpha.6-Windows-x64.zip
+            installer-output/Orvix-Setup-v0.7.3-alpha.6-Windows-x64.exe
+
+  android-mobile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform
+        run: flutter create --platforms=android --org com.orvix --project-name orvix .
+
+      - name: Install Pillow for Android branding
+        run: python3 -m pip install --disable-pip-version-check pillow
+
+      - name: Configure Android mobile
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+
+          manifest = Path('android/app/src/main/AndroidManifest.xml')
+          text = manifest.read_text()
+          if 'android.permission.INTERNET' not in text:
+              text = text.replace(
+                  '<manifest xmlns:android="http://schemas.android.com/apk/res/android">',
+                  '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n'
+                  '    <uses-permission android:name="android.permission.INTERNET" />\n'
+                  '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />'
+              )
+          text = text.replace('android:label="orvix"', 'android:label="Orvix"')
+          if 'android:usesCleartextTraffic=' not in text:
+              text = text.replace(
+                  '<application',
+                  '<application\n        android:usesCleartextTraffic="true"',
+                  1,
+              )
+          manifest.write_text(text)
+
+          src = Image.open('assets/branding/orvix_icon.png').convert('RGBA')
+          sizes = {'mdpi':48,'hdpi':72,'xhdpi':96,'xxhdpi':144,'xxxhdpi':192}
+          for density, size in sizes.items():
+              out = Path(f'android/app/src/main/res/mipmap-{density}/ic_launcher.png')
+              out.parent.mkdir(parents=True, exist_ok=True)
+              src.resize((size,size), Image.Resampling.LANCZOS).save(out)
+
+          # Proper adaptive icon: prevents Android launchers from placing the
+          # legacy square icon on a white circle and also fixes Android 12 splash.
+          fg = Image.new('RGBA', (432, 432), (0, 0, 0, 0))
+          logo = src.copy()
+          logo.thumbnail((330, 330), Image.Resampling.LANCZOS)
+          fg.alpha_composite(logo, ((432-logo.width)//2, (432-logo.height)//2))
+          fg_path = Path('android/app/src/main/res/drawable-nodpi/orvix_foreground.png')
+          fg_path.parent.mkdir(parents=True, exist_ok=True)
+          fg.save(fg_path)
+
+          values = Path('android/app/src/main/res/values/orvix_colors.xml')
+          values.write_text(
+              '<resources>\n'
+              '  <color name="orvix_icon_background">#050806</color>\n'
+              '</resources>\n'
+          )
+          anydpi = Path('android/app/src/main/res/mipmap-anydpi-v26')
+          anydpi.mkdir(parents=True, exist_ok=True)
+          adaptive_xml = (
+              '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n'
+              '  <background android:drawable="@color/orvix_icon_background"/>\n'
+              '  <foreground android:drawable="@drawable/orvix_foreground"/>\n'
+              '</adaptive-icon>\n'
+          )
+          (anydpi / 'ic_launcher.xml').write_text(adaptive_xml)
+          (anydpi / 'ic_launcher_round.xml').write_text(adaptive_xml)
+
+          text = manifest.read_text()
+          if 'android:roundIcon=' not in text:
+              text = text.replace(
+                  '<application',
+                  '<application\n        android:roundIcon="@mipmap/ic_launcher_round"',
+                  1,
+              )
+          manifest.write_text(text)
+
+          for launch in (
+              Path('android/app/src/main/res/drawable/launch_background.xml'),
+              Path('android/app/src/main/res/drawable-v21/launch_background.xml'),
+          ):
+              if launch.exists():
+                  launch.write_text(
+                      launch.read_text().replace(
+                          '@android:color/white',
+                          '@color/orvix_icon_background',
+                      )
+                  )
+
+          v31 = Path('android/app/src/main/res/values-v31/styles.xml')
+          v31.parent.mkdir(parents=True, exist_ok=True)
+          v31.write_text(
+              '<resources>\n'
+              '  <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">\n'
+              '    <item name="android:forceDarkAllowed">false</item>\n'
+              '    <item name="android:windowSplashScreenBackground">@color/orvix_icon_background</item>\n'
+              '    <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>\n'
+              '    <item name="android:windowSplashScreenIconBackgroundColor">@color/orvix_icon_background</item>\n'
+              '  </style>\n'
+              '  <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">\n'
+              '    <item name="android:windowLightStatusBar">false</item>\n'
+              '    <item name="android:windowBackground">?android:colorBackground</item>\n'
+              '  </style>\n'
+              '</resources>\n'
+          )
+          PY
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Android mobile APK
+        run: flutter build apk --release
+
+      - name: Rename APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.3-alpha.6-Android-Mobile.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-mobile
+          path: Orvix-v0.7.3-alpha.6-Android-Mobile.apk
+
+  android-tv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform
+        run: flutter create --platforms=android --org com.orvix --project-name orvix .
+
+      - name: Install Pillow
+        run: python3 -m pip install --disable-pip-version-check pillow
+
+      - name: Configure Android TV
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+
+          manifest = Path('android/app/src/main/AndroidManifest.xml')
+          text = manifest.read_text()
+          text = text.replace(
+              '<manifest xmlns:android="http://schemas.android.com/apk/res/android">',
+              '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n'
+              '    <uses-permission android:name="android.permission.INTERNET" />\n'
+              '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n'
+              '    <uses-feature android:name="android.software.leanback" android:required="true" />\n'
+              '    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />'
+          )
+          text = text.replace('android:label="orvix"', 'android:label="Orvix TV"')
+          if 'android:usesCleartextTraffic=' not in text:
+              text = text.replace(
+                  '<application',
+                  '<application\n        android:usesCleartextTraffic="true"\n        android:banner="@drawable/tv_banner"',
+                  1,
+              )
+          if 'android.intent.category.LEANBACK_LAUNCHER' not in text:
+              text = text.replace(
+                  '<category android:name="android.intent.category.LAUNCHER"/>',
+                  '<category android:name="android.intent.category.LAUNCHER"/>\n'
+                  '                <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>'
+              )
+          manifest.write_text(text)
+
+          gradle = Path('android/app/build.gradle.kts')
+          if gradle.exists():
+              g = gradle.read_text()
+              g = g.replace('com.orvix.orvix', 'com.orvix.orvix.tv')
+              gradle.write_text(g)
+
+          src = Image.open('assets/branding/orvix_icon.png').convert('RGBA')
+          sizes = {'mdpi':48,'hdpi':72,'xhdpi':96,'xxhdpi':144,'xxxhdpi':192}
+          for density, size in sizes.items():
+              out = Path(f'android/app/src/main/res/mipmap-{density}/ic_launcher.png')
+              out.parent.mkdir(parents=True, exist_ok=True)
+              src.resize((size,size), Image.Resampling.LANCZOS).save(out)
+
+          fg = Image.new('RGBA', (432, 432), (0, 0, 0, 0))
+          logo_fg = src.copy()
+          logo_fg.thumbnail((330, 330), Image.Resampling.LANCZOS)
+          fg.alpha_composite(
+              logo_fg,
+              ((432-logo_fg.width)//2, (432-logo_fg.height)//2),
+          )
+          fg_path = Path('android/app/src/main/res/drawable-nodpi/orvix_foreground.png')
+          fg_path.parent.mkdir(parents=True, exist_ok=True)
+          fg.save(fg_path)
+
+          values = Path('android/app/src/main/res/values/orvix_colors.xml')
+          values.write_text(
+              '<resources>\n'
+              '  <color name="orvix_icon_background">#050806</color>\n'
+              '</resources>\n'
+          )
+          anydpi = Path('android/app/src/main/res/mipmap-anydpi-v26')
+          anydpi.mkdir(parents=True, exist_ok=True)
+          adaptive_xml = (
+              '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n'
+              '  <background android:drawable="@color/orvix_icon_background"/>\n'
+              '  <foreground android:drawable="@drawable/orvix_foreground"/>\n'
+              '</adaptive-icon>\n'
+          )
+          (anydpi / 'ic_launcher.xml').write_text(adaptive_xml)
+          (anydpi / 'ic_launcher_round.xml').write_text(adaptive_xml)
+
+          text = manifest.read_text()
+          if 'android:roundIcon=' not in text:
+              text = text.replace(
+                  '<application',
+                  '<application\n        android:roundIcon="@mipmap/ic_launcher_round"',
+                  1,
+              )
+          manifest.write_text(text)
+
+          for launch in (
+              Path('android/app/src/main/res/drawable/launch_background.xml'),
+              Path('android/app/src/main/res/drawable-v21/launch_background.xml'),
+          ):
+              if launch.exists():
+                  launch.write_text(
+                      launch.read_text().replace(
+                          '@android:color/white',
+                          '@color/orvix_icon_background',
+                      )
+                  )
+
+          v31 = Path('android/app/src/main/res/values-v31/styles.xml')
+          v31.parent.mkdir(parents=True, exist_ok=True)
+          v31.write_text(
+              '<resources>\n'
+              '  <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">\n'
+              '    <item name="android:forceDarkAllowed">false</item>\n'
+              '    <item name="android:windowSplashScreenBackground">@color/orvix_icon_background</item>\n'
+              '    <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>\n'
+              '    <item name="android:windowSplashScreenIconBackgroundColor">@color/orvix_icon_background</item>\n'
+              '  </style>\n'
+              '  <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">\n'
+              '    <item name="android:windowLightStatusBar">false</item>\n'
+              '    <item name="android:windowBackground">?android:colorBackground</item>\n'
+              '  </style>\n'
+              '</resources>\n'
+          )
+
+          banner = Image.new('RGBA', (320,180), (5,8,6,255))
+          logo = src.copy()
+          logo.thumbnail((135,135), Image.Resampling.LANCZOS)
+          banner.alpha_composite(logo, ((320-logo.width)//2, (180-logo.height)//2))
+          banner_path = Path('android/app/src/main/res/drawable/tv_banner.png')
+          banner_path.parent.mkdir(parents=True, exist_ok=True)
+          banner.save(banner_path)
+          PY
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Android TV APK
+        run: flutter build apk --release
+
+      - name: Rename APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.3-alpha.6-Android-TV.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-tv
+          path: Orvix-v0.7.3-alpha.6-Android-TV.apk
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Enable and generate macOS platform
+        run: |
+          flutter config --enable-macos-desktop
+          flutter create --platforms=macos --org com.orvix --project-name orvix .
+
+      - name: Configure macOS networking and branding
+        run: |
+          sed -i '' 's/PRODUCT_NAME = orvix/PRODUCT_NAME = Orvix/' macos/Runner/Configs/AppInfo.xcconfig
+
+          ICON_DIR='macos/Runner/Assets.xcassets/AppIcon.appiconset'
+          SRC='assets/branding/orvix_icon.png'
+          sips -z 16 16 "$SRC" --out "$ICON_DIR/app_icon_16.png" >/dev/null
+          sips -z 32 32 "$SRC" --out "$ICON_DIR/app_icon_32.png" >/dev/null
+          sips -z 64 64 "$SRC" --out "$ICON_DIR/app_icon_64.png" >/dev/null
+          sips -z 128 128 "$SRC" --out "$ICON_DIR/app_icon_128.png" >/dev/null
+          sips -z 256 256 "$SRC" --out "$ICON_DIR/app_icon_256.png" >/dev/null
+          sips -z 512 512 "$SRC" --out "$ICON_DIR/app_icon_512.png" >/dev/null
+          sips -z 1024 1024 "$SRC" --out "$ICON_DIR/app_icon_1024.png" >/dev/null
+
+          for f in macos/Runner/Release.entitlements macos/Runner/DebugProfile.entitlements; do
+            /usr/libexec/PlistBuddy -c "Add :com.apple.security.network.client bool true" "$f" 2>/dev/null || \
+            /usr/libexec/PlistBuddy -c "Set :com.apple.security.network.client true" "$f"
+          done
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build macOS app
+        run: flutter build macos --release
+
+      - name: Ad-hoc sign and create DMG
+        run: |
+          APP="$(find build/macos/Build/Products/Release -maxdepth 1 -name '*.app' -print -quit)"
+          if [ -z "$APP" ]; then
+            echo "macOS .app not found" >&2
+            exit 1
+          fi
+          codesign --force --deep --sign - "$APP"
+          mkdir -p dmg-root
+          cp -R "$APP" dmg-root/Orvix.app
+          ln -s /Applications dmg-root/Applications
+          hdiutil create -volname "Orvix" -srcfolder dmg-root -ov -format UDZO Orvix-v0.7.3-alpha.6-macOS.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: Orvix-v0.7.3-alpha.6-macOS.dmg
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [windows, android-mobile, android-tv, macos]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -lah dist
+
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v0.7.3-alpha.6 \
+            --target '${{ github.sha }}' \
+            --title 'Orvix v0.7.3-alpha.6 — Multi-platform Test' \
+            --prerelease \
+            --notes "Orvix alpha.6 fixes the first mobile/TV layout pass and Android branding.
+
+          Test assets:
+          - Windows x64 installer + portable ZIP
+          - Android Mobile APK
+          - Android TV APK with Leanback launcher support
+          - macOS DMG (ad-hoc signed; Gatekeeper may require Open Anyway)
+
+          Platform notes:
+          - Windows includes the built-in local P2P torrent engine.
+          - Android/mobile/TV and macOS currently support direct streams and PikPak/TorBox paths; the bundled local P2P sidecar is still Windows-only.
+          - Android APKs are test builds using Flutter's generated signing setup, not Play Store production signing.
+          - Mobile details, episode cards, source picker and player controls now use responsive layouts.\n          - Android TV keeps the large-screen layout with focusable controls and Leanback launcher support.\n          - Android launcher/splash branding now uses a dark adaptive Orvix icon instead of the white legacy icon background.
+          - macOS is an unsigned/notarization-free test distribution, so macOS may show a Gatekeeper warning." \
+            dist/Orvix-v0.7.3-alpha.6-Windows-x64.zip \
+            dist/installer-output/Orvix-Setup-v0.7.3-alpha.6-Windows-x64.exe \
+            dist/Orvix-v0.7.3-alpha.6-Android-Mobile.apk \
+            dist/Orvix-v0.7.3-alpha.6-Android-TV.apk \
+            dist/Orvix-v0.7.3-alpha.6-macOS.dmg
