@@ -1350,6 +1350,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       episode: widget.episode,
       releaseHint: widget.releaseHint,
       videoSize: widget.expectedSizeBytes,
+      videoHash: widget.expectedVideoHash,
       preferredLanguage: _preferredSubtitleLanguage,
     );
 
