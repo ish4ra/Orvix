@@ -917,7 +917,10 @@ class SourceProviderService {
           hints?['videoHash']?.toString() ?? raw['videoHash']?.toString(),
         );
         final videoHash = rawVideoHash != null &&
-                RegExp(r'^[a-fA-F0-9]{16}
+                RegExp(r'^[a-fA-F0-9]{16}$').hasMatch(rawVideoHash)
+            ? rawVideoHash.toLowerCase()
+            : null;
+        final bingeGroup = _nonEmpty(
           hints?['bingeGroup']?.toString() ?? hints?['binge_group']?.toString(),
         );
         final torrentFileIndex = _parseInt(
