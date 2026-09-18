@@ -71,6 +71,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   StreamSubscription<String>? _playbackErrorSubscription;
   bool _playbackStarted = false;
   bool _startupFailureVisible = false;
+  bool _closing = false;
   final FocusNode _focusNode = FocusNode();
   AiPreparedSubtitle? _preparedAiSubtitle;
   bool _aiSinhalaEnabled = false;
@@ -244,9 +245,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _prepareAiSinhalaAfterPlaybackStarts() async {
-    if (_preparedAiSubtitle != null) return;
+    if (_preparedAiSubtitle != null || _closing) return;
     final enabled = await AiSinhalaPreferencesService.isEnabled();
-    if (!enabled || !mounted || _subtitleChoiceOverridden) return;
+    if (!enabled || !mounted || _closing || _subtitleChoiceOverridden) return;
 
     setState(() => _aiSinhalaRequested = true);
     await _setNativeSubtitleVisibility(false);
@@ -258,12 +259,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
           _aiSubtitleUnavailable = true;
         });
       }
-      await _setNativeSubtitleVisibility(true);
+      await _setNativeSubtitleVisibility(false);
       return;
     }
 
     await Future<void>.delayed(const Duration(milliseconds: 900));
-    if (!mounted || _subtitleChoiceOverridden) return;
+    if (!mounted || _closing || _subtitleChoiceOverridden) return;
     setState(() {
       _aiSubtitleLoading = true;
       _aiSubtitleUnavailable = false;
@@ -287,7 +288,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             _aiSinhalaEnabled = false;
             _aiDisplaySubtitle = '';
           });
-          await _setNativeSubtitleVisibility(true);
+          await _setNativeSubtitleVisibility(false);
         }
         return;
       }
@@ -329,6 +330,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<bool> _tryPrepareEmbeddedAiTiming() async {
     if (!_aiSinhalaRequested ||
         _subtitleChoiceOverridden ||
+        _closing ||
         !mounted ||
         widget.item == null) {
       return false;
@@ -372,11 +374,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _liveDialogueContext.clear();
         await _hideNativeTimingSubtitle();
 
-        final wasPlaying = player.state.playing;
-        if (wasPlaying) {
-          await player.pause();
-        }
-
         try {
           if (mounted) {
             setState(() {
@@ -391,9 +388,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
             episode: widget.episode,
           );
           if (!mounted ||
+              _closing ||
               _subtitleChoiceOverridden ||
               prepared == null) {
-            if (wasPlaying) await player.play();
             return false;
           }
 
@@ -413,10 +410,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
           await _setNativeSubtitleDelayProperty(0);
           await _hideNativeTimingSubtitle();
           _startNativeSubtitleClock();
-          if (wasPlaying) await player.play();
           return true;
         } catch (_) {
-          if (wasPlaying) await player.play();
           return false;
         }
       }
