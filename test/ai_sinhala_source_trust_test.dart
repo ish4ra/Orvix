@@ -27,4 +27,25 @@ void main() {
     );
     expect(player, isNot(contains('_tryEnableLiveAiFallback()')));
   });
+
+  test('exact OpenSubtitles file hash is preserved end to end', () {
+    final sources =
+        File('lib/services/source_provider_service.dart').readAsStringSync();
+    final details = File('lib/screens/details_screen.dart').readAsStringSync();
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+    final service =
+        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+
+    expect(sources, contains("hints?['videoHash']"));
+    expect(sources, contains('final String? videoHash;'));
+    expect(details, contains('expectedVideoHash: chosen.videoHash'));
+    expect(player, contains('expectedVideoHash: widget.expectedVideoHash'));
+    expect(service, contains('_normalizeVideoHash(expectedVideoHash)'));
+    expect(service, contains("match: 'video-hash'"));
+    expect(service, contains("preserveProviderOrder: endpoint.match == 'video-hash'"));
+    expect(
+      service,
+      contains('Preserve the official addon\'s ordering here'),
+    );
+  });
 }
