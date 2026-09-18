@@ -782,11 +782,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _pickExternalSubtitle() async {
     _hideTimer?.cancel();
-    final result = await FilePicker.pickFiles(
+    final result = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: const ['srt', 'ass', 'ssa', 'vtt'],
     );
-    final path = result?.files.single.path;
+    final path = result?.path;
     if (path == null || path.isEmpty) {
       if (mounted) _scheduleHide();
       return;
