@@ -13,12 +13,13 @@ void main() {
       player,
       contains('(_timingTrackSelected && _timingTrackIsText)'),
     );
-    expect(player, contains('_embeddedMismatchCount < 3'));
-    expect(player, contains('if (remainingMs < 700) return;'));
-    expect(player, contains("'sub-end/full'"));
-    expect(player, contains('_autoSyncSamples.length < 3'));
-    expect(service, contains('math.min(96, cues.length)'));
-    expect(service, contains('requireReleaseEvidence: endpoint.match =='));
+    expect(player, contains('_tryPrepareEmbeddedAiTiming'));
+    expect(player, contains('Never fall back to translating'));
+    expect(player, isNot(contains('_tryEnableLiveAiFallback()')));
+    expect(service, contains('prepareForEmbeddedTiming'));
+    expect(service, contains("sourceMatch: 'embedded-text-timing'"));
+    expect(service, isNot(contains("match: 'title-episode'")));
+    expect(service, contains('requireReleaseEvidence && specificTokens.isEmpty'));
     expect(SubtitlePreferencesService.defaultFontSize, 26);
   });
 }
