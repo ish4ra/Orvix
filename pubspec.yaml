@@ -26,6 +26,10 @@ dependencies:
 # safer NativeCallable ownership/disposal and waiting for native render-context
 # teardown before libmpv destruction on Windows/Apple. Pin the exact reviewed
 # Debrify commit so a future upstream change cannot silently alter Orvix.
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
 dependency_overrides:
   media_kit:
     git:
