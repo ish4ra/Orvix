@@ -45,7 +45,7 @@ void main() {
     expect(service, contains("preserveProviderOrder: endpoint.match == 'video-hash'"));
     expect(
       service,
-      contains('Preserve the official addon\'s ordering here'),
+      contains("trust the provider's"),
     );
   });
 }
