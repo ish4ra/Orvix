@@ -1014,6 +1014,175 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (mounted) _scheduleHide();
   }
 
+  Widget _subtitleAppearanceControls(StateSetter setSheetState) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0B120D),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF263827)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Subtitle appearance',
+            style: TextStyle(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              OutlinedButton(
+                onPressed: () async {
+                  await _setSubtitleFontSize(_subtitleFontSize - 2);
+                  setSheetState(() {});
+                },
+                child: const Text('A−'),
+              ),
+              Chip(
+                label: Text('${_subtitleFontSize.toStringAsFixed(0)} px'),
+              ),
+              OutlinedButton(
+                onPressed: () async {
+                  await _setSubtitleFontSize(_subtitleFontSize + 2);
+                  setSheetState(() {});
+                },
+                child: const Text('A+'),
+              ),
+              FilterChip(
+                selected: _subtitleBackground,
+                label: const Text('Background'),
+                onSelected: (value) async {
+                  await _setSubtitleBackground(value);
+                  setSheetState(() {});
+                },
+              ),
+              OutlinedButton(
+                onPressed: !_subtitleBackground
+                    ? null
+                    : () async {
+                        await _setSubtitleBackgroundOpacity(
+                          _subtitleBackgroundOpacity - .1,
+                        );
+                        setSheetState(() {});
+                      },
+                child: const Text('BG −'),
+              ),
+              Chip(
+                label: Text(
+                  'BG ${(_subtitleBackgroundOpacity * 100).round()}%',
+                ),
+              ),
+              OutlinedButton(
+                onPressed: !_subtitleBackground
+                    ? null
+                    : () async {
+                        await _setSubtitleBackgroundOpacity(
+                          _subtitleBackgroundOpacity + .1,
+                        );
+                        setSheetState(() {});
+                      },
+                child: const Text('BG +'),
+              ),
+              OutlinedButton(
+                onPressed: () async {
+                  await _setSubtitleBottomOffset(_subtitleBottomOffset - 10);
+                  setSheetState(() {});
+                },
+                child: const Text('Lower'),
+              ),
+              Chip(
+                label: Text('Position ${_subtitleBottomOffset.round()}'),
+              ),
+              OutlinedButton(
+                onPressed: () async {
+                  await _setSubtitleBottomOffset(_subtitleBottomOffset + 10);
+                  setSheetState(() {});
+                },
+                child: const Text('Higher'),
+              ),
+              TextButton.icon(
+                onPressed: () async {
+                  await _resetSubtitleAppearance();
+                  setSheetState(() {});
+                },
+                icon: const Icon(Icons.restart_alt_rounded),
+                label: const Text('Reset appearance'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _subtitleSyncControls(StateSetter setSheetState) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0B120D),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF263827)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Subtitle sync',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+              Text(
+                '${_subtitleDelaySeconds > 0 ? '+' : ''}${_subtitleDelaySeconds.toStringAsFixed(2)}s',
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Earlier/later works for embedded, local and OpenSubtitles tracks. The adjustment is only for this playback session.',
+            style: TextStyle(fontSize: 12, color: Color(0xFF9CA99E)),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton(
+                onPressed: () async {
+                  await _setSubtitleDelay(_subtitleDelaySeconds - .5);
+                  setSheetState(() {});
+                },
+                child: const Text('Earlier −0.5s'),
+              ),
+              OutlinedButton(
+                onPressed: () async {
+                  await _setSubtitleDelay(0);
+                  setSheetState(() {});
+                },
+                child: const Text('Reset'),
+              ),
+              OutlinedButton(
+                onPressed: () async {
+                  await _setSubtitleDelay(_subtitleDelaySeconds + .5);
+                  setSheetState(() {});
+                },
+                child: const Text('Later +0.5s'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _showTracks() async {
     _hideTimer?.cancel();
     final player = widget.playback.player;
