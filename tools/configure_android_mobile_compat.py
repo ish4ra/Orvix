@@ -23,15 +23,9 @@ def main() -> None:
     gradle = Path("android/app/build.gradle.kts")
     g = gradle.read_text()
 
-    g, min_sdk_count = re.subn(
-        r"(?m)^(\s*)minSdk\s*=\s*[^\n]+$",
-        r"\1minSdk = 23",
-        g,
-        count=1,
-    )
-    if min_sdk_count != 1:
-        raise SystemExit("Could not locate Android minSdk assignment.")
-
+    # Flutter 3.47 supports Android API 24+. Keep Flutter's supported minSdk
+    # instead of forcing API 23; the compatibility change here is native-lib
+    # extraction/legacy packaging, which is safe for current LineageOS builds.
     if "useLegacyPackaging = true" not in g:
         marker = "    defaultConfig {"
         if marker not in g:
