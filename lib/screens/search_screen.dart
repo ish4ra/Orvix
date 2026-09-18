@@ -126,8 +126,16 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final mobile = screenWidth < 600;
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(32, 28, 32, 32),
+      padding: EdgeInsets.fromLTRB(
+        mobile ? 16 : 32,
+        mobile ? 18 : 28,
+        mobile ? 16 : 32,
+        mobile ? 18 : 32,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -218,16 +226,24 @@ class _SearchScreenState extends State<SearchScreen> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = (constraints.maxWidth / 180).floor().clamp(2, 8);
+        final width = constraints.maxWidth;
+        final columns = width >= 1400
+            ? 7
+            : width >= 1200
+                ? 6
+                : width >= 1000
+                    ? 5
+                    : width >= 840
+                        ? 4
+                        : 3;
+        final compactGrid = width < 600;
         return GridView.builder(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
-            crossAxisSpacing: 18,
-            mainAxisSpacing: 22,
-            // Poster + two text rows need a taller TV-safe cell. The previous
-            // .58 ratio overflowed on 800px test layouts and can clip real TV
-            // focus borders/text at some launcher/UI scales.
-            childAspectRatio: .50,
+            crossAxisSpacing: compactGrid ? 10 : 16,
+            mainAxisSpacing: compactGrid ? 16 : 22,
+            childAspectRatio: compactGrid ? .50 : .52,
           ),
           itemCount: _results.length,
           itemBuilder: (context, index) {
@@ -236,6 +252,7 @@ class _SearchScreenState extends State<SearchScreen> {
               key: ValueKey('search-result-$index'),
               item: item,
               width: double.infinity,
+              compact: compactGrid,
               focusNode: index == 0 ? _firstResultFocusNode : null,
               onTap: () => widget.onOpen(item),
             );
