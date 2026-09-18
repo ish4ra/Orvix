@@ -224,7 +224,10 @@ class _SearchScreenState extends State<SearchScreen> {
             crossAxisCount: columns,
             crossAxisSpacing: 18,
             mainAxisSpacing: 22,
-            childAspectRatio: .58,
+            // Poster + two text rows need a taller TV-safe cell. The previous
+            // .58 ratio overflowed on 800px test layouts and can clip real TV
+            // focus borders/text at some launcher/UI scales.
+            childAspectRatio: .50,
           ),
           itemCount: _results.length,
           itemBuilder: (context, index) {

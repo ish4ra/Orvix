@@ -111,6 +111,7 @@ jobs:
 
       - name: Test Android TV search D-pad focus
         run: flutter test test/search_tv_focus_test.dart
+        # This also catches MediaCard/Grid overflow regressions on TV-sized focus paths.
 
       - name: Build Windows
         run: flutter build windows --release
@@ -566,6 +567,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          if gh release view v0.7.3-alpha.11 >/dev/null 2>&1; then
+            echo "alpha.11 prerelease already exists; replacing assets with this validated run."
+            gh release upload v0.7.3-alpha.11 --clobber \
+              dist/Orvix-v0.7.3-alpha.11-Windows-x64.zip \
+              dist/installer-output/Orvix-Setup-v0.7.3-alpha.11-Windows-x64.exe \
+              dist/Orvix-v0.7.3-alpha.11-Android-Mobile*.apk \
+              dist/Orvix-v0.7.3-alpha.11-Android-TV.apk \
+              dist/Orvix-v0.7.3-alpha.11-macOS.dmg
+            gh release edit v0.7.3-alpha.11 \
+              --title 'Orvix v0.7.3-alpha.11 — Android TV Navigation + Branding' \
+              --prerelease \
+              --notes "This alpha.11 release has been refreshed with the latest validated multi-platform artifacts."
+            exit 0
+          fi
+
           gh release create v0.7.3-alpha.11 \
             --target '${{ github.sha }}' \
             --title 'Orvix v0.7.3-alpha.11 — Android TV Navigation + Branding' \

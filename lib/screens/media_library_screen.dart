@@ -136,7 +136,9 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
                               crossAxisCount: count,
                               crossAxisSpacing: 18,
                               mainAxisSpacing: 22,
-                              childAspectRatio: .55,
+                              // Match the TV-safe MediaCard height used by
+                              // Search so poster/title metadata never overflows.
+                              childAspectRatio: .50,
                             ),
                             itemBuilder: (context, index) {
                               final item = visible[index];
