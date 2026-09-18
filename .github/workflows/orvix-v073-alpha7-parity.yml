@@ -343,14 +343,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          brew install libtorrent-rasterbar boost pkg-config
+          brew install libtorrent-rasterbar boost openssl@3 pkg-config
           LIBTORRENT_PREFIX="$(brew --prefix libtorrent-rasterbar)"
           BOOST_PREFIX="$(brew --prefix boost)"
-          echo "PKG_CONFIG_PATH=$LIBTORRENT_PREFIX/lib/pkgconfig:$(brew --prefix)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
-          echo "CXXFLAGS=-I$BOOST_PREFIX/include ${CXXFLAGS:-}" >> "$GITHUB_ENV"
-          echo "CPPFLAGS=-I$BOOST_PREFIX/include ${CPPFLAGS:-}" >> "$GITHUB_ENV"
-          echo "CPLUS_INCLUDE_PATH=$BOOST_PREFIX/include:${CPLUS_INCLUDE_PATH:-}" >> "$GITHUB_ENV"
-          echo "LDFLAGS=-L$BOOST_PREFIX/lib ${LDFLAGS:-}" >> "$GITHUB_ENV"
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          echo "PKG_CONFIG_PATH=$LIBTORRENT_PREFIX/lib/pkgconfig:$OPENSSL_PREFIX/lib/pkgconfig:$(brew --prefix)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          echo "CXXFLAGS=-I$BOOST_PREFIX/include -I$OPENSSL_PREFIX/include ${CXXFLAGS:-}" >> "$GITHUB_ENV"
+          echo "CPPFLAGS=-I$BOOST_PREFIX/include -I$OPENSSL_PREFIX/include ${CPPFLAGS:-}" >> "$GITHUB_ENV"
+          echo "CPLUS_INCLUDE_PATH=$BOOST_PREFIX/include:$OPENSSL_PREFIX/include:${CPLUS_INCLUDE_PATH:-}" >> "$GITHUB_ENV"
+          echo "LDFLAGS=-L$BOOST_PREFIX/lib -L$OPENSSL_PREFIX/lib ${LDFLAGS:-}" >> "$GITHUB_ENV"
 
       - name: Build macOS P2P engine
         shell: bash
