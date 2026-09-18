@@ -172,3 +172,5 @@ jobs:
 # retrigger after clean search ranking rebuild
 
 # final alpha.02 rerun: clean catalog + relevance/layout/icon/player regression gates
+
+# final rerun after clean catalog reconstruction
