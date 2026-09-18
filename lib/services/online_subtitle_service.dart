@@ -42,14 +42,14 @@ class OnlineSubtitleService {
 
     final type = item.kind == MediaKind.movie ? 'movie' : 'series';
     final suffix = item.kind == MediaKind.series && episode != null
-        ? '$imdbId:\${episode.season}:\${episode.episode}'
+        ? '$imdbId:${episode.season}:${episode.episode}'
         : imdbId;
 
     final endpoints = <({Uri uri, int bonus})>[];
     final extras = <String>[];
     final cleanRelease = releaseHint?.trim();
     if (cleanRelease != null && cleanRelease.isNotEmpty) {
-      extras.add('filename=\${Uri.encodeComponent(cleanRelease)}');
+      extras.add('filename=${Uri.encodeComponent(cleanRelease)}');
     }
     if (videoSize != null && videoSize > 0) {
       extras.add('videoSize=$videoSize');
@@ -57,7 +57,7 @@ class OnlineSubtitleService {
     if (extras.isNotEmpty) {
       endpoints.add((
         uri: Uri.parse(
-          '$_base/subtitles/$type/$suffix/\${extras.join('&')}.json',
+          '$_base/subtitles/$type/$suffix/${extras.join('&')}.json',
         ),
         bonus: 40,
       ));
@@ -96,7 +96,7 @@ class OnlineSubtitleService {
               .toString()
               .trim();
           final searchable =
-              '$rawLabel \${raw['id'] ?? ''} $url'.toLowerCase();
+              '$rawLabel ${raw['id'] ?? ''} $url'.toLowerCase();
 
           var score = endpoint.bonus;
           if (language == preferred) score += 500;
