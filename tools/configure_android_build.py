@@ -72,7 +72,7 @@ def patch_android(tv: bool) -> None:
 
     fg = Image.new("RGBA", (432, 432), (0, 0, 0, 0))
     logo = src.copy()
-    logo.thumbnail((340, 340), Image.Resampling.LANCZOS)
+    logo.thumbnail((380, 380), Image.Resampling.LANCZOS)
     fg.alpha_composite(
         logo,
         ((432 - logo.width) // 2, (432 - logo.height) // 2),
@@ -129,16 +129,24 @@ def patch_android(tv: bool) -> None:
     )
 
     if tv:
-        banner = Image.new("RGBA", (320, 180), (5, 8, 6, 255))
-        logo = src.copy()
-        logo.thumbnail((145, 145), Image.Resampling.LANCZOS)
-        banner.alpha_composite(
-            logo,
-            ((320 - logo.width) // 2, (180 - logo.height) // 2),
-        )
-        banner_path = Path("android/app/src/main/res/drawable/tv_banner.png")
+        banner_source = Path("assets/branding/orvix_tv_banner.jpg")
+        banner_path = Path("android/app/src/main/res/drawable/tv_banner.jpg")
         banner_path.parent.mkdir(parents=True, exist_ok=True)
-        banner.save(banner_path)
+        if banner_source.exists():
+            banner = Image.open(banner_source).convert("RGB")
+            banner = banner.resize((320, 180), Image.Resampling.LANCZOS)
+            banner.save(banner_path, quality=92, optimize=True)
+        else:
+            banner = Image.new("RGB", (320, 180), (5, 8, 6))
+            logo = src.copy()
+            logo.thumbnail((172, 172), Image.Resampling.LANCZOS)
+            layer = Image.new("RGBA", (320, 180), (0, 0, 0, 0))
+            layer.alpha_composite(
+                logo,
+                ((320 - logo.width) // 2, (180 - logo.height) // 2),
+            )
+            banner.paste(layer.convert("RGB"))
+            banner.save(banner_path, quality=92, optimize=True)
 
     main_activity = Path(
         "android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt"
