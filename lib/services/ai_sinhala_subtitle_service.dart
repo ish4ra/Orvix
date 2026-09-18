@@ -916,7 +916,7 @@ class _TranslationResponse {
   final dynamic data;
 }
 
-$exceptionMarker
+class AiSubtitleException implements Exception {
   const AiSubtitleException(this.message, {this.rateLimited = false});
 
   final String message;
