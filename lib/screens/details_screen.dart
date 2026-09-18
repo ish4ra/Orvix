@@ -852,6 +852,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         episode,
         releaseHint: releaseHint,
         expectedSizeBytes: chosen.sizeBytes,
+        expectedVideoHash: chosen.videoHash,
       );
       return;
     }
