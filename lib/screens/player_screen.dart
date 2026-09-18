@@ -179,24 +179,26 @@ class _PlayerScreenState extends State<PlayerScreen> {
         setState(() => _error = null);
       }
 
-      final aiPreferred = _preparedAiSubtitle != null ||
-          await AiSinhalaPreferencesService.isEnabled();
+      // alpha.11 is fail-open: AI Sinhala is prepared before navigation.
+      // Never hide normal subtitles merely because the global preference is on.
+      // If pre-play preparation failed, playback opens normally with native/
+      // English subtitles visible instead of a silent blank subtitle state.
+      final aiReady = _preparedAiSubtitle != null;
       if (mounted && !_subtitleChoiceOverridden) {
         setState(() {
-          _aiSinhalaRequested = aiPreferred;
-          _aiSinhalaEnabled =
-              aiPreferred && _preparedAiSubtitle != null;
+          _aiSinhalaRequested = aiReady;
+          _aiSinhalaEnabled = aiReady;
+          _aiSubtitleLoading = false;
+          _aiSubtitleUnavailable = false;
         });
       }
 
       await widget.playback.open(widget.url, title: widget.title);
-      await _setNativeSubtitleVisibility(!_aiSinhalaRequested);
-      if (_aiSinhalaEnabled) {
+      await _setNativeSubtitleVisibility(!aiReady);
+      if (aiReady) {
         unawaited(_ensureEnglishTimingTrack());
         _lastAiPrefetchBucket = -1;
         _refreshAiSubtitle();
-      } else if (_aiSinhalaRequested) {
-        unawaited(_prepareAiSinhalaAfterPlaybackStarts());
       }
 
       if (_hasPlaybackActivity()) {
@@ -1829,7 +1831,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ),
                   if (_aiSubtitleLoading)
                     const _EmptyTrackMessage(
-                      'AI Sinhala is matching this exact release in the background. Playback is not blocked.',
+                      'AI Sinhala is preparing a verified subtitle timeline.',
                     )
                   else if (_aiSubtitleUnavailable)
                     const _EmptyTrackMessage(
