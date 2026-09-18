@@ -91,6 +91,9 @@ jobs:
       - name: Generate Android platform
         run: flutter create --platforms=android --org com.orvix --project-name orvix .
 
+      - name: Install Pillow for Android branding
+        run: python3 -m pip install --disable-pip-version-check pillow
+
       - name: Configure Android mobile
         shell: bash
         run: |
