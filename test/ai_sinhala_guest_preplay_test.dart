@@ -9,7 +9,7 @@ void main() {
     final details = File('lib/screens/details_screen.dart').readAsStringSync();
 
     expect(service, contains('static bool get canTranslate => true;'));
-    expect(service, contains("'Authorization': 'Bearer $_guestFunctionJwt'"));
+    expect(service, contains(r"'Authorization': 'Bearer $_guestFunctionJwt'"));
     expect(service, contains('translate-subtitle-si'));
     expect(details, contains('AiSinhalaPreferencesService.isEnabled()'));
     expect(details, contains('AiSinhalaSubtitleService.prepareBuffered('));
