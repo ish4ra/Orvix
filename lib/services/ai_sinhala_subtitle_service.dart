@@ -945,7 +945,13 @@ class AiSinhalaSubtitleService {
 
   static String? _normalizeVideoHash(String? raw) {
     final value = raw?.trim().toLowerCase();
-    if (value == null || !RegExp(r'^[a-f0-9]{16}
+    if (value == null || !RegExp(r'^[a-f0-9]{16}$').hasMatch(value)) {
+      return null;
+    }
+    return value;
+  }
+
+  static Future<String> _downloadSubtitle(String url) async {
     final response = await _httpGetWithRetry(
       Uri.parse(url),
       timeout: const Duration(seconds: 15),
