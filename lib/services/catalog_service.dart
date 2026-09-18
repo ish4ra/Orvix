@@ -61,8 +61,6 @@ class CatalogService {
       }
     }
 
-    // IMDb vote counts are a stable popularity signal for exact-title ties.
-    // Search still works if this enrichment request fails.
     final imdbSignals = await _imdbSearchSignals(merged);
     final enriched = merged
         .map((item) => _withSearchSignal(item, imdbSignals[item.id]))
