@@ -332,7 +332,7 @@ jobs:
           - Android TV navigation is an initial D-pad test build and will be refined from device feedback.
           - macOS is an unsigned/notarization-free test distribution, so macOS may show a Gatekeeper warning." \
             dist/Orvix-v0.7.3-alpha.5-Windows-x64.zip \
-            dist/Orvix-Setup-v0.7.3-alpha.5-Windows-x64.exe \
+            dist/installer-output/Orvix-Setup-v0.7.3-alpha.5-Windows-x64.exe \
             dist/Orvix-v0.7.3-alpha.5-Android-Mobile.apk \
             dist/Orvix-v0.7.3-alpha.5-Android-TV.apk \
             dist/Orvix-v0.7.3-alpha.5-macOS.dmg
