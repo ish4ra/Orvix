@@ -252,8 +252,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await _setNativeSubtitleVisibility(false);
 
     if (widget.item == null) {
-      final liveReady = await _tryEnableLiveAiFallback();
-      if (mounted) setState(() => _aiSubtitleUnavailable = !liveReady);
+      if (mounted) {
+        setState(() {
+          _aiSubtitleLoading = false;
+          _aiSubtitleUnavailable = true;
+        });
+      }
+      await _setNativeSubtitleVisibility(true);
       return;
     }
 
@@ -273,12 +278,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
       if (!mounted || _subtitleChoiceOverridden) return;
       if (prepared == null) {
-        final liveReady = await _tryEnableLiveAiFallback();
+        final embeddedReady = await _tryPrepareEmbeddedAiTiming();
         if (!mounted) return;
-        setState(() {
-          _aiSubtitleLoading = false;
-          _aiSubtitleUnavailable = !liveReady;
-        });
+        if (!embeddedReady) {
+          setState(() {
+            _aiSubtitleLoading = false;
+            _aiSubtitleUnavailable = true;
+            _aiSinhalaEnabled = false;
+            _aiDisplaySubtitle = '';
+          });
+          await _setNativeSubtitleVisibility(true);
+        }
         return;
       }
 
@@ -302,19 +312,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _refreshAiSubtitle();
     } catch (_) {
       if (!mounted || _subtitleChoiceOverridden) return;
-      final liveReady = await _tryEnableLiveAiFallback();
+      final embeddedReady = await _tryPrepareEmbeddedAiTiming();
       if (!mounted) return;
-      setState(() {
-        _aiSubtitleLoading = false;
-        _aiSubtitleUnavailable = !liveReady;
-      });
+      if (!embeddedReady) {
+        setState(() {
+          _aiSubtitleLoading = false;
+          _aiSubtitleUnavailable = true;
+          _aiSinhalaEnabled = false;
+          _aiDisplaySubtitle = '';
+        });
+        await _setNativeSubtitleVisibility(true);
+      }
     }
   }
 
-  Future<bool> _tryEnableLiveAiFallback() async {
+  Future<bool> _tryPrepareEmbeddedAiTiming() async {
     if (!_aiSinhalaRequested ||
         _subtitleChoiceOverridden ||
-        !mounted) {
+        !mounted ||
+        widget.item == null) {
       return false;
     }
 
@@ -351,21 +367,60 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (chosen != null) {
         _timingTrackSelected = true;
         _timingTrackIsText = true;
+        _liveAiFallback = false;
         _liveCueGeneration++;
         _liveDialogueContext.clear();
-        _subtitleTimingSubscription ??=
-            player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
-        if (mounted) {
-          setState(() {
-            _liveAiFallback = true;
-            _aiSinhalaEnabled = true;
-            _aiSubtitleUnavailable = false;
-            _aiDisplaySubtitle = '';
-          });
-        }
         await _hideNativeTimingSubtitle();
-        return true;
+
+        final wasPlaying = player.state.playing;
+        if (wasPlaying) {
+          await player.pause();
+        }
+
+        try {
+          if (mounted) {
+            setState(() {
+              _aiSubtitleLoading = true;
+              _aiSubtitleUnavailable = false;
+              _aiDisplaySubtitle = '';
+            });
+          }
+          final prepared =
+              await AiSinhalaSubtitleService.prepareForEmbeddedTiming(
+            item: widget.item!,
+            episode: widget.episode,
+          );
+          if (!mounted ||
+              _subtitleChoiceOverridden ||
+              prepared == null) {
+            if (wasPlaying) await player.play();
+            return false;
+          }
+
+          setState(() {
+            _preparedAiSubtitle = prepared;
+            _aiSinhalaRequested = true;
+            _aiSinhalaEnabled = true;
+            _liveAiFallback = false;
+            _aiSubtitleLoading = false;
+            _aiSubtitleUnavailable = false;
+            _lastAiPrefetchBucket = -1;
+          });
+          _positionSubscription ??=
+              player.stream.position.listen(_onPosition);
+          _subtitleTimingSubscription ??=
+              player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
+          await _setNativeSubtitleDelayProperty(0);
+          await _hideNativeTimingSubtitle();
+          _startNativeSubtitleClock();
+          if (wasPlaying) await player.play();
+          return true;
+        } catch (_) {
+          if (wasPlaying) await player.play();
+          return false;
+        }
       }
+
       await Future<void>.delayed(const Duration(milliseconds: 300));
     }
     return false;
@@ -1110,20 +1165,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
       setState(() => _aiDisplaySubtitle = '');
     }
 
-    // One subtitle can differ because of SDH/punctuation. Only abandon the
-    // buffered timeline after several consecutive real-file cues disagree.
-    if (_embeddedMismatchCount < 3) return;
-
-    _embeddedMismatchCount = 0;
-    if (mounted) {
-      setState(() {
-        _liveAiFallback = true;
-        _aiDisplaySubtitle = '';
-      });
+    // The embedded text track is the real video clock. If a transcript line
+    // cannot be matched, omit only that line. Never fall back to translating
+    // the already-started cue live, because network latency makes that path
+    // inherently late and caused the disappear/flash behaviour seen in alpha.04.
+    if (_embeddedMismatchCount >= 12) {
+      _embeddedMismatchCount = 0;
     }
-    _lastAiPrefetchBucket = -1;
-    _liveDialogueContext.clear();
-    await _translateLiveSubtitleCue(source);
+    return;
   }
 
   Future<void> _translateLiveSubtitleCue(String source) async {
