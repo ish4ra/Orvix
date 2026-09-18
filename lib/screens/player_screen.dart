@@ -97,6 +97,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   String _preferredSubtitleLanguage =
       SubtitlePreferencesService.defaultPreferredLanguage;
   bool _subtitleChoiceOverridden = false;
+  bool _androidMobilePlayerMode = false;
+  bool _mobilePortraitPlayer = false;
 
   bool get _desktop =>
       Platform.isWindows || Platform.isLinux || Platform.isMacOS;
@@ -137,8 +139,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
         widget.playback.player.stream.completed.listen((completed) {
       if (completed) _startNextCountdown();
     });
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _focusNode.requestFocus());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _focusNode.requestFocus();
+      unawaited(_enterAndroidMobilePlayerMode());
+    });
   }
 
   bool _hasPlaybackActivity() {
@@ -592,6 +597,42 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (!_desktop) return;
     await windowManager.setFullScreen(!(await windowManager.isFullScreen()));
     _showControls();
+  }
+
+  Future<void> _enterAndroidMobilePlayerMode() async {
+    if (!Platform.isAndroid || !mounted) return;
+    final size = MediaQuery.sizeOf(context);
+    if (size.shortestSide >= 600) return;
+
+    _androidMobilePlayerMode = true;
+    _mobilePortraitPlayer = false;
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    await SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+  }
+
+  Future<void> _toggleMobileOrientation() async {
+    if (!_androidMobilePlayerMode) return;
+    _mobilePortraitPlayer = !_mobilePortraitPlayer;
+    await SystemChrome.setPreferredOrientations(
+      _mobilePortraitPlayer
+          ? const [DeviceOrientation.portraitUp]
+          : const [
+              DeviceOrientation.landscapeLeft,
+              DeviceOrientation.landscapeRight,
+            ],
+    );
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    _showControls();
+  }
+
+  Future<void> _restoreAndroidMobilePlayerMode() async {
+    if (!_androidMobilePlayerMode) return;
+    _androidMobilePlayerMode = false;
+    await SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
 
   Future<void> _handleEscape() async {
@@ -1733,6 +1774,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _persistProgress();
     _focusNode.dispose();
     widget.playback.stop();
+    unawaited(_restoreAndroidMobilePlayerMode());
     super.dispose();
   }
 
@@ -2090,6 +2132,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                 onPressed: _showTracks,
                                 icon: const Icon(Icons.subtitles_rounded),
                               ),
+                              if (_androidMobilePlayerMode)
+                                IconButton(
+                                  tooltip: _mobilePortraitPlayer
+                                      ? 'Rotate to landscape'
+                                      : 'Rotate to portrait',
+                                  onPressed: _toggleMobileOrientation,
+                                  icon: const Icon(Icons.screen_rotation_rounded),
+                                ),
                               PopupMenuButton<double>(
                                 tooltip: 'Playback speed',
                                 initialValue: player.state.rate,
@@ -2191,6 +2241,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
           onPressed: _showTracks,
           icon: const Icon(Icons.subtitles_rounded),
         ),
+        if (_androidMobilePlayerMode)
+          IconButton(
+            tooltip: _mobilePortraitPlayer
+                ? 'Rotate to landscape'
+                : 'Rotate to portrait',
+            onPressed: _toggleMobileOrientation,
+            icon: const Icon(Icons.screen_rotation_rounded),
+          ),
         PopupMenuButton<double>(
           tooltip: 'Playback speed',
           initialValue: player.state.rate,
