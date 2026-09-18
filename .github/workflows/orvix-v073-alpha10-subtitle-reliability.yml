@@ -105,6 +105,7 @@ jobs:
       - name: Analyze
         run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
 
+      # Subtitle regression gate: seek, gap and source-match behavior.
       - name: Test AI Sinhala subtitle timeline
         run: flutter test test/ai_sinhala_subtitle_service_test.dart
 
