@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 def main() -> None:
@@ -11,7 +12,6 @@ def main() -> None:
             1,
         )
     else:
-        import re
         text = re.sub(
             r'android:extractNativeLibs="(?:true|false)"',
             'android:extractNativeLibs="true"',
@@ -23,14 +23,14 @@ def main() -> None:
     gradle = Path("android/app/build.gradle.kts")
     g = gradle.read_text()
 
-    # Use API 23 so AGP emits a legacy v1 signature as well as modern schemes.
-    # Orvix itself still targets the current SDK; this only broadens install
-    # verifier compatibility on custom ROMs.
-    g = g.replace(
-        "minSdk = flutter.minSdkVersion",
-        "minSdk = 23",
-        1,
+    g, min_sdk_count = re.subn(
+        r"(?m)^(\s*)minSdk\s*=\s*[^\n]+$",
+        r"\1minSdk = 23",
+        g,
+        count=1,
     )
+    if min_sdk_count != 1:
+        raise SystemExit("Could not locate Android minSdk assignment.")
 
     if "useLegacyPackaging = true" not in g:
         marker = "    defaultConfig {"
