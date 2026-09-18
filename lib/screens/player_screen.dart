@@ -631,7 +631,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _restoreAndroidMobilePlayerMode() async {
     if (!_androidMobilePlayerMode) return;
     _androidMobilePlayerMode = false;
-    await SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+    await SystemChrome.setPreferredOrientations(
+      const [DeviceOrientation.portraitUp],
+    );
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
 
@@ -1858,7 +1860,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Widget _nextEpisodeOverlay() {
-    final compact = MediaQuery.sizeOf(context).width < 700;
+    final compact = !_desktop && MediaQuery.sizeOf(context).shortestSide < 600;
     return Positioned(
       right: compact ? 14 : 28,
       left: compact ? 14 : null,
@@ -1936,7 +1938,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Widget _controls(BuildContext context) {
     final player = widget.playback.player;
-    final compact = MediaQuery.sizeOf(context).width < 700;
+    final compact = !_desktop && MediaQuery.sizeOf(context).shortestSide < 600;
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
