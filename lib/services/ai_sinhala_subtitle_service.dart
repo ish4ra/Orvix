@@ -40,6 +40,30 @@ class AiPreparedSubtitle {
   int get translatedCount =>
       cues.where((cue) => cue.translation?.isNotEmpty == true).length;
 
+  int cueIndexNear(Duration position) {
+    if (cues.isEmpty) return -1;
+    var low = 0;
+    var high = cues.length - 1;
+    while (low <= high) {
+      final mid = (low + high) >> 1;
+      final cue = cues[mid];
+      if (position < cue.start) {
+        high = mid - 1;
+      } else if (position > cue.end) {
+        low = mid + 1;
+      } else {
+        return mid;
+      }
+    }
+    if (low >= cues.length) return cues.length - 1;
+    return low.clamp(0, cues.length - 1).toInt();
+  }
+
+  bool isTranslatedAt(int index) =>
+      index >= 0 &&
+      index < cues.length &&
+      cues[index].translation?.trim().isNotEmpty == true;
+
   String subtitleAt(Duration position) {
     if (cues.isEmpty) return '';
     var low = 0;
@@ -96,6 +120,9 @@ class AiSinhalaSubtitleService {
       <String, AiPreparedSubtitle>{};
   static final Map<String, Future<AiPreparedSubtitle?>> _inFlight =
       <String, Future<AiPreparedSubtitle?>>{};
+  static final Map<String, Future<void>> _translationWork =
+      <String, Future<void>>{};
+  static final Map<String, String> _liveCueCache = <String, String>{};
 
   static bool get canTranslate =>
       Supabase.instance.client.auth.currentSession != null;
@@ -255,9 +282,9 @@ class AiSinhalaSubtitleService {
     await _translateRange(prepared, 0, firstEnd);
     onStatus?.call('Sinhala subtitles ready — opening player…');
 
-    if (firstEnd < cues.length) {
-      unawaited(_translateRemaining(prepared, firstEnd));
-    }
+    // Translate on demand around playback instead of racing through the
+    // entire movie/episode. This avoids burning quota and hitting rate limits
+    // before later scenes are actually watched.
     return prepared;
   }
 
@@ -388,22 +415,52 @@ class AiSinhalaSubtitleService {
     return ranked.map((entry) => entry.url).toList(growable: false);
   }
 
-  static Future<void> _translateRemaining(
+  static Future<void> ensureTranslatedAround(
     AiPreparedSubtitle prepared,
-    int start,
-  ) async {
-    var cursor = start;
-    while (cursor < prepared.cues.length) {
-      final end = math.min(cursor + 60, prepared.cues.length);
-      try {
-        await _translateRange(prepared, cursor, end);
-      } on AiSubtitleException catch (error) {
-        if (error.rateLimited) return;
-        await Future<void>.delayed(const Duration(milliseconds: 700));
-      } catch (_) {
-        await Future<void>.delayed(const Duration(milliseconds: 700));
+    Duration position, {
+    int lookBehind = 4,
+    int lookAhead = 72,
+  }) async {
+    if (!canTranslate || prepared.cues.isEmpty) return;
+
+    for (var pass = 0; pass < 2; pass++) {
+      final center = prepared.cueIndexNear(position);
+      if (center < 0) return;
+      final start = math.max(0, center - lookBehind);
+      final end = math.min(prepared.cues.length, center + lookAhead + 1);
+      final missing = <int>[
+        for (var i = start; i < end; i++)
+          if (!prepared.isTranslatedAt(i)) i,
+      ];
+      if (missing.isEmpty) return;
+
+      final existing = _translationWork[prepared.key];
+      if (existing != null) {
+        await existing;
+        continue;
       }
-      cursor = end;
+
+      final future = _translateMissingIndices(prepared, missing);
+      _translationWork[prepared.key] = future;
+      try {
+        await future;
+      } finally {
+        if (identical(_translationWork[prepared.key], future)) {
+          _translationWork.remove(prepared.key);
+        }
+      }
+      return;
+    }
+  }
+
+  static Future<void> _translateMissingIndices(
+    AiPreparedSubtitle prepared,
+    List<int> indices,
+  ) async {
+    const batchSize = 36;
+    for (var cursor = 0; cursor < indices.length; cursor += batchSize) {
+      final end = math.min(cursor + batchSize, indices.length);
+      await _translateIndices(prepared, indices.sublist(cursor, end));
     }
   }
 
@@ -413,15 +470,119 @@ class AiSinhalaSubtitleService {
     int end,
   ) async {
     if (start >= end) return;
-    final slice = prepared.cues.sublist(start, end);
+    final indices = <int>[
+      for (var i = start; i < end; i++)
+        if (!prepared.isTranslatedAt(i)) i,
+    ];
+    if (indices.isEmpty) return;
+    await _translateIndices(prepared, indices);
+  }
+
+  static Future<void> _translateIndices(
+    AiPreparedSubtitle prepared,
+    List<int> indices,
+  ) async {
+    if (indices.isEmpty) return;
+    final segments = indices
+        .map((index) => prepared.cues[index].source)
+        .toList(growable: false);
+
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final response = await Supabase.instance.client.functions.invoke(
+          'translate-subtitle-si',
+          body: <String, dynamic>{
+            'title': prepared.title,
+            'segments': segments,
+          },
+        );
+        final data = response.data;
+        if (response.status == 429 ||
+            (data is Map && data['error'] == 'rate_limited')) {
+          throw const AiSubtitleException(
+            'AI Sinhala subtitle limit reached.',
+            rateLimited: true,
+          );
+        }
+        if (response.status < 200 || response.status >= 300) {
+          if (attempt < 2) {
+            await Future<void>.delayed(
+              Duration(milliseconds: 500 * (attempt + 1)),
+            );
+            continue;
+          }
+          throw const AiSubtitleException(
+            'Could not translate subtitle buffer.',
+          );
+        }
+
+        final raw = data is Map ? data['translations'] : null;
+        if (raw is! List || raw.length != indices.length) {
+          if (attempt < 2) {
+            await Future<void>.delayed(
+              Duration(milliseconds: 500 * (attempt + 1)),
+            );
+            continue;
+          }
+          throw const AiSubtitleException(
+            'AI subtitle buffer was incomplete.',
+          );
+        }
+
+        for (var i = 0; i < indices.length; i++) {
+          final value = raw[i]?.toString().trim() ?? '';
+          if (value.isNotEmpty) {
+            prepared.cues[indices[i]].translation = value;
+          }
+        }
+        return;
+      } on AiSubtitleException catch (error) {
+        if (error.rateLimited || attempt == 2) rethrow;
+        await Future<void>.delayed(
+          Duration(milliseconds: 500 * (attempt + 1)),
+        );
+      } catch (_) {
+        if (attempt == 2) {
+          throw const AiSubtitleException(
+            'Could not translate subtitle buffer.',
+          );
+        }
+        await Future<void>.delayed(
+          Duration(milliseconds: 500 * (attempt + 1)),
+        );
+      }
+    }
+  }
+
+  static Future<String> translateCue({
+    required String title,
+    required String text,
+    List<String> context = const <String>[],
+  }) async {
+    final clean = text.trim();
+    if (clean.isEmpty) return '';
+    if (!canTranslate) {
+      throw const AiSubtitleException(
+        'Sign in to your Orvix account to use AI Sinhala subtitles.',
+      );
+    }
+
+    final cacheKey = '$title|$clean';
+    final cached = _liveCueCache[cacheKey];
+    if (cached != null && cached.isNotEmpty) return cached;
 
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
         final response = await Supabase.instance.client.functions.invoke(
           'translate-subtitle-si',
           body: <String, dynamic>{
-            'title': prepared.title,
-            'segments': slice.map((cue) => cue.source).toList(growable: false),
+            'title': title,
+            'text': clean,
+            'context': context.reversed
+                .take(6)
+                .toList(growable: false)
+                .reversed
+                .toList(growable: false),
           },
         );
         final data = response.data;
@@ -434,37 +595,41 @@ class AiSinhalaSubtitleService {
         }
         if (response.status < 200 || response.status >= 300) {
           if (attempt == 0) {
-            await Future<void>.delayed(const Duration(milliseconds: 550));
+            await Future<void>.delayed(const Duration(milliseconds: 400));
             continue;
           }
           throw const AiSubtitleException(
-              'Could not translate subtitle buffer.');
+            'Could not translate the current subtitle cue.',
+          );
         }
-
-        final raw = data is Map ? data['translations'] : null;
-        if (raw is! List || raw.length != slice.length) {
+        final translated =
+            data is Map ? data['translation']?.toString().trim() ?? '' : '';
+        if (translated.isEmpty) {
           if (attempt == 0) {
-            await Future<void>.delayed(const Duration(milliseconds: 550));
+            await Future<void>.delayed(const Duration(milliseconds: 400));
             continue;
           }
-          throw const AiSubtitleException('AI subtitle buffer was incomplete.');
+          throw const AiSubtitleException(
+            'AI returned an empty subtitle cue.',
+          );
         }
-        for (var i = 0; i < slice.length; i++) {
-          final value = raw[i]?.toString().trim() ?? '';
-          if (value.isNotEmpty) slice[i].translation = value;
-        }
-        return;
+        _liveCueCache[cacheKey] = translated;
+        return translated;
       } on AiSubtitleException catch (error) {
         if (error.rateLimited || attempt == 1) rethrow;
-        await Future<void>.delayed(const Duration(milliseconds: 550));
+        await Future<void>.delayed(const Duration(milliseconds: 400));
       } catch (_) {
         if (attempt == 1) {
           throw const AiSubtitleException(
-              'Could not translate subtitle buffer.');
+            'Could not translate the current subtitle cue.',
+          );
         }
-        await Future<void>.delayed(const Duration(milliseconds: 550));
+        await Future<void>.delayed(const Duration(milliseconds: 400));
       }
     }
+    throw const AiSubtitleException(
+      'Could not translate the current subtitle cue.',
+    );
   }
 
   static Future<_VideoProbe> _probeVideo(
@@ -677,7 +842,11 @@ class AiSinhalaSubtitleService {
           ? '${item.kind.name}:${item.id}'
           : '${item.kind.name}:${item.id}:${episode.season}:${episode.episode}';
 
-  static void clearPreparedCache() => _preparedCache.clear();
+  static void clearPreparedCache() {
+    _preparedCache.clear();
+    _translationWork.clear();
+    _liveCueCache.clear();
+  }
 }
 
 class _VideoProbe {
