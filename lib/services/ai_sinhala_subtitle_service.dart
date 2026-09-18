@@ -959,9 +959,9 @@ class AiSinhalaSubtitleService {
     );
 
     // The native engine returns HTTP 200 even when the hash is not ready, so
-    // retry the JSON result itself. AI subtitle preparation runs after media
-    // playback opens and stays in the background, so this never gates player
-    // startup on a weak swarm.
+    // retry the JSON result itself. PlayerScreen must open the media first
+    // (paused during AI preflight) before this route is queried; probing a local
+    // P2P stream before the player attaches it caused the alpha.11 regression.
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
         final response =
