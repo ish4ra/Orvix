@@ -214,6 +214,60 @@ class _OrvixShellState extends State<_OrvixShell> {
     OrvixAccountService.pushLocalStateIfSignedIn().catchError((_) {});
   }
 
+  Future<void> _showCompactMoreMenu() async {
+    final value = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: const Color(0xFF0D120E),
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.cloud_rounded),
+                title: const Text('Clouds'),
+                onTap: () => Navigator.pop(sheetContext, 3),
+              ),
+              ListTile(
+                leading: const Icon(Icons.settings_rounded),
+                title: const Text('Settings'),
+                onTap: () => Navigator.pop(sheetContext, 5),
+              ),
+              ListTile(
+                leading: const Icon(Icons.person_rounded),
+                title: const Text('Account'),
+                onTap: () => Navigator.pop(sheetContext, 6),
+              ),
+              ListTile(
+                leading: const Icon(Icons.info_rounded),
+                title: const Text('About'),
+                onTap: () => Navigator.pop(sheetContext, 7),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (value != null) _selectDestination(value);
+  }
+
+  int get _compactNavigationIndex {
+    switch (_index) {
+      case 0:
+        return 0;
+      case 1:
+        return 1;
+      case 2:
+        return 2;
+      case 4:
+        return 3;
+      default:
+        return 4;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final screens = <Widget>[
@@ -247,7 +301,73 @@ class _OrvixShellState extends State<_OrvixShell> {
       const _AboutScreen(),
     ];
 
-    final extended = MediaQuery.sizeOf(context).width >= 1180;
+    final width = MediaQuery.sizeOf(context).width;
+    final compact = width < 720;
+    final extended = width >= 1180;
+
+    Widget body = AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      child: KeyedSubtree(
+        key: ValueKey(_index),
+        child: IndexedStack(index: _index, children: screens),
+      ),
+    );
+
+    if (compact) {
+      return Scaffold(
+        body: SafeArea(child: body),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _compactNavigationIndex,
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+          onDestinationSelected: (value) {
+            switch (value) {
+              case 0:
+                _selectDestination(0);
+                break;
+              case 1:
+                _selectDestination(1);
+                break;
+              case 2:
+                _selectDestination(2);
+                break;
+              case 3:
+                _selectDestination(4);
+                break;
+              default:
+                _showCompactMoreMenu();
+            }
+          },
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.home_outlined),
+              selectedIcon: Icon(Icons.home_rounded),
+              label: 'Home',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.search_rounded),
+              selectedIcon: Icon(Icons.manage_search_rounded),
+              label: 'Search',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.video_library_outlined),
+              selectedIcon: Icon(Icons.video_library_rounded),
+              label: 'Library',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.hub_outlined),
+              selectedIcon: Icon(Icons.hub_rounded),
+              label: 'Sources',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.more_horiz_rounded),
+              selectedIcon: Icon(Icons.more_rounded),
+              label: 'More',
+            ),
+          ],
+        ),
+      );
+    }
+
     return Scaffold(
       body: Row(
         children: [
@@ -360,15 +480,7 @@ class _OrvixShellState extends State<_OrvixShell> {
               ],
             ),
           ),
-          Expanded(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
-              child: KeyedSubtree(
-                key: ValueKey(_index),
-                child: IndexedStack(index: _index, children: screens),
-              ),
-            ),
-          ),
+          Expanded(child: body),
         ],
       ),
     );
@@ -389,7 +501,7 @@ class _AboutScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Orvix v0.7.3-alpha.4',
+                'Orvix v0.7.3-alpha.5',
                 style: Theme.of(context)
                     .textTheme
                     .headlineMedium
@@ -397,7 +509,7 @@ class _AboutScreen extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               const Text(
-                'A multi-cloud cinematic media hub built with Flutter. Orvix connects your cloud services, source providers, library and player in one native desktop app.',
+                'A multi-cloud cinematic media hub built with Flutter. Orvix connects your cloud services, source providers, library and player across desktop, mobile and TV.',
                 style: TextStyle(height: 1.55),
               ),
               const SizedBox(height: 24),
@@ -420,7 +532,7 @@ class _AboutScreen extends StatelessWidget {
               const _FeatureLine(Icons.dashboard_customize_outlined,
                   'Customizable Home rows including optional IMDb Top 250 shelves'),
               const _FeatureLine(Icons.phone_android_outlined,
-                  'Shared Flutter foundation for future Android & Android TV builds'),
+                  'Responsive Flutter shell for Windows, Android mobile, Android TV and macOS test builds'),
             ],
           ),
         ),
