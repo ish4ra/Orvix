@@ -5,7 +5,7 @@ on:
     branches:
       - orvix-v0.7.4-alpha.13
     paths:
-      - '.github/workflows/orvix-v074-alpha13-paused-preflight.yml'
+      - '.github/workflows/orvix-v074-alpha13-subtitle-fix.yml'
       - 'lib/**'
       - 'test/**'
       - 'pubspec.yaml'
@@ -410,5 +410,5 @@ jobs:
             gh release upload v0.7.4-alpha.13 --clobber "${assets[@]}"
             gh release edit v0.7.4-alpha.13               --title 'Orvix v0.7.4-alpha.13 — Subtitle Pipeline Fix • Windows + Mobile + TV'               --prerelease               --notes-file /tmp/orvix-alpha13-notes.md
           else
-            gh release create v0.7.4-alpha.13               --target '${{ github.sha }}'               --title 'Orvix v0.7.4-alpha.13 — Paused AI Preflight • Windows + Mobile + TV'               --prerelease               --notes-file /tmp/orvix-alpha13-notes.md               "${assets[@]}"
+            gh release create v0.7.4-alpha.13               --target '${{ github.sha }}'               --title 'Orvix v0.7.4-alpha.13 — Subtitle Pipeline Fix • Windows + Mobile + TV'               --prerelease               --notes-file /tmp/orvix-alpha13-notes.md               "${assets[@]}"
           fi
