@@ -738,6 +738,15 @@ class AiSinhalaSubtitleService {
     if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https')) {
       return _VideoProbe(fileName: fallbackName, size: fallbackSize);
     }
+
+    final localP2p = (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
+        uri.port == 11470;
+    if (localP2p) {
+      // Do not seek to the tail of an actively streaming torrent just to build
+      // an OpenSubtitles hash. Use the source filename/size metadata instead;
+      // this avoids competing with sequential playback on low-seed swarms.
+      return _VideoProbe(fileName: fallbackName, size: fallbackSize);
+    }
     final client = http.Client();
     try {
       final first = await _readRangeWithRetry(
