@@ -28,6 +28,7 @@ class PlayerScreen extends StatefulWidget {
     this.aiSubtitle,
     this.releaseHint,
     this.expectedSizeBytes,
+    this.expectedVideoHash,
     this.nextEpisodeLabel,
     this.onNext,
   });
@@ -41,6 +42,7 @@ class PlayerScreen extends StatefulWidget {
   final AiPreparedSubtitle? aiSubtitle;
   final String? releaseHint;
   final int? expectedSizeBytes;
+  final String? expectedVideoHash;
   final String? nextEpisodeLabel;
   final Future<void> Function()? onNext;
 
@@ -276,6 +278,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         videoUrl: widget.url,
         releaseHint: widget.releaseHint,
         expectedSizeBytes: widget.expectedSizeBytes,
+        expectedVideoHash: widget.expectedVideoHash,
       );
       if (!mounted || _closing || _subtitleChoiceOverridden) return;
       if (prepared == null) {
