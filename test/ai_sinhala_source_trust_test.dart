@@ -23,8 +23,7 @@ void main() {
     expect(player, contains('_tryPrepareEmbeddedAiTiming'));
     expect(
       player,
-      contains('use those real cue events as the clock') |
-          contains('embedded text track is the real video clock'),
+      contains('embedded text track is the real video clock'),
     );
     expect(player, isNot(contains('_tryEnableLiveAiFallback()')));
   });
