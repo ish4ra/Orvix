@@ -47,7 +47,8 @@ jobs:
           flutter test test/ai_sinhala_subtitle_service_test.dart
           flutter test test/ai_sinhala_guest_preplay_test.dart
           flutter test test/ai_sinhala_stability_test.dart
-          flutter test test/ai_sinhala_source_trust_test.dart\n          flutter test test/ai_sinhala_preplay_test.dart
+          flutter test test/ai_sinhala_source_trust_test.dart
+          flutter test test/ai_sinhala_preplay_test.dart
           flutter test test/player_recovery_regression_test.dart
 
   android-native:
