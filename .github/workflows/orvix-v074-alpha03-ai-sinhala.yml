@@ -6,6 +6,10 @@ on:
       - orvix-v0.7.4-alpha.03
     paths:
       - '.github/workflows/orvix-v074-alpha03-ai-sinhala.yml'
+      - 'lib/**'
+      - 'test/**'
+      - 'tools/**'
+      - 'pubspec.yaml'
 
 permissions:
   contents: write
@@ -177,3 +181,5 @@ jobs:
 # final rerun after clean catalog reconstruction
 
 # rerun after AI guest/preplay source repair
+
+# retrigger after fixing guest JWT regression test interpolation
