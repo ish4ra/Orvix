@@ -175,7 +175,7 @@ class AiSinhalaSubtitleService {
     EpisodeItem? episode,
     void Function(String message)? onStatus,
   }) async {
-    final key = '${_mediaKey(item, episode)}:embedded-text-timing';
+    final key = '\${_mediaKey(item, episode)}:embedded-text-timing';
     final cached = _preparedCache[key];
     if (cached != null &&
         cached.translatedCount >= math.min(96, cached.cues.length)) {
@@ -184,7 +184,83 @@ class AiSinhalaSubtitleService {
     return _inFlight.putIfAbsent(key, () async {
       try {
         final imdbId = item.id.trim();
-        if (!RegExp(r'^tt\d+    required String key,
+        if (!RegExp(r'^tt\d+$').hasMatch(imdbId)) {
+          throw const AiSubtitleException(
+            'This title does not have a compatible IMDb subtitle id.',
+          );
+        }
+
+        final suffix = item.kind == MediaKind.series && episode != null
+            ? '$imdbId:\${episode.season}:\${episode.episode}'
+            : imdbId;
+        final type = item.kind == MediaKind.movie ? 'movie' : 'series';
+        final endpoint = Uri.parse(
+          'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix.json',
+        );
+
+        onStatus?.call(
+          'Using the video embedded English track as the timing source…',
+        );
+        final candidates = await _subtitleCandidates(
+          endpoint,
+          item: item,
+        );
+        if (candidates.isEmpty) {
+          throw const AiSubtitleException(
+            'No English transcript was found for embedded subtitle timing.',
+          );
+        }
+
+        List<AiSubtitleCue>? cues;
+        String? sourceUrl;
+        Object? lastError;
+        for (final url in candidates.take(10)) {
+          try {
+            final text = await _downloadSubtitle(url);
+            final parsed = _parseSubtitle(text);
+            if (parsed.length >= 8) {
+              cues = parsed;
+              sourceUrl = url;
+              break;
+            }
+          } catch (error) {
+            lastError = error;
+          }
+        }
+
+        if (cues == null || sourceUrl == null) {
+          throw AiSubtitleException(
+            lastError == null
+                ? 'No usable English transcript was found.'
+                : 'Could not prepare the English transcript.',
+          );
+        }
+
+        final prepared = AiPreparedSubtitle(
+          key: key,
+          title:
+              episode == null ? item.title : '\${item.title} \${episode.label}',
+          sourceUrl: sourceUrl,
+          cues: cues,
+          sourceMatch: 'embedded-text-timing',
+        );
+        _preparedCache[key] = prepared;
+
+        final firstEnd = math.min(96, cues.length);
+        onStatus?.call(
+          'Translating Sinhala ahead while keeping embedded video timing…',
+        );
+        await _translateRange(prepared, 0, firstEnd);
+        onStatus?.call('Embedded-timed Sinhala subtitles ready.');
+        return prepared;
+      } finally {
+        _inFlight.remove(key);
+      }
+    });
+  }
+
+  static Future<AiPreparedSubtitle?> _prepare({
+    required String key,
     required MediaItem item,
     required EpisodeItem? episode,
     required _VideoProbe probe,
@@ -198,35 +274,31 @@ class AiSinhalaSubtitleService {
     }
 
     final suffix = item.kind == MediaKind.series && episode != null
-        ? '$imdbId:${episode.season}:${episode.episode}'
+        ? '$imdbId:\${episode.season}:\${episode.episode}'
         : imdbId;
     final type = item.kind == MediaKind.movie ? 'movie' : 'series';
 
-    // AI Sinhala must never silently attach a generic movie/episode subtitle
-    // to a different video release. A wrong transcript can be offset, drift by
-    // frame-rate, or contain different cuts/recaps, none of which is safely
-    // repairable with a single sync value.
     final endpoints = <({Uri uri, String match})>[];
     final extras = <String>[];
     if (probe.hash != null) {
-      extras.add('videoHash=${Uri.encodeComponent(probe.hash!)}');
+      extras.add('videoHash=\${Uri.encodeComponent(probe.hash!)}');
     }
-    if (probe.size != null) extras.add('videoSize=${probe.size}');
+    if (probe.size != null) extras.add('videoSize=\${probe.size}');
     if (probe.fileName?.isNotEmpty == true) {
-      extras.add('filename=${Uri.encodeComponent(probe.fileName!)}');
+      extras.add('filename=\${Uri.encodeComponent(probe.fileName!)}');
     }
 
     if (probe.hash != null) {
       endpoints.add((
         uri: Uri.parse(
-          'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix/${extras.join('&')}.json',
+          'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix/\${extras.join('&')}.json',
         ),
         match: 'video-hash',
       ));
     } else if (probe.size != null && probe.fileName?.isNotEmpty == true) {
       endpoints.add((
         uri: Uri.parse(
-          'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix/${extras.join('&')}.json',
+          'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix/\${extras.join('&')}.json',
         ),
         match: 'filename-size',
       ));
@@ -280,10 +352,6 @@ class AiSinhalaSubtitleService {
         }
       }
       if (cues != null && sourceUrl != null) break;
-
-      // A provider can return stale/broken files for an otherwise exact query.
-      // Try another candidate from the same trusted release query, but never
-      // downgrade to a generic title/episode subtitle.
       onStatus?.call('Trying another release-matched subtitle…');
     }
 
@@ -297,7 +365,7 @@ class AiSinhalaSubtitleService {
 
     final prepared = AiPreparedSubtitle(
       key: key,
-      title: episode == null ? item.title : '${item.title} ${episode.label}',
+      title: episode == null ? item.title : '\${item.title} \${episode.label}',
       sourceUrl: sourceUrl,
       cues: cues,
       sourceMatch: sourceMatch,
@@ -308,10 +376,6 @@ class AiSinhalaSubtitleService {
     onStatus?.call('Translating a stable opening Sinhala buffer…');
     await _translateRange(prepared, 0, firstEnd);
     onStatus?.call('Sinhala subtitles ready — opening player…');
-
-    // Translate on demand around playback instead of racing through the
-    // entire movie/episode. This avoids burning quota and hitting rate limits
-    // before later scenes are actually watched.
     return prepared;
   }
 
@@ -407,7 +471,9 @@ class AiSinhalaSubtitleService {
     final specificTokens = <String>{...preferredTokens}
       ..removeAll(titleTokens)
       ..removeWhere((token) =>
-          RegExp(r'^(?:19|20)\d{2}
+          RegExp(r'^(?:19|20)\d{2}$').hasMatch(token) ||
+          RegExp(r'^s\d{1,2}e\d{1,3}$').hasMatch(token) ||
+          RegExp(r'^\d{1,2}x\d{1,3}$').hasMatch(token));
     if (requireReleaseEvidence && specificTokens.isEmpty) {
       return const [];
     }
