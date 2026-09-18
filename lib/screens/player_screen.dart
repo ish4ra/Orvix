@@ -12,7 +12,9 @@ import '../models/media_item.dart';
 import '../services/ai_sinhala_preferences_service.dart';
 import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/media_state_service.dart';
+import '../services/online_subtitle_service.dart';
 import '../services/playback_service.dart';
+import '../services/subtitle_preferences_service.dart';
 
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({
@@ -76,6 +78,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
   int? _lastNativeSubtitleStartMs;
   final List<int> _autoSyncSamples = <int>[];
   final Map<int, int> _bitmapOffsetVotes = <int, int>{};
+  double _subtitleFontSize = SubtitlePreferencesService.defaultFontSize;
+  bool _subtitleBackground = SubtitlePreferencesService.defaultBackground;
+  double _subtitleBackgroundOpacity =
+      SubtitlePreferencesService.defaultBackgroundOpacity;
+  double _subtitleBottomOffset =
+      SubtitlePreferencesService.defaultBottomOffset;
+  double _subtitleDelaySeconds = 0;
+  String _preferredSubtitleLanguage =
+      SubtitlePreferencesService.defaultPreferredLanguage;
+  bool _subtitleChoiceOverridden = false;
 
   bool get _desktop =>
       Platform.isWindows || Platform.isLinux || Platform.isMacOS;
@@ -85,6 +97,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     super.initState();
     _preparedAiSubtitle = widget.aiSubtitle;
     _aiSinhalaEnabled = _preparedAiSubtitle != null;
+    unawaited(_loadSubtitlePreferences());
     _playbackErrorSubscription =
         widget.playback.player.stream.error.listen(_onPlaybackError);
     if (_aiSinhalaEnabled) {
@@ -204,6 +217,138 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _aiSubtitleUnavailable = true;
       });
     }
+  }
+
+  Future<void> _loadSubtitlePreferences() async {
+    final fontSize = await SubtitlePreferencesService.fontSize();
+    final background = await SubtitlePreferencesService.backgroundEnabled();
+    final opacity = await SubtitlePreferencesService.backgroundOpacity();
+    final bottomOffset = await SubtitlePreferencesService.bottomOffset();
+    final language = await SubtitlePreferencesService.preferredLanguage();
+    if (!mounted) return;
+    setState(() {
+      _subtitleFontSize = fontSize;
+      _subtitleBackground = background;
+      _subtitleBackgroundOpacity = opacity;
+      _subtitleBottomOffset = bottomOffset;
+      _preferredSubtitleLanguage =
+          OnlineSubtitleService.normalizeLanguage(language);
+    });
+  }
+
+  Future<void> _setNativeSubtitleVisibility(bool visible) async {
+    final platform = widget.playback.player.platform;
+    if (platform is! mk.NativePlayer) return;
+    try {
+      await platform.setProperty(
+        'sub-visibility',
+        visible ? 'yes' : 'no',
+        waitForInitialization: false,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _setNativeSubtitleDelayProperty(double seconds) async {
+    final platform = widget.playback.player.platform;
+    if (platform is! mk.NativePlayer) return;
+    try {
+      await platform.setProperty(
+        'sub-delay',
+        seconds.toStringAsFixed(3),
+        waitForInitialization: false,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _setSubtitleDelay(double seconds) async {
+    final next = seconds.clamp(-120.0, 120.0).toDouble();
+    if (mounted) setState(() => _subtitleDelaySeconds = next);
+    if (!_aiSinhalaEnabled) {
+      await _setNativeSubtitleDelayProperty(next);
+    }
+  }
+
+  Future<void> _activateNativeSubtitle(mk.SubtitleTrack track) async {
+    _subtitleChoiceOverridden = true;
+    _nativeSubtitleClockTimer?.cancel();
+    _timingTrackSelected = false;
+    _timingTrackIsText = false;
+    if (mounted) {
+      setState(() {
+        _aiSinhalaEnabled = false;
+        _aiDisplaySubtitle = '';
+      });
+    }
+    await _setNativeSubtitleVisibility(true);
+    await widget.playback.player.setSubtitleTrack(track);
+    await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
+  }
+
+  Future<void> _disableSubtitles() async {
+    _subtitleChoiceOverridden = true;
+    _nativeSubtitleClockTimer?.cancel();
+    _timingTrackSelected = false;
+    _timingTrackIsText = false;
+    if (mounted) {
+      setState(() {
+        _aiSinhalaEnabled = false;
+        _aiDisplaySubtitle = '';
+      });
+    }
+    await _setNativeSubtitleVisibility(true);
+    await widget.playback.player.setSubtitleTrack(mk.SubtitleTrack.no());
+  }
+
+  Future<void> _enablePreparedAiSubtitle() async {
+    final prepared = _preparedAiSubtitle;
+    if (prepared == null) return;
+    _subtitleChoiceOverridden = true;
+    await _setNativeSubtitleDelayProperty(0);
+    if (!mounted) return;
+    setState(() => _aiSinhalaEnabled = true);
+    _positionSubscription ??=
+        widget.playback.player.stream.position.listen(_onPosition);
+    _subtitleTimingSubscription ??=
+        widget.playback.player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
+    await _loadManualSync();
+    if (!mounted) return;
+    await _ensureEnglishTimingTrack();
+    _refreshAiSubtitle();
+  }
+
+  Future<void> _setSubtitleFontSize(double value) async {
+    final next = value.clamp(18.0, 72.0).toDouble();
+    if (mounted) setState(() => _subtitleFontSize = next);
+    await SubtitlePreferencesService.setFontSize(next);
+  }
+
+  Future<void> _setSubtitleBackground(bool value) async {
+    if (mounted) setState(() => _subtitleBackground = value);
+    await SubtitlePreferencesService.setBackgroundEnabled(value);
+  }
+
+  Future<void> _setSubtitleBackgroundOpacity(double value) async {
+    final next = value.clamp(0.0, 1.0).toDouble();
+    if (mounted) setState(() => _subtitleBackgroundOpacity = next);
+    await SubtitlePreferencesService.setBackgroundOpacity(next);
+  }
+
+  Future<void> _setSubtitleBottomOffset(double value) async {
+    final next = value.clamp(8.0, 220.0).toDouble();
+    if (mounted) setState(() => _subtitleBottomOffset = next);
+    await SubtitlePreferencesService.setBottomOffset(next);
+  }
+
+  Future<void> _resetSubtitleAppearance() async {
+    await SubtitlePreferencesService.resetAppearance();
+    if (!mounted) return;
+    setState(() {
+      _subtitleFontSize = SubtitlePreferencesService.defaultFontSize;
+      _subtitleBackground = SubtitlePreferencesService.defaultBackground;
+      _subtitleBackgroundOpacity =
+          SubtitlePreferencesService.defaultBackgroundOpacity;
+      _subtitleBottomOffset = SubtitlePreferencesService.defaultBottomOffset;
+    });
   }
 
   Future<void> _persistProgress() async {
