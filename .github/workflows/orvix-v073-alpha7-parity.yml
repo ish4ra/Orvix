@@ -379,12 +379,14 @@ jobs:
           # feature path use the rqbit constructor that exists on EngineFS.
           server = Path("server/src/lib.rs")
           server_text = server.read_text()
-          import re
-          pattern = r'    let \\(download_engine, download_engine_disk_backed\\) = match EngineFS::new_disk_backed\\(.*?\\n    \\};\\n'
-          new_init = '    let engine_fs = EngineFS::new(\\n        cache_dir.clone(),\\n        backend_config.cache.clone(),\\n    )\\n    .await?;\\n    let download_engine = Arc::new(engine_fs);\\n    let download_engine_disk_backed = false;\\n'
-          server_text, replacements = re.subn(pattern, new_init, server_text, count=1, flags=re.S)
-          if replacements != 1:
+          start_marker = '    let (download_engine, download_engine_disk_backed) = match EngineFS::new_disk_backed('
+          end_marker = '    let engine = download_engine.clone();'
+          start_pos = server_text.find(start_marker)
+          end_pos = server_text.find(end_marker, start_pos)
+          if start_pos < 0 or end_pos < 0:
               raise SystemExit("Expected libtorrent startup block was not found")
+          new_init = '    let engine_fs = EngineFS::new(\\n        cache_dir.clone(),\\n        backend_config.cache.clone(),\\n    )\\n    .await?;\\n    let download_engine = Arc::new(engine_fs);\\n    let download_engine_disk_backed = false;\\n'
+          server_text = server_text[:start_pos] + new_init + server_text[end_pos:]
           server.write_text(server_text)
           PY
 
