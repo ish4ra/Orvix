@@ -1,7 +1,65 @@
 import argparse
+from collections import deque
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+
+
+def _clean_launcher_artwork(source: Image.Image) -> Image.Image:
+    """Remove only the dark background connected to the outer image edge."""
+    image = source.convert("RGBA").copy()
+    width, height = image.size
+    pixels = image.load()
+    visited = bytearray(width * height)
+    queue = deque()
+
+    def is_outer_dark(x: int, y: int) -> bool:
+        r, g, b, a = pixels[x, y]
+        if a == 0:
+            return True
+        return r <= 46 and g <= 46 and b <= 46
+
+    def push(x: int, y: int) -> None:
+        index = y * width + x
+        if visited[index] or not is_outer_dark(x, y):
+            return
+        visited[index] = 1
+        queue.append((x, y))
+
+    for x in range(width):
+        push(x, 0)
+        push(x, height - 1)
+    for y in range(height):
+        push(0, y)
+        push(width - 1, y)
+
+    while queue:
+        x, y = queue.popleft()
+        r, g, b, _ = pixels[x, y]
+        pixels[x, y] = (r, g, b, 0)
+        if x > 0:
+            push(x - 1, y)
+        if x + 1 < width:
+            push(x + 1, y)
+        if y > 0:
+            push(x, y - 1)
+        if y + 1 < height:
+            push(x, y + 1)
+
+    bbox = image.getbbox()
+    return image.crop(bbox) if bbox else image
+
+
+def _center_artwork(source: Image.Image, size: int, fill_ratio: float) -> Image.Image:
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    art = source.copy()
+    target = max(1, int(size * fill_ratio))
+    art.thumbnail((target, target), Image.Resampling.LANCZOS)
+    canvas.alpha_composite(
+        art,
+        ((size - art.width) // 2, (size - art.height) // 2),
+    )
+    return canvas
 
 
 def patch_android(tv: bool) -> None:
@@ -78,20 +136,16 @@ def patch_android(tv: bool) -> None:
         gradle_text += f"\n\ndependencies {{\n    {aar_dep}\n}}\n"
     gradle.write_text(gradle_text)
 
-    src = Image.open("assets/branding/orvix_icon.png").convert("RGBA")
+    raw_src = Image.open("assets/branding/orvix_icon.png").convert("RGBA")
+    src = _clean_launcher_artwork(raw_src)
+
     sizes = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
     for density, size in sizes.items():
         out = Path(f"android/app/src/main/res/mipmap-{density}/ic_launcher.png")
         out.parent.mkdir(parents=True, exist_ok=True)
-        src.resize((size, size), Image.Resampling.LANCZOS).save(out)
+        _center_artwork(src, size, .84).save(out)
 
-    fg = Image.new("RGBA", (432, 432), (0, 0, 0, 0))
-    logo = src.copy()
-    logo.thumbnail((380, 380), Image.Resampling.LANCZOS)
-    fg.alpha_composite(
-        logo,
-        ((432 - logo.width) // 2, (432 - logo.height) // 2),
-    )
+    fg = _center_artwork(src, 432, .68)
     fg_path = Path("android/app/src/main/res/drawable-nodpi/orvix_foreground.png")
     fg_path.parent.mkdir(parents=True, exist_ok=True)
     fg.save(fg_path)
@@ -99,7 +153,7 @@ def patch_android(tv: bool) -> None:
     values = Path("android/app/src/main/res/values/orvix_colors.xml")
     values.write_text(
         "<resources>\n"
-        '  <color name="orvix_icon_background">#050806</color>\n'
+        '  <color name="orvix_icon_background">#17270D</color>\n'
         "</resources>\n"
     )
 
