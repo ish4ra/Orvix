@@ -157,14 +157,11 @@ class LocalTorrentService {
               : '$localAppData${Platform.pathSeparator}Orvix${Platform.pathSeparator}torrent-engine',
         );
       } else {
-        final home = Platform.environment['HOME'];
+        // The test DMG is app-sandboxed. Keep the native engine's working
+        // directory inside a location the sandbox can always write to.
         workDir = Directory(
-          home == null || home.trim().isEmpty
-              ? '${Directory.systemTemp.path}${Platform.pathSeparator}Orvix'
-              : '$home${Platform.pathSeparator}Library'
-                  '${Platform.pathSeparator}Application Support'
-                  '${Platform.pathSeparator}Orvix'
-                  '${Platform.pathSeparator}torrent-engine',
+          '${Directory.systemTemp.path}${Platform.pathSeparator}Orvix'
+          '${Platform.pathSeparator}torrent-engine',
         );
       }
       await workDir.create(recursive: true);
