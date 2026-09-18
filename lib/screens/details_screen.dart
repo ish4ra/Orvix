@@ -686,6 +686,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ],
+                const SizedBox(height: 18),
+                OutlinedButton.icon(
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  label: const Text('Back'),
+                ),
               ],
             ),
           ),
