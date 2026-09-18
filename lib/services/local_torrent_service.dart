@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import 'source_provider_service.dart';
@@ -21,6 +22,9 @@ class LocalTorrentService {
 
   static const String baseUrl = 'http://127.0.0.1:11470';
   static const String bundledExeName = 'orvix-stream-server.exe';
+  static const String bundledMacName = 'orvix-stream-server';
+  static const MethodChannel _androidChannel =
+      MethodChannel('orvix/torrent_engine');
 
   Process? _process;
   bool _ownsProcess = false;
@@ -99,27 +103,70 @@ class LocalTorrentService {
     _starting = completer.future;
 
     try {
-      if (!Platform.isWindows) {
+      if (Platform.isAndroid) {
+        try {
+          await _androidChannel.invokeMethod<String>('start');
+        } on PlatformException catch (error) {
+          throw LocalTorrentException(
+            'Could not start the Android torrent engine: ${error.message ?? error.code}',
+          );
+        } on MissingPluginException {
+          throw const LocalTorrentException(
+            'The Android torrent engine bridge is missing from this build. Reinstall the latest Orvix APK.',
+          );
+        }
+
+        for (var attempt = 0; attempt < 80; attempt++) {
+          if (await _heartbeat()) {
+            completer.complete();
+            return;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 250));
+        }
+
         throw const LocalTorrentException(
-          'Built-in P2P streaming is currently available on Windows only.',
+          'The Android torrent engine did not become ready in time.',
+        );
+      }
+
+      if (!Platform.isWindows && !Platform.isMacOS) {
+        throw const LocalTorrentException(
+          'Built-in P2P streaming is not packaged for this platform yet.',
         );
       }
 
       final appDir = File(Platform.resolvedExecutable).parent;
-      final executable =
-          File('${appDir.path}${Platform.pathSeparator}$bundledExeName');
+      final executable = Platform.isWindows
+          ? File('${appDir.path}${Platform.pathSeparator}$bundledExeName')
+          : File(
+              '${appDir.parent.path}${Platform.pathSeparator}Resources'
+              '${Platform.pathSeparator}$bundledMacName',
+            );
       if (!await executable.exists()) {
         throw const LocalTorrentException(
           'The Orvix torrent engine is missing from this installation. Reinstall the latest Orvix build.',
         );
       }
 
-      final localAppData = Platform.environment['LOCALAPPDATA'];
-      final workDir = Directory(
-        localAppData == null || localAppData.trim().isEmpty
-            ? '${appDir.path}${Platform.pathSeparator}torrent-engine-data'
-            : '$localAppData${Platform.pathSeparator}Orvix${Platform.pathSeparator}torrent-engine',
-      );
+      late final Directory workDir;
+      if (Platform.isWindows) {
+        final localAppData = Platform.environment['LOCALAPPDATA'];
+        workDir = Directory(
+          localAppData == null || localAppData.trim().isEmpty
+              ? '${appDir.path}${Platform.pathSeparator}torrent-engine-data'
+              : '$localAppData${Platform.pathSeparator}Orvix${Platform.pathSeparator}torrent-engine',
+        );
+      } else {
+        final home = Platform.environment['HOME'];
+        workDir = Directory(
+          home == null || home.trim().isEmpty
+              ? '${Directory.systemTemp.path}${Platform.pathSeparator}Orvix'
+              : '$home${Platform.pathSeparator}Library'
+                  '${Platform.pathSeparator}Application Support'
+                  '${Platform.pathSeparator}Orvix'
+                  '${Platform.pathSeparator}torrent-engine',
+        );
+      }
       await workDir.create(recursive: true);
 
       _process = await Process.start(
@@ -133,7 +180,7 @@ class LocalTorrentService {
       _process!.stdout.listen((_) {});
       _process!.stderr.listen((_) {});
 
-      for (var attempt = 0; attempt < 60; attempt++) {
+      for (var attempt = 0; attempt < 80; attempt++) {
         if (await _heartbeat()) {
           completer.complete();
           return;
@@ -188,5 +235,12 @@ class LocalTorrentService {
       process.kill();
     }
     _ownsProcess = false;
+    if (Platform.isAndroid) {
+      try {
+        await _androidChannel.invokeMethod<void>('stop');
+      } catch (_) {
+        // Process shutdown must stay best-effort during app teardown.
+      }
+    }
   }
 }
