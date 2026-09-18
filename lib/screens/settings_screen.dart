@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../services/ai_sinhala_preferences_service.dart';
 import '../services/ai_sinhala_subtitle_service.dart';
+import '../services/online_subtitle_service.dart';
+import '../services/subtitle_preferences_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -12,6 +14,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool? _aiSinhala;
+  String? _preferredSubtitleLanguage;
 
   @override
   void initState() {
@@ -21,7 +24,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _load() async {
     final enabled = await AiSinhalaPreferencesService.isEnabled();
-    if (mounted) setState(() => _aiSinhala = enabled);
+    final language = await SubtitlePreferencesService.preferredLanguage();
+    if (!mounted) return;
+    setState(() {
+      _aiSinhala = enabled;
+      _preferredSubtitleLanguage =
+          OnlineSubtitleService.normalizeLanguage(language);
+    });
+  }
+
+  Future<void> _setPreferredSubtitleLanguage(String language) async {
+    final normalized = OnlineSubtitleService.normalizeLanguage(language);
+    setState(() => _preferredSubtitleLanguage = normalized);
+    await SubtitlePreferencesService.setPreferredLanguage(normalized);
   }
 
   Future<void> _setAiSinhala(bool enabled) async {
@@ -32,7 +47,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       SnackBar(
         content: Text(
           enabled
-              ? 'AI Sinhala subtitles enabled. Orvix will prepare Sinhala subtitles before playback when possible.'
+              ? 'AI Sinhala subtitles enabled. Orvix will prepare Sinhala subtitles in the background after playback starts when possible.'
               : 'AI Sinhala subtitles disabled.',
         ),
       ),
@@ -82,8 +97,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       AiSinhalaSubtitleService.canTranslate
-                          ? 'Prepare a Sinhala subtitle buffer before playback, then keep translating ahead in the background. Requires internet.'
-                          : 'Sign in to your Orvix account first. When enabled, Orvix prepares Sinhala subtitles before playback and keeps translating ahead.',
+                          ? 'Start playback immediately, then prepare Sinhala subtitles in the background and keep translating ahead. Requires internet.'
+                          : 'Sign in to your Orvix account first. When enabled, Orvix starts playback normally and prepares Sinhala subtitles in the background.',
                       style: const TextStyle(height: 1.45),
                     ),
                   ),
@@ -94,10 +109,219 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 'Beta note: Orvix uses an available English text subtitle as the translation source. If no suitable subtitle is found, playback continues normally with the original subtitle options.',
                 style: TextStyle(fontSize: 12.5, height: 1.5, color: Color(0xFF9CA99E)),
               ),
+              const SizedBox(height: 22),
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0D120E),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFF263827)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.closed_caption_rounded),
+                        SizedBox(width: 10),
+                        Text(
+                          'Online subtitle language',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'OpenSubtitles v3 is built into Orvix. This language is placed first in the online subtitle picker, but every language returned by the addon remains selectable.',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        height: 1.45,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: 300,
+                      child: DropdownButtonFormField<String>(
+                        value: _preferredSubtitleLanguage ??
+                            SubtitlePreferencesService
+                                .defaultPreferredLanguage,
+                        decoration: const InputDecoration(
+                          labelText: 'Preferred language',
+                          prefixIcon: Icon(Icons.language_rounded),
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'eng',
+                            child: Text('English'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'sin',
+                            child: Text('Sinhala'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'tam',
+                            child: Text('Tamil'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'hin',
+                            child: Text('Hindi'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'spa',
+                            child: Text('Spanish'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'fre',
+                            child: Text('French'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'ger',
+                            child: Text('German'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'ita',
+                            child: Text('Italian'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'por',
+                            child: Text('Portuguese'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'dut',
+                            child: Text('Dutch'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'rus',
+                            child: Text('Russian'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'ara',
+                            child: Text('Arabic'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'jpn',
+                            child: Text('Japanese'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'kor',
+                            child: Text('Korean'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'chi',
+                            child: Text('Chinese'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'ind',
+                            child: Text('Indonesian'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'tur',
+                            child: Text('Turkish'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          if (value != null) {
+                            _setPreferredSubtitleLanguage(value);
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 22),
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0D120E),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFF263827)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Built-in addon stack',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const _AddonLine(
+                      icon: Icons.movie_filter_outlined,
+                      title: 'AIO Metadata + Cinemeta',
+                      detail:
+                          'Rich metadata first, with Cinemeta v3 as the built-in movie/series fallback.',
+                    ),
+                    const _AddonLine(
+                      icon: Icons.subtitles_rounded,
+                      title: 'OpenSubtitles v3',
+                      detail:
+                          'Online subtitles from the official Stremio OpenSubtitles v3 addon, selectable by language in the player.',
+                    ),
+                    const _AddonLine(
+                      icon: Icons.hub_rounded,
+                      title: 'Torrentio + provider pool',
+                      detail:
+                          'Torrentio-compatible results plus the default Comet and MediaFusion provider pool. AIOStreams remains optional.',
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
       ],
+    );
+  }
+}
+
+class _AddonLine extends StatelessWidget {
+  const _AddonLine({
+    required this.icon,
+    required this.title,
+    required this.detail,
+  });
+
+  final IconData icon;
+  final String title;
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 13),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  detail,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                    fontSize: 12.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
