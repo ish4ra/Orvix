@@ -325,8 +325,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
           return const SizedBox.shrink();
         }
 
+        final compact = MediaQuery.sizeOf(context).width < 700;
         return Padding(
-          padding: const EdgeInsets.fromLTRB(40, 18, 40, 20),
+          padding: EdgeInsets.fromLTRB(
+            compact ? 18 : 40,
+            18,
+            compact ? 18 : 40,
+            20,
+          ),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 1180),
             child: Column(
@@ -466,22 +472,31 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final selected = _selectedSeason ?? seasons.first;
     final episodes = item.episodes.where((e) => e.season == selected).toList()
       ..sort((a, b) => a.episode.compareTo(b.episode));
+    final compact = MediaQuery.sizeOf(context).width < 700;
+    final horizontalPadding = compact ? 18.0 : 40.0;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(40, 18, 40, 18),
+      padding: EdgeInsets.fromLTRB(
+        horizontalPadding,
+        18,
+        horizontalPadding,
+        18,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Text(
-                'Episodes',
-                style: Theme.of(context)
-                    .textTheme
-                    .headlineSmall
-                    ?.copyWith(fontWeight: FontWeight.w900),
+              Expanded(
+                child: Text(
+                  'Episodes',
+                  style: Theme.of(context)
+                      .textTheme
+                      .headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w900),
+                ),
               ),
-              const Spacer(),
+              const SizedBox(width: 12),
               DropdownButton<int>(
                 value: selected,
                 borderRadius: BorderRadius.circular(14),
@@ -504,65 +519,114 @@ class _DetailsScreenState extends State<DetailsScreen> {
   }
 
   Widget _episodeTile(MediaItem item, EpisodeItem episode) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0B100D),
-        borderRadius: BorderRadius.circular(17),
-        border: Border.all(color: const Color(0xFF1D2A20)),
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 18,
-          vertical: 10,
-        ),
-        leading: SizedBox(
-          width: 104,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: episode.thumbnail == null
-                ? Container(
-                    color: const Color(0xFF121A13),
-                    child: const Icon(Icons.movie_outlined),
-                  )
-                : CachedNetworkImage(
-                    imageUrl: episode.thumbnail!,
-                    fit: BoxFit.cover,
-                    errorWidget: (_, __, ___) =>
-                        const Icon(Icons.movie_outlined),
-                  ),
-          ),
-        ),
-        title: Text(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 680;
+
+        final thumbnail = ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: episode.thumbnail == null
+              ? Container(
+                  color: const Color(0xFF121A13),
+                  child: const Center(child: Icon(Icons.movie_outlined)),
+                )
+              : CachedNetworkImage(
+                  imageUrl: episode.thumbnail!,
+                  fit: BoxFit.cover,
+                  errorWidget: (_, __, ___) =>
+                      const Center(child: Icon(Icons.movie_outlined)),
+                ),
+        );
+
+        final title = Text(
           '${episode.label}  ${episode.title}',
+          maxLines: compact ? 3 : 2,
+          overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontWeight: FontWeight.w800),
-        ),
-        subtitle: episode.overview == null
+        );
+
+        final overview = episode.overview == null
             ? null
             : Text(
                 episode.overview!,
-                maxLines: 2,
+                maxLines: compact ? 3 : 2,
                 overflow: TextOverflow.ellipsis,
-              ),
-        trailing: Wrap(
-          spacing: 8,
-          children: [
-            OutlinedButton.icon(
-              onPressed: _resolving
-                  ? null
-                  : () => _findSourcesAndPlay(item, episode: episode),
-              icon: const Icon(Icons.travel_explore_rounded),
-              label: const Text('Sources'),
-            ),
-            FilledButton.icon(
-              onPressed:
-                  _resolving ? null : () => _play(item, episode: episode),
-              icon: const Icon(Icons.play_arrow_rounded),
-              label: const Text('Play'),
-            ),
-          ],
-        ),
-      ),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  height: 1.35,
+                ),
+              );
+
+        final sourcesButton = OutlinedButton.icon(
+          onPressed: _resolving
+              ? null
+              : () => _findSourcesAndPlay(item, episode: episode),
+          icon: const Icon(Icons.travel_explore_rounded),
+          label: const Text('Sources'),
+        );
+
+        final playButton = FilledButton.icon(
+          onPressed: _resolving ? null : () => _play(item, episode: episode),
+          icon: const Icon(Icons.play_arrow_rounded),
+          label: const Text('Play'),
+        );
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          padding: EdgeInsets.all(compact ? 14 : 0),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0B100D),
+            borderRadius: BorderRadius.circular(17),
+            border: Border.all(color: const Color(0xFF1D2A20)),
+          ),
+          child: compact
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(width: 112, height: 72, child: thumbnail),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              title,
+                              if (overview != null) ...[
+                                const SizedBox(height: 6),
+                                overview,
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(child: sourcesButton),
+                        const SizedBox(width: 10),
+                        Expanded(child: playButton),
+                      ],
+                    ),
+                  ],
+                )
+              : ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 10,
+                  ),
+                  leading: SizedBox(width: 104, height: 68, child: thumbnail),
+                  title: title,
+                  subtitle: overview,
+                  trailing: Wrap(
+                    spacing: 8,
+                    children: [sourcesButton, playButton],
+                  ),
+                ),
+        );
+      },
     );
   }
 
@@ -572,7 +636,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
         color: Colors.black.withValues(alpha: .66),
         child: Center(
           child: Container(
-            width: 470,
+            constraints: const BoxConstraints(maxWidth: 470),
+            margin: const EdgeInsets.all(24),
             padding: const EdgeInsets.all(28),
             decoration: BoxDecoration(
               color: const Color(0xFF0D120E),
@@ -1153,7 +1218,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
           builder: (context, setDialogState) => AlertDialog(
             title: const Text('Source priority'),
             content: SizedBox(
-              width: 430,
+              width: (MediaQuery.sizeOf(dialogContext).width - 80)
+                  .clamp(260.0, 430.0)
+                  .toDouble(),
               height: 300,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
