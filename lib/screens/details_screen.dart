@@ -1927,28 +1927,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
   }) async {
     if (!mounted) return;
 
-    // Subtitle discovery must never block opening the player. AI Sinhala is
-    // prepared in PlayerScreen after playback has opened, so slow source
-    // probing can never trap the user behind the details-screen busy overlay.
-    if (!mounted) return;
-            setState(() => _status = message);
-          },
-        );
-      } catch (_) {
-        // Do not attach a generic subtitle timeline to a different release.
-        // PlayerScreen will inspect the actual media for an embedded English
-        // text track and, when present, use those real cue events as the clock
-        // while a generic English subtitle is used only as a translation transcript.
-        if (mounted) {
-          setState(() {
-            _status =
-                'No matched external subtitle — checking the video’s embedded English track…';
-          });
-        }
-      }
-    }
-
-    if (!mounted) return;
+    // Subtitle discovery must never block opening the player. PlayerScreen
+    // prepares AI Sinhala in the background after media playback is available.
     setState(() {
       _resolving = false;
       _resolveProgress = null;
