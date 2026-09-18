@@ -175,7 +175,7 @@ class AiSinhalaSubtitleService {
     EpisodeItem? episode,
     void Function(String message)? onStatus,
   }) async {
-    final key = '\${_mediaKey(item, episode)}:embedded-text-timing';
+    final key = '${_mediaKey(item, episode)}:embedded-text-timing';
     final cached = _preparedCache[key];
     if (cached != null &&
         cached.translatedCount >= math.min(96, cached.cues.length)) {
@@ -191,7 +191,7 @@ class AiSinhalaSubtitleService {
         }
 
         final suffix = item.kind == MediaKind.series && episode != null
-            ? '$imdbId:\${episode.season}:\${episode.episode}'
+            ? '$imdbId:${episode.season}:${episode.episode}'
             : imdbId;
         final type = item.kind == MediaKind.movie ? 'movie' : 'series';
         final endpoint = Uri.parse(
@@ -239,7 +239,7 @@ class AiSinhalaSubtitleService {
         final prepared = AiPreparedSubtitle(
           key: key,
           title:
-              episode == null ? item.title : '\${item.title} \${episode.label}',
+              episode == null ? item.title : '${item.title} ${episode.label}',
           sourceUrl: sourceUrl,
           cues: cues,
           sourceMatch: 'embedded-text-timing',
@@ -274,31 +274,31 @@ class AiSinhalaSubtitleService {
     }
 
     final suffix = item.kind == MediaKind.series && episode != null
-        ? '$imdbId:\${episode.season}:\${episode.episode}'
+        ? '$imdbId:${episode.season}:${episode.episode}'
         : imdbId;
     final type = item.kind == MediaKind.movie ? 'movie' : 'series';
 
     final endpoints = <({Uri uri, String match})>[];
     final extras = <String>[];
     if (probe.hash != null) {
-      extras.add('videoHash=\${Uri.encodeComponent(probe.hash!)}');
+      extras.add('videoHash=${Uri.encodeComponent(probe.hash!)}');
     }
-    if (probe.size != null) extras.add('videoSize=\${probe.size}');
+    if (probe.size != null) extras.add('videoSize=${probe.size}');
     if (probe.fileName?.isNotEmpty == true) {
-      extras.add('filename=\${Uri.encodeComponent(probe.fileName!)}');
+      extras.add('filename=${Uri.encodeComponent(probe.fileName!)}');
     }
 
     if (probe.hash != null) {
       endpoints.add((
         uri: Uri.parse(
-          'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix/\${extras.join('&')}.json',
+          'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix/${extras.join('&')}.json',
         ),
         match: 'video-hash',
       ));
     } else if (probe.size != null && probe.fileName?.isNotEmpty == true) {
       endpoints.add((
         uri: Uri.parse(
-          'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix/\${extras.join('&')}.json',
+          'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix/${extras.join('&')}.json',
         ),
         match: 'filename-size',
       ));
@@ -365,7 +365,7 @@ class AiSinhalaSubtitleService {
 
     final prepared = AiPreparedSubtitle(
       key: key,
-      title: episode == null ? item.title : '\${item.title} \${episode.label}',
+      title: episode == null ? item.title : '${item.title} ${episode.label}',
       sourceUrl: sourceUrl,
       cues: cues,
       sourceMatch: sourceMatch,
