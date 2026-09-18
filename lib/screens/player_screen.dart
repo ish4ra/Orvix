@@ -1463,6 +1463,28 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     controls: NoVideoControls,
                     subtitleViewConfiguration: SubtitleViewConfiguration(
                       visible: !_aiSinhalaEnabled,
+                      style: TextStyle(
+                        height: 1.35,
+                        fontSize: _subtitleFontSize,
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        backgroundColor: _subtitleBackground
+                            ? Colors.black.withValues(
+                                alpha: _subtitleBackgroundOpacity,
+                              )
+                            : Colors.transparent,
+                        shadows: const [
+                          Shadow(color: Colors.black, blurRadius: 7),
+                        ],
+                      ),
+                      padding: EdgeInsets.fromLTRB(
+                        20,
+                        0,
+                        20,
+                        _controlsVisible && _subtitleBottomOffset < 110
+                            ? 110
+                            : _subtitleBottomOffset,
+                      ),
                     ),
                   )
                 else
