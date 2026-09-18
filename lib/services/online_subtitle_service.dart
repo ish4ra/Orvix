@@ -49,7 +49,13 @@ class OnlineSubtitleService {
     final endpoints = <({Uri uri, int bonus})>[];
     final extras = <String>[];
     final cleanHash = videoHash?.trim().toLowerCase();
-    if (cleanHash != null && RegExp(r'^[a-f0-9]{16}
+    final validHash = cleanHash != null &&
+        cleanHash.length == 16 &&
+        !RegExp(r'[^a-f0-9]').hasMatch(cleanHash);
+    if (validHash) {
+      extras.add('videoHash=${Uri.encodeComponent(cleanHash!)}');
+    }
+    final cleanRelease = releaseHint?.trim();
     if (cleanRelease != null && cleanRelease.isNotEmpty) {
       extras.add('filename=${Uri.encodeComponent(cleanRelease)}');
     }
@@ -61,7 +67,7 @@ class OnlineSubtitleService {
         uri: Uri.parse(
           '$_base/subtitles/$type/$suffix/${extras.join('&')}.json',
         ),
-        bonus: cleanHash != null ? 600 : 40,
+        bonus: validHash ? 600 : 40,
       ));
     }
     endpoints.add((
