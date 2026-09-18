@@ -131,6 +131,9 @@ class AiSinhalaSubtitleService {
   static final Uri _translationEndpoint = Uri.parse(
     'https://kpjuisxofwqxhbnnsyzf.supabase.co/functions/v1/translate-subtitle-si',
   );
+  static final Uri _openSubtitlesExactEndpoint = Uri.parse(
+    'https://kpjuisxofwqxhbnnsyzf.supabase.co/functions/v1/opensubtitles-exact',
+  );
 
   static bool get canTranslate => true;
 
@@ -275,32 +278,71 @@ class AiSinhalaSubtitleService {
       );
     }
 
+    final title = episode == null ? item.title : '${item.title} ${episode.label}';
     final suffix = item.kind == MediaKind.series && episode != null
         ? '$imdbId:${episode.season}:${episode.episode}'
         : imdbId;
     final type = item.kind == MediaKind.movie ? 'movie' : 'series';
 
-    final endpoints = <({Uri uri, String match})>[];
-    final extras = <String>[];
-    if (probe.hash != null) {
-      extras.add('videoHash=${Uri.encodeComponent(probe.hash!)}');
-    }
-    if (probe.size != null) extras.add('videoSize=${probe.size}');
-    if (probe.fileName?.isNotEmpty == true) {
-      extras.add('filename=${Uri.encodeComponent(probe.fileName!)}');
+    // Strongest downloadable timing source: OpenSubtitles REST v1 confirms
+    // moviehash_match=true for the exact file hash + exact byte size. The API
+    // key stays server-side in the Supabase Edge Function and is never shipped
+    // in Orvix.
+    if (probe.hash != null && probe.size != null && probe.size! > 0) {
+      onStatus?.call('Checking an exact OpenSubtitles file-hash match…');
+      final exactText = await _fetchExactRestSubtitle(
+        movieHash: probe.hash!,
+        movieByteSize: probe.size!,
+      );
+      if (exactText != null) {
+        final exactCues = _parseSubtitle(exactText);
+        if (exactCues.length >= 8) {
+          final prepared = AiPreparedSubtitle(
+            key: key,
+            title: title,
+            sourceUrl: 'opensubtitles-rest-v1://moviehash/${probe.hash}',
+            cues: exactCues,
+            sourceMatch: 'rest-moviehash',
+          );
+          _preparedCache[key] = prepared;
+          final firstEnd = math.min(96, exactCues.length);
+          onStatus?.call('Exact-file timing verified — translating Sinhala…');
+          await _translateRange(prepared, 0, firstEnd);
+          onStatus?.call('Exact-timed Sinhala subtitles ready.');
+          return prepared;
+        }
+      }
     }
 
+    // Zero-config fallback: OpenSubtitles v3. Exact-hash responses must carry
+    // explicit hash-match evidence (m=h / hashMatch / moviehash_match). If not,
+    // do not pretend they are exact. A filename+size release match may then be
+    // used, but only when release-specific tokens are present.
+    final endpoints = <({Uri uri, String match})>[];
     if (probe.hash != null) {
+      final exactExtras = <String>[
+        'videoHash=${Uri.encodeComponent(probe.hash!)}',
+        if (probe.size != null && probe.size! > 0) 'videoSize=${probe.size}',
+        if (probe.fileName?.isNotEmpty == true)
+          'filename=${Uri.encodeComponent(probe.fileName!)}',
+      ];
       endpoints.add((
         uri: Uri.parse(
-          'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix/${extras.join('&')}.json',
+          'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix/${exactExtras.join('&')}.json',
         ),
         match: 'video-hash',
       ));
-    } else if (probe.size != null && probe.fileName?.isNotEmpty == true) {
+    }
+    if (probe.size != null &&
+        probe.size! > 0 &&
+        probe.fileName?.isNotEmpty == true) {
+      final releaseExtras = <String>[
+        'videoSize=${probe.size}',
+        'filename=${Uri.encodeComponent(probe.fileName!)}',
+      ];
       endpoints.add((
         uri: Uri.parse(
-          'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix/${extras.join('&')}.json',
+          'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix/${releaseExtras.join('&')}.json',
         ),
         match: 'filename-size',
       ));
@@ -320,7 +362,7 @@ class AiSinhalaSubtitleService {
     for (final endpoint in endpoints) {
       onStatus?.call(
         endpoint.match == 'video-hash'
-            ? 'Matching subtitles to this exact video file…'
+            ? 'Checking verified exact-hash subtitle candidates…'
             : 'Matching subtitles to this exact release…',
       );
 
@@ -332,6 +374,7 @@ class AiSinhalaSubtitleService {
           item: item,
           requireReleaseEvidence: endpoint.match == 'filename-size',
           preserveProviderOrder: endpoint.match == 'video-hash',
+          requireHashEvidence: endpoint.match == 'video-hash',
         );
       } catch (error) {
         lastError = error;
@@ -355,20 +398,19 @@ class AiSinhalaSubtitleService {
         }
       }
       if (cues != null && sourceUrl != null) break;
-      onStatus?.call('Trying another release-matched subtitle…');
     }
 
     if (cues == null || sourceUrl == null) {
       throw AiSubtitleException(
         lastError == null
-            ? 'No release-matched English subtitle was found for this video.'
+            ? 'No trusted timing match was found for this exact video release.'
             : 'Could not prepare a trusted English subtitle for this video.',
       );
     }
 
     final prepared = AiPreparedSubtitle(
       key: key,
-      title: episode == null ? item.title : '${item.title} ${episode.label}',
+      title: title,
       sourceUrl: sourceUrl,
       cues: cues,
       sourceMatch: sourceMatch,
@@ -378,8 +420,62 @@ class AiSinhalaSubtitleService {
     final firstEnd = math.min(96, cues.length);
     onStatus?.call('Translating a stable opening Sinhala buffer…');
     await _translateRange(prepared, 0, firstEnd);
-    onStatus?.call('Sinhala subtitles ready — opening player…');
+    onStatus?.call('Sinhala subtitles ready.');
     return prepared;
+  }
+
+  static Future<String?> _fetchExactRestSubtitle({
+    required String movieHash,
+    required int movieByteSize,
+  }) async {
+    final body = <String, dynamic>{
+      'moviehash': movieHash,
+      'moviebytesize': movieByteSize,
+      'language': 'en',
+    };
+
+    try {
+      dynamic data;
+      int status;
+      final session = Supabase.instance.client.auth.currentSession;
+      if (session != null) {
+        final response = await Supabase.instance.client.functions.invoke(
+          'opensubtitles-exact',
+          body: body,
+        );
+        status = response.status;
+        data = response.data;
+      } else {
+        final response = await http
+            .post(
+              _openSubtitlesExactEndpoint,
+              headers: const {
+                'Authorization': 'Bearer $_guestFunctionJwt',
+                'apikey': _guestFunctionJwt,
+                'Content-Type': 'application/json',
+              },
+              body: jsonEncode(body),
+            )
+            .timeout(const Duration(seconds: 35));
+        status = response.statusCode;
+        try {
+          data = jsonDecode(
+            utf8.decode(response.bodyBytes, allowMalformed: true),
+          );
+        } catch (_) {
+          data = null;
+        }
+      }
+
+      if (status < 200 || status >= 300 || data is! Map) return null;
+      if (data['moviehash_match'] != true) return null;
+      final subtitle = data['subtitle']?.toString().trim() ?? '';
+      return subtitle.isEmpty ? null : subtitle;
+    } catch (_) {
+      // REST v1 is the preferred exact resolver, but an outage/missing server
+      // key must not break playback. Safe v3 exact/release matching continues.
+      return null;
+    }
   }
 
   static Future<http.Response> _httpGetWithRetry(
@@ -461,6 +557,7 @@ class AiSinhalaSubtitleService {
     required MediaItem item,
     bool requireReleaseEvidence = false,
     bool preserveProviderOrder = false,
+    bool requireHashEvidence = false,
   }) async {
     final response = await _httpGetWithRetry(endpoint);
     if (response.statusCode < 200 || response.statusCode >= 300)
@@ -471,9 +568,11 @@ class AiSinhalaSubtitleService {
     if (entries is! List) return const [];
 
     if (preserveProviderOrder) {
-      // For an exact OpenSubtitles file-hash match, trust the provider's
-      // ordering instead of re-ranking by filename guesses. Normal English
-      // entries stay ahead of forced-only tracks.
+      // A hash-qualified request is only considered exact when the provider
+      // explicitly marks the candidate as a hash match. This avoids silently
+      // accepting a generic IMDb/episode result from the same response.
+      final exactRegular = <String>[];
+      final exactForced = <String>[];
       final regular = <String>[];
       final forced = <String>[];
       for (final entry in entries.whereType<Map>()) {
@@ -490,12 +589,22 @@ class AiSinhalaSubtitleService {
         if (!url.startsWith('http')) continue;
         final searchable =
             '${entry['label'] ?? ''} ${entry['id'] ?? ''} $url'.toLowerCase();
-        if (searchable.contains('forced')) {
-          forced.add(url);
+        final forcedOnly = searchable.contains('forced');
+        final marker = (entry['m'] ?? '').toString().trim().toLowerCase();
+        final hashMatched = marker == 'h' ||
+            entry['hashMatch'] == true ||
+            entry['hash_match'] == true ||
+            entry['moviehash_match'] == true;
+        if (hashMatched) {
+          (forcedOnly ? exactForced : exactRegular).add(url);
         } else {
-          regular.add(url);
+          (forcedOnly ? forced : regular).add(url);
         }
       }
+      if (exactRegular.isNotEmpty || exactForced.isNotEmpty) {
+        return <String>[...exactRegular, ...exactForced];
+      }
+      if (requireHashEvidence) return const [];
       return <String>[...regular, ...forced];
     }
 
