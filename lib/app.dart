@@ -513,7 +513,7 @@ class _AboutScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Orvix v0.7.4-alpha.06',
+                'Orvix v0.7.4-alpha.07',
                 style: Theme.of(context)
                     .textTheme
                     .headlineMedium
