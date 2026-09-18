@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - orvix-v0.7.3-alpha.5
-    paths:
-      - '.github/workflows/orvix-v073-alpha5-multiplatform.yml'
 
 permissions:
   contents: write
