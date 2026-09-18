@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/media_item.dart';
 import '../services/catalog_service.dart';
@@ -11,10 +12,12 @@ class SearchScreen extends StatefulWidget {
     super.key,
     required this.catalog,
     required this.onOpen,
+    this.active = true,
   });
 
   final CatalogService catalog;
   final ValueChanged<MediaItem> onOpen;
+  final bool active;
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -22,7 +25,9 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final _controller = TextEditingController();
-  final _focusNode = FocusNode();
+  final _focusNode = FocusNode(debugLabel: 'search-field');
+  final _firstResultFocusNode =
+      FocusNode(debugLabel: 'search-first-result');
   Timer? _debounce;
   List<MediaItem> _results = const [];
   bool _loading = false;
@@ -32,8 +37,21 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _focusNode.requestFocus());
+    if (widget.active) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focusNode.requestFocus();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant SearchScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !oldWidget.active) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focusNode.requestFocus();
+      });
+    }
   }
 
   @override
@@ -41,7 +59,28 @@ class _SearchScreenState extends State<SearchScreen> {
     _debounce?.cancel();
     _controller.dispose();
     _focusNode.dispose();
+    _firstResultFocusNode.dispose();
     super.dispose();
+  }
+
+  void _focusFirstResult() {
+    if (_results.isEmpty) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _results.isNotEmpty) {
+        _firstResultFocusNode.requestFocus();
+      }
+    });
+  }
+
+  KeyEventResult _handleSearchFieldKey(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.arrowDown &&
+        _results.isNotEmpty) {
+      _focusFirstResult();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   void _onQueryChanged(String raw) {
@@ -110,13 +149,17 @@ class _SearchScreenState extends State<SearchScreen> {
           const SizedBox(height: 18),
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 820),
-            child: TextField(
-              controller: _controller,
-              focusNode: _focusNode,
-              onChanged: _onQueryChanged,
-              textInputAction: TextInputAction.search,
-              style: const TextStyle(fontSize: 17),
-              decoration: InputDecoration(
+            child: Focus(
+              canRequestFocus: false,
+              onKeyEvent: _handleSearchFieldKey,
+              child: TextField(
+                controller: _controller,
+                focusNode: _focusNode,
+                onChanged: _onQueryChanged,
+                onSubmitted: (_) => _focusFirstResult(),
+                textInputAction: TextInputAction.search,
+                style: const TextStyle(fontSize: 17),
+                decoration: InputDecoration(
                 hintText:
                     'Start typing — suggestions appear after 2 characters…',
                 prefixIcon: const Icon(Icons.search_rounded),
@@ -128,9 +171,11 @@ class _SearchScreenState extends State<SearchScreen> {
                           _controller.clear();
                           _onQueryChanged('');
                           setState(() {});
+                          _focusNode.requestFocus();
                         },
                         icon: const Icon(Icons.close),
                       ),
+                ),
               ),
             ),
           ),
@@ -185,8 +230,10 @@ class _SearchScreenState extends State<SearchScreen> {
           itemBuilder: (context, index) {
             final item = _results[index];
             return MediaCard(
+              key: ValueKey('search-result-$index'),
               item: item,
               width: double.infinity,
+              focusNode: index == 0 ? _firstResultFocusNode : null,
               onTap: () => widget.onOpen(item),
             );
           },

@@ -304,7 +304,11 @@ class _OrvixShellState extends State<_OrvixShell> {
         mediaState: widget.mediaState,
         onOpen: _openMedia,
       ),
-      SearchScreen(catalog: widget.catalog, onOpen: _openMedia),
+      SearchScreen(
+        catalog: widget.catalog,
+        onOpen: _openMedia,
+        active: _index == 1,
+      ),
       MediaLibraryScreen(
         key: ValueKey('media-library-$_libraryRevision'),
         mediaState: widget.mediaState,
@@ -509,7 +513,7 @@ class _AboutScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Orvix v0.7.3-alpha.8',
+                'Orvix v0.7.3-alpha.11',
                 style: Theme.of(context)
                     .textTheme
                     .headlineMedium

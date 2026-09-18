@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
 def patch_android(tv: bool) -> None:
@@ -36,6 +36,13 @@ def patch_android(tv: bool) -> None:
         )
 
     if tv:
+        if 'android:screenOrientation="landscape"' not in text:
+            text = text.replace(
+                'android:name=".MainActivity"',
+                'android:name=".MainActivity"\n'
+                '            android:screenOrientation="landscape"',
+                1,
+            )
         if "android.software.leanback" not in text:
             text = text.replace(
                 '<uses-permission android:name="android.permission.WAKE_LOCK" />',
@@ -129,33 +136,57 @@ def patch_android(tv: bool) -> None:
     )
 
     if tv:
-        banner_source = Path("assets/branding/orvix_tv_banner.jpg")
-        banner_path = Path("android/app/src/main/res/drawable/tv_banner.jpg")
+        # Android TV expects a 320x180 xhdpi banner with the app name included.
+        # Generate it from the canonical square Orvix icon instead of cropping a
+        # second source artwork; this keeps launcher branding deterministic and
+        # avoids the double-frame/awkward wide icon seen on physical TV launchers.
+        banner_path = Path(
+            "android/app/src/main/res/drawable-xhdpi/tv_banner.png"
+        )
         banner_path.parent.mkdir(parents=True, exist_ok=True)
-        if banner_source.exists():
-            banner = Image.open(banner_source).convert("RGB")
-            # The supplied board has dark framing at its edges. Android TV
-            # already places banners inside its own rounded tile, so crop a
-            # small outer bleed instead of showing a double black frame.
-            banner = ImageOps.fit(
-                banner,
-                (320, 180),
-                method=Image.Resampling.LANCZOS,
-                bleed=0.06,
-                centering=(0.5, 0.5),
-            )
-            banner.save(banner_path, quality=94, optimize=True)
-        else:
-            banner = Image.new("RGB", (320, 180), (5, 8, 6))
-            logo = src.copy()
-            logo.thumbnail((172, 172), Image.Resampling.LANCZOS)
-            layer = Image.new("RGBA", (320, 180), (0, 0, 0, 0))
-            layer.alpha_composite(
-                logo,
-                ((320 - logo.width) // 2, (180 - logo.height) // 2),
-            )
-            banner.paste(layer.convert("RGB"))
-            banner.save(banner_path, quality=92, optimize=True)
+
+        banner = Image.new("RGB", (320, 180), (5, 8, 6))
+        draw = ImageDraw.Draw(banner)
+
+        # Subtle Orvix green glow on the right without adding a visible frame.
+        for x in range(320):
+            strength = max(0.0, (x - 120) / 200)
+            if strength <= 0:
+                continue
+            green = int(8 + 20 * strength)
+            draw.line((x, 0, x, 179), fill=(5, green, 6))
+
+        icon = ImageOps.fit(
+            src,
+            (112, 112),
+            method=Image.Resampling.LANCZOS,
+            centering=(0.5, 0.5),
+        )
+        mask = Image.new("L", (112, 112), 0)
+        mask_draw = ImageDraw.Draw(mask)
+        mask_draw.rounded_rectangle((0, 0, 111, 111), radius=24, fill=255)
+        banner.paste(icon.convert("RGB"), (24, 34), mask)
+
+        font = None
+        for candidate in (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+        ):
+            try:
+                font = ImageFont.truetype(candidate, 38)
+                break
+            except OSError:
+                pass
+        if font is None:
+            font = ImageFont.load_default()
+
+        draw.text((153, 61), "ORVIX", font=font, fill=(245, 248, 245))
+        draw.rounded_rectangle(
+            (154, 111, 286, 116),
+            radius=3,
+            fill=(185, 255, 69),
+        )
+        banner.save(banner_path, optimize=True)
 
     main_activity = Path(
         "android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt"
