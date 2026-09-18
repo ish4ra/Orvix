@@ -304,8 +304,9 @@ jobs:
 
       - name: Prepare transparent Orvix branding
         run: |
-          python3 -m pip install --disable-pip-version-check pillow
-          python3 tools/make_logo_mark.py
+          python3 -m venv .logo-venv
+          .logo-venv/bin/python -m pip install --disable-pip-version-check pillow
+          .logo-venv/bin/python tools/make_logo_mark.py
 
       - uses: subosito/flutter-action@v2
         with:
