@@ -21,9 +21,10 @@ class AiSinhalaPreferencesService {
     return prefs.getInt(_syncKey(subtitleKey)) ?? 0;
   }
 
-  static Future<void> setSyncOffsetMs(String subtitleKey, int milliseconds) async {
+  static Future<void> setSyncOffsetMs(
+      String subtitleKey, int milliseconds) async {
     final prefs = await SharedPreferences.getInstance();
-    final value = milliseconds.clamp(-15000, 15000).toInt();
+    final value = milliseconds.clamp(-120000, 120000).toInt();
     if (value == 0) {
       await prefs.remove(_syncKey(subtitleKey));
     } else {

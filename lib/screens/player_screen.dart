@@ -24,6 +24,8 @@ class PlayerScreen extends StatefulWidget {
     this.item,
     this.episode,
     this.aiSubtitle,
+    this.releaseHint,
+    this.expectedSizeBytes,
     this.nextEpisodeLabel,
     this.onNext,
   });
@@ -35,6 +37,8 @@ class PlayerScreen extends StatefulWidget {
   final MediaItem? item;
   final EpisodeItem? episode;
   final AiPreparedSubtitle? aiSubtitle;
+  final String? releaseHint;
+  final int? expectedSizeBytes;
   final String? nextEpisodeLabel;
   final Future<void> Function()? onNext;
 
@@ -58,8 +62,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
   StreamSubscription<bool>? _completedSubscription;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<List<String>>? _subtitleTimingSubscription;
+  StreamSubscription<String>? _playbackErrorSubscription;
   final FocusNode _focusNode = FocusNode();
+  AiPreparedSubtitle? _preparedAiSubtitle;
   bool _aiSinhalaEnabled = false;
+  bool _aiSubtitleLoading = false;
+  bool _aiSubtitleUnavailable = false;
   bool _timingTrackSelected = false;
   bool _timingTrackIsText = false;
   String _aiDisplaySubtitle = '';
@@ -75,7 +83,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   void initState() {
     super.initState();
-    _aiSinhalaEnabled = widget.aiSubtitle != null;
+    _preparedAiSubtitle = _preparedAiSubtitle;
+    _aiSinhalaEnabled = _preparedAiSubtitle != null;
+    _playbackErrorSubscription =
+        widget.playback.player.stream.error.listen(_onPlaybackError);
     if (_aiSinhalaEnabled) {
       _positionSubscription =
           widget.playback.player.stream.position.listen(_onPosition);
@@ -100,6 +111,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       await widget.playback.open(widget.url, title: widget.title);
       if (_aiSinhalaEnabled) {
         unawaited(_ensureEnglishTimingTrack());
+      } else {
+        unawaited(_prepareAiSinhalaAfterPlaybackStarts());
       }
       _startupTimer?.cancel();
       _startupTimer = Timer(const Duration(seconds: 12), () {
@@ -109,7 +122,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             state.position <= Duration.zero) {
           setState(() {
             _error =
-                'PikPak stream did not initialize (still 0:00/0:00 after 12 seconds). '
+                'The video stream did not initialize (still 0:00/0:00 after 12 seconds). '
                 'This is a stream-start failure, not normal buffering.';
           });
         }
@@ -127,6 +140,69 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
+    }
+  }
+
+  void _onPlaybackError(String message) {
+    if (!mounted || message.trim().isEmpty) return;
+    final state = widget.playback.player.state;
+    if (state.duration <= Duration.zero &&
+        state.position < const Duration(seconds: 1)) {
+      setState(() => _error = 'Playback engine: ${message.trim()}');
+    }
+  }
+
+  Future<void> _prepareAiSinhalaAfterPlaybackStarts() async {
+    if (_preparedAiSubtitle != null || widget.item == null) return;
+    final enabled = await AiSinhalaPreferencesService.isEnabled();
+    if (!enabled || !mounted) return;
+    if (!AiSinhalaSubtitleService.canTranslate) {
+      if (mounted) setState(() => _aiSubtitleUnavailable = true);
+      return;
+    }
+
+    await Future<void>.delayed(const Duration(milliseconds: 900));
+    if (!mounted) return;
+    setState(() {
+      _aiSubtitleLoading = true;
+      _aiSubtitleUnavailable = false;
+    });
+    try {
+      final prepared = await AiSinhalaSubtitleService.prepareBuffered(
+        item: widget.item!,
+        episode: widget.episode,
+        videoUrl: widget.url,
+        releaseHint: widget.releaseHint,
+        expectedSizeBytes: widget.expectedSizeBytes,
+      );
+      if (!mounted) return;
+      if (prepared == null) {
+        setState(() {
+          _aiSubtitleLoading = false;
+          _aiSubtitleUnavailable = true;
+        });
+        return;
+      }
+      setState(() {
+        _preparedAiSubtitle = prepared;
+        _aiSinhalaEnabled = true;
+        _aiSubtitleLoading = false;
+        _aiSubtitleUnavailable = false;
+      });
+      _positionSubscription ??=
+          widget.playback.player.stream.position.listen(_onPosition);
+      _subtitleTimingSubscription ??=
+          widget.playback.player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
+      await _loadManualSync();
+      if (!mounted) return;
+      await _ensureEnglishTimingTrack();
+      _refreshAiSubtitle();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _aiSubtitleLoading = false;
+        _aiSubtitleUnavailable = true;
+      });
     }
   }
 
@@ -268,10 +344,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   int get _effectiveSyncOffsetMs =>
-      (_autoSyncOffsetMs + _manualSyncOffsetMs).clamp(-15000, 15000).toInt();
+      (_autoSyncOffsetMs + _manualSyncOffsetMs).clamp(-120000, 120000).toInt();
 
   Future<void> _loadManualSync() async {
-    final prepared = widget.aiSubtitle;
+    final prepared = _preparedAiSubtitle;
     if (prepared == null) return;
     final value = await AiSinhalaPreferencesService.syncOffsetMs(prepared.key);
     if (!mounted) return;
@@ -280,16 +356,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _adjustManualSync(int deltaMs) async {
-    final prepared = widget.aiSubtitle;
+    final prepared = _preparedAiSubtitle;
     if (prepared == null) return;
-    final next = (_manualSyncOffsetMs + deltaMs).clamp(-15000, 15000).toInt();
+    final next = (_manualSyncOffsetMs + deltaMs).clamp(-120000, 120000).toInt();
     if (mounted) setState(() => _manualSyncOffsetMs = next);
     await AiSinhalaPreferencesService.setSyncOffsetMs(prepared.key, next);
     _refreshAiSubtitle();
   }
 
   Future<void> _resetManualSync() async {
-    final prepared = widget.aiSubtitle;
+    final prepared = _preparedAiSubtitle;
     if (prepared == null) return;
     if (mounted) setState(() => _manualSyncOffsetMs = 0);
     await AiSinhalaPreferencesService.setSyncOffsetMs(prepared.key, 0);
@@ -306,7 +382,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _onPosition(Duration position) {
-    final prepared = widget.aiSubtitle;
+    final prepared = _preparedAiSubtitle;
     if (!_aiSinhalaEnabled || prepared == null || !mounted) return;
     var adjustedMs = position.inMilliseconds - _effectiveSyncOffsetMs;
     if (adjustedMs < 0) adjustedMs = 0;
@@ -324,10 +400,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (current.id.toLowerCase() != 'no' && _isEnglishTrack(current)) {
         chosen = current;
       } else {
-        final tracks = player.state.tracks.subtitle
+        final allTracks = player.state.tracks.subtitle
             .where((track) => track.id.toLowerCase() != 'no')
-            .where(_isEnglishTrack)
-            .toList(growable: false)
+            .toList(growable: false);
+        final tracks = allTracks.where(_isEnglishTrack).toList(growable: false)
           ..sort((a, b) {
             final aBitmap = _isImageSubtitleTrack(a) ? 1 : 0;
             final bBitmap = _isImageSubtitleTrack(b) ? 1 : 0;
@@ -336,6 +412,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
         if (tracks.isNotEmpty) {
           chosen = tracks.first;
           await player.setSubtitleTrack(chosen);
+        } else {
+          final unknownText = allTracks.where((track) {
+            if (_isImageSubtitleTrack(track)) return false;
+            final language = (track.language ?? '').toString().trim();
+            final title = (track.title ?? '').toString().trim();
+            return language.isEmpty && title.isEmpty;
+          }).toList(growable: false);
+          if (unknownText.length == 1) {
+            chosen = unknownText.first;
+            await player.setSubtitleTrack(chosen);
+          }
         }
       }
 
@@ -428,7 +515,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _acceptAutoSyncSample(int sample) {
-    if (sample.abs() > 15000 || !mounted) return;
+    if (sample.abs() > 120000 || !mounted) return;
     _autoSyncSamples.add(sample);
     if (_autoSyncSamples.length > 7) _autoSyncSamples.removeAt(0);
     final ordered = [..._autoSyncSamples]..sort();
@@ -439,13 +526,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _voteBitmapTiming(int sourceStartMs) {
-    final prepared = widget.aiSubtitle;
+    final prepared = _preparedAiSubtitle;
     if (prepared == null || prepared.cues.isEmpty) return;
 
     // PGS/VobSub carries timing but no text. Build a small histogram of the
     // difference between source cue starts and nearby OpenSubtitles cue starts.
     // The real release offset repeats across many cues; accidental neighbours do not.
-    const windowMs = 12000;
+    const windowMs = 120000;
     for (final cue in prepared.cues) {
       final cueStart = cue.start.inMilliseconds;
       if (cueStart < sourceStartMs - windowMs) continue;
@@ -471,7 +558,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _handleEmbeddedSubtitleCue(List<String> lines) async {
     if (!_aiSinhalaEnabled || !_timingTrackSelected || !mounted) return;
-    final prepared = widget.aiSubtitle;
+    final prepared = _preparedAiSubtitle;
     if (prepared == null || !_timingTrackIsText) return;
     final source = lines
         .map((line) => line.trim())
@@ -638,7 +725,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                if (_aiSinhalaEnabled && widget.aiSubtitle != null) ...[
+                if (_aiSubtitleLoading)
+                  const _EmptyTrackMessage(
+                    'AI Sinhala is matching this exact release in the background. Playback is not blocked.',
+                  )
+                else if (_aiSubtitleUnavailable)
+                  const _EmptyTrackMessage(
+                    'AI Sinhala could not confidently prepare subtitles for this release. Playback is unaffected.',
+                  ),
+                if ((_aiSubtitleLoading || _aiSubtitleUnavailable) &&
+                    _aiSinhalaEnabled == false)
+                  const SizedBox(height: 12),
+                if (_aiSinhalaEnabled && _preparedAiSubtitle != null) ...[
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(14),
@@ -763,6 +861,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _completedSubscription?.cancel();
     _positionSubscription?.cancel();
     _subtitleTimingSubscription?.cancel();
+    _playbackErrorSubscription?.cancel();
     _persistProgress();
     _focusNode.dispose();
     widget.playback.stop();

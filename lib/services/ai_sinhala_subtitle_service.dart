@@ -104,9 +104,15 @@ class AiSinhalaSubtitleService {
     required MediaItem item,
     required String videoUrl,
     EpisodeItem? episode,
+    String? releaseHint,
+    int? expectedSizeBytes,
     void Function(String message)? onStatus,
   }) async {
-    final probe = await _probeVideo(videoUrl);
+    final probe = await _probeVideo(
+      videoUrl,
+      fallbackFileName: releaseHint,
+      fallbackSize: expectedSizeBytes,
+    );
     final identity = probe.hash ??
         '${probe.size ?? 0}:${probe.fileName ?? Uri.tryParse(videoUrl)?.pathSegments.lastOrNull ?? 'unknown'}';
     final key = '${_mediaKey(item, episode)}:$identity';
@@ -196,6 +202,7 @@ class AiSinhalaSubtitleService {
         candidates = await _subtitleCandidates(
           endpoint.uri,
           preferredFileName: probe.fileName,
+          item: item,
         );
       } catch (error) {
         lastError = error;
@@ -330,6 +337,7 @@ class AiSinhalaSubtitleService {
   static Future<List<String>> _subtitleCandidates(
     Uri endpoint, {
     String? preferredFileName,
+    required MediaItem item,
   }) async {
     final response = await _httpGetWithRetry(endpoint);
     if (response.statusCode < 200 || response.statusCode >= 300)
@@ -340,6 +348,10 @@ class AiSinhalaSubtitleService {
     if (entries is! List) return const [];
 
     final preferredTokens = _releaseTokens(preferredFileName);
+    final titleTokens = _releaseTokens(item.title);
+    final specificTokens = <String>{...preferredTokens}
+      ..removeAll(titleTokens)
+      ..removeWhere((token) => RegExp(r'^(?:19|20)\d{2}$').hasMatch(token));
     final ranked = <({String url, int score})>[];
     for (final entry in entries.whereType<Map>()) {
       final lang = (entry['lang'] ?? entry['language'] ?? '')
@@ -358,10 +370,18 @@ class AiSinhalaSubtitleService {
           .toString()
           .toLowerCase();
       var score = 0;
+      var specificMatches = 0;
       for (final token in preferredTokens) {
         if (searchable.contains(token)) score += token.length >= 5 ? 3 : 1;
       }
-      if (searchable.contains('forced')) score -= 3;
+      for (final token in specificTokens) {
+        if (searchable.contains(token)) {
+          specificMatches++;
+          score += token.length >= 5 ? 12 : 6;
+        }
+      }
+      if (specificMatches > 0) score += 30;
+      if (searchable.contains('forced')) score -= 12;
       ranked.add((url: url, score: score));
     }
     ranked.sort((a, b) => b.score.compareTo(a.score));
@@ -447,18 +467,28 @@ class AiSinhalaSubtitleService {
     }
   }
 
-  static Future<_VideoProbe> _probeVideo(String rawUrl) async {
+  static Future<_VideoProbe> _probeVideo(
+    String rawUrl, {
+    String? fallbackFileName,
+    int? fallbackSize,
+  }) async {
     final uri = Uri.tryParse(rawUrl);
+    final fallbackName = fallbackFileName?.trim().isNotEmpty == true
+        ? fallbackFileName!.trim()
+        : uri == null
+            ? null
+            : _fileNameFromUri(uri);
     if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https')) {
-      return const _VideoProbe();
+      return _VideoProbe(fileName: fallbackName, size: fallbackSize);
     }
     final client = http.Client();
     try {
       final first = await _readRange(client, uri, 0, 65535);
-      if (first == null) return _VideoProbe(fileName: _fileNameFromUri(uri));
-      final fileName =
-          _fileNameFromHeaders(first.headers) ?? _fileNameFromUri(uri);
-      final size = _totalSize(first.statusCode, first.headers);
+      if (first == null) {
+        return _VideoProbe(fileName: fallbackName, size: fallbackSize);
+      }
+      final fileName = _fileNameFromHeaders(first.headers) ?? fallbackName;
+      final size = _totalSize(first.statusCode, first.headers) ?? fallbackSize;
       if (first.statusCode != 206 ||
           size == null ||
           size < 131072 ||
@@ -475,7 +505,7 @@ class AiSinhalaSubtitleService {
         hash: _openSubtitlesHash(size, first.bytes, tail.bytes),
       );
     } catch (_) {
-      return _VideoProbe(fileName: _fileNameFromUri(uri));
+      return _VideoProbe(fileName: fallbackName, size: fallbackSize);
     } finally {
       client.close();
     }

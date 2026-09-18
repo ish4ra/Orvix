@@ -4,8 +4,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
-import '../services/ai_sinhala_preferences_service.dart';
-import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/catalog_service.dart';
 import '../services/cloud_preferences_service.dart';
 import '../services/local_torrent_service.dart';
@@ -319,20 +317,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
         item.genres.isNotEmpty;
     final pinKey = widget.sources.sourceTargetKey(item);
 
-    return FutureBuilder<String?>(
-      future: widget.sources.getPinnedSourceIdentity(pinKey),
+    return FutureBuilder<PinnedSourcePreference?>(
+      future: widget.sources.getPinnedSourcePreference(pinKey),
       builder: (context, snapshot) {
         final pinned = snapshot.data;
-        if (!hasCredits && !hasFacts && (pinned == null || pinned.isEmpty)) {
+        if (!hasCredits && !hasFacts && pinned == null) {
           return const SizedBox.shrink();
         }
-
-        final provider = pinned == null || pinned.isEmpty
-            ? null
-            : pinned.split('|').first.trim();
-        final providerLabel = provider == null || provider.isEmpty
-            ? null
-            : '${provider[0].toUpperCase()}${provider.substring(1)}';
 
         return Padding(
           padding: const EdgeInsets.fromLTRB(40, 18, 40, 20),
@@ -341,45 +332,69 @@ class _DetailsScreenState extends State<DetailsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (pinned != null && pinned.isNotEmpty) ...[
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 15,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0D150F),
+                if (pinned != null) ...[
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFF2D492F)),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.push_pin_rounded),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Pinned source',
-                                style: TextStyle(fontWeight: FontWeight.w900),
-                              ),
-                              const SizedBox(height: 3),
-                              Text(
-                                item.kind == MediaKind.series
-                                    ? '${providerLabel ?? 'Pinned provider'} is preferred across this series when a matching release is available.'
-                                    : '${providerLabel ?? 'Pinned provider'} is preferred for this title.',
-                                style: TextStyle(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
-                                ),
-                              ),
-                            ],
-                          ),
+                      onTap: item.kind == MediaKind.movie
+                          ? () => _playPinnedRelease(item)
+                          : null,
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 15,
                         ),
-                      ],
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0D150F),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0xFF2D492F)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.push_pin_rounded),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    item.kind == MediaKind.series
+                                        ? 'Pinned release family'
+                                        : 'Pinned release',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    pinned.label,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    item.kind == MediaKind.movie
+                                        ? '${pinned.provider} • Click to play this exact pinned release'
+                                        : '${pinned.provider} • This release family is preferred when you choose an episode',
+                                    style: TextStyle(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (item.kind == MediaKind.movie)
+                              const Icon(Icons.play_arrow_rounded),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 24),
@@ -703,39 +718,116 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
       chosen ??= await _chooseSource(results, item, episode);
       if (chosen == null || !mounted) return;
-
-      if (!chosen.isMagnet) {
-        setState(() {
-          _resolving = true;
-          _resolveProgress = null;
-          _status = 'Opening direct stream…';
-        });
-        await _openPlayerUrl(chosen.resource, item, episode);
-        return;
-      }
-
-      if (!hasCloudConnection) {
-        setState(() {
-          _resolving = true;
-          _resolveProgress = null;
-          _status = 'Starting local P2P torrent stream…';
-        });
-        final localUrl = await LocalTorrentService.instance.resolve(chosen);
-        if (!mounted) return;
-        setState(() => _status = 'Torrent metadata ready — opening player…');
-        await _openPlayerUrl(localUrl, item, episode);
-        return;
-      }
-
-      final cloud = await _chooseCloudProvider();
-      if (cloud == null || !mounted) return;
-      if (cloud == CloudProvider.torbox) {
-        await _sendSourceToTorBox(chosen, item, episode);
-      } else {
-        await _sendSourceToPikPak(chosen, item, episode);
-      }
+      await _playSourceResult(
+        chosen,
+        item,
+        episode,
+        hasCloudConnection: hasCloudConnection,
+      );
     } catch (e) {
       _showPlayError(e);
+    }
+  }
+
+  String _sourceReleaseHint(SourceResult source) {
+    final fileName = source.fileNameHint?.trim();
+    if (fileName != null && fileName.isNotEmpty) return fileName;
+    return source.title.split('\n').last.trim();
+  }
+
+  Future<void> _playSourceResult(
+    SourceResult chosen,
+    MediaItem item,
+    EpisodeItem? episode, {
+    bool? hasCloudConnection,
+  }) async {
+    final cloudConnected = hasCloudConnection ??
+        ((await widget.pikpak.isSignedIn) || (await widget.torbox.isConnected));
+    final releaseHint = _sourceReleaseHint(chosen);
+
+    if (!chosen.isMagnet) {
+      if (!mounted) return;
+      setState(() {
+        _resolving = true;
+        _resolveProgress = null;
+        _status = 'Opening direct stream…';
+      });
+      await _openPlayerUrl(
+        chosen.resource,
+        item,
+        episode,
+        releaseHint: releaseHint,
+        expectedSizeBytes: chosen.sizeBytes,
+      );
+      return;
+    }
+
+    if (!cloudConnected) {
+      if (!mounted) return;
+      setState(() {
+        _resolving = true;
+        _resolveProgress = null;
+        _status = 'Starting local P2P torrent stream…';
+      });
+      final localUrl = await LocalTorrentService.instance.resolve(chosen);
+      if (!mounted) return;
+      setState(() => _status = 'Torrent metadata ready — opening player…');
+      await _openPlayerUrl(
+        localUrl,
+        item,
+        episode,
+        releaseHint: releaseHint,
+        expectedSizeBytes: chosen.sizeBytes,
+      );
+      return;
+    }
+
+    final cloud = await _chooseCloudProvider();
+    if (cloud == null || !mounted) return;
+    if (cloud == CloudProvider.torbox) {
+      await _sendSourceToTorBox(chosen, item, episode);
+    } else {
+      await _sendSourceToPikPak(chosen, item, episode);
+    }
+  }
+
+  Future<void> _playPinnedRelease(MediaItem item) async {
+    if (_resolving || !mounted) return;
+    final pinKey = widget.sources.sourceTargetKey(item);
+    final pinned = await widget.sources.getPinnedSourcePreference(pinKey);
+    if (pinned == null || !mounted) return;
+    setState(() {
+      _resolving = true;
+      _resolveProgress = null;
+      _status = 'Finding pinned release: ${pinned.label}…';
+    });
+    try {
+      final results = await widget.sources.resolve(item);
+      if (!mounted) return;
+      SourceResult? match;
+      for (final result in results) {
+        if (widget.sources.matchesPinned(result, pinned.identity)) {
+          match = result;
+          break;
+        }
+      }
+      if (match == null) {
+        setState(() {
+          _resolving = false;
+          _resolveProgress = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Pinned release is not being returned by the current source providers right now: ${pinned.label}',
+            ),
+          ),
+        );
+        return;
+      }
+      await _playSourceResult(match, item, null);
+    } catch (error) {
+      _showPlayError(error);
     }
   }
 
@@ -884,7 +976,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
           'TorBox finished, but no playable video file was found.',
         );
       final url = await widget.torbox.requestDownloadUrl(cloudItem, file);
-      await _openPlayerUrl(url, item, episode);
+      await _openPlayerUrl(
+        url,
+        item,
+        episode,
+        releaseHint: file.name,
+        expectedSizeBytes: file.size,
+      );
       return;
     }
     throw const TorBoxException(
@@ -1439,7 +1537,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
     if (file == null)
       throw const TorBoxException('No playable video file found in TorBox.');
     final url = await widget.torbox.requestDownloadUrl(cloudItem, file);
-    await _openPlayerUrl(url, item, episode);
+    await _openPlayerUrl(
+      url,
+      item,
+      episode,
+      releaseHint: file.name,
+      expectedSizeBytes: file.size,
+    );
   }
 
   Future<PikPakFile?> _findInPikPak(
@@ -1596,47 +1700,21 @@ class _DetailsScreenState extends State<DetailsScreen> {
     if (url == null || url.isEmpty) {
       throw Exception('PikPak did not return a playable URL yet.');
     }
-    await _openPlayerUrl(url, item, episode);
+    await _openPlayerUrl(
+      url,
+      item,
+      episode,
+      releaseHint: file.name,
+    );
   }
 
   Future<void> _openPlayerUrl(
     String url,
     MediaItem item,
-    EpisodeItem? episode,
-  ) async {
-    if (!mounted) return;
-
-    AiPreparedSubtitle? preparedAiSubtitle;
-    final aiEnabled = await AiSinhalaPreferencesService.isEnabled();
-    if (aiEnabled && AiSinhalaSubtitleService.canTranslate) {
-      setState(() {
-        _resolving = true;
-        _resolveProgress = null;
-        _status = 'Preparing Sinhala subtitles…';
-      });
-      try {
-        preparedAiSubtitle = await AiSinhalaSubtitleService.prepareBuffered(
-          item: item,
-          episode: episode,
-          videoUrl: url,
-          onStatus: (message) {
-            if (!mounted) return;
-            setState(() => _status = message);
-          },
-        );
-      } catch (_) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'AI Sinhala was not ready for this source after automatic retries. Playing normally; you can retry this title at any time.',
-              ),
-            ),
-          );
-        }
-      }
-    }
-
+    EpisodeItem? episode, {
+    String? releaseHint,
+    int? expectedSizeBytes,
+  }) async {
     if (!mounted) return;
     setState(() {
       _resolving = false;
@@ -1657,7 +1735,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
           mediaState: widget.mediaState,
           item: item,
           episode: episode,
-          aiSubtitle: preparedAiSubtitle,
+          releaseHint: releaseHint,
+          expectedSizeBytes: expectedSizeBytes,
           nextEpisodeLabel: next == null ? null : '${next.label} ${next.title}',
           onNext: next == null
               ? null

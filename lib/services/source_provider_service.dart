@@ -195,6 +195,20 @@ class SourceResult {
   }
 }
 
+class PinnedSourcePreference {
+  const PinnedSourcePreference({
+    required this.identity,
+    required this.provider,
+    required this.label,
+    this.bingeGroup,
+  });
+
+  final String identity;
+  final String provider;
+  final String label;
+  final String? bingeGroup;
+}
+
 class SourceProviderService {
   SourceProviderService({http.Client? client})
       : _client = client ?? http.Client();
@@ -454,22 +468,42 @@ class SourceProviderService {
   String _pinPreferenceKey(String targetKey) =>
       '$_pinnedSourcePrefix$targetKey';
 
-  Future<String?> getPinnedSourceIdentity(String targetKey) async {
+  Future<PinnedSourcePreference?> getPinnedSourcePreference(
+    String targetKey,
+  ) async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_pinPreferenceKey(targetKey));
     if (raw == null || raw.trim().isEmpty) return null;
     try {
       final decoded = jsonDecode(raw);
       if (decoded is Map<String, dynamic>) {
-        final identity = decoded['identity']?.toString().trim();
-        return identity == null || identity.isEmpty ? null : identity;
+        final identity = decoded['identity']?.toString().trim() ?? '';
+        if (identity.isEmpty) return null;
+        final provider = decoded['provider']?.toString().trim();
+        final label = decoded['label']?.toString().trim();
+        return PinnedSourcePreference(
+          identity: identity,
+          provider: provider == null || provider.isEmpty
+              ? identity.split('|').first
+              : provider,
+          label: label == null || label.isEmpty ? 'Pinned release' : label,
+          bingeGroup: decoded['bingeGroup']?.toString(),
+        );
       }
     } catch (_) {
-      // A future migration can still accept a legacy plain identity value.
-      return raw.trim();
+      final identity = raw.trim();
+      if (identity.isEmpty) return null;
+      return PinnedSourcePreference(
+        identity: identity,
+        provider: identity.split('|').first,
+        label: 'Pinned release',
+      );
     }
     return null;
   }
+
+  Future<String?> getPinnedSourceIdentity(String targetKey) async =>
+      (await getPinnedSourcePreference(targetKey))?.identity;
 
   Future<void> pinSource(
     String targetKey,
@@ -477,7 +511,10 @@ class SourceProviderService {
     bool seriesWide = false,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    final label = result.title.split('\n').last.trim();
+    final fileName = result.fileNameHint?.trim();
+    final label = fileName != null && fileName.isNotEmpty
+        ? fileName
+        : result.title.split('\n').last.trim();
     await prefs.setString(
       _pinPreferenceKey(targetKey),
       jsonEncode({
