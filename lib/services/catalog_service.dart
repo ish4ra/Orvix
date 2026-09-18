@@ -726,13 +726,14 @@ class CatalogService {
 
   MediaItem _withSearchSignal(MediaItem item, _ImdbSearchSignal? signal) {
     if (signal == null) return item;
+    final betterPoster = signal.poster?.trim();
     return MediaItem(
       id: item.id,
       kind: item.kind,
       title: item.title,
       year: item.year,
-      poster: signal.poster?.trim().isNotEmpty == true
-          ? signal.poster
+      poster: betterPoster != null && betterPoster.isNotEmpty
+          ? betterPoster
           : item.poster,
       background: item.background,
       description: item.description,
@@ -762,6 +763,18 @@ class CatalogService {
   void dispose() => _client.close();
 }
 
+class _ImdbSearchSignal {
+  const _ImdbSearchSignal({
+    this.rating,
+    required this.voteCount,
+    this.poster,
+  });
+
+  final double? rating;
+  final int voteCount;
+  final String? poster;
+}
+
 class _ImdbChartRow {
   const _ImdbChartRow({
     required this.id,
@@ -778,18 +791,6 @@ class _ImdbChartRow {
   final String? poster;
   final double? rating;
   final String? runtime;
-}
-
-class _ImdbSearchSignal {
-  const _ImdbSearchSignal({
-    this.rating,
-    required this.voteCount,
-    this.poster,
-  });
-
-  final double? rating;
-  final int voteCount;
-  final String? poster;
 }
 
 class CatalogException implements Exception {
@@ -812,7 +813,8 @@ class CatalogException implements Exception {
             i.toString() +
             ': title(id: ' +
             jsonEncode(ids[i]) +
-            ') { ratingsSummary { aggregateRating voteCount } primaryImage { url } }',
+            ') { ratingsSummary { aggregateRating voteCount } '
+                'primaryImage { url } }',
       );
     }
     query.writeln('}');
