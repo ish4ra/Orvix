@@ -322,7 +322,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           _aiSinhalaEnabled = false;
           _aiDisplaySubtitle = '';
         });
-        await _setNativeSubtitleVisibility(true);
+        await _setNativeSubtitleVisibility(false);
       }
     }
   }
@@ -688,11 +688,31 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
 
+  Future<void> _preparePlayerExit() async {
+    if (_closing) return;
+    _closing = true;
+    _hideTimer?.cancel();
+    _saveTimer?.cancel();
+    _nextTimer?.cancel();
+    _startupTimer?.cancel();
+    _nativeSubtitleClockTimer?.cancel();
+    _liveCueClearTimer?.cancel();
+    _liveCueGeneration++;
+
+    try {
+      await _persistProgress();
+    } catch (_) {}
+    try {
+      await widget.playback.stop();
+    } catch (_) {}
+  }
+
   Future<void> _handleEscape() async {
     if (_desktop && await windowManager.isFullScreen()) {
       await windowManager.setFullScreen(false);
       return;
     }
+    await _preparePlayerExit();
     if (mounted) Navigator.of(context).maybePop();
   }
 
@@ -764,7 +784,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (widget.onNext == null || _advancing) return;
     _advancing = true;
     _nextTimer?.cancel();
-    await _persistProgress();
+    await _preparePlayerExit();
     if (!mounted) return;
     Navigator.of(context).pop();
     await Future<void>.delayed(const Duration(milliseconds: 120));
@@ -1932,29 +1952,39 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   void dispose() {
+    _closing = true;
     _hideTimer?.cancel();
     _saveTimer?.cancel();
     _nextTimer?.cancel();
     _startupTimer?.cancel();
     _nativeSubtitleClockTimer?.cancel();
-    _startupPlayingSubscription?.cancel();
-    _startupPositionActivitySubscription?.cancel();
-    _startupDurationSubscription?.cancel();
-    _completedSubscription?.cancel();
-    _positionSubscription?.cancel();
-    _subtitleTimingSubscription?.cancel();
-    _playbackErrorSubscription?.cancel();
-    _persistProgress();
+    _liveCueClearTimer?.cancel();
+    _liveCueGeneration++;
+    unawaited(_startupPlayingSubscription?.cancel() ?? Future<void>.value());
+    unawaited(
+      _startupPositionActivitySubscription?.cancel() ?? Future<void>.value(),
+    );
+    unawaited(_startupDurationSubscription?.cancel() ?? Future<void>.value());
+    unawaited(_completedSubscription?.cancel() ?? Future<void>.value());
+    unawaited(_positionSubscription?.cancel() ?? Future<void>.value());
+    unawaited(_subtitleTimingSubscription?.cancel() ?? Future<void>.value());
+    unawaited(_playbackErrorSubscription?.cancel() ?? Future<void>.value());
+    unawaited(_persistProgress().catchError((_) {}));
+    unawaited(widget.playback.stop().catchError((_) {}));
     _focusNode.dispose();
-    widget.playback.stop();
-    unawaited(_restoreAndroidMobilePlayerMode());
+    unawaited(_restoreAndroidMobilePlayerMode().catchError((_) {}));
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final player = widget.playback.player;
-    return Scaffold(
+    return WillPopScope(
+      onWillPop: () async {
+        await _preparePlayerExit();
+        return true;
+      },
+      child: Scaffold(
       backgroundColor: Colors.black,
       body: Focus(
         focusNode: _focusNode,
@@ -2027,6 +2057,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           ),
         ),
       ),
+    ),
     );
   }
 
@@ -2097,7 +2128,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             Text(_error!, textAlign: TextAlign.center),
             const SizedBox(height: 18),
             OutlinedButton.icon(
-              onPressed: () => Navigator.of(context).maybePop(),
+              onPressed: _handleEscape,
               icon: const Icon(Icons.arrow_back_rounded),
               label: const Text('Back'),
             ),
