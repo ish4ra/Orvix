@@ -1199,8 +1199,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
       showDragHandle: true,
       isScrollControlled: true,
       constraints: const BoxConstraints(maxWidth: 760),
-      builder: (sheetContext) => SafeArea(
-        child: ConstrainedBox(
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: ConstrainedBox(
           constraints: BoxConstraints(
               maxHeight: MediaQuery.sizeOf(sheetContext).height * .72),
           child: SingleChildScrollView(
@@ -1257,6 +1258,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     OutlinedButton.icon(
                       onPressed: () async {
                         Navigator.pop(sheetContext);
+                        await _showOnlineSubtitles();
+                      },
+                      icon: const Icon(Icons.cloud_download_outlined),
+                      label: const Text('Online'),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        Navigator.pop(sheetContext);
                         await _pickExternalSubtitle();
                       },
                       icon: const Icon(Icons.file_open_outlined),
@@ -1265,6 +1275,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
+                _subtitleAppearanceControls(setSheetState),
+                const SizedBox(height: 12),
+                if (!_aiSinhalaEnabled) ...[
+                  _subtitleSyncControls(setSheetState),
+                  const SizedBox(height: 12),
+                ],
+                if (_preparedAiSubtitle != null)
+                  _TrackTile(
+                    title: 'AI Sinhala',
+                    detail: _aiSinhalaEnabled
+                        ? 'Active • translated Sinhala overlay'
+                        : 'Available • switch back to AI Sinhala',
+                    selected: _aiSinhalaEnabled,
+                    onTap: () async {
+                      await _enablePreparedAiSubtitle();
+                      if (sheetContext.mounted) Navigator.pop(sheetContext);
+                    },
+                  ),
                 if (_aiSubtitleLoading)
                   const _EmptyTrackMessage(
                     'AI Sinhala is matching this exact release in the background. Playback is not blocked.',
@@ -1353,7 +1381,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   selected:
                       player.state.track.subtitle.id.toLowerCase() == 'no',
                   onTap: () async {
-                    await player.setSubtitleTrack(mk.SubtitleTrack.no());
+                    await _disableSubtitles();
                     if (sheetContext.mounted) Navigator.pop(sheetContext);
                   },
                 ),
@@ -1363,7 +1391,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     detail: track.codec ?? 'Embedded subtitle',
                     selected: player.state.track.subtitle.id == track.id,
                     onTap: () async {
-                      await player.setSubtitleTrack(track);
+                      await _activateNativeSubtitle(track);
                       if (sheetContext.mounted) Navigator.pop(sheetContext);
                     },
                   ),
@@ -1371,6 +1399,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ],
             ),
           ),
+        ),
         ),
       ),
     );
