@@ -721,7 +721,12 @@ class AiSinhalaSubtitleService {
         if (!prepared.isTranslatedAt(i)) i,
     ];
     if (indices.isEmpty) return;
-    await _translateIndices(prepared, indices);
+
+    // The translation Edge Function deliberately caps a single batch at
+    // 80 subtitle cues. Opening preflight currently translates up to 96 cues,
+    // so sending the whole range in one request made normal TV episodes fail
+    // with invalid_segments every time. Reuse the chunked path here.
+    await _translateMissingIndices(prepared, indices);
   }
 
   static Future<void> _translateIndices(
