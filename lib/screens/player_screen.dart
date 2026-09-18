@@ -61,10 +61,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Timer? _nextTimer;
   Timer? _startupTimer;
   Timer? _nativeSubtitleClockTimer;
+  StreamSubscription<bool>? _startupPlayingSubscription;
+  StreamSubscription<Duration>? _startupPositionActivitySubscription;
+  StreamSubscription<Duration>? _startupDurationSubscription;
   StreamSubscription<bool>? _completedSubscription;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<List<String>>? _subtitleTimingSubscription;
   StreamSubscription<String>? _playbackErrorSubscription;
+  bool _playbackStarted = false;
+  bool _startupFailureVisible = false;
   final FocusNode _focusNode = FocusNode();
   AiPreparedSubtitle? _preparedAiSubtitle;
   bool _aiSinhalaEnabled = false;
@@ -99,6 +104,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
     unawaited(_loadSubtitlePreferences());
     _playbackErrorSubscription =
         widget.playback.player.stream.error.listen(_onPlaybackError);
+    _startupPlayingSubscription =
+        widget.playback.player.stream.playing.listen((playing) {
+      if (playing) _markPlaybackStarted();
+    });
+    _startupPositionActivitySubscription =
+        widget.playback.player.stream.position.listen((position) {
+      if (position > Duration.zero) _markPlaybackStarted();
+    });
+    _startupDurationSubscription =
+        widget.playback.player.stream.duration.listen((duration) {
+      if (duration > Duration.zero) _markPlaybackStarted();
+    });
     if (_aiSinhalaEnabled) {
       _positionSubscription =
           widget.playback.player.stream.position.listen(_onPosition);
@@ -118,27 +135,59 @@ class _PlayerScreenState extends State<PlayerScreen> {
         .addPostFrameCallback((_) => _focusNode.requestFocus());
   }
 
+  bool _hasPlaybackActivity() {
+    final state = widget.playback.player.state;
+    return _playbackStarted ||
+        state.playing ||
+        state.position > Duration.zero ||
+        state.duration > Duration.zero;
+  }
+
+  void _markPlaybackStarted() {
+    _playbackStarted = true;
+    _startupTimer?.cancel();
+    if (mounted && _startupFailureVisible) {
+      setState(() {
+        _startupFailureVisible = false;
+        _error = null;
+      });
+    }
+  }
+
   Future<void> _open() async {
     try {
+      _playbackStarted = false;
+      _startupFailureVisible = false;
+      _startupTimer?.cancel();
+      if (mounted && _error != null) {
+        setState(() => _error = null);
+      }
+
       await widget.playback.open(widget.url, title: widget.title);
       if (_aiSinhalaEnabled) {
         unawaited(_ensureEnglishTimingTrack());
       } else {
         unawaited(_prepareAiSinhalaAfterPlaybackStarts());
       }
-      _startupTimer?.cancel();
-      _startupTimer = Timer(const Duration(seconds: 12), () {
-        if (!mounted) return;
-        final state = widget.playback.player.state;
-        if (state.duration <= Duration.zero &&
-            state.position <= Duration.zero) {
+
+      if (_hasPlaybackActivity()) {
+        _markPlaybackStarted();
+      } else {
+        _startupTimer = Timer(const Duration(seconds: 30), () {
+          if (!mounted) return;
+          if (_hasPlaybackActivity()) {
+            _markPlaybackStarted();
+            return;
+          }
           setState(() {
+            _startupFailureVisible = true;
             _error =
-                'The video stream did not initialize (still 0:00/0:00 after 12 seconds). '
-                'This is a stream-start failure, not normal buffering.';
+                'The stream is taking longer than expected to start. '
+                'Orvix will recover automatically if media begins playing.';
           });
-        }
-      });
+        });
+      }
+
       final currentVolume = widget.playback.player.state.volume;
       if (currentVolume > 0) _lastVolume = currentVolume;
       if (widget.item != null && widget.mediaState != null) {
@@ -156,11 +205,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _onPlaybackError(String message) {
-    if (!mounted || message.trim().isEmpty) return;
+    if (!mounted || message.trim().isEmpty || _hasPlaybackActivity()) return;
     final state = widget.playback.player.state;
     if (state.duration <= Duration.zero &&
         state.position < const Duration(seconds: 1)) {
-      setState(() => _error = 'Playback engine: ${message.trim()}');
+      setState(() {
+        _startupFailureVisible = true;
+        _error = 'Playback engine: ${message.trim()}';
+      });
     }
   }
 
@@ -1425,6 +1477,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _nextTimer?.cancel();
     _startupTimer?.cancel();
     _nativeSubtitleClockTimer?.cancel();
+    _startupPlayingSubscription?.cancel();
+    _startupPositionActivitySubscription?.cancel();
+    _startupDurationSubscription?.cancel();
     _completedSubscription?.cancel();
     _positionSubscription?.cancel();
     _subtitleTimingSubscription?.cancel();
