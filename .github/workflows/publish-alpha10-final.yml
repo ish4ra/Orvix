@@ -99,31 +99,30 @@ jobs:
             exit 1
           fi
 
-          notes="$(cat <<'EOF'
-Orvix alpha.10 focuses on AI Sinhala subtitle reliability across Windows, macOS, Android mobile and Android TV.
+          cat > /tmp/orvix-alpha10-notes.md <<'EOF'
+          Orvix alpha.10 focuses on AI Sinhala subtitle reliability across Windows, macOS, Android mobile and Android TV.
 
-- AI Sinhala now follows seeks/jumps by translating around the new playback position.
-- Whole-title background translation was replaced by a sliding window, reducing quota/rate-limit failures later in playback.
-- Failed translation windows are retried instead of becoming permanent subtitle gaps.
-- When AI Sinhala is enabled, an English subtitle track may be used internally for timing but is kept hidden.
-- If release-matched subtitles are unavailable or do not match the actual file, Orvix switches to live AI translation of the file's embedded English text track.
-- In-flight live subtitle requests are invalidated after seeking so stale pre-seek lines cannot remain visible.
-- Regression tests cover timeline lookup, untranslated-cue behavior, and normalized source matching.
-- Retains alpha.9 Android signing/P2P, TV focus/branding and macOS Keychain fixes.
-EOF
-)"
+          - AI Sinhala now follows seeks/jumps by translating around the new playback position.
+          - Whole-title background translation was replaced by a sliding window, reducing quota/rate-limit failures later in playback.
+          - Failed translation windows are retried instead of becoming permanent subtitle gaps.
+          - When AI Sinhala is enabled, an English subtitle track may be used internally for timing but is kept hidden.
+          - If release-matched subtitles are unavailable or do not match the actual file, Orvix switches to live AI translation of the file's embedded English text track.
+          - In-flight live subtitle requests are invalidated after seeking so stale pre-seek lines cannot remain visible.
+          - Regression tests cover timeline lookup, untranslated-cue behavior, and normalized source matching.
+          - Retains alpha.9 Android signing/P2P, TV focus/branding and macOS Keychain fixes.
+          EOF
 
           if gh release view v0.7.3-alpha.10 >/dev/null 2>&1; then
             gh release upload v0.7.3-alpha.10 --clobber "${files[@]}"
             gh release edit v0.7.3-alpha.10 \
               --title 'Orvix v0.7.3-alpha.10 — Subtitle Reliability' \
               --prerelease \
-              --notes "$notes"
+              --notes-file /tmp/orvix-alpha10-notes.md
           else
             gh release create v0.7.3-alpha.10 \
               --verify-tag \
               --title 'Orvix v0.7.3-alpha.10 — Subtitle Reliability' \
               --prerelease \
-              --notes "$notes" \
+              --notes-file /tmp/orvix-alpha10-notes.md \
               "${files[@]}"
           fi
