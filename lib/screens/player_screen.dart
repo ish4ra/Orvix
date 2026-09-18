@@ -61,6 +61,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Timer? _nextTimer;
   Timer? _startupTimer;
   Timer? _nativeSubtitleClockTimer;
+  Timer? _liveCueClearTimer;
   StreamSubscription<bool>? _startupPlayingSubscription;
   StreamSubscription<Duration>? _startupPositionActivitySubscription;
   StreamSubscription<Duration>? _startupDurationSubscription;
@@ -88,6 +89,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   int? _lastNativeSubtitleStartMs;
   final List<int> _autoSyncSamples = <int>[];
   final Map<int, int> _bitmapOffsetVotes = <int, int>{};
+  int _embeddedMismatchCount = 0;
   double _subtitleFontSize = SubtitlePreferencesService.defaultFontSize;
   bool _subtitleBackground = SubtitlePreferencesService.defaultBackground;
   double _subtitleBackgroundOpacity =
@@ -421,6 +423,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _activateNativeSubtitle(mk.SubtitleTrack track) async {
     _subtitleChoiceOverridden = true;
     _nativeSubtitleClockTimer?.cancel();
+    _liveCueClearTimer?.cancel();
     _timingTrackSelected = false;
     _timingTrackIsText = false;
     _liveCueGeneration++;
@@ -555,6 +558,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (!_aiSinhalaRequested) return;
     _lastNativeSubtitleStartMs = null;
     _lastAiPrefetchBucket = -1;
+    _embeddedMismatchCount = 0;
+    _autoSyncSamples.clear();
+    _liveCueClearTimer?.cancel();
+    _liveCueClearTimer = null;
     unawaited(_setNativeSubtitleVisibility(false));
 
     if (_liveAiFallback) {
@@ -757,7 +764,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (!_aiSinhalaEnabled ||
         _liveAiFallback ||
         prepared == null ||
-        !mounted) {
+        !mounted ||
+        (_timingTrackSelected && _timingTrackIsText)) {
       return;
     }
     var adjustedMs = position.inMilliseconds - _effectiveSyncOffsetMs;
@@ -770,7 +778,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     final cueIndex = prepared.cueIndexNear(adjusted);
     if (cueIndex < 0) return;
-    final bucket = cueIndex ~/ 18;
+    final bucket = cueIndex ~/ 12;
     if (bucket != _lastAiPrefetchBucket) {
       _lastAiPrefetchBucket = bucket;
       unawaited(_ensureAiTranslationNear(adjusted, bucket: bucket));
@@ -793,7 +801,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         prepared,
         position,
         lookBehind: 4,
-        lookAhead: 84,
+        lookAhead: 120,
       );
       if (!mounted ||
           !_aiSinhalaEnabled ||
@@ -926,6 +934,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  Future<int?> _nativeSubtitleEndMs() async {
+    final platform = widget.playback.player.platform;
+    if (platform is! mk.NativePlayer) return null;
+    try {
+      final raw = (await platform.getProperty(
+        'sub-end/full',
+        waitForInitialization: false,
+      ))
+          .trim();
+      if (raw.isEmpty || raw == 'null' || raw == 'N/A') return null;
+      final seconds = double.tryParse(raw);
+      if (seconds == null || !seconds.isFinite || seconds < 0) return null;
+      return (seconds * 1000).round();
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _pollNativeSubtitleClock() async {
     if (!_aiSinhalaEnabled || !_timingTrackSelected || !mounted) return;
     final startMs = await _nativeSubtitleStartMs();
@@ -942,9 +968,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (sample.abs() > 120000 || !mounted) return;
     _autoSyncSamples.add(sample);
     if (_autoSyncSamples.length > 7) _autoSyncSamples.removeAt(0);
+
+    // Never let a single fuzzy cue move the whole subtitle timeline.
+    if (_autoSyncSamples.length < 3) return;
     final ordered = [..._autoSyncSamples]..sort();
     final median = ordered[ordered.length ~/ 2];
-    if ((median - _autoSyncOffsetMs).abs() < 40) return;
+    final deviations = ordered.map((value) => (value - median).abs()).toList()
+      ..sort();
+    final medianDeviation = deviations[deviations.length ~/ 2];
+    if (medianDeviation > 1200) return;
+    if ((median - _autoSyncOffsetMs).abs() < 80) return;
     setState(() => _autoSyncOffsetMs = median);
     _refreshAiSubtitle();
   }
@@ -988,47 +1021,125 @@ class _PlayerScreenState extends State<PlayerScreen> {
         .join('\n')
         .trim();
 
-    if (_liveAiFallback) {
-      if (source.isEmpty) {
+    if (source.isEmpty) {
+      if (_liveAiFallback) {
+        // mpv can emit an empty subtitle event at cue boundaries. Do not
+        // invalidate a translation request that is still finishing; its
+        // native sub-end timestamp decides whether it is still worth showing.
+        if (_liveCueClearTimer == null &&
+            _aiDisplaySubtitle.isNotEmpty &&
+            mounted) {
+          _liveCueClearTimer = Timer(const Duration(milliseconds: 180), () {
+            _liveCueClearTimer = null;
+            if (mounted && _liveAiFallback) {
+              setState(() => _aiDisplaySubtitle = '');
+            }
+          });
+        }
+      } else if (_timingTrackIsText) {
         _liveCueGeneration++;
         if (_aiDisplaySubtitle.isNotEmpty && mounted) {
           setState(() => _aiDisplaySubtitle = '');
         }
-        return;
       }
+      return;
+    }
+
+    _liveCueClearTimer?.cancel();
+    _liveCueClearTimer = null;
+
+    if (_liveAiFallback) {
       await _translateLiveSubtitleCue(source);
       return;
     }
 
     if (!_aiSinhalaEnabled) return;
     final prepared = _preparedAiSubtitle;
-    if (prepared == null || !_timingTrackIsText || source.isEmpty) return;
+    if (prepared == null || !_timingTrackIsText) return;
+
+    // When the file itself has an English text track, its cue events are the
+    // authoritative clock. Match that text to the already translated external
+    // subtitle and render Sinhala on the file's real cue timing instead of
+    // trying to continuously offset a different release timeline.
     final matched = prepared.matchSourceCue(source);
-    if (matched == null) {
-      // The embedded English cue is real timing from the file currently
-      // playing. If it does not match the downloaded release timeline, prefer
-      // the actual file from this point on instead of silently showing gaps or
-      // an out-of-sync Sinhala timeline.
-      if (mounted) {
-        setState(() {
-          _liveAiFallback = true;
-          _aiDisplaySubtitle = '';
-        });
+    if (matched != null) {
+      _embeddedMismatchCount = 0;
+      final generation = ++_liveCueGeneration;
+      final ready = matched.translation?.trim() ?? '';
+      if (ready.isNotEmpty) {
+        if (mounted) setState(() => _aiDisplaySubtitle = ready);
+      } else {
+        if (_aiDisplaySubtitle.isNotEmpty && mounted) {
+          setState(() => _aiDisplaySubtitle = '');
+        }
+        try {
+          await AiSinhalaSubtitleService.ensureTranslatedAround(
+            prepared,
+            matched.start,
+            lookBehind: 2,
+            lookAhead: 120,
+          );
+          if (!mounted ||
+              generation != _liveCueGeneration ||
+              _liveAiFallback) {
+            return;
+          }
+          final translated = matched.translation?.trim() ?? '';
+          if (translated.isNotEmpty) {
+            setState(() => _aiDisplaySubtitle = translated);
+          }
+        } catch (_) {}
       }
-      _lastAiPrefetchBucket = -1;
-      _liveDialogueContext.clear();
-      await _translateLiveSubtitleCue(source);
+
+      // Keep a large translated runway ahead so later dialogue does not
+      // disappear when the next batch is requested.
+      unawaited(
+        AiSinhalaSubtitleService.ensureTranslatedAround(
+          prepared,
+          matched.start,
+          lookBehind: 2,
+          lookAhead: 120,
+        ),
+      );
       return;
     }
-    final nativeStart = await _nativeSubtitleStartMs();
-    if (!mounted) return;
-    final sourceStart =
-        nativeStart ?? widget.playback.player.state.position.inMilliseconds;
-    _acceptAutoSyncSample(sourceStart - matched.start.inMilliseconds);
+
+    _embeddedMismatchCount++;
+    _liveCueGeneration++;
+    if (_aiDisplaySubtitle.isNotEmpty && mounted) {
+      setState(() => _aiDisplaySubtitle = '');
+    }
+
+    // One subtitle can differ because of SDH/punctuation. Only abandon the
+    // buffered timeline after several consecutive real-file cues disagree.
+    if (_embeddedMismatchCount < 3) return;
+
+    _embeddedMismatchCount = 0;
+    if (mounted) {
+      setState(() {
+        _liveAiFallback = true;
+        _aiDisplaySubtitle = '';
+      });
+    }
+    _lastAiPrefetchBucket = -1;
+    _liveDialogueContext.clear();
+    await _translateLiveSubtitleCue(source);
   }
 
   Future<void> _translateLiveSubtitleCue(String source) async {
     final generation = ++_liveCueGeneration;
+    _liveCueClearTimer?.cancel();
+    _liveCueClearTimer = null;
+
+    final cueEndMs = await _nativeSubtitleEndMs();
+    if (!mounted || generation != _liveCueGeneration) return;
+
+    // Never leave the previous dialogue on screen while a new cue is being
+    // translated.
+    if (_aiDisplaySubtitle.isNotEmpty) {
+      setState(() => _aiDisplaySubtitle = '');
+    }
+
     try {
       final translation = await AiSinhalaSubtitleService.translateCue(
         title: widget.title,
@@ -1040,18 +1151,36 @@ class _PlayerScreenState extends State<PlayerScreen> {
           generation != _liveCueGeneration) {
         return;
       }
+
+      final nowMs = widget.playback.player.state.position.inMilliseconds;
+      final remainingMs =
+          cueEndMs == null ? 1800 : cueEndMs - nowMs;
+
+      // If AI returned after the actual cue has essentially ended, skip it.
+      // Showing a late result for 100-300ms is the "flashing" behaviour that
+      // made subtitles look broken.
+      if (remainingMs < 700) return;
+
       setState(() => _aiDisplaySubtitle = translation);
       _liveDialogueContext.add(source);
       if (_liveDialogueContext.length > 6) {
         _liveDialogueContext.removeAt(0);
       }
+
+      _liveCueClearTimer = Timer(
+        Duration(milliseconds: remainingMs.clamp(700, 8000)),
+        () {
+          _liveCueClearTimer = null;
+          if (!mounted ||
+              !_liveAiFallback ||
+              generation != _liveCueGeneration) {
+            return;
+          }
+          setState(() => _aiDisplaySubtitle = '');
+        },
+      );
     } catch (_) {
-      if (!mounted ||
-          !_liveAiFallback ||
-          generation != _liveCueGeneration) {
-        return;
-      }
-      setState(() => _aiDisplaySubtitle = '');
+      // A failed/late cue is better omitted than flashed at the wrong time.
     }
   }
 
@@ -1084,14 +1213,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 ],
               ),
               child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                padding: EdgeInsets.symmetric(
+                  horizontal: _androidMobilePlayerMode ? 14 : 18,
+                  vertical: _androidMobilePlayerMode ? 7 : 10,
+                ),
                 child: Text(
                   _aiDisplaySubtitle,
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: _subtitleFontSize,
+                    fontSize: _androidMobilePlayerMode && _subtitleFontSize > 26
+                        ? 26
+                        : _subtitleFontSize,
                     height: 1.35,
                     fontWeight: FontWeight.w700,
                     shadows: const [

@@ -152,7 +152,7 @@ class AiSinhalaSubtitleService {
     final key = '${_mediaKey(item, episode)}:$identity';
     final cached = _preparedCache[key];
     if (cached != null &&
-        cached.translatedCount >= math.min(48, cached.cues.length)) {
+        cached.translatedCount >= math.min(96, cached.cues.length)) {
       return cached;
     }
     return _inFlight.putIfAbsent(key, () async {
@@ -232,6 +232,7 @@ class AiSinhalaSubtitleService {
           endpoint.uri,
           preferredFileName: probe.fileName,
           item: item,
+          requireReleaseEvidence: endpoint.match == 'filename-size',
         );
       } catch (error) {
         lastError = error;
@@ -279,8 +280,8 @@ class AiSinhalaSubtitleService {
     );
     _preparedCache[key] = prepared;
 
-    final firstEnd = math.min(48, cues.length);
-    onStatus?.call('Translating the first subtitle buffer to Sinhala…');
+    final firstEnd = math.min(96, cues.length);
+    onStatus?.call('Translating a stable opening Sinhala buffer…');
     await _translateRange(prepared, 0, firstEnd);
     onStatus?.call('Sinhala subtitles ready — opening player…');
 
@@ -367,6 +368,7 @@ class AiSinhalaSubtitleService {
     Uri endpoint, {
     String? preferredFileName,
     required MediaItem item,
+    bool requireReleaseEvidence = false,
   }) async {
     final response = await _httpGetWithRetry(endpoint);
     if (response.statusCode < 200 || response.statusCode >= 300)
@@ -410,6 +412,11 @@ class AiSinhalaSubtitleService {
         }
       }
       if (specificMatches > 0) score += 30;
+      if (requireReleaseEvidence &&
+          specificTokens.isNotEmpty &&
+          specificMatches == 0) {
+        continue;
+      }
       if (searchable.contains('forced')) score -= 12;
       ranked.add((url: url, score: score));
     }
@@ -638,7 +645,13 @@ class AiSinhalaSubtitleService {
     }
     final client = http.Client();
     try {
-      final first = await _readRange(client, uri, 0, 65535);
+      final first = await _readRangeWithRetry(
+        client,
+        uri,
+        0,
+        65535,
+        attempts: 3,
+      );
       if (first == null) {
         return _VideoProbe(fileName: fallbackName, size: fallbackSize);
       }
@@ -650,7 +663,14 @@ class AiSinhalaSubtitleService {
           first.bytes.length < 65536) {
         return _VideoProbe(fileName: fileName, size: size);
       }
-      final tail = await _readRange(client, uri, size - 65536, size - 1);
+      final tail = await _readRangeWithRetry(
+        client,
+        uri,
+        size - 65536,
+        size - 1,
+        attempts: 4,
+        requirePartial: true,
+      );
       if (tail == null || tail.statusCode != 206 || tail.bytes.length < 65536) {
         return _VideoProbe(fileName: fileName, size: size);
       }
@@ -664,6 +684,32 @@ class AiSinhalaSubtitleService {
     } finally {
       client.close();
     }
+  }
+
+  static Future<_RangeRead?> _readRangeWithRetry(
+    http.Client client,
+    Uri uri,
+    int start,
+    int end, {
+    int attempts = 3,
+    bool requirePartial = false,
+  }) async {
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      try {
+        final value = await _readRange(client, uri, start, end);
+        final expected = end - start + 1;
+        final usable = value != null &&
+            value.bytes.length >= expected &&
+            (!requirePartial || value.statusCode == 206);
+        if (usable) return value;
+      } catch (_) {}
+      if (attempt + 1 < attempts) {
+        await Future<void>.delayed(
+          Duration(milliseconds: 650 * (attempt + 1)),
+        );
+      }
+    }
+    return null;
   }
 
   static Future<_RangeRead?> _readRange(

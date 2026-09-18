@@ -9,7 +9,7 @@ class SubtitlePreferencesService {
   static const _bottomOffsetKey = 'orvix_subtitle_bottom_offset_v1';
   static const _preferredLanguageKey = 'orvix_subtitle_preferred_language_v1';
 
-  static const double defaultFontSize = 32;
+  static const double defaultFontSize = 26;
   static const bool defaultBackground = true;
   static const double defaultBackgroundOpacity = .70;
   static const double defaultBottomOffset = 24;

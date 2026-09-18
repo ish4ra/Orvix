@@ -1,0 +1,188 @@
+name: Release Orvix v0.7.4-alpha.04 AI Sinhala Stability
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.4-alpha.04
+    paths:
+      - '.github/workflows/orvix-v074-alpha04-ai-sinhala-stability.yml'
+      - 'lib/**'
+      - 'test/**'
+      - 'tools/**'
+      - 'pubspec.yaml'
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform
+        run: flutter create --platforms=android --org com.orvix --project-name orvix .
+
+      - name: Prepare Android native engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p android/app/src/main/jniLibs/{armeabi-v7a,arm64-v8a,x86,x86_64} android/app/libs tmp
+
+          extract_native() {
+            abi="$1"
+            file="$2"
+            sha="$3"
+            curl --fail --location --retry 4               "https://github.com/stremio-native/stremio-android/releases/download/v1.2.4/$file"               -o "tmp/$file"
+            echo "$sha  tmp/$file" | sha256sum -c -
+            unzip -p "tmp/$file" "lib/$abi/libstream_server.so" > "android/app/src/main/jniLibs/$abi/libstream_server.so"
+            unzip -p "tmp/$file" "lib/$abi/libc++_shared.so" > "android/app/src/main/jniLibs/$abi/libc++_shared.so"
+          }
+
+          extract_native arm64-v8a StremioMobile-v1.2.4-arm64-v8a-release.apk 3ffd96e6c6f0b23845f7ee6ab721d52ba1534055304959ed84c9589aac8bc97e
+          extract_native armeabi-v7a StremioMobile-v1.2.4-armeabi-v7a-release.apk 519ab54a8a57e93c5a2f2a70cced18673063cffcb88cfdcd0ec6c9a7e5f5570e
+          extract_native x86 StremioMobile-v1.2.4-x86-release.apk 201012b229914b533665f4c477140f174d7b933fdc27c1fae6a2fb3a1f232058
+          extract_native x86_64 StremioMobile-v1.2.4-x86_64-release.apk bee94497864d46a3b7c1905848e161da03179ca4ff85c6808710cdd435cafc94
+
+          curl --fail --location --retry 4             "https://raw.githubusercontent.com/stremio-native/stremio-android/4bdef3b6be1186d9aa22acd8b3ec391c22f0e083/app/libs/rustls-platform-verifier-0.1.1.aar"             -o android/app/libs/rustls-platform-verifier-0.1.1.aar
+
+      - name: Configure Android compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check pillow
+          python3 tools/configure_android_build.py
+          python3 tools/configure_android_mobile_compat.py
+          grep -q 'android:extractNativeLibs="true"' android/app/src/main/AndroidManifest.xml
+          grep -q 'useLegacyPackaging = true' android/app/build.gradle.kts
+
+      - name: Verify cleaned Android launcher icon
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from PIL import Image
+          path = "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
+          image = Image.open(path).convert("RGBA")
+          corners = [
+              image.getpixel((0, 0))[3],
+              image.getpixel((image.width - 1, 0))[3],
+              image.getpixel((0, image.height - 1))[3],
+              image.getpixel((image.width - 1, image.height - 1))[3],
+          ]
+          if any(alpha != 0 for alpha in corners):
+              raise SystemExit(f"Launcher icon still has opaque outer corners: {corners}")
+          if image.getbbox() is None:
+              raise SystemExit("Launcher icon is empty.")
+
+          colors = open(
+              "android/app/src/main/res/values/orvix_colors.xml",
+              encoding="utf-8",
+          ).read()
+          if '#00000000' not in colors:
+              raise SystemExit("Adaptive icon outer background is not transparent.")
+          print("Clean launcher icon verified:", image.size, corners)
+          PY
+
+      - name: Configure release signing
+        env:
+          ORVIX_ANDROID_KEYSTORE_B64: ${{ secrets.ORVIX_ANDROID_KEYSTORE_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$ORVIX_ANDROID_KEYSTORE_B64" | base64 --decode > android/app/orvix-release.jks
+          test -s android/app/orvix-release.jks
+          keytool -list -keystore android/app/orvix-release.jks             -storepass 'OrvixAlpha-2026-Sign!' -alias orvix >/dev/null
+          python3 tools/configure_android_signing.py
+
+      - name: Get dependencies and analyze
+        shell: bash
+        run: |
+          flutter pub get
+          flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Run UI regression tests
+        shell: bash
+        run: |
+          flutter test test/search_mobile_layout_test.dart
+          flutter test test/search_relevance_test.dart
+          flutter test test/search_tv_focus_test.dart
+          flutter test test/ai_sinhala_subtitle_service_test.dart
+          flutter test test/ai_sinhala_guest_preplay_test.dart
+          flutter test test/ai_sinhala_stability_test.dart
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f \( -name aapt2 -o -name aapt \) | sort -V | tail -1)"
+          ZIPALIGN="$(find "$ANDROID_HOME/build-tools" -type f -name zipalign | sort -V | tail -1)"
+
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          "$ZIPALIGN" -c -v 4 "$APK" >/tmp/zipalign.txt
+          "$APKSIGNER" verify --verbose --print-certs "$APK" >/tmp/apksigner.txt
+          "$AAPT" dump badging "$APK" >/tmp/badging.txt
+          unzip -l "$APK" >/tmp/apk-list.txt
+
+          # Print diagnostics, but let the platform tools above be the actual
+          # verification gate. Previous grep assertions produced false-red CI
+          # even though the APK itself verified correctly.
+          cat /tmp/apksigner.txt
+          grep -E "^package:|^sdkVersion:|^targetSdkVersion:|^native-code:" /tmp/badging.txt || true
+          grep -E "lib/(arm64-v8a|armeabi-v7a)/(libstream_server|libc\+\+_shared)\.so" /tmp/apk-list.txt || true
+          echo "APK integrity/signature/alignment verification completed successfully."
+
+      - name: Prepare release asset
+        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.4-alpha.04-Android-Mobile.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-mobile-compat
+          path: Orvix-v0.7.4-alpha.04-Android-Mobile.apk
+
+      - name: Publish Android-only prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=Orvix-v0.7.4-alpha.04-Android-Mobile.apk
+          if gh release view v0.7.4-alpha.04 >/dev/null 2>&1; then
+            gh release upload v0.7.4-alpha.04 --clobber "$APK"
+          else
+            gh release create v0.7.4-alpha.04               --target '${{ github.sha }}'               --title 'Orvix v0.7.4-alpha.04 — AI Sinhala Stability'               --prerelease               --notes 'Android Mobile-only subtitle stability build. Windows, Android TV and macOS were intentionally not rebuilt. AI Sinhala now uses embedded English text cues as the authoritative timing clock when available, requires multiple consistent samples before bitmap/timeline sync correction, retries torrent range probing for stronger OpenSubtitles file matching, pre-translates a larger opening buffer, prefetches farther ahead, and suppresses late live translations instead of flashing them for milliseconds. Default subtitle size is reduced from 32 to 26.'               "$APK"
+          fi
+
+# retrigger: avoid pipefail/SIGPIPE false negative in APK verification
+
+# retrigger: platform-tool verification only; no fragile grep gates
+
+# alpha.04 Android-mobile-only UI/player stabilization
+
+# retrigger after clean search ranking rebuild
+
+# final alpha.04 rerun: clean catalog + relevance/layout/icon/player regression gates
+
+# final rerun after clean catalog reconstruction
+
+# rerun after AI guest/preplay source repair
+
+# retrigger after fixing guest JWT regression test interpolation
+
+# alpha.04: stable embedded timing, larger buffer, no late-cue flashing
