@@ -210,8 +210,9 @@ jobs:
           APK=build/app/outputs/flutter-apk/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libstream_server.so'
-          unzip -l "$APK" | grep -q 'lib/armeabi-v7a/libstream_server.so'
+          unzip -l "$APK" > /tmp/orvix-apk-list.txt
+          grep -q 'lib/arm64-v8a/libstream_server.so' /tmp/orvix-apk-list.txt
+          grep -q 'lib/armeabi-v7a/libstream_server.so' /tmp/orvix-apk-list.txt
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
           "$APKSIGNER" verify --verbose "$APK"
 
@@ -306,8 +307,9 @@ jobs:
           APK=build/app/outputs/flutter-apk/app-release.apk
           test -s "$APK"
           unzip -t "$APK" >/dev/null
-          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libstream_server.so'
-          unzip -l "$APK" | grep -q 'lib/armeabi-v7a/libstream_server.so'
+          unzip -l "$APK" > /tmp/orvix-apk-list.txt
+          grep -q 'lib/arm64-v8a/libstream_server.so' /tmp/orvix-apk-list.txt
+          grep -q 'lib/armeabi-v7a/libstream_server.so' /tmp/orvix-apk-list.txt
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
           "$APKSIGNER" verify --verbose "$APK"
 
