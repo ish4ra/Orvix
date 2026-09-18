@@ -153,7 +153,8 @@ def patch_android(tv: bool) -> None:
     values = Path("android/app/src/main/res/values/orvix_colors.xml")
     values.write_text(
         "<resources>\n"
-        '  <color name="orvix_icon_background">#17270D</color>\n'
+        '  <color name="orvix_icon_background">#00000000</color>\n'
+        '  <color name="orvix_splash_background">#050806</color>\n'
         "</resources>\n"
     )
 
@@ -176,7 +177,7 @@ def patch_android(tv: bool) -> None:
             launch.write_text(
                 launch.read_text().replace(
                     "@android:color/white",
-                    "@color/orvix_icon_background",
+                    "@color/orvix_splash_background",
                 )
             )
 
@@ -186,7 +187,7 @@ def patch_android(tv: bool) -> None:
         "<resources>\n"
         '  <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">\n'
         '    <item name="android:forceDarkAllowed">false</item>\n'
-        '    <item name="android:windowSplashScreenBackground">@color/orvix_icon_background</item>\n'
+        '    <item name="android:windowSplashScreenBackground">@color/orvix_splash_background</item>\n'
         '    <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>\n'
         '    <item name="android:windowSplashScreenIconBackgroundColor">@color/orvix_icon_background</item>\n'
         "  </style>\n"
