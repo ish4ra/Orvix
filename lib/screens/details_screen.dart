@@ -913,7 +913,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         ),
         content: Text(
           configured.isEmpty
-              ? 'Configure a Stremio-compatible source provider. Direct HTTP streams play immediately, and torrent/magnet sources can use Orvix built-in local P2P engine on Windows. PikPak/TorBox are optional cloud paths.'
+              ? 'Configure a Stremio-compatible source provider. Direct HTTP streams play immediately, and torrent/magnet sources can use Orvix built-in local P2P engine on Windows, Android, Android TV and macOS. PikPak/TorBox are optional cloud paths.'
               : 'Your configured providers did not return a source for this title. You can manage providers or try again.',
         ),
         actions: [
