@@ -2165,13 +2165,55 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   )
                 else
                   _errorView(context),
-                if (_error == null)
+                if (_error == null && !_aiSubtitleLoading)
                   StreamBuilder<bool>(
                     stream: player.stream.buffering,
                     initialData: player.state.buffering,
                     builder: (context, snapshot) => snapshot.data == true
                         ? const Center(child: CircularProgressIndicator())
                         : const SizedBox.shrink(),
+                  ),
+                if (_error == null && _aiSubtitleLoading)
+                  Center(
+                    child: Container(
+                      constraints: const BoxConstraints(maxWidth: 520),
+                      margin: const EdgeInsets.symmetric(horizontal: 24),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 22,
+                        vertical: 18,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xE8171B16),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFF394934)),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const CircularProgressIndicator(),
+                          const SizedBox(height: 14),
+                          const Text(
+                            'Preparing AI Sinhala before playback',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 7),
+                          Text(
+                            _aiPreflightMessage.trim().isEmpty
+                                ? 'Checking the safest subtitle timing source…'
+                                : _aiPreflightMessage,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Color(0xFFB9C4B7),
+                              height: 1.4,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 if (_aiSinhalaEnabled && _aiDisplaySubtitle.isNotEmpty)
                   _aiSubtitleOverlay(),
