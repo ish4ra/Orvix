@@ -315,7 +315,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final hasFacts = item.country?.trim().isNotEmpty == true ||
         item.certification?.trim().isNotEmpty == true ||
         item.genres.isNotEmpty;
-    final pinKey = widget.sources.sourceTargetKey(item);
+    if (item.kind == MediaKind.series && episode == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No episode is available for this series.')),
+      );
+      return;
+    }
+    final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
 
     return FutureBuilder<PinnedSourcePreference?>(
       future: widget.sources.getPinnedSourcePreference(pinKey),
@@ -343,9 +349,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     color: Colors.transparent,
                     child: InkWell(
                       borderRadius: BorderRadius.circular(16),
-                      onTap: item.kind == MediaKind.movie
-                          ? () => _playPinnedRelease(item)
-                          : null,
+                      onTap: () {
+                        final episode = item.kind == MediaKind.series
+                            ? _episodeForPinnedRelease(item, pinned)
+                            : null;
+                        _playPinnedRelease(item, episode: episode);
+                      },
                       child: Container(
                         width: double.infinity,
                         padding: const EdgeInsets.symmetric(
@@ -386,7 +395,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                   Text(
                                     item.kind == MediaKind.movie
                                         ? '${pinned.provider} • Click to play this exact pinned release'
-                                        : '${pinned.provider} • This release family is preferred when you choose an episode',
+                                        : '${pinned.provider} • Click to play this pinned release family',
                                     style: TextStyle(
                                       color: Theme.of(context)
                                           .colorScheme
@@ -396,8 +405,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                 ],
                               ),
                             ),
-                            if (item.kind == MediaKind.movie)
-                              const Icon(Icons.play_arrow_rounded),
+                            const Icon(Icons.play_arrow_rounded),
                           ],
                         ),
                       ),
@@ -856,7 +864,34 @@ class _DetailsScreenState extends State<DetailsScreen> {
     }
   }
 
-  Future<void> _playPinnedRelease(MediaItem item) async {
+  EpisodeItem? _episodeForPinnedRelease(
+    MediaItem item,
+    PinnedSourcePreference pinned,
+  ) {
+    if (item.kind != MediaKind.series || item.episodes.isEmpty) return null;
+    final match = RegExp(r's(\d{1,2})e(\d{1,3})', caseSensitive: false)
+        .firstMatch(pinned.label);
+    if (match != null) {
+      final season = int.tryParse(match.group(1)!);
+      final number = int.tryParse(match.group(2)!);
+      for (final episode in item.episodes) {
+        if (episode.season == season && episode.episode == number) {
+          return episode;
+        }
+      }
+    }
+    final selected = _selectedSeason;
+    final episodes = item.episodes
+        .where((episode) => selected == null || episode.season == selected)
+        .toList()
+      ..sort((a, b) => a.episode.compareTo(b.episode));
+    return episodes.isNotEmpty ? episodes.first : item.episodes.first;
+  }
+
+  Future<void> _playPinnedRelease(
+    MediaItem item, {
+    EpisodeItem? episode,
+  }) async {
     if (_resolving || !mounted) return;
     final pinKey = widget.sources.sourceTargetKey(item);
     final pinned = await widget.sources.getPinnedSourcePreference(pinKey);
@@ -867,11 +902,15 @@ class _DetailsScreenState extends State<DetailsScreen> {
       _status = 'Finding pinned release: ${pinned.label}…';
     });
     try {
-      final results = await widget.sources.resolve(item);
+      final results = await widget.sources.resolve(item, episode: episode);
       if (!mounted) return;
       SourceResult? match;
       for (final result in results) {
-        if (widget.sources.matchesPinned(result, pinned.identity)) {
+        if (widget.sources.matchesPinned(
+          result,
+          pinned.identity,
+          seriesWide: item.kind == MediaKind.series,
+        )) {
           match = result;
           break;
         }
@@ -890,7 +929,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         );
         return;
       }
-      await _playSourceResult(match, item, null);
+      await _playSourceResult(match, item, episode);
     } catch (error) {
       _showPlayError(error);
     }
