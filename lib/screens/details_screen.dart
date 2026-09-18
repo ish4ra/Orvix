@@ -1912,9 +1912,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
           },
         );
       } catch (_) {
-        // Do not block playback forever when an external release-matched text
-        // subtitle is unavailable. PlayerScreen will inspect the actual media
-        // for an embedded English text track and translate that live instead.
+        // Do not attach a generic subtitle timeline to a different release.
+        // PlayerScreen will inspect the actual media for an embedded English
+        // text track and, when present, use those real cue events as the clock
+        // while a generic English subtitle is used only as a translation transcript.
         if (mounted) {
           setState(() {
             _status =
