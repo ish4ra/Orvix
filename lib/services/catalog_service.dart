@@ -750,53 +750,7 @@ class CatalogService {
   ) async {
     final ids = items
         .map((item) => item.id)
-        .where((id) => RegExp(r'^tt\d{7,10}  String _searchKey(String value) => value
-      .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
-      .trim()
-      .replaceAll(RegExp(r'\s+'), ' ');
-
-  void dispose() => _client.close();
-}
-
-class _ImdbChartRow {
-  const _ImdbChartRow({
-    required this.id,
-    this.title,
-    this.year,
-    this.poster,
-    this.rating,
-    this.runtime,
-  });
-
-  final String id;
-  final String? title;
-  final String? year;
-  final String? poster;
-  final double? rating;
-  final String? runtime;
-}
-
-class _ImdbSearchSignal {
-  const _ImdbSearchSignal({
-    this.rating,
-    required this.voteCount,
-    this.poster,
-  });
-
-  final double? rating;
-  final int voteCount;
-  final String? poster;
-}
-
-class CatalogException implements Exception {
-  const CatalogException(this.message);
-  final String message;
-
-  @override
-  String toString() => message;
-}
-).hasMatch(id))
+        .where((id) => RegExp(r'^tt\d{7,10}$').hasMatch(id))
         .toSet()
         .take(40)
         .toList(growable: false);
@@ -894,6 +848,18 @@ class _ImdbChartRow {
   final String? poster;
   final double? rating;
   final String? runtime;
+}
+
+class _ImdbSearchSignal {
+  const _ImdbSearchSignal({
+    this.rating,
+    required this.voteCount,
+    this.poster,
+  });
+
+  final double? rating;
+  final int voteCount;
+  final String? poster;
 }
 
 class CatalogException implements Exception {
