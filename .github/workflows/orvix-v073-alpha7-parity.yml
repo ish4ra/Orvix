@@ -345,6 +345,25 @@ jobs:
           set -euo pipefail
           git clone --depth 1 --branch v0.1.8 https://github.com/stremio-native/stream-server.git stream-server
           cd stream-server
+
+          # stream-server's server crate depends on enginefs without disabling
+          # enginefs' default libtorrent feature. On macOS that unnecessarily
+          # pulls libtorrent-sys even when we explicitly build the librqbit
+          # backend, and the hosted runner does not ship libtorrent-rasterbar.
+          # Keep the build pure-librqbit so Orvix has the same local P2P engine
+          # behavior without an unrelated system libtorrent dependency.
+          python3 - <<'PY'
+          from pathlib import Path
+
+          cargo = Path("server/Cargo.toml")
+          text = cargo.read_text()
+          old = 'enginefs = { path = "../enginefs" }'
+          new = 'enginefs = { path = "../enginefs", default-features = false }'
+          if old not in text:
+              raise SystemExit("Expected enginefs dependency declaration was not found")
+          cargo.write_text(text.replace(old, new, 1))
+          PY
+
           cargo build --release --package server --bin server --no-default-features --features librqbit
 
       - name: Smoke test macOS P2P engine
