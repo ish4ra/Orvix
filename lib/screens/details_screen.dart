@@ -315,13 +315,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final hasFacts = item.country?.trim().isNotEmpty == true ||
         item.certification?.trim().isNotEmpty == true ||
         item.genres.isNotEmpty;
-    if (item.kind == MediaKind.series && episode == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No episode is available for this series.')),
-      );
-      return;
-    }
-    final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
+    final pinKey = widget.sources.sourceTargetKey(item);
 
     return FutureBuilder<PinnedSourcePreference?>(
       future: widget.sources.getPinnedSourcePreference(pinKey),
@@ -899,6 +893,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
     EpisodeItem? episode,
   }) async {
     if (_resolving || !mounted) return;
+    if (item.kind == MediaKind.series && episode == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No episode is available for this series.')),
+      );
+      return;
+    }
     final pinKey = widget.sources.sourceTargetKey(item);
     final pinned = await widget.sources.getPinnedSourcePreference(pinKey);
     if (pinned == null || !mounted) return;
