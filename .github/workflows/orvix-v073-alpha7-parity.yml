@@ -373,6 +373,46 @@ jobs:
           if old_type not in enginefs_text:
               raise SystemExit("Expected rqbit EngineCacheConfig signature was not found")
           enginefs.write_text(enginefs_text.replace(old_type, new_type, 1))
+
+          # The v0.1.8 server startup is written against libtorrent-only
+          # constructors (new_disk_backed/new_with_storage). For the rqbit
+          # feature path use the rqbit constructor that exists on EngineFS.
+          server = Path("server/src/lib.rs")
+          server_text = server.read_text()
+          old_init = """    let (download_engine, download_engine_disk_backed) = match EngineFS::new_disk_backed(
+        cache_dir.clone(),
+        backend_config.clone(),
+        Some(tracker_storage.clone()),
+    )
+    .await
+    {
+        Ok(download_engine_fs) => (Arc::new(download_engine_fs), true),
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "Disk-backed download engine unavailable at startup; download=1 will use memory-only mode"
+            );
+            let engine_fs = EngineFS::new_with_storage(
+                cache_dir.clone(),
+                backend_config,
+                Some(tracker_storage),
+            )
+            .await?;
+            (Arc::new(engine_fs), false)
+        }
+    };
+"""
+          new_init = """    let engine_fs = EngineFS::new(
+        cache_dir.clone(),
+        backend_config.cache.clone(),
+    )
+    .await?;
+    let download_engine = Arc::new(engine_fs);
+    let download_engine_disk_backed = false;
+"""
+          if old_init not in server_text:
+              raise SystemExit("Expected libtorrent startup block was not found")
+          server.write_text(server_text.replace(old_init, new_init, 1))
           PY
 
           cargo build --release --package server --bin server --no-default-features --features librqbit
