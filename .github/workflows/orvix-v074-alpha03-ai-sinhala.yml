@@ -175,3 +175,5 @@ jobs:
 # final alpha.03 rerun: clean catalog + relevance/layout/icon/player regression gates
 
 # final rerun after clean catalog reconstruction
+
+# rerun after AI guest/preplay source repair
