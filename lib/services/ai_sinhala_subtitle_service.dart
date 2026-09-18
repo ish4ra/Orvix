@@ -471,9 +471,9 @@ class AiSinhalaSubtitleService {
     if (entries is! List) return const [];
 
     if (preserveProviderOrder) {
-      // OpenSubtitles recommends exact movie-hash search first and then taking
-      // the top matching result. Preserve the official addon's ordering here
-      // instead of re-ranking an exact-file match using filename guesses.
+      // For an exact OpenSubtitles file-hash match, trust the provider's
+      // ordering instead of re-ranking by filename guesses. Normal English
+      // entries stay ahead of forced-only tracks.
       final regular = <String>[];
       final forced = <String>[];
       for (final entry in entries.whereType<Map>()) {
@@ -489,8 +489,7 @@ class AiSinhalaSubtitleService {
         final url = entry['url']?.toString().trim() ?? '';
         if (!url.startsWith('http')) continue;
         final searchable =
-            '${entry['label'] ?? ''} ${entry['id'] ?? ''} $url'
-                .toLowerCase();
+            '${entry['label'] ?? ''} ${entry['id'] ?? ''} $url'.toLowerCase();
         if (searchable.contains('forced')) {
           forced.add(url);
         } else {
@@ -946,187 +945,6 @@ class AiSinhalaSubtitleService {
   static String? _normalizeVideoHash(String? raw) {
     final value = raw?.trim().toLowerCase();
     if (value == null || !RegExp(r'^[a-f0-9]{16}$').hasMatch(value)) {
-      return null;
-    }
-    return value;
-  }
-
-  static Future<String> _downloadSubtitle(String url) async {
-    final response = await _httpGetWithRetry(
-      Uri.parse(url),
-      timeout: const Duration(seconds: 15),
-    );
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw const AiSubtitleException('Subtitle download failed.');
-    }
-    List<int> bytes = response.bodyBytes;
-    if (bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
-      bytes = gzip.decode(bytes);
-    }
-    return utf8.decode(bytes, allowMalformed: true);
-  }
-
-  static List<AiSubtitleCue> _parseSubtitle(String input) {
-    var text = input
-        .replaceFirst('\uFEFF', '')
-        .replaceAll('\r\n', '\n')
-        .replaceAll('\r', '\n');
-    if (text.trimLeft().startsWith('WEBVTT')) {
-      text = text.replaceFirst(RegExp(r'^\s*WEBVTT[^\n]*\n'), '');
-    }
-    final blocks = text.split(RegExp(r'\n\s*\n'));
-    final cues = <AiSubtitleCue>[];
-    for (final block in blocks) {
-      final lines = block
-          .split('\n')
-          .map((line) => line.trimRight())
-          .toList(growable: false);
-      final timingIndex = lines.indexWhere((line) => line.contains('-->'));
-      if (timingIndex < 0) continue;
-      final timing = lines[timingIndex].split('-->');
-      if (timing.length < 2) continue;
-      final start = _parseTimestamp(timing[0].trim());
-      final endText = timing[1].trim().split(RegExp(r'\s+')).first;
-      final end = _parseTimestamp(endText);
-      if (start == null || end == null || end <= start) continue;
-      final cueText = lines
-          .skip(timingIndex + 1)
-          .join('\n')
-          .replaceAll(RegExp(r'<[^>]+>'), '')
-          .replaceAll(RegExp(r'\{\\[^}]+\}'), '')
-          .trim();
-      if (cueText.isEmpty) continue;
-      cues.add(AiSubtitleCue(start: start, end: end, source: cueText));
-    }
-    cues.sort((a, b) => a.start.compareTo(b.start));
-    return cues;
-  }
-
-  static Duration? _parseTimestamp(String raw) {
-    final clean = raw.replaceAll(',', '.').trim();
-    final parts = clean.split(':');
-    if (parts.length < 2 || parts.length > 3) return null;
-    final secondsPart = parts.last;
-    final secondPieces = secondsPart.split('.');
-    final seconds = int.tryParse(secondPieces.first);
-    if (seconds == null) return null;
-    var milliseconds = 0;
-    if (secondPieces.length > 1) {
-      final fraction = secondPieces[1].replaceAll(RegExp(r'\D'), '');
-      if (fraction.isNotEmpty) {
-        milliseconds =
-            int.tryParse(fraction.padRight(3, '0').substring(0, 3)) ?? 0;
-      }
-    }
-    final minutes = int.tryParse(parts[parts.length - 2]) ?? 0;
-    final hours = parts.length == 3 ? int.tryParse(parts.first) ?? 0 : 0;
-    return Duration(
-      hours: hours,
-      minutes: minutes,
-      seconds: seconds,
-      milliseconds: milliseconds,
-    );
-  }
-
-  static String _mediaKey(MediaItem item, EpisodeItem? episode) =>
-      episode == null
-          ? '${item.kind.name}:${item.id}'
-          : '${item.kind.name}:${item.id}:${episode.season}:${episode.episode}';
-
-  static Future<_TranslationResponse> _invokeTranslation(
-    Map<String, dynamic> body,
-  ) async {
-    final session = Supabase.instance.client.auth.currentSession;
-    if (session != null) {
-      final response = await Supabase.instance.client.functions.invoke(
-        'translate-subtitle-si',
-        body: body,
-      );
-      return _TranslationResponse(
-        status: response.status,
-        data: response.data,
-      );
-    }
-
-    final response = await http
-        .post(
-          _translationEndpoint,
-          headers: const {
-            'Authorization': 'Bearer $_guestFunctionJwt',
-            'apikey': _guestFunctionJwt,
-            'Content-Type': 'application/json',
-          },
-          body: jsonEncode(body),
-        )
-        .timeout(const Duration(seconds: 25));
-
-    dynamic data;
-    try {
-      data = jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
-    } catch (_) {
-      data = <String, dynamic>{'error': 'invalid_function_response'};
-    }
-    return _TranslationResponse(status: response.statusCode, data: data);
-  }
-
-  static void clearPreparedCache() {
-    _preparedCache.clear();
-    _translationWork.clear();
-    _liveCueCache.clear();
-  }
-}
-
-class _VideoProbe {
-  const _VideoProbe({this.fileName, this.size, this.hash});
-
-  final String? fileName;
-  final int? size;
-  final String? hash;
-}
-
-class _RangeRead {
-  const _RangeRead({
-    required this.statusCode,
-    required this.headers,
-    required this.bytes,
-  });
-
-  final int statusCode;
-  final Map<String, String> headers;
-  final List<int> bytes;
-}
-
-String _normalizeCue(String value) => value
-    .toLowerCase()
-    .replaceAll(RegExp(r'<[^>]+>'), '')
-    .replaceAll(RegExp(r"[^a-z0-9\s'’-]"), ' ')
-    .replaceAll(RegExp(r'\s+'), ' ')
-    .trim();
-
-extension<T> on List<T> {
-  T? get lastOrNull => isEmpty ? null : last;
-}
-
-class _TranslationResponse {
-  const _TranslationResponse({
-    required this.status,
-    required this.data,
-  });
-
-  final int status;
-  final dynamic data;
-}
-
-class AiSubtitleException implements Exception {
-  const AiSubtitleException(this.message, {this.rateLimited = false});
-
-  final String message;
-  final bool rateLimited;
-
-  @override
-  String toString() => message;
-}
-).hasMatch(value)) {
       return null;
     }
     return value;
