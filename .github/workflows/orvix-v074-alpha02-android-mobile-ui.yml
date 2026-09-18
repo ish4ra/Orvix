@@ -160,3 +160,5 @@ jobs:
 # retrigger: platform-tool verification only; no fragile grep gates
 
 # alpha.02 Android-mobile-only UI/player stabilization
+
+# retrigger after clean search ranking rebuild
