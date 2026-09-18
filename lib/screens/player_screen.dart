@@ -1515,11 +1515,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Widget _nextEpisodeOverlay() {
+    final compact = MediaQuery.sizeOf(context).width < 700;
     return Positioned(
-      right: 28,
-      bottom: 116,
+      right: compact ? 14 : 28,
+      left: compact ? 14 : null,
+      bottom: compact ? 96 : 116,
       child: Container(
-        width: 330,
+        width: compact ? null : 330,
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
           color: const Color(0xEE11141C),
@@ -1591,6 +1593,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Widget _controls(BuildContext context) {
     final player = widget.playback.player;
+    final compact = MediaQuery.sizeOf(context).width < 700;
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -1622,10 +1625,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           fontSize: 16, fontWeight: FontWeight.w800),
                     ),
                   ),
-                  const _KeyboardHint('←/→ 10s'),
-                  const SizedBox(width: 8),
-                  const _KeyboardHint('Space Play/Pause'),
-                  if (_desktop) ...[
+                  if (!compact && _desktop) ...[
+                    const _KeyboardHint('←/→ 10s'),
+                    const SizedBox(width: 8),
+                    const _KeyboardHint('Space Play/Pause'),
                     const SizedBox(width: 8),
                     const _KeyboardHint('F Fullscreen'),
                   ],
@@ -1634,7 +1637,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ),
             const Spacer(),
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+              padding: EdgeInsets.fromLTRB(
+                compact ? 10 : 24,
+                0,
+                compact ? 10 : 24,
+                compact ? 10 : 20,
+              ),
               child: StreamBuilder<Duration>(
                 stream: player.stream.duration,
                 initialData: player.state.duration,
@@ -1694,6 +1702,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                               );
                             },
                           ),
+                          if (compact)
+                            _compactTransportRow(player, position, duration)
+                          else
                           Row(
                             children: [
                               StreamBuilder<bool>(
@@ -1825,6 +1836,79 @@ class _PlayerScreenState extends State<PlayerScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _compactTransportRow(
+    mk.Player player,
+    Duration position,
+    Duration duration,
+  ) {
+    return Row(
+      children: [
+        StreamBuilder<bool>(
+          stream: player.stream.playing,
+          initialData: player.state.playing,
+          builder: (context, snapshot) => IconButton.filled(
+            tooltip: snapshot.data == true ? 'Pause' : 'Play',
+            onPressed: player.playOrPause,
+            icon: Icon(
+              snapshot.data == true
+                  ? Icons.pause_rounded
+                  : Icons.play_arrow_rounded,
+              size: 26,
+            ),
+          ),
+        ),
+        IconButton(
+          tooltip: 'Back 10 seconds',
+          onPressed: () => _seekRelative(const Duration(seconds: -10)),
+          icon: const Icon(Icons.replay_10_rounded),
+        ),
+        IconButton(
+          tooltip: 'Forward 10 seconds',
+          onPressed: () => _seekRelative(const Duration(seconds: 10)),
+          icon: const Icon(Icons.forward_10_rounded),
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Text(
+            '${_format(position)} / ${_format(duration)}',
+            maxLines: 1,
+            overflow: TextOverflow.fade,
+            softWrap: false,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        IconButton(
+          tooltip: 'Audio & subtitles',
+          onPressed: _showTracks,
+          icon: const Icon(Icons.subtitles_rounded),
+        ),
+        PopupMenuButton<double>(
+          tooltip: 'Playback speed',
+          initialValue: player.state.rate,
+          onSelected: player.setRate,
+          itemBuilder: (_) => const [
+            PopupMenuItem(value: .5, child: Text('0.5×')),
+            PopupMenuItem(value: .75, child: Text('0.75×')),
+            PopupMenuItem(value: 1, child: Text('1×')),
+            PopupMenuItem(value: 1.25, child: Text('1.25×')),
+            PopupMenuItem(value: 1.5, child: Text('1.5×')),
+            PopupMenuItem(value: 2, child: Text('2×')),
+          ],
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+            child: Text(
+              '${player.state.rate.toStringAsFixed(player.state.rate == 1 ? 0 : 2)}×',
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
