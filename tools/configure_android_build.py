@@ -23,10 +23,18 @@ def patch_android(tv: bool) -> None:
     )
 
     if "android:usesCleartextTraffic=" not in text:
-        insert = '<application\n        android:usesCleartextTraffic="true"'
-        if tv:
-            insert += '\n        android:banner="@drawable/tv_banner"'
-        text = text.replace("<application", insert, 1)
+        text = text.replace(
+            "<application",
+            '<application\n        android:usesCleartextTraffic="true"',
+            1,
+        )
+
+    if tv and 'android:banner="@drawable/tv_banner"' not in text:
+        text = text.replace(
+            "<application",
+            '<application\n        android:banner="@drawable/tv_banner"',
+            1,
+        )
 
     if 'android:roundIcon=' not in text:
         text = text.replace(

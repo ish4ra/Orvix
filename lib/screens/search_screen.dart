@@ -25,7 +25,7 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final _controller = TextEditingController();
-  final _focusNode = FocusNode(debugLabel: 'search-field');
+  late final FocusNode _focusNode;
   final _firstResultFocusNode =
       FocusNode(debugLabel: 'search-first-result');
   Timer? _debounce;
@@ -37,6 +37,10 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void initState() {
     super.initState();
+    _focusNode = FocusNode(
+      debugLabel: 'search-field',
+      onKeyEvent: _handleSearchFieldKey,
+    );
     if (widget.active) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _focusNode.requestFocus();
@@ -149,17 +153,14 @@ class _SearchScreenState extends State<SearchScreen> {
           const SizedBox(height: 18),
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 820),
-            child: Focus(
-              canRequestFocus: false,
-              onKeyEvent: _handleSearchFieldKey,
-              child: TextField(
-                controller: _controller,
-                focusNode: _focusNode,
-                onChanged: _onQueryChanged,
-                onSubmitted: (_) => _focusFirstResult(),
-                textInputAction: TextInputAction.search,
-                style: const TextStyle(fontSize: 17),
-                decoration: InputDecoration(
+            child: TextField(
+              controller: _controller,
+              focusNode: _focusNode,
+              onChanged: _onQueryChanged,
+              onSubmitted: (_) => _focusFirstResult(),
+              textInputAction: TextInputAction.search,
+              style: const TextStyle(fontSize: 17),
+              decoration: InputDecoration(
                 hintText:
                     'Start typing — suggestions appear after 2 characters…',
                 prefixIcon: const Icon(Icons.search_rounded),
@@ -175,7 +176,6 @@ class _SearchScreenState extends State<SearchScreen> {
                         },
                         icon: const Icon(Icons.close),
                       ),
-                ),
               ),
             ),
           ),

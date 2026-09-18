@@ -109,6 +109,9 @@ jobs:
       - name: Test AI Sinhala subtitle timeline
         run: flutter test test/ai_sinhala_subtitle_service_test.dart
 
+      - name: Test Android TV search D-pad focus
+        run: flutter test test/search_tv_focus_test.dart
+
       - name: Build Windows
         run: flutter build windows --release
 
