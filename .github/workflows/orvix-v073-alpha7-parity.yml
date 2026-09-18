@@ -362,6 +362,17 @@ jobs:
           if old not in text:
               raise SystemExit("Expected enginefs dependency declaration was not found")
           cargo.write_text(text.replace(old, new, 1))
+
+          # v0.1.8 has one rqbit-only compile typo: EngineCacheConfig is used
+          # unqualified while its import is only present on the libtorrent path.
+          # Qualify it locally so the pure rqbit backend compiles unchanged.
+          enginefs = Path("enginefs/src/lib.rs")
+          enginefs_text = enginefs.read_text()
+          old_type = '_cache_config: EngineCacheConfig,'
+          new_type = '_cache_config: crate::backend::priorities::EngineCacheConfig,'
+          if old_type not in enginefs_text:
+              raise SystemExit("Expected rqbit EngineCacheConfig signature was not found")
+          enginefs.write_text(enginefs_text.replace(old_type, new_type, 1))
           PY
 
           cargo build --release --package server --bin server --no-default-features --features librqbit
