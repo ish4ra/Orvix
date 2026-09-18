@@ -224,7 +224,7 @@ class _SourcesScreenState extends State<SourcesScreen> {
                   ),
                   const SizedBox(height: 7),
                   Text(
-                    'Orvix resolves your configured Stremio-compatible providers in parallel, ranks results, then sends your choice to the cloud service you select.',
+                    'Orvix resolves Stremio-compatible stream providers in parallel, ranks results, then uses direct playback, built-in local P2P, or your connected cloud/debrid service as appropriate.',
                     style: TextStyle(
                       color: color.onSurfaceVariant,
                       height: 1.45,
