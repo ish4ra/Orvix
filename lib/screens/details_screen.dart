@@ -4,8 +4,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
-import '../services/ai_sinhala_preferences_service.dart';
-import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/catalog_service.dart';
 import '../services/cloud_preferences_service.dart';
 import '../services/local_torrent_service.dart';
@@ -1890,24 +1888,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
   }) async {
     if (!mounted) return;
 
-    AiPreparedSubtitle? preparedAiSubtitle;
-    final aiSinhalaPreferred = await AiSinhalaPreferencesService.isEnabled();
-
-    if (aiSinhalaPreferred) {
-      setState(() {
-        _resolving = true;
-        _resolveProgress = null;
-        _status = 'Finding source-matched English subtitles…';
-      });
-      try {
-        preparedAiSubtitle = await AiSinhalaSubtitleService.prepareBuffered(
-          item: item,
-          episode: episode,
-          videoUrl: url,
-          releaseHint: releaseHint,
-          expectedSizeBytes: expectedSizeBytes,
-          onStatus: (message) {
-            if (!mounted) return;
+    // Subtitle discovery must never block opening the player. AI Sinhala is
+    // prepared in PlayerScreen after playback has opened, so slow source
+    // probing can never trap the user behind the details-screen busy overlay.
+    if (!mounted) return;
             setState(() => _status = message);
           },
         );
@@ -1945,7 +1929,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
           mediaState: widget.mediaState,
           item: item,
           episode: episode,
-          aiSubtitle: preparedAiSubtitle,
+          aiSubtitle: null,
           releaseHint: releaseHint,
           expectedSizeBytes: expectedSizeBytes,
           nextEpisodeLabel: next == null ? null : '${next.label} ${next.title}',
