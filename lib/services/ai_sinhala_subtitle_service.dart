@@ -170,6 +170,95 @@ class AiSinhalaSubtitleService {
     });
   }
 
+  static Future<AiPreparedSubtitle?> prepareForEmbeddedTiming({
+    required MediaItem item,
+    EpisodeItem? episode,
+    void Function(String message)? onStatus,
+  }) async {
+    final key = '${_mediaKey(item, episode)}:embedded-text-timing';
+    final cached = _preparedCache[key];
+    if (cached != null &&
+        cached.translatedCount >= math.min(96, cached.cues.length)) {
+      return cached;
+    }
+    return _inFlight.putIfAbsent(key, () async {
+      try {
+        final imdbId = item.id.trim();
+        if (!RegExp(r'^tt\d+$').hasMatch(imdbId)) {
+          throw const AiSubtitleException(
+            'This title does not have a compatible IMDb subtitle id.',
+          );
+        }
+
+        final suffix = item.kind == MediaKind.series && episode != null
+            ? '$imdbId:${episode.season}:${episode.episode}'
+            : imdbId;
+        final type = item.kind == MediaKind.movie ? 'movie' : 'series';
+        final endpoint = Uri.parse(
+          'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix.json',
+        );
+
+        onStatus?.call(
+          'Using the video embedded English track as the timing source…',
+        );
+        final candidates = await _subtitleCandidates(
+          endpoint,
+          item: item,
+        );
+        if (candidates.isEmpty) {
+          throw const AiSubtitleException(
+            'No English transcript was found for embedded subtitle timing.',
+          );
+        }
+
+        List<AiSubtitleCue>? cues;
+        String? sourceUrl;
+        Object? lastError;
+        for (final url in candidates.take(10)) {
+          try {
+            final text = await _downloadSubtitle(url);
+            final parsed = _parseSubtitle(text);
+            if (parsed.length >= 8) {
+              cues = parsed;
+              sourceUrl = url;
+              break;
+            }
+          } catch (error) {
+            lastError = error;
+          }
+        }
+
+        if (cues == null || sourceUrl == null) {
+          throw AiSubtitleException(
+            lastError == null
+                ? 'No usable English transcript was found.'
+                : 'Could not prepare the English transcript.',
+          );
+        }
+
+        final prepared = AiPreparedSubtitle(
+          key: key,
+          title:
+              episode == null ? item.title : '${item.title} ${episode.label}',
+          sourceUrl: sourceUrl,
+          cues: cues,
+          sourceMatch: 'embedded-text-timing',
+        );
+        _preparedCache[key] = prepared;
+
+        final firstEnd = math.min(96, cues.length);
+        onStatus?.call(
+          'Translating Sinhala ahead while keeping embedded video timing…',
+        );
+        await _translateRange(prepared, 0, firstEnd);
+        onStatus?.call('Embedded-timed Sinhala subtitles ready.');
+        return prepared;
+      } finally {
+        _inFlight.remove(key);
+      }
+    });
+  }
+
   static Future<AiPreparedSubtitle?> _prepare({
     required String key,
     required MediaItem item,
@@ -191,39 +280,46 @@ class AiSinhalaSubtitleService {
 
     final endpoints = <({Uri uri, String match})>[];
     final extras = <String>[];
-    if (probe.hash != null)
+    if (probe.hash != null) {
       extras.add('videoHash=${Uri.encodeComponent(probe.hash!)}');
+    }
     if (probe.size != null) extras.add('videoSize=${probe.size}');
     if (probe.fileName?.isNotEmpty == true) {
       extras.add('filename=${Uri.encodeComponent(probe.fileName!)}');
     }
-    if (extras.isNotEmpty) {
+
+    if (probe.hash != null) {
       endpoints.add((
         uri: Uri.parse(
           'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix/${extras.join('&')}.json',
         ),
-        match: probe.hash != null ? 'video-hash' : 'filename-size',
+        match: 'video-hash',
+      ));
+    } else if (probe.size != null && probe.fileName?.isNotEmpty == true) {
+      endpoints.add((
+        uri: Uri.parse(
+          'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix/${extras.join('&')}.json',
+        ),
+        match: 'filename-size',
       ));
     }
-    endpoints.add((
-      uri: Uri.parse(
-        'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix.json',
-      ),
-      match: 'title-episode',
-    ));
+
+    if (endpoints.isEmpty) {
+      throw const AiSubtitleException(
+        'This stream does not expose enough release metadata for safe AI Sinhala subtitles.',
+      );
+    }
 
     List<AiSubtitleCue>? cues;
     String? sourceUrl;
-    var sourceMatch = 'title-episode';
+    var sourceMatch = endpoints.first.match;
     Object? lastError;
 
     for (final endpoint in endpoints) {
       onStatus?.call(
         endpoint.match == 'video-hash'
             ? 'Matching subtitles to this exact video file…'
-            : endpoint.match == 'filename-size'
-                ? 'Matching subtitles to this video release…'
-                : 'Finding the best English subtitle…',
+            : 'Matching subtitles to this exact release…',
       );
 
       List<String> candidates = const [];
@@ -240,8 +336,7 @@ class AiSinhalaSubtitleService {
       }
       if (candidates.isEmpty) continue;
 
-      for (final url
-          in candidates.take(endpoint.match == 'title-episode' ? 10 : 6)) {
+      for (final url in candidates.take(6)) {
         try {
           onStatus?.call('Checking the matched English subtitle…');
           final text = await _downloadSubtitle(url);
@@ -257,17 +352,14 @@ class AiSinhalaSubtitleService {
         }
       }
       if (cues != null && sourceUrl != null) break;
-
-      // A provider can return stale/broken files for an otherwise exact query.
-      // Keep going to filename/title matching instead of failing the whole feature.
-      onStatus?.call('Trying another subtitle match…');
+      onStatus?.call('Trying another release-matched subtitle…');
     }
 
     if (cues == null || sourceUrl == null) {
       throw AiSubtitleException(
         lastError == null
-            ? 'No usable English text subtitle was found.'
-            : 'Could not prepare a usable English subtitle source.',
+            ? 'No release-matched English subtitle was found for this video.'
+            : 'Could not prepare a trusted English subtitle for this video.',
       );
     }
 
@@ -284,10 +376,6 @@ class AiSinhalaSubtitleService {
     onStatus?.call('Translating a stable opening Sinhala buffer…');
     await _translateRange(prepared, 0, firstEnd);
     onStatus?.call('Sinhala subtitles ready — opening player…');
-
-    // Translate on demand around playback instead of racing through the
-    // entire movie/episode. This avoids burning quota and hitting rate limits
-    // before later scenes are actually watched.
     return prepared;
   }
 
@@ -382,7 +470,14 @@ class AiSinhalaSubtitleService {
     final titleTokens = _releaseTokens(item.title);
     final specificTokens = <String>{...preferredTokens}
       ..removeAll(titleTokens)
-      ..removeWhere((token) => RegExp(r'^(?:19|20)\d{2}$').hasMatch(token));
+      ..removeWhere((token) =>
+          RegExp(r'^(?:19|20)\d{2}$').hasMatch(token) ||
+          RegExp(r'^s\d{1,2}e\d{1,3}$').hasMatch(token) ||
+          RegExp(r'^\d{1,2}x\d{1,3}$').hasMatch(token));
+    if (requireReleaseEvidence && specificTokens.isEmpty) {
+      return const [];
+    }
+
     final ranked = <({String url, int score})>[];
     for (final entry in entries.whereType<Map>()) {
       final lang = (entry['lang'] ?? entry['language'] ?? '')
