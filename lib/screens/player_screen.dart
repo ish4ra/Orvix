@@ -204,8 +204,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
         play: !aiPreferred,
       );
 
-      // Keep normal subtitles available until AI Sinhala has actually prepared.
-      await _setNativeSubtitleVisibility(false);
+      // Use Flutter's SubtitleView for text subtitles. libmpv native rendering
+      // stays reserved for bitmap/image tracks to avoid duplicate text layers.
+      if (aiPreferred) {
+        await _setNativeSubtitleVisibility(false);
+      } else {
+        final currentSubtitle = widget.playback.player.state.track.subtitle;
+        await _setNativeSubtitleVisibility(
+          currentSubtitle.id.toLowerCase() != 'no' &&
+              _isImageSubtitleTrack(currentSubtitle),
+        );
+      }
 
       if (aiPreferred) {
         if (aiReady) {
@@ -424,6 +433,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final player = widget.playback.player;
     final current = player.state.track.subtitle;
     if (current.id.toLowerCase() != 'no') {
+      await _setNativeSubtitleVisibility(_isImageSubtitleTrack(current));
       await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
       return;
     }
@@ -444,7 +454,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               : null;
       if (chosen != null) {
         await player.setSubtitleTrack(chosen);
-        await _setNativeSubtitleVisibility(false);
+        await _setNativeSubtitleVisibility(_isImageSubtitleTrack(chosen));
         await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
         return;
       }
@@ -619,8 +629,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _aiDisplaySubtitle = '';
       });
     }
-    await _setNativeSubtitleVisibility(false);
     await widget.playback.player.setSubtitleTrack(track);
+    await _setNativeSubtitleVisibility(_isImageSubtitleTrack(track));
     await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
   }
 
@@ -1396,11 +1406,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
 
     if (_desktop) {
-      return (base * heightScale * 1.18).clamp(24.0, 54.0).toDouble();
+      return (base * heightScale * 1.30).clamp(26.0, 54.0).toDouble();
     }
 
     // Android TV / large-screen Android.
-    return (base * heightScale * 1.10).clamp(22.0, 48.0).toDouble();
+    return (base * heightScale * 1.18).clamp(22.0, 48.0).toDouble();
   }
 
   Widget _aiSubtitleOverlay() {
