@@ -256,32 +256,17 @@ jobs:
 
       - name: Configure macOS networking and branding
         run: |
-          python3 -m pip install --disable-pip-version-check pillow
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          from PIL import Image
+          sed -i '' 's/PRODUCT_NAME = orvix/PRODUCT_NAME = Orvix/' macos/Runner/Configs/AppInfo.xcconfig
 
-          xc = Path('macos/Runner/Configs/AppInfo.xcconfig')
-          text = xc.read_text()
-          text = text.replace('PRODUCT_NAME = orvix', 'PRODUCT_NAME = Orvix')
-          text = text.replace('PRODUCT_BUNDLE_IDENTIFIER = com.orvix.orvix', 'PRODUCT_BUNDLE_IDENTIFIER = com.orvix.orvix')
-          xc.write_text(text)
-
-          src = Image.open('assets/branding/orvix_icon.png').convert('RGBA')
-          icon_dir = Path('macos/Runner/Assets.xcassets/AppIcon.appiconset')
-          contents = json.loads((icon_dir / 'Contents.json').read_text())
-          scales = {'1x':1, '2x':2}
-          for entry in contents['images']:
-              filename = entry.get('filename')
-              size = entry.get('size')
-              scale = entry.get('scale')
-              if not filename or not size or not scale:
-                  continue
-              points = float(size.split('x')[0])
-              px = round(points * scales.get(scale, 1))
-              src.resize((px, px), Image.Resampling.LANCZOS).save(icon_dir / filename)
-          PY
+          ICON_DIR='macos/Runner/Assets.xcassets/AppIcon.appiconset'
+          SRC='assets/branding/orvix_icon.png'
+          sips -z 16 16 "$SRC" --out "$ICON_DIR/app_icon_16.png" >/dev/null
+          sips -z 32 32 "$SRC" --out "$ICON_DIR/app_icon_32.png" >/dev/null
+          sips -z 64 64 "$SRC" --out "$ICON_DIR/app_icon_64.png" >/dev/null
+          sips -z 128 128 "$SRC" --out "$ICON_DIR/app_icon_128.png" >/dev/null
+          sips -z 256 256 "$SRC" --out "$ICON_DIR/app_icon_256.png" >/dev/null
+          sips -z 512 512 "$SRC" --out "$ICON_DIR/app_icon_512.png" >/dev/null
+          sips -z 1024 1024 "$SRC" --out "$ICON_DIR/app_icon_1024.png" >/dev/null
 
           for f in macos/Runner/Release.entitlements macos/Runner/DebugProfile.entitlements; do
             /usr/libexec/PlistBuddy -c "Add :com.apple.security.network.client bool true" "$f" 2>/dev/null || \
