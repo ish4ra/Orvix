@@ -54,6 +54,7 @@ class PlaybackService {
     String url, {
     String? title,
     Map<String, String>? httpHeaders,
+    bool play = true,
   }) async {
     await _applySmartStreamingProfile(url);
     await player.open(
@@ -64,7 +65,7 @@ class PlaybackService {
           if (title != null) 'title': title,
         },
       ),
-      play: true,
+      play: play,
     );
   }
 
