@@ -27,6 +27,8 @@ def main() -> None:
             // This maximizes sideload compatibility across Android/TV builds.
             enableV1Signing = true
             enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = false
         }}
     }}
 
