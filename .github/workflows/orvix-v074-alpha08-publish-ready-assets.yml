@@ -1,0 +1,76 @@
+name: Publish Orvix v0.7.4-alpha.08 Verified Assets
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.4-alpha.08
+    paths:
+      - '.github/workflows/orvix-v074-alpha08-publish-ready-assets.yml'
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download verified alpha.08 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 35395721467
+          path: dist
+          merge-multiple: true
+
+      - name: Verify release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/Orvix-v0.7.4-alpha.08-Windows-x64.zip
+          test -s dist/installer-output/Orvix-Setup-v0.7.4-alpha.08-Windows-x64.exe
+          test -s dist/Orvix-v0.7.4-alpha.08-Android-Mobile.apk
+          test -s dist/Orvix-v0.7.4-alpha.08-Android-Mobile-arm64-v8a.apk
+          test -s dist/Orvix-v0.7.4-alpha.08-Android-Mobile-armeabi-v7a.apk
+          test -s dist/Orvix-v0.7.4-alpha.08-Android-Mobile-x86_64.apk
+          test -s dist/Orvix-v0.7.4-alpha.08-Android-TV.apk
+
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/notes.md <<'EOF'
+          Orvix alpha.08 fixes the regressions found during real Windows and free-streaming testing.
+
+          - Pinned TV-series release-family cards are now clickable and resolve the matching episode from the pinned release family.
+          - Playback opens before AI Sinhala preparation, so subtitle discovery can no longer trap the details screen behind a spinner.
+          - Slow resolve screens keep a visible Back escape path.
+          - AI Sinhala embedded-track preparation no longer pauses and resumes the video by itself.
+          - When AI Sinhala cannot prepare a trusted Sinhala subtitle, Orvix keeps the native English timing track hidden instead of silently showing English.
+          - Local P2P streams no longer receive disruptive tail reads just to calculate an OpenSubtitles file hash.
+          - Weak P2P swarms use a steadier cache pause/resume threshold to reduce rapid 1–2 second pause/resume thrashing.
+          - Player exit/back now cancels pending subtitle work and stops playback through one guarded teardown path to prevent pause/back crash races.
+          - Trusted TorBox/PikPak release metadata matching remains intact.
+          - Includes Windows x64 installer + portable ZIP, Android Mobile universal/per-ABI APKs, and Android TV APK.
+          EOF
+
+          assets=(
+            dist/Orvix-v0.7.4-alpha.08-Windows-x64.zip
+            dist/installer-output/Orvix-Setup-v0.7.4-alpha.08-Windows-x64.exe
+            dist/Orvix-v0.7.4-alpha.08-Android-Mobile.apk
+            dist/Orvix-v0.7.4-alpha.08-Android-Mobile-arm64-v8a.apk
+            dist/Orvix-v0.7.4-alpha.08-Android-Mobile-armeabi-v7a.apk
+            dist/Orvix-v0.7.4-alpha.08-Android-Mobile-x86_64.apk
+            dist/Orvix-v0.7.4-alpha.08-Android-TV.apk
+          )
+
+          if gh release view v0.7.4-alpha.08 >/dev/null 2>&1; then
+            gh release upload v0.7.4-alpha.08 --clobber "${assets[@]}"
+            gh release edit v0.7.4-alpha.08               --title 'Orvix v0.7.4-alpha.08 — Playback Recovery • Windows + Mobile + TV'               --prerelease               --notes-file /tmp/notes.md
+          else
+            gh release create v0.7.4-alpha.08               --target 474b36e850dfdd6808600d54a4d9ef89f0d19801               --title 'Orvix v0.7.4-alpha.08 — Playback Recovery • Windows + Mobile + TV'               --prerelease               --notes-file /tmp/notes.md               "${assets[@]}"
+          fi
