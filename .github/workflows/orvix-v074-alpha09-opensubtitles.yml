@@ -383,7 +383,8 @@ jobs:
           - Captures a stream addon's OpenSubtitles-compatible behaviorHints.videoHash when available.
           - Carries that exact hash from source selection into PlayerScreen and AI Sinhala preparation.
           - Exact video-hash searches preserve the official provider result order instead of re-ranking them with filename guesses.
-          - Free/local P2P can use a provider-supplied exact hash without forcing a disruptive read from the end of a weak torrent.
+          - Provider-supplied behaviorHints.videoHash is still trusted first, avoiding redundant reads.
+          - When free/local P2P has no provider hash, Orvix asks the bundled stream-server for its native OpenSubtitles hash (first + last 64 KiB plus exact file size).
           - Seekable direct, TorBox and PikPak streams can still compute the canonical OpenSubtitles hash from the first and last 64 KiB plus file size.
           - Filename + size remains a guarded fallback only when exact hash metadata is unavailable.
           - Includes the alpha.08 playback/back/pinned-source recovery fixes on Windows, Android Mobile and Android TV.
@@ -400,6 +401,10 @@ jobs:
           )
 
           if gh release view v0.7.4-alpha.09 >/dev/null 2>&1; then
+            # Keep the prerelease tag aligned with the exact commit that
+            # produced the clobbered assets.
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/v0.7.4-alpha.09" \
+              -f sha='${{ github.sha }}' -F force=true >/dev/null
             gh release upload v0.7.4-alpha.09 --clobber "${assets[@]}"
             gh release edit v0.7.4-alpha.09               --title 'Orvix v0.7.4-alpha.09 — Exact Subtitle Hash • Windows + Mobile + TV'               --prerelease               --notes-file /tmp/orvix-alpha09-notes.md
           else

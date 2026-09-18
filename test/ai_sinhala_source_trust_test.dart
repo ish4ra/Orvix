@@ -41,6 +41,9 @@ void main() {
     expect(details, contains('expectedVideoHash: chosen.videoHash'));
     expect(player, contains('expectedVideoHash: widget.expectedVideoHash'));
     expect(service, contains('_normalizeVideoHash(expectedVideoHash)'));
+    expect(service, contains('_probeLocalOpenSubtitlesHash('));
+    expect(service, contains("path: '/opensubHash'"));
+    expect(service, contains("'videoUrl': videoUri.toString()"));
     expect(service, contains("match: 'video-hash'"));
     expect(service, contains("preserveProviderOrder: endpoint.match == 'video-hash'"));
     expect(

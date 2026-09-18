@@ -784,10 +784,16 @@ class AiSinhalaSubtitleService {
     final localP2p = (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
         uri.port == 11470;
     if (localP2p) {
-      // Do not seek to the tail of an actively streaming torrent just to build
-      // an OpenSubtitles hash. Use the source filename/size metadata instead;
-      // this avoids competing with sequential playback on low-seed swarms.
-      return _VideoProbe(fileName: fallbackName, size: fallbackSize);
+      // The bundled stream-server exposes a native OpenSubtitles hash route.
+      // Let the torrent engine fetch/prioritize the exact first + last 64 KiB
+      // instead of issuing raw range reads against the active local stream.
+      // This gives free P2P the same exact-file matching used by direct/cloud
+      // streams while playback itself remains non-blocking in PlayerScreen.
+      return _probeLocalOpenSubtitlesHash(
+        uri,
+        fallbackFileName: fallbackName,
+        fallbackSize: fallbackSize,
+      );
     }
     final client = http.Client();
     try {
@@ -832,6 +838,59 @@ class AiSinhalaSubtitleService {
     }
   }
 
+  static Future<_VideoProbe> _probeLocalOpenSubtitlesHash(
+    Uri videoUri, {
+    required String? fallbackFileName,
+    required int? fallbackSize,
+  }) async {
+    final endpoint = videoUri.replace(
+      path: '/opensubHash',
+      queryParameters: <String, String>{'videoUrl': videoUri.toString()},
+      fragment: '',
+    );
+
+    // The native engine returns HTTP 200 even when the hash is not ready, so
+    // retry the JSON result itself. AI subtitle preparation runs after media
+    // playback opens and stays in the background, so this never gates player
+    // startup on a weak swarm.
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final response =
+            await http.get(endpoint).timeout(const Duration(seconds: 30));
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          final decoded = jsonDecode(
+            utf8.decode(response.bodyBytes, allowMalformed: true),
+          );
+          final result = decoded is Map ? decoded['result'] : null;
+          if (result is Map) {
+            final hash = _normalizeVideoHash(result['hash']?.toString());
+            final rawSize = result['size'];
+            final nativeSize = rawSize is num
+                ? rawSize.toInt()
+                : int.tryParse(rawSize?.toString() ?? '');
+            if (hash != null) {
+              return _VideoProbe(
+                fileName: fallbackFileName,
+                size: nativeSize != null && nativeSize > 0
+                    ? nativeSize
+                    : fallbackSize,
+                hash: hash,
+              );
+            }
+          }
+        }
+      } catch (_) {}
+
+      if (attempt == 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+      }
+    }
+
+    return _VideoProbe(
+      fileName: fallbackFileName,
+      size: fallbackSize,
+    );
+  }
   static Future<_RangeRead?> _readRangeWithRetry(
     http.Client client,
     Uri uri,
