@@ -343,16 +343,42 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          brew install libtorrent-rasterbar boost openssl@3 pkg-config
-          LIBTORRENT_PREFIX="$(brew --prefix libtorrent-rasterbar)"
+          brew install boost openssl@3 cmake pkg-config
+
           BOOST_PREFIX="$(brew --prefix boost)"
           OPENSSL_PREFIX="$(brew --prefix openssl@3)"
-          echo "PKG_CONFIG_PATH=$LIBTORRENT_PREFIX/lib/pkgconfig:$OPENSSL_PREFIX/lib/pkgconfig:$(brew --prefix)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          LIBTORRENT_PREFIX="$RUNNER_TEMP/libtorrent-2.0.11"
+          LIBTORRENT_TARBALL="$RUNNER_TEMP/libtorrent-rasterbar-2.0.11.tar.gz"
+
+          curl -fL --retry 3 \
+            https://github.com/arvidn/libtorrent/releases/download/v2.0.11/libtorrent-rasterbar-2.0.11.tar.gz \
+            -o "$LIBTORRENT_TARBALL"
+          echo "f0db58580f4f29ade6cc40fa4ba80e2c9a70c90265cd77332d3cdec37ecf1e6d  $LIBTORRENT_TARBALL" | shasum -a 256 -c -
+
+          rm -rf "$RUNNER_TEMP/libtorrent-src" "$RUNNER_TEMP/libtorrent-build" "$LIBTORRENT_PREFIX"
+          mkdir -p "$RUNNER_TEMP/libtorrent-src"
+          tar -xzf "$LIBTORRENT_TARBALL" -C "$RUNNER_TEMP/libtorrent-src" --strip-components=1
+
+          cmake -S "$RUNNER_TEMP/libtorrent-src" -B "$RUNNER_TEMP/libtorrent-build" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$LIBTORRENT_PREFIX" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -Dpython-bindings=OFF \
+            -Dexamples=OFF \
+            -Dtests=OFF \
+            -Dtools=OFF \
+            -Dencryption=ON \
+            -DCMAKE_PREFIX_PATH="$BOOST_PREFIX;$OPENSSL_PREFIX"
+          cmake --build "$RUNNER_TEMP/libtorrent-build" --config Release --parallel 4
+          cmake --install "$RUNNER_TEMP/libtorrent-build" --config Release
+
+          test -f "$LIBTORRENT_PREFIX/lib/pkgconfig/libtorrent-rasterbar.pc"
+          echo "PKG_CONFIG_PATH=$LIBTORRENT_PREFIX/lib/pkgconfig:$OPENSSL_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          echo "LIBTORRENT_RASTERBAR_STATIC=1" >> "$GITHUB_ENV"
           echo "CXXFLAGS=-I$BOOST_PREFIX/include -I$OPENSSL_PREFIX/include ${CXXFLAGS:-}" >> "$GITHUB_ENV"
           echo "CPPFLAGS=-I$BOOST_PREFIX/include -I$OPENSSL_PREFIX/include ${CPPFLAGS:-}" >> "$GITHUB_ENV"
           echo "CPLUS_INCLUDE_PATH=$BOOST_PREFIX/include:$OPENSSL_PREFIX/include:${CPLUS_INCLUDE_PATH:-}" >> "$GITHUB_ENV"
-          echo "LDFLAGS=-L$BOOST_PREFIX/lib -L$OPENSSL_PREFIX/lib ${LDFLAGS:-}" >> "$GITHUB_ENV"
-
+          echo "LDFLAGS=-L$LIBTORRENT_PREFIX/lib -L$BOOST_PREFIX/lib -L$OPENSSL_PREFIX/lib ${LDFLAGS:-}" >> "$GITHUB_ENV"
       - name: Build macOS P2P engine
         shell: bash
         run: |
