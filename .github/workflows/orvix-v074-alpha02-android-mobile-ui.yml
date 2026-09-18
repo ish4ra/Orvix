@@ -80,6 +80,13 @@ jobs:
               raise SystemExit(f"Launcher icon still has opaque outer corners: {corners}")
           if image.getbbox() is None:
               raise SystemExit("Launcher icon is empty.")
+
+          colors = open(
+              "android/app/src/main/res/values/orvix_colors.xml",
+              encoding="utf-8",
+          ).read()
+          if '#00000000' not in colors:
+              raise SystemExit("Adaptive icon outer background is not transparent.")
           print("Clean launcher icon verified:", image.size, corners)
           PY
 
@@ -104,6 +111,7 @@ jobs:
         shell: bash
         run: |
           flutter test test/search_mobile_layout_test.dart
+          flutter test test/search_relevance_test.dart
           flutter test test/search_tv_focus_test.dart
           flutter test test/ai_sinhala_subtitle_service_test.dart
 
@@ -152,7 +160,7 @@ jobs:
           if gh release view v0.7.4-alpha.02 >/dev/null 2>&1; then
             gh release upload v0.7.4-alpha.02 --clobber "$APK"
           else
-            gh release create v0.7.4-alpha.02               --target '${{ github.sha }}'               --title 'Orvix v0.7.4-alpha.02 — Android Mobile UI + Player'               --prerelease               --notes 'Android Mobile-only update; Windows, Android TV and macOS were intentionally not rebuilt. Fixes launcher artwork by removing the edge-connected dark box, makes Search phone-responsive with denser poster cards, ranks famous exact-title results using IMDb vote/rating signals, prefers IMDb primary poster art in Search, and makes the mobile player enter immersive sensor-landscape mode with an explicit rotate control. Retains custom-ROM install compatibility packaging and stable signing from alpha.01.'               "$APK"
+            gh release create v0.7.4-alpha.02               --target '${{ github.sha }}'               --title 'Orvix v0.7.4-alpha.02 — Android Mobile UI + Player'               --prerelease               --notes 'Android Mobile-only update; Windows, Android TV and macOS were intentionally not rebuilt. Fixes launcher artwork by removing the edge-connected dark box and adaptive outer ring, uses a Nuvio-inspired three-column handset search layout, ranks famous exact-title results using IMDb vote/rating signals, prefers IMDb primary poster art in Search, and makes the Android phone player enter immersive sensor-landscape mode with an explicit rotate control. Retains custom-ROM install compatibility packaging and stable signing from alpha.01.'               "$APK"
           fi
 
 # retrigger: avoid pipefail/SIGPIPE false negative in APK verification
@@ -162,3 +170,5 @@ jobs:
 # alpha.02 Android-mobile-only UI/player stabilization
 
 # retrigger after clean search ranking rebuild
+
+# final alpha.02 rerun: clean catalog + relevance/layout/icon/player regression gates
