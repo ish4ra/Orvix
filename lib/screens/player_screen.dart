@@ -804,6 +804,216 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  Future<void> _showOnlineSubtitles() async {
+    final item = widget.item;
+    if (item == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Online subtitles need movie or episode metadata.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    _hideTimer?.cancel();
+    var languageFilter = _preferredSubtitleLanguage;
+    final future = OnlineSubtitleService.search(
+      item: item,
+      episode: widget.episode,
+      releaseHint: widget.releaseHint,
+      videoSize: widget.expectedSizeBytes,
+      preferredLanguage: _preferredSubtitleLanguage,
+    );
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0D120E),
+      showDragHandle: true,
+      isScrollControlled: true,
+      constraints: const BoxConstraints(maxWidth: 860),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: SizedBox(
+            height: MediaQuery.sizeOf(sheetContext).height * .78,
+            child: FutureBuilder<List<OnlineSubtitleResult>>(
+              future: future,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(),
+                        SizedBox(height: 14),
+                        Text('Searching OpenSubtitles v3…'),
+                      ],
+                    ),
+                  );
+                }
+
+                final results = snapshot.data ?? const <OnlineSubtitleResult>[];
+                if (results.isEmpty) {
+                  return const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(28),
+                      child: Text(
+                        'OpenSubtitles v3 did not return subtitles for this title/release.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  );
+                }
+
+                final languages = results
+                    .map((entry) => entry.language)
+                    .toSet()
+                    .toList(growable: false)
+                  ..sort((a, b) => OnlineSubtitleService.languageName(a)
+                      .compareTo(OnlineSubtitleService.languageName(b)));
+                if (languageFilter != 'all' &&
+                    !languages.contains(languageFilter)) {
+                  languageFilter = 'all';
+                }
+                final visible = languageFilter == 'all'
+                    ? results
+                    : results
+                        .where((entry) => entry.language == languageFilter)
+                        .toList(growable: false);
+
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(22, 4, 22, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Online subtitles',
+                        style:
+                            Theme.of(context).textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.w900,
+                                ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        'Official OpenSubtitles v3 • release-aware matching • choose any available language',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          const Icon(Icons.language_rounded, size: 20),
+                          const SizedBox(width: 10),
+                          SizedBox(
+                            width: 240,
+                            child: DropdownButtonFormField<String>(
+                              value: languageFilter,
+                              decoration: const InputDecoration(
+                                labelText: 'Language',
+                                isDense: true,
+                              ),
+                              items: [
+                                const DropdownMenuItem(
+                                  value: 'all',
+                                  child: Text('All languages'),
+                                ),
+                                for (final language in languages)
+                                  DropdownMenuItem(
+                                    value: language,
+                                    child: Text(
+                                      OnlineSubtitleService.languageName(
+                                        language,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                              onChanged: (value) async {
+                                if (value == null) return;
+                                setSheetState(() => languageFilter = value);
+                                if (value != 'all') {
+                                  _preferredSubtitleLanguage = value;
+                                  await SubtitlePreferencesService
+                                      .setPreferredLanguage(value);
+                                }
+                              },
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '${visible.length} result${visible.length == 1 ? '' : 's'}',
+                            style: TextStyle(
+                              color:
+                                  Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      const Divider(height: 1),
+                      Expanded(
+                        child: ListView.separated(
+                          itemCount: visible.length,
+                          separatorBuilder: (_, __) =>
+                              const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            final subtitle = visible[index];
+                            return ListTile(
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 5,
+                              ),
+                              leading:
+                                  const Icon(Icons.closed_caption_rounded),
+                              title: Text(
+                                subtitle.languageLabel,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              subtitle: Text(
+                                '${subtitle.provider} • ${subtitle.label}',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              trailing:
+                                  const Icon(Icons.play_arrow_rounded),
+                              onTap: () async {
+                                _preferredSubtitleLanguage =
+                                    subtitle.language;
+                                await SubtitlePreferencesService
+                                    .setPreferredLanguage(
+                                  subtitle.language,
+                                );
+                                await _activateNativeSubtitle(
+                                  mk.SubtitleTrack.uri(
+                                    subtitle.url,
+                                    title:
+                                        '${subtitle.languageLabel} • ${subtitle.provider}',
+                                    language: subtitle.language,
+                                  ),
+                                );
+                                if (sheetContext.mounted) {
+                                  Navigator.pop(sheetContext);
+                                }
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    if (mounted) _scheduleHide();
+  }
+
   Future<void> _showTracks() async {
     _hideTimer?.cancel();
     final player = widget.playback.player;
