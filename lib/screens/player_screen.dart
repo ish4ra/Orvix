@@ -557,7 +557,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _lastNativeSubtitleStartMs = null;
     _lastAiPrefetchBucket = -1;
     unawaited(_setNativeSubtitleVisibility(false));
-    if (_aiSinhalaEnabled && !_liveAiFallback) {
+
+    if (_liveAiFallback) {
+      // Any translation request that started before the seek now belongs to
+      // the old playback position. Invalidate it and remove the stale line
+      // immediately instead of leaving it on screen after a jump.
+      _liveCueGeneration++;
+      _liveDialogueContext.clear();
+      if (mounted && _aiDisplaySubtitle.isNotEmpty) {
+        setState(() => _aiDisplaySubtitle = '');
+      }
+      return;
+    }
+
+    if (_aiSinhalaEnabled) {
       _refreshAiSubtitle();
       unawaited(_ensureEnglishTimingTrack());
       unawaited(_ensureAiTranslationNear(target));
@@ -954,7 +967,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final prepared = _preparedAiSubtitle;
     if (prepared == null || !_timingTrackIsText || source.isEmpty) return;
     final matched = prepared.matchSourceCue(source);
-    if (matched == null) return;
+    if (matched == null) {
+      // The embedded English cue is real timing from the file currently
+      // playing. If it does not match the downloaded release timeline, prefer
+      // the actual file from this point on instead of silently showing gaps or
+      // an out-of-sync Sinhala timeline.
+      if (mounted) {
+        setState(() {
+          _liveAiFallback = true;
+          _aiDisplaySubtitle = '';
+        });
+      }
+      _lastAiPrefetchBucket = -1;
+      _liveDialogueContext.clear();
+      await _translateLiveSubtitleCue(source);
+      return;
+    }
     final nativeStart = await _nativeSubtitleStartMs();
     if (!mounted) return;
     final sourceStart =

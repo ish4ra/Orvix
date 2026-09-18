@@ -105,6 +105,9 @@ jobs:
       - name: Analyze
         run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
 
+      - name: Test AI Sinhala subtitle timeline
+        run: flutter test test/ai_sinhala_subtitle_service_test.dart
+
       - name: Build Windows
         run: flutter build windows --release
 
@@ -553,7 +556,8 @@ jobs:
           - Stops aggressive whole-title background translation that could consume quota or hit rate limits before later scenes.
           - Retries missing subtitle windows instead of permanently skipping failed batches.
           - Keeps English timing subtitles hidden whenever AI Sinhala is enabled in Settings.
-          - Adds live AI translation from an embedded English text track when release-matched subtitle preparation is unavailable.
+          - Adds live AI translation from an embedded English text track when release-matched subtitle preparation is unavailable or does not match the actual file cues.
+          - Clears stale AI subtitle requests immediately after seeks so a pre-seek line cannot remain on screen.
           - Applies the same subtitle behavior to Windows, macOS, Android mobile and Android TV.
           - Retains alpha.9 Android signing/P2P, TV focus/branding and macOS Keychain fixes." \
             dist/Orvix-v0.7.3-alpha.10-Windows-x64.zip \

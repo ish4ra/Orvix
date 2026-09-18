@@ -10,6 +10,7 @@ Orvix translates English text subtitles to natural Sri Lankan Sinhala across Win
 - Seeking immediately prioritizes translation around the new playback position, so jumping forward does not create a permanent untranslated gap.
 - Failed translation windows are retried instead of being skipped forever.
 - If release-matched OpenSubtitles preparation fails but the source has an English text subtitle track, Orvix uses a live AI translation fallback from that hidden track.
+- If a downloaded release timeline exists but does not match the actual embedded English cues, Orvix automatically promotes the real embedded track to the live AI path instead of leaving gaps or drifting out of sync.
 - Image-based PGS/VobSub tracks can provide timing calibration but cannot provide text for the live fallback.
 - Manually selecting a native subtitle or **Off** overrides AI Sinhala for that playback session; the persistent Settings preference is used again on the next playback.
 
