@@ -5,7 +5,7 @@ on:
     branches:
       - orvix-v0.7.4-alpha.11
     paths:
-      - '.github/workflows/orvix-v074-alpha11-subtitle-timing.yml'
+      - '.github/workflows/orvix-v074-alpha11-preplay-ai.yml'
       - 'lib/**'
       - 'test/**'
       - 'pubspec.yaml'
