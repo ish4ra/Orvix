@@ -387,37 +387,18 @@ class _OrvixShellState extends State<_OrvixShell> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Container(
-                      width: 64,
-                      height: 64,
-                      padding: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF081008),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color: const Color(0xFF8FD43D),
-                          width: 1,
-                        ),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x663CFF00),
-                            blurRadius: 20,
-                            spreadRadius: 1,
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: Image.asset(
-                          'assets/branding/orvix_icon.png',
-                          fit: BoxFit.contain,
-                          filterQuality: FilterQuality.high,
-                          errorBuilder: (_, __, ___) => const Center(
-                            child: Icon(
-                              Icons.play_arrow_rounded,
-                              color: Color(0xFFB9FF45),
-                              size: 38,
-                            ),
+                    SizedBox(
+                      width: 66,
+                      height: 66,
+                      child: Image.asset(
+                        'assets/branding/orvix_icon.png',
+                        fit: BoxFit.contain,
+                        filterQuality: FilterQuality.high,
+                        errorBuilder: (_, __, ___) => const Center(
+                          child: Icon(
+                            Icons.play_arrow_rounded,
+                            color: Color(0xFFB9FF45),
+                            size: 42,
                           ),
                         ),
                       ),
@@ -501,7 +482,7 @@ class _AboutScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Orvix v0.7.3-alpha.6',
+                'Orvix v0.7.3-alpha.7',
                 style: Theme.of(context)
                     .textTheme
                     .headlineMedium
