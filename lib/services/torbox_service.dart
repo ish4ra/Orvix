@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+import 'secure_storage_factory.dart';
 import 'package:http/http.dart' as http;
 
 class TorBoxException implements Exception {
@@ -98,7 +100,7 @@ class TorBoxItem {
 class TorBoxService {
   TorBoxService({http.Client? client, FlutterSecureStorage? storage})
       : _client = client ?? http.Client(),
-        _storage = storage ?? const FlutterSecureStorage();
+        _storage = storage ?? createOrvixSecureStorage();
 
   static const _base = 'https://api.torbox.app/v1/api';
   static const _tokenKey = 'orvix_torbox_api_token_v1';
