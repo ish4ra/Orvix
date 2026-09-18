@@ -64,7 +64,7 @@ class CatalogService {
         .toList(growable: false);
     final originalOrder = <String, int>{
       for (var i = 0; i < enriched.length; i++)
-        enriched[i].kind.name + ':' + enriched[i].id: i,
+        (enriched[i].kind.name + ':' + enriched[i].id): i,
     };
 
     enriched.sort((a, b) {
