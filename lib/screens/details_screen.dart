@@ -5,8 +5,6 @@ import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
 import '../services/catalog_service.dart';
-import '../services/ai_sinhala_preferences_service.dart';
-import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/cloud_preferences_service.dart';
 import '../services/local_torrent_service.dart';
 import '../services/media_state_service.dart';
@@ -1939,49 +1937,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
   }) async {
     if (!mounted) return;
 
-    AiPreparedSubtitle? preparedAiSubtitle;
-    final aiEnabled = await AiSinhalaPreferencesService.isEnabled();
-
-    if (aiEnabled) {
-      setState(() {
-        _resolving = true;
-        _resolveProgress = null;
-        _status = 'AI Sinhala • matching this exact video file…';
-      });
-
-      try {
-        preparedAiSubtitle = await AiSinhalaSubtitleService.prepareBuffered(
-          item: item,
-          episode: episode,
-          videoUrl: url,
-          releaseHint: releaseHint,
-          expectedSizeBytes: expectedSizeBytes,
-          expectedVideoHash: expectedVideoHash,
-          onStatus: (message) {
-            if (!mounted) return;
-            setState(() => _status = message);
-          },
-        );
-      } catch (_) {
-        preparedAiSubtitle = null;
-      }
-
-      if (!mounted) return;
-
-      if (preparedAiSubtitle == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'AI Sinhala could not verify a safe subtitle timeline for this release. '
-              'Opening the video with normal English/native subtitles instead.',
-            ),
-            duration: Duration(seconds: 6),
-          ),
-        );
-      }
-    }
-
-    if (!mounted) return;
+    // AI Sinhala preflight now happens inside PlayerScreen after the media has
+    // been opened PAUSED. That lets Orvix inspect the actual embedded subtitle
+    // tracks and avoids probing a local P2P stream before the native engine has
+    // attached the media.
     setState(() {
       _resolving = false;
       _resolveProgress = null;
@@ -2002,7 +1961,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
           mediaState: widget.mediaState,
           item: item,
           episode: episode,
-          aiSubtitle: preparedAiSubtitle,
+          aiSubtitle: null,
           releaseHint: releaseHint,
           expectedSizeBytes: expectedSizeBytes,
           expectedVideoHash: expectedVideoHash,
