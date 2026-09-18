@@ -236,14 +236,20 @@ class _SearchScreenState extends State<SearchScreen> {
                     : width >= 840
                         ? 4
                         : 3;
-        final compactGrid = width < 600;
+        final compactGrid = MediaQuery.sizeOf(context).shortestSide < 600;
+        final crossSpacing = compactGrid ? 10.0 : 16.0;
+        final cardWidth =
+            (width - crossSpacing * (columns - 1)) / columns.toDouble();
+        final cardHeight = cardWidth / .675 + (compactGrid ? 44 : 64);
+
         return GridView.builder(
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: EdgeInsets.zero,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
-            crossAxisSpacing: compactGrid ? 10 : 16,
-            mainAxisSpacing: compactGrid ? 16 : 22,
-            childAspectRatio: compactGrid ? .50 : .52,
+            crossAxisSpacing: crossSpacing,
+            mainAxisSpacing: compactGrid ? 14 : 22,
+            mainAxisExtent: cardHeight,
           ),
           itemCount: _results.length,
           itemBuilder: (context, index) {
