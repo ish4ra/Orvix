@@ -100,8 +100,13 @@ jobs:
           grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" /tmp/apksigner.txt
           grep -q "sdkVersion:'24'" /tmp/badging.txt
           grep -q "targetSdkVersion:'36'" /tmp/badging.txt
-          unzip -l "$APK" | grep 'lib/arm64-v8a/libstream_server.so'
-          unzip -l "$APK" | grep 'lib/armeabi-v7a/libstream_server.so'
+
+          # Avoid SIGPIPE false failures under 'set -o pipefail': grep can
+          # finish early while unzip is still writing the archive listing.
+          unzip -l "$APK" > /tmp/apk-list.txt
+          grep -q 'lib/arm64-v8a/libstream_server.so' /tmp/apk-list.txt
+          grep -q 'lib/armeabi-v7a/libstream_server.so' /tmp/apk-list.txt
+          grep -q 'lib/arm64-v8a/libc++_shared.so' /tmp/apk-list.txt
 
       - name: Prepare release asset
         run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.4-alpha.01-Android-Mobile-Compat.apk
@@ -123,3 +128,5 @@ jobs:
           else
             gh release create v0.7.4-alpha.01               --target '${{ github.sha }}'               --title 'Orvix v0.7.4-alpha.01 — Android Mobile Install Compatibility'               --prerelease               --notes 'Android Mobile-only compatibility hotfix. Windows, Android TV and macOS were intentionally not rebuilt. This build keeps Flutter 3.47 supported Android API 24+, uses the persistent Orvix signing certificate, v2/v3 APK signing, extracted native libraries and legacy JNI packaging for broader custom-ROM compatibility.'               "$APK"
           fi
+
+# retrigger: avoid pipefail/SIGPIPE false negative in APK verification
