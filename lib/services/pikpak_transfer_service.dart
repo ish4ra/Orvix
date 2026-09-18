@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+import 'secure_storage_factory.dart';
 import 'package:http/http.dart' as http;
 
 class PikPakTransferService {
@@ -9,7 +11,7 @@ class PikPakTransferService {
     http.Client? client,
     FlutterSecureStorage? storage,
   })  : _client = client ?? http.Client(),
-        _storage = storage ?? const FlutterSecureStorage();
+        _storage = storage ?? createOrvixSecureStorage();
 
   static const _clientId = 'YUMx5nI8ZU8Ap8pm';
   static const _clientVersion = '2.0.0';
