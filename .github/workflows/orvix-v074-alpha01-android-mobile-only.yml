@@ -165,3 +165,5 @@ jobs:
           This compatibility APK uses the same persistent Orvix signing certificate, adds v1 + v2 + v3 APK signatures, lowers minSdk metadata to API 23, and uses legacy extracted native-library packaging for broader LineageOS/custom-ROM installer compatibility.
 
           Test this single universal APK first. If LineageOS still reports the package as invalid, the APK itself has already passed zip, alignment, signature, manifest and native-library checks in CI; the next useful data is the exact Package Manager failure code from adb install."             "$APK"
+
+# retrigger after Android compatibility patch
