@@ -123,8 +123,16 @@ class AiSinhalaSubtitleService {
       <String, Future<void>>{};
   static final Map<String, String> _liveCueCache = <String, String>{};
 
-  static bool get canTranslate =>
-      Supabase.instance.client.auth.currentSession != null;
+  // This is Supabase's public legacy anon key, not a secret. Orvix uses it only
+  // when there is no signed-in user so the JWT-protected Edge Function can
+  // serve guest/free-streaming users without forcing an Orvix account.
+  static const _guestFunctionJwt =
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtwanVpc3hvZndxeGhibm5zeXpmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk2NTMxMDIsImV4cCI6MjEwNTIyOTEwMn0.cBlT4tgZW_WMlkmOagFo7PhtFXwS7ib9Yw9BECCrNew';
+  static final Uri _translationEndpoint = Uri.parse(
+    'https://kpjuisxofwqxhbnnsyzf.supabase.co/functions/v1/translate-subtitle-si',
+  );
+
+  static bool get canTranslate => true;
 
   static Future<AiPreparedSubtitle?> prepareBuffered({
     required MediaItem item,
@@ -169,11 +177,6 @@ class AiSinhalaSubtitleService {
     required _VideoProbe probe,
     void Function(String message)? onStatus,
   }) async {
-    if (!canTranslate) {
-      throw const AiSubtitleException(
-        'Sign in to your Orvix account to use AI Sinhala subtitles.',
-      );
-    }
     final imdbId = item.id.trim();
     if (!RegExp(r'^tt\d+$').hasMatch(imdbId)) {
       throw const AiSubtitleException(
@@ -488,13 +491,10 @@ class AiSinhalaSubtitleService {
 
     for (var attempt = 0; attempt < 3; attempt++) {
       try {
-        final response = await Supabase.instance.client.functions.invoke(
-          'translate-subtitle-si',
-          body: <String, dynamic>{
-            'title': prepared.title,
-            'segments': segments,
-          },
-        );
+        final response = await _invokeTranslation(<String, dynamic>{
+          'title': prepared.title,
+          'segments': segments,
+        });
         final data = response.data;
         if (response.status == 429 ||
             (data is Map && data['error'] == 'rate_limited')) {
@@ -560,30 +560,21 @@ class AiSinhalaSubtitleService {
   }) async {
     final clean = text.trim();
     if (clean.isEmpty) return '';
-    if (!canTranslate) {
-      throw const AiSubtitleException(
-        'Sign in to your Orvix account to use AI Sinhala subtitles.',
-      );
-    }
-
     final cacheKey = '$title|$clean';
     final cached = _liveCueCache[cacheKey];
     if (cached != null && cached.isNotEmpty) return cached;
 
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
-        final response = await Supabase.instance.client.functions.invoke(
-          'translate-subtitle-si',
-          body: <String, dynamic>{
-            'title': title,
-            'text': clean,
-            'context': context.reversed
-                .take(6)
-                .toList(growable: false)
-                .reversed
-                .toList(growable: false),
-          },
-        );
+        final response = await _invokeTranslation(<String, dynamic>{
+          'title': title,
+          'text': clean,
+          'context': context.reversed
+              .take(6)
+              .toList(growable: false)
+              .reversed
+              .toList(growable: false),
+        });
         final data = response.data;
         if (response.status == 429 ||
             (data is Map && data['error'] == 'rate_limited')) {
@@ -841,6 +832,42 @@ class AiSinhalaSubtitleService {
           ? '${item.kind.name}:${item.id}'
           : '${item.kind.name}:${item.id}:${episode.season}:${episode.episode}';
 
+  static Future<_TranslationResponse> _invokeTranslation(
+    Map<String, dynamic> body,
+  ) async {
+    final session = Supabase.instance.client.auth.currentSession;
+    if (session != null) {
+      final response = await Supabase.instance.client.functions.invoke(
+        'translate-subtitle-si',
+        body: body,
+      );
+      return _TranslationResponse(
+        status: response.status,
+        data: response.data,
+      );
+    }
+
+    final response = await http
+        .post(
+          _translationEndpoint,
+          headers: const {
+            'Authorization': 'Bearer $_guestFunctionJwt',
+            'apikey': _guestFunctionJwt,
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 25));
+
+    dynamic data;
+    try {
+      data = jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
+    } catch (_) {
+      data = <String, dynamic>{'error': 'invalid_function_response'};
+    }
+    return _TranslationResponse(status: response.statusCode, data: data);
+  }
+
   static void clearPreparedCache() {
     _preparedCache.clear();
     _translationWork.clear();
@@ -879,7 +906,17 @@ extension<T> on List<T> {
   T? get lastOrNull => isEmpty ? null : last;
 }
 
-class AiSubtitleException implements Exception {
+class _TranslationResponse {
+  const _TranslationResponse({
+    required this.status,
+    required this.data,
+  });
+
+  final int status;
+  final dynamic data;
+}
+
+$exceptionMarker
   const AiSubtitleException(this.message, {this.rateLimited = false});
 
   final String message;

@@ -4,6 +4,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
+import '../services/ai_sinhala_preferences_service.dart';
+import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/catalog_service.dart';
 import '../services/cloud_preferences_service.dart';
 import '../services/local_torrent_service.dart';
@@ -1887,6 +1889,42 @@ class _DetailsScreenState extends State<DetailsScreen> {
     int? expectedSizeBytes,
   }) async {
     if (!mounted) return;
+
+    AiPreparedSubtitle? preparedAiSubtitle;
+    final aiSinhalaPreferred = await AiSinhalaPreferencesService.isEnabled();
+
+    if (aiSinhalaPreferred) {
+      setState(() {
+        _resolving = true;
+        _resolveProgress = null;
+        _status = 'Finding source-matched English subtitles…';
+      });
+      try {
+        preparedAiSubtitle = await AiSinhalaSubtitleService.prepareBuffered(
+          item: item,
+          episode: episode,
+          videoUrl: url,
+          releaseHint: releaseHint,
+          expectedSizeBytes: expectedSizeBytes,
+          onStatus: (message) {
+            if (!mounted) return;
+            setState(() => _status = message);
+          },
+        );
+      } catch (_) {
+        // Do not block playback forever when an external release-matched text
+        // subtitle is unavailable. PlayerScreen will inspect the actual media
+        // for an embedded English text track and translate that live instead.
+        if (mounted) {
+          setState(() {
+            _status =
+                'No matched external subtitle — checking the video’s embedded English track…';
+          });
+        }
+      }
+    }
+
+    if (!mounted) return;
     setState(() {
       _resolving = false;
       _resolveProgress = null;
@@ -1906,6 +1944,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
           mediaState: widget.mediaState,
           item: item,
           episode: episode,
+          aiSubtitle: preparedAiSubtitle,
           releaseHint: releaseHint,
           expectedSizeBytes: expectedSizeBytes,
           nextEpisodeLabel: next == null ? null : '${next.label} ${next.title}',

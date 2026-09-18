@@ -249,11 +249,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     setState(() => _aiSinhalaRequested = true);
     await _setNativeSubtitleVisibility(false);
 
-    if (!AiSinhalaSubtitleService.canTranslate) {
-      if (mounted) setState(() => _aiSubtitleUnavailable = true);
-      return;
-    }
-
     if (widget.item == null) {
       final liveReady = await _tryEnableLiveAiFallback();
       if (mounted) setState(() => _aiSubtitleUnavailable = !liveReady);
@@ -317,7 +312,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<bool> _tryEnableLiveAiFallback() async {
     if (!_aiSinhalaRequested ||
         _subtitleChoiceOverridden ||
-        !AiSinhalaSubtitleService.canTranslate ||
         !mounted) {
       return false;
     }
