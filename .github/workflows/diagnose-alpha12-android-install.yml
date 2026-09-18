@@ -1,0 +1,99 @@
+name: Diagnose alpha.12 Android install
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.4-alpha.01
+    paths:
+      - '.github/workflows/diagnose-alpha12-android-install.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download released arm64 APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release download v0.7.3-alpha.12             --pattern 'Orvix-v0.7.3-alpha.12-Android-Mobile-arm64-v8a.apk'             --dir apk
+          ls -lh apk
+
+      - name: Locate Android build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)" >> "$GITHUB_ENV"
+          echo "AAPT=$(find "$ANDROID_HOME/build-tools" -type f \( -name aapt2 -o -name aapt \) | sort -V | tail -1)" >> "$GITHUB_ENV"
+          echo "ZIPALIGN=$(find "$ANDROID_HOME/build-tools" -type f -name zipalign | sort -V | tail -1)" >> "$GITHUB_ENV"
+
+      - name: Verify APK structure and signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=apk/Orvix-v0.7.3-alpha.12-Android-Mobile-arm64-v8a.apk
+          sha256sum "$APK"
+          unzip -t "$APK" >/dev/null
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          "$ZIPALIGN" -c -P 16 -v 4 "$APK"
+          "$AAPT" dump badging "$APK" | tee /tmp/badging.txt
+          grep '^package:' /tmp/badging.txt
+          grep '^sdkVersion:' /tmp/badging.txt || true
+          grep '^targetSdkVersion:' /tmp/badging.txt || true
+          grep '^native-code:' /tmp/badging.txt || true
+
+      - name: Inspect packaged native libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=apk/Orvix-v0.7.3-alpha.12-Android-Mobile-arm64-v8a.apk
+          rm -rf unpacked
+          mkdir unpacked
+          unzip -q "$APK" 'lib/arm64-v8a/*' -d unpacked
+          find unpacked/lib/arm64-v8a -maxdepth 1 -type f -name '*.so' -print | sort
+          for so in unpacked/lib/arm64-v8a/*.so; do
+            echo "===== $so ====="
+            file "$so"
+            readelf -lW "$so" | grep -E '^[[:space:]]*LOAD' || true
+            readelf -dW "$so" | grep NEEDED || true
+          done
+
+      - name: Check 16 KB ELF load alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess, sys
+
+          bad = []
+          for so in sorted(Path('unpacked/lib/arm64-v8a').glob('*.so')):
+              out = subprocess.check_output(['readelf','-lW',str(so)], text=True)
+              aligns = []
+              for line in out.splitlines():
+                  if line.lstrip().startswith('LOAD'):
+                      parts = line.split()
+                      # readelf -lW prints Align as the final column.
+                      try:
+                          align = int(parts[-1], 0)
+                      except Exception:
+                          continue
+                      aligns.append(align)
+              print(f'{so.name}: LOAD alignments = {[hex(x) for x in aligns]}')
+              if aligns and any(x < 0x4000 for x in aligns):
+                  bad.append((so.name, aligns))
+
+          if bad:
+              print('NATIVE_LIBS_BELOW_16K_ALIGNMENT:')
+              for name, aligns in bad:
+                  print(name, [hex(x) for x in aligns])
+              # Do not fail: this workflow is diagnostic and we want all logs.
+          else:
+              print('All LOAD segments are >= 16 KB aligned.')
+          PY
