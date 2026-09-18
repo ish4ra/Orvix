@@ -189,41 +189,52 @@ class AiSinhalaSubtitleService {
         : imdbId;
     final type = item.kind == MediaKind.movie ? 'movie' : 'series';
 
+    // AI Sinhala must never silently attach a generic movie/episode subtitle
+    // to a different video release. A wrong transcript can be offset, drift by
+    // frame-rate, or contain different cuts/recaps, none of which is safely
+    // repairable with a single sync value.
     final endpoints = <({Uri uri, String match})>[];
     final extras = <String>[];
-    if (probe.hash != null)
+    if (probe.hash != null) {
       extras.add('videoHash=${Uri.encodeComponent(probe.hash!)}');
+    }
     if (probe.size != null) extras.add('videoSize=${probe.size}');
     if (probe.fileName?.isNotEmpty == true) {
       extras.add('filename=${Uri.encodeComponent(probe.fileName!)}');
     }
-    if (extras.isNotEmpty) {
+
+    if (probe.hash != null) {
       endpoints.add((
         uri: Uri.parse(
           'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix/${extras.join('&')}.json',
         ),
-        match: probe.hash != null ? 'video-hash' : 'filename-size',
+        match: 'video-hash',
+      ));
+    } else if (probe.size != null && probe.fileName?.isNotEmpty == true) {
+      endpoints.add((
+        uri: Uri.parse(
+          'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix/${extras.join('&')}.json',
+        ),
+        match: 'filename-size',
       ));
     }
-    endpoints.add((
-      uri: Uri.parse(
-        'https://opensubtitles-v3.strem.io/subtitles/$type/$suffix.json',
-      ),
-      match: 'title-episode',
-    ));
+
+    if (endpoints.isEmpty) {
+      throw const AiSubtitleException(
+        'This stream does not expose enough release metadata for safe AI Sinhala subtitles.',
+      );
+    }
 
     List<AiSubtitleCue>? cues;
     String? sourceUrl;
-    var sourceMatch = 'title-episode';
+    var sourceMatch = endpoints.first.match;
     Object? lastError;
 
     for (final endpoint in endpoints) {
       onStatus?.call(
         endpoint.match == 'video-hash'
             ? 'Matching subtitles to this exact video file…'
-            : endpoint.match == 'filename-size'
-                ? 'Matching subtitles to this video release…'
-                : 'Finding the best English subtitle…',
+            : 'Matching subtitles to this exact release…',
       );
 
       List<String> candidates = const [];
@@ -240,8 +251,7 @@ class AiSinhalaSubtitleService {
       }
       if (candidates.isEmpty) continue;
 
-      for (final url
-          in candidates.take(endpoint.match == 'title-episode' ? 10 : 6)) {
+      for (final url in candidates.take(6)) {
         try {
           onStatus?.call('Checking the matched English subtitle…');
           final text = await _downloadSubtitle(url);
@@ -259,15 +269,16 @@ class AiSinhalaSubtitleService {
       if (cues != null && sourceUrl != null) break;
 
       // A provider can return stale/broken files for an otherwise exact query.
-      // Keep going to filename/title matching instead of failing the whole feature.
-      onStatus?.call('Trying another subtitle match…');
+      // Try another candidate from the same trusted release query, but never
+      // downgrade to a generic title/episode subtitle.
+      onStatus?.call('Trying another release-matched subtitle…');
     }
 
     if (cues == null || sourceUrl == null) {
       throw AiSubtitleException(
         lastError == null
-            ? 'No usable English text subtitle was found.'
-            : 'Could not prepare a usable English subtitle source.',
+            ? 'No release-matched English subtitle was found for this video.'
+            : 'Could not prepare a trusted English subtitle for this video.',
       );
     }
 
@@ -382,7 +393,1781 @@ class AiSinhalaSubtitleService {
     final titleTokens = _releaseTokens(item.title);
     final specificTokens = <String>{...preferredTokens}
       ..removeAll(titleTokens)
-      ..removeWhere((token) => RegExp(r'^(?:19|20)\d{2}$').hasMatch(token));
+      ..removeWhere((token) =>
+          RegExp(r'^(?:19|20)\d{2}
+    if (requireReleaseEvidence && specificTokens.isEmpty) {
+      return const [];
+    }
+
+    final ranked = <({String url, int score})>[];
+    for (final entry in entries.whereType<Map>()) {
+      final lang = (entry['lang'] ?? entry['language'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final english = lang == 'eng' ||
+          lang == 'en' ||
+          lang.startsWith('en-') ||
+          lang.contains('english');
+      if (!english) continue;
+      final url = entry['url']?.toString().trim() ?? '';
+      if (!url.startsWith('http')) continue;
+
+      final searchable = '${entry['label'] ?? ''} ${entry['id'] ?? ''} $url'
+          .toString()
+          .toLowerCase();
+      var score = 0;
+      var specificMatches = 0;
+      for (final token in preferredTokens) {
+        if (searchable.contains(token)) score += token.length >= 5 ? 3 : 1;
+      }
+      for (final token in specificTokens) {
+        if (searchable.contains(token)) {
+          specificMatches++;
+          score += token.length >= 5 ? 12 : 6;
+        }
+      }
+      if (specificMatches > 0) score += 30;
+      if (requireReleaseEvidence &&
+          specificTokens.isNotEmpty &&
+          specificMatches == 0) {
+        continue;
+      }
+      if (searchable.contains('forced')) score -= 12;
+      ranked.add((url: url, score: score));
+    }
+    ranked.sort((a, b) => b.score.compareTo(a.score));
+    return ranked.map((entry) => entry.url).toList(growable: false);
+  }
+
+  static Future<void> ensureTranslatedAround(
+    AiPreparedSubtitle prepared,
+    Duration position, {
+    int lookBehind = 4,
+    int lookAhead = 72,
+  }) async {
+    if (!canTranslate || prepared.cues.isEmpty) return;
+
+    for (var pass = 0; pass < 2; pass++) {
+      final center = prepared.cueIndexNear(position);
+      if (center < 0) return;
+      final start = math.max(0, center - lookBehind);
+      final end = math.min(prepared.cues.length, center + lookAhead + 1);
+      final missing = <int>[
+        for (var i = start; i < end; i++)
+          if (!prepared.isTranslatedAt(i)) i,
+      ];
+      if (missing.isEmpty) return;
+
+      final existing = _translationWork[prepared.key];
+      if (existing != null) {
+        await existing;
+        continue;
+      }
+
+      final future = _translateMissingIndices(prepared, missing);
+      _translationWork[prepared.key] = future;
+      try {
+        await future;
+      } finally {
+        if (identical(_translationWork[prepared.key], future)) {
+          _translationWork.remove(prepared.key);
+        }
+      }
+      return;
+    }
+  }
+
+  static Future<void> _translateMissingIndices(
+    AiPreparedSubtitle prepared,
+    List<int> indices,
+  ) async {
+    const batchSize = 36;
+    for (var cursor = 0; cursor < indices.length; cursor += batchSize) {
+      final end = math.min(cursor + batchSize, indices.length);
+      await _translateIndices(prepared, indices.sublist(cursor, end));
+    }
+  }
+
+  static Future<void> _translateRange(
+    AiPreparedSubtitle prepared,
+    int start,
+    int end,
+  ) async {
+    if (start >= end) return;
+    final indices = <int>[
+      for (var i = start; i < end; i++)
+        if (!prepared.isTranslatedAt(i)) i,
+    ];
+    if (indices.isEmpty) return;
+    await _translateIndices(prepared, indices);
+  }
+
+  static Future<void> _translateIndices(
+    AiPreparedSubtitle prepared,
+    List<int> indices,
+  ) async {
+    if (indices.isEmpty) return;
+    final segments = indices
+        .map((index) => prepared.cues[index].source)
+        .toList(growable: false);
+
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final response = await _invokeTranslation(<String, dynamic>{
+          'title': prepared.title,
+          'segments': segments,
+        });
+        final data = response.data;
+        if (response.status == 429 ||
+            (data is Map && data['error'] == 'rate_limited')) {
+          throw const AiSubtitleException(
+            'AI Sinhala subtitle limit reached.',
+            rateLimited: true,
+          );
+        }
+        if (response.status < 200 || response.status >= 300) {
+          if (attempt < 2) {
+            await Future<void>.delayed(
+              Duration(milliseconds: 500 * (attempt + 1)),
+            );
+            continue;
+          }
+          throw const AiSubtitleException(
+            'Could not translate subtitle buffer.',
+          );
+        }
+
+        final raw = data is Map ? data['translations'] : null;
+        if (raw is! List || raw.length != indices.length) {
+          if (attempt < 2) {
+            await Future<void>.delayed(
+              Duration(milliseconds: 500 * (attempt + 1)),
+            );
+            continue;
+          }
+          throw const AiSubtitleException(
+            'AI subtitle buffer was incomplete.',
+          );
+        }
+
+        for (var i = 0; i < indices.length; i++) {
+          final value = raw[i]?.toString().trim() ?? '';
+          if (value.isNotEmpty) {
+            prepared.cues[indices[i]].translation = value;
+          }
+        }
+        return;
+      } on AiSubtitleException catch (error) {
+        if (error.rateLimited || attempt == 2) rethrow;
+        await Future<void>.delayed(
+          Duration(milliseconds: 500 * (attempt + 1)),
+        );
+      } catch (_) {
+        if (attempt == 2) {
+          throw const AiSubtitleException(
+            'Could not translate subtitle buffer.',
+          );
+        }
+        await Future<void>.delayed(
+          Duration(milliseconds: 500 * (attempt + 1)),
+        );
+      }
+    }
+  }
+
+  static Future<String> translateCue({
+    required String title,
+    required String text,
+    List<String> context = const <String>[],
+  }) async {
+    final clean = text.trim();
+    if (clean.isEmpty) return '';
+    final cacheKey = '$title|$clean';
+    final cached = _liveCueCache[cacheKey];
+    if (cached != null && cached.isNotEmpty) return cached;
+
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final response = await _invokeTranslation(<String, dynamic>{
+          'title': title,
+          'text': clean,
+          'context': context.reversed
+              .take(6)
+              .toList(growable: false)
+              .reversed
+              .toList(growable: false),
+        });
+        final data = response.data;
+        if (response.status == 429 ||
+            (data is Map && data['error'] == 'rate_limited')) {
+          throw const AiSubtitleException(
+            'AI Sinhala subtitle limit reached.',
+            rateLimited: true,
+          );
+        }
+        if (response.status < 200 || response.status >= 300) {
+          if (attempt == 0) {
+            await Future<void>.delayed(const Duration(milliseconds: 400));
+            continue;
+          }
+          throw const AiSubtitleException(
+            'Could not translate the current subtitle cue.',
+          );
+        }
+        final translated =
+            data is Map ? data['translation']?.toString().trim() ?? '' : '';
+        if (translated.isEmpty) {
+          if (attempt == 0) {
+            await Future<void>.delayed(const Duration(milliseconds: 400));
+            continue;
+          }
+          throw const AiSubtitleException(
+            'AI returned an empty subtitle cue.',
+          );
+        }
+        _liveCueCache[cacheKey] = translated;
+        return translated;
+      } on AiSubtitleException catch (error) {
+        if (error.rateLimited || attempt == 1) rethrow;
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+      } catch (_) {
+        if (attempt == 1) {
+          throw const AiSubtitleException(
+            'Could not translate the current subtitle cue.',
+          );
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+      }
+    }
+    throw const AiSubtitleException(
+      'Could not translate the current subtitle cue.',
+    );
+  }
+
+  static Future<_VideoProbe> _probeVideo(
+    String rawUrl, {
+    String? fallbackFileName,
+    int? fallbackSize,
+  }) async {
+    final uri = Uri.tryParse(rawUrl);
+    final fallbackName = fallbackFileName?.trim().isNotEmpty == true
+        ? fallbackFileName!.trim()
+        : uri == null
+            ? null
+            : _fileNameFromUri(uri);
+    if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https')) {
+      return _VideoProbe(fileName: fallbackName, size: fallbackSize);
+    }
+    final client = http.Client();
+    try {
+      final first = await _readRangeWithRetry(
+        client,
+        uri,
+        0,
+        65535,
+        attempts: 3,
+      );
+      if (first == null) {
+        return _VideoProbe(fileName: fallbackName, size: fallbackSize);
+      }
+      final fileName = _fileNameFromHeaders(first.headers) ?? fallbackName;
+      final size = _totalSize(first.statusCode, first.headers) ?? fallbackSize;
+      if (first.statusCode != 206 ||
+          size == null ||
+          size < 131072 ||
+          first.bytes.length < 65536) {
+        return _VideoProbe(fileName: fileName, size: size);
+      }
+      final tail = await _readRangeWithRetry(
+        client,
+        uri,
+        size - 65536,
+        size - 1,
+        attempts: 4,
+        requirePartial: true,
+      );
+      if (tail == null || tail.statusCode != 206 || tail.bytes.length < 65536) {
+        return _VideoProbe(fileName: fileName, size: size);
+      }
+      return _VideoProbe(
+        fileName: fileName,
+        size: size,
+        hash: _openSubtitlesHash(size, first.bytes, tail.bytes),
+      );
+    } catch (_) {
+      return _VideoProbe(fileName: fallbackName, size: fallbackSize);
+    } finally {
+      client.close();
+    }
+  }
+
+  static Future<_RangeRead?> _readRangeWithRetry(
+    http.Client client,
+    Uri uri,
+    int start,
+    int end, {
+    int attempts = 3,
+    bool requirePartial = false,
+  }) async {
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      try {
+        final value = await _readRange(client, uri, start, end);
+        final expected = end - start + 1;
+        final usable = value != null &&
+            value.bytes.length >= expected &&
+            (!requirePartial || value.statusCode == 206);
+        if (usable) return value;
+      } catch (_) {}
+      if (attempt + 1 < attempts) {
+        await Future<void>.delayed(
+          Duration(milliseconds: 650 * (attempt + 1)),
+        );
+      }
+    }
+    return null;
+  }
+
+  static Future<_RangeRead?> _readRange(
+    http.Client client,
+    Uri uri,
+    int start,
+    int end,
+  ) async {
+    final request = http.Request('GET', uri)
+      ..headers['Range'] = 'bytes=$start-$end'
+      ..headers['Accept-Encoding'] = 'identity';
+    final response =
+        await client.send(request).timeout(const Duration(seconds: 10));
+    if (response.statusCode < 200 || response.statusCode >= 400) return null;
+    final limit = end - start + 1;
+    final bytes = <int>[];
+    await for (final chunk in response.stream) {
+      final remaining = limit - bytes.length;
+      if (remaining <= 0) break;
+      if (chunk.length <= remaining) {
+        bytes.addAll(chunk);
+      } else {
+        bytes.addAll(chunk.take(remaining));
+      }
+      if (bytes.length >= limit) break;
+    }
+    return _RangeRead(
+      statusCode: response.statusCode,
+      headers: response.headers,
+      bytes: bytes,
+    );
+  }
+
+  static int? _totalSize(int statusCode, Map<String, String> headers) {
+    final contentRange = headers['content-range'];
+    if (contentRange != null) {
+      final match = RegExp(r'/(\d+)\s*$').firstMatch(contentRange);
+      final value = match == null ? null : int.tryParse(match.group(1)!);
+      if (value != null && value > 0) return value;
+    }
+    if (statusCode == 200) {
+      final length = int.tryParse(headers['content-length'] ?? '');
+      if (length != null && length > 0) return length;
+    }
+    return null;
+  }
+
+  static String? _fileNameFromHeaders(Map<String, String> headers) {
+    final disposition = headers['content-disposition'];
+    if (disposition == null || disposition.isEmpty) return null;
+    final utf = RegExp(r"filename\*=UTF-8''([^;]+)", caseSensitive: false)
+        .firstMatch(disposition);
+    if (utf != null) return Uri.decodeComponent(utf.group(1)!.trim());
+    final plain = RegExp(r'filename="?([^";]+)"?', caseSensitive: false)
+        .firstMatch(disposition);
+    return plain?.group(1)?.trim();
+  }
+
+  static String? _fileNameFromUri(Uri uri) {
+    if (uri.pathSegments.isEmpty) return null;
+    final value = Uri.decodeComponent(uri.pathSegments.last).trim();
+    return value.isEmpty ? null : value;
+  }
+
+  static String _openSubtitlesHash(
+    int size,
+    List<int> first,
+    List<int> last,
+  ) {
+    const mask = 0xFFFFFFFFFFFFFFFF;
+    var hash = size & mask;
+    for (var offset = 0; offset + 7 < 65536; offset += 8) {
+      hash = (hash + _littleEndian64(first, offset)) & mask;
+      hash = (hash + _littleEndian64(last, offset)) & mask;
+    }
+    return hash.toRadixString(16).padLeft(16, '0');
+  }
+
+  static int _littleEndian64(List<int> bytes, int offset) {
+    var value = 0;
+    for (var i = 0; i < 8; i++) {
+      value |= (bytes[offset + i] & 0xff) << (8 * i);
+    }
+    return value;
+  }
+
+  static Future<String> _downloadSubtitle(String url) async {
+    final response = await _httpGetWithRetry(
+      Uri.parse(url),
+      timeout: const Duration(seconds: 15),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw const AiSubtitleException('Subtitle download failed.');
+    }
+    List<int> bytes = response.bodyBytes;
+    if (bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
+      bytes = gzip.decode(bytes);
+    }
+    return utf8.decode(bytes, allowMalformed: true);
+  }
+
+  static List<AiSubtitleCue> _parseSubtitle(String input) {
+    var text = input
+        .replaceFirst('\uFEFF', '')
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n');
+    if (text.trimLeft().startsWith('WEBVTT')) {
+      text = text.replaceFirst(RegExp(r'^\s*WEBVTT[^\n]*\n'), '');
+    }
+    final blocks = text.split(RegExp(r'\n\s*\n'));
+    final cues = <AiSubtitleCue>[];
+    for (final block in blocks) {
+      final lines = block
+          .split('\n')
+          .map((line) => line.trimRight())
+          .toList(growable: false);
+      final timingIndex = lines.indexWhere((line) => line.contains('-->'));
+      if (timingIndex < 0) continue;
+      final timing = lines[timingIndex].split('-->');
+      if (timing.length < 2) continue;
+      final start = _parseTimestamp(timing[0].trim());
+      final endText = timing[1].trim().split(RegExp(r'\s+')).first;
+      final end = _parseTimestamp(endText);
+      if (start == null || end == null || end <= start) continue;
+      final cueText = lines
+          .skip(timingIndex + 1)
+          .join('\n')
+          .replaceAll(RegExp(r'<[^>]+>'), '')
+          .replaceAll(RegExp(r'\{\\[^}]+\}'), '')
+          .trim();
+      if (cueText.isEmpty) continue;
+      cues.add(AiSubtitleCue(start: start, end: end, source: cueText));
+    }
+    cues.sort((a, b) => a.start.compareTo(b.start));
+    return cues;
+  }
+
+  static Duration? _parseTimestamp(String raw) {
+    final clean = raw.replaceAll(',', '.').trim();
+    final parts = clean.split(':');
+    if (parts.length < 2 || parts.length > 3) return null;
+    final secondsPart = parts.last;
+    final secondPieces = secondsPart.split('.');
+    final seconds = int.tryParse(secondPieces.first);
+    if (seconds == null) return null;
+    var milliseconds = 0;
+    if (secondPieces.length > 1) {
+      final fraction = secondPieces[1].replaceAll(RegExp(r'\D'), '');
+      if (fraction.isNotEmpty) {
+        milliseconds =
+            int.tryParse(fraction.padRight(3, '0').substring(0, 3)) ?? 0;
+      }
+    }
+    final minutes = int.tryParse(parts[parts.length - 2]) ?? 0;
+    final hours = parts.length == 3 ? int.tryParse(parts.first) ?? 0 : 0;
+    return Duration(
+      hours: hours,
+      minutes: minutes,
+      seconds: seconds,
+      milliseconds: milliseconds,
+    );
+  }
+
+  static String _mediaKey(MediaItem item, EpisodeItem? episode) =>
+      episode == null
+          ? '${item.kind.name}:${item.id}'
+          : '${item.kind.name}:${item.id}:${episode.season}:${episode.episode}';
+
+  static Future<_TranslationResponse> _invokeTranslation(
+    Map<String, dynamic> body,
+  ) async {
+    final session = Supabase.instance.client.auth.currentSession;
+    if (session != null) {
+      final response = await Supabase.instance.client.functions.invoke(
+        'translate-subtitle-si',
+        body: body,
+      );
+      return _TranslationResponse(
+        status: response.status,
+        data: response.data,
+      );
+    }
+
+    final response = await http
+        .post(
+          _translationEndpoint,
+          headers: const {
+            'Authorization': 'Bearer $_guestFunctionJwt',
+            'apikey': _guestFunctionJwt,
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 25));
+
+    dynamic data;
+    try {
+      data = jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
+    } catch (_) {
+      data = <String, dynamic>{'error': 'invalid_function_response'};
+    }
+    return _TranslationResponse(status: response.statusCode, data: data);
+  }
+
+  static void clearPreparedCache() {
+    _preparedCache.clear();
+    _translationWork.clear();
+    _liveCueCache.clear();
+  }
+}
+
+class _VideoProbe {
+  const _VideoProbe({this.fileName, this.size, this.hash});
+
+  final String? fileName;
+  final int? size;
+  final String? hash;
+}
+
+class _RangeRead {
+  const _RangeRead({
+    required this.statusCode,
+    required this.headers,
+    required this.bytes,
+  });
+
+  final int statusCode;
+  final Map<String, String> headers;
+  final List<int> bytes;
+}
+
+String _normalizeCue(String value) => value
+    .toLowerCase()
+    .replaceAll(RegExp(r'<[^>]+>'), '')
+    .replaceAll(RegExp(r"[^a-z0-9\s'’-]"), ' ')
+    .replaceAll(RegExp(r'\s+'), ' ')
+    .trim();
+
+extension<T> on List<T> {
+  T? get lastOrNull => isEmpty ? null : last;
+}
+
+class _TranslationResponse {
+  const _TranslationResponse({
+    required this.status,
+    required this.data,
+  });
+
+  final int status;
+  final dynamic data;
+}
+
+class AiSubtitleException implements Exception {
+  const AiSubtitleException(this.message, {this.rateLimited = false});
+
+  final String message;
+  final bool rateLimited;
+
+  @override
+  String toString() => message;
+}
+).hasMatch(token) ||
+          RegExp(r'^s\d{1,2}e\d{1,3}
+    final ranked = <({String url, int score})>[];
+    for (final entry in entries.whereType<Map>()) {
+      final lang = (entry['lang'] ?? entry['language'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final english = lang == 'eng' ||
+          lang == 'en' ||
+          lang.startsWith('en-') ||
+          lang.contains('english');
+      if (!english) continue;
+      final url = entry['url']?.toString().trim() ?? '';
+      if (!url.startsWith('http')) continue;
+
+      final searchable = '${entry['label'] ?? ''} ${entry['id'] ?? ''} $url'
+          .toString()
+          .toLowerCase();
+      var score = 0;
+      var specificMatches = 0;
+      for (final token in preferredTokens) {
+        if (searchable.contains(token)) score += token.length >= 5 ? 3 : 1;
+      }
+      for (final token in specificTokens) {
+        if (searchable.contains(token)) {
+          specificMatches++;
+          score += token.length >= 5 ? 12 : 6;
+        }
+      }
+      if (specificMatches > 0) score += 30;
+      if (requireReleaseEvidence &&
+          specificTokens.isNotEmpty &&
+          specificMatches == 0) {
+        continue;
+      }
+      if (searchable.contains('forced')) score -= 12;
+      ranked.add((url: url, score: score));
+    }
+    ranked.sort((a, b) => b.score.compareTo(a.score));
+    return ranked.map((entry) => entry.url).toList(growable: false);
+  }
+
+  static Future<void> ensureTranslatedAround(
+    AiPreparedSubtitle prepared,
+    Duration position, {
+    int lookBehind = 4,
+    int lookAhead = 72,
+  }) async {
+    if (!canTranslate || prepared.cues.isEmpty) return;
+
+    for (var pass = 0; pass < 2; pass++) {
+      final center = prepared.cueIndexNear(position);
+      if (center < 0) return;
+      final start = math.max(0, center - lookBehind);
+      final end = math.min(prepared.cues.length, center + lookAhead + 1);
+      final missing = <int>[
+        for (var i = start; i < end; i++)
+          if (!prepared.isTranslatedAt(i)) i,
+      ];
+      if (missing.isEmpty) return;
+
+      final existing = _translationWork[prepared.key];
+      if (existing != null) {
+        await existing;
+        continue;
+      }
+
+      final future = _translateMissingIndices(prepared, missing);
+      _translationWork[prepared.key] = future;
+      try {
+        await future;
+      } finally {
+        if (identical(_translationWork[prepared.key], future)) {
+          _translationWork.remove(prepared.key);
+        }
+      }
+      return;
+    }
+  }
+
+  static Future<void> _translateMissingIndices(
+    AiPreparedSubtitle prepared,
+    List<int> indices,
+  ) async {
+    const batchSize = 36;
+    for (var cursor = 0; cursor < indices.length; cursor += batchSize) {
+      final end = math.min(cursor + batchSize, indices.length);
+      await _translateIndices(prepared, indices.sublist(cursor, end));
+    }
+  }
+
+  static Future<void> _translateRange(
+    AiPreparedSubtitle prepared,
+    int start,
+    int end,
+  ) async {
+    if (start >= end) return;
+    final indices = <int>[
+      for (var i = start; i < end; i++)
+        if (!prepared.isTranslatedAt(i)) i,
+    ];
+    if (indices.isEmpty) return;
+    await _translateIndices(prepared, indices);
+  }
+
+  static Future<void> _translateIndices(
+    AiPreparedSubtitle prepared,
+    List<int> indices,
+  ) async {
+    if (indices.isEmpty) return;
+    final segments = indices
+        .map((index) => prepared.cues[index].source)
+        .toList(growable: false);
+
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final response = await _invokeTranslation(<String, dynamic>{
+          'title': prepared.title,
+          'segments': segments,
+        });
+        final data = response.data;
+        if (response.status == 429 ||
+            (data is Map && data['error'] == 'rate_limited')) {
+          throw const AiSubtitleException(
+            'AI Sinhala subtitle limit reached.',
+            rateLimited: true,
+          );
+        }
+        if (response.status < 200 || response.status >= 300) {
+          if (attempt < 2) {
+            await Future<void>.delayed(
+              Duration(milliseconds: 500 * (attempt + 1)),
+            );
+            continue;
+          }
+          throw const AiSubtitleException(
+            'Could not translate subtitle buffer.',
+          );
+        }
+
+        final raw = data is Map ? data['translations'] : null;
+        if (raw is! List || raw.length != indices.length) {
+          if (attempt < 2) {
+            await Future<void>.delayed(
+              Duration(milliseconds: 500 * (attempt + 1)),
+            );
+            continue;
+          }
+          throw const AiSubtitleException(
+            'AI subtitle buffer was incomplete.',
+          );
+        }
+
+        for (var i = 0; i < indices.length; i++) {
+          final value = raw[i]?.toString().trim() ?? '';
+          if (value.isNotEmpty) {
+            prepared.cues[indices[i]].translation = value;
+          }
+        }
+        return;
+      } on AiSubtitleException catch (error) {
+        if (error.rateLimited || attempt == 2) rethrow;
+        await Future<void>.delayed(
+          Duration(milliseconds: 500 * (attempt + 1)),
+        );
+      } catch (_) {
+        if (attempt == 2) {
+          throw const AiSubtitleException(
+            'Could not translate subtitle buffer.',
+          );
+        }
+        await Future<void>.delayed(
+          Duration(milliseconds: 500 * (attempt + 1)),
+        );
+      }
+    }
+  }
+
+  static Future<String> translateCue({
+    required String title,
+    required String text,
+    List<String> context = const <String>[],
+  }) async {
+    final clean = text.trim();
+    if (clean.isEmpty) return '';
+    final cacheKey = '$title|$clean';
+    final cached = _liveCueCache[cacheKey];
+    if (cached != null && cached.isNotEmpty) return cached;
+
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final response = await _invokeTranslation(<String, dynamic>{
+          'title': title,
+          'text': clean,
+          'context': context.reversed
+              .take(6)
+              .toList(growable: false)
+              .reversed
+              .toList(growable: false),
+        });
+        final data = response.data;
+        if (response.status == 429 ||
+            (data is Map && data['error'] == 'rate_limited')) {
+          throw const AiSubtitleException(
+            'AI Sinhala subtitle limit reached.',
+            rateLimited: true,
+          );
+        }
+        if (response.status < 200 || response.status >= 300) {
+          if (attempt == 0) {
+            await Future<void>.delayed(const Duration(milliseconds: 400));
+            continue;
+          }
+          throw const AiSubtitleException(
+            'Could not translate the current subtitle cue.',
+          );
+        }
+        final translated =
+            data is Map ? data['translation']?.toString().trim() ?? '' : '';
+        if (translated.isEmpty) {
+          if (attempt == 0) {
+            await Future<void>.delayed(const Duration(milliseconds: 400));
+            continue;
+          }
+          throw const AiSubtitleException(
+            'AI returned an empty subtitle cue.',
+          );
+        }
+        _liveCueCache[cacheKey] = translated;
+        return translated;
+      } on AiSubtitleException catch (error) {
+        if (error.rateLimited || attempt == 1) rethrow;
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+      } catch (_) {
+        if (attempt == 1) {
+          throw const AiSubtitleException(
+            'Could not translate the current subtitle cue.',
+          );
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+      }
+    }
+    throw const AiSubtitleException(
+      'Could not translate the current subtitle cue.',
+    );
+  }
+
+  static Future<_VideoProbe> _probeVideo(
+    String rawUrl, {
+    String? fallbackFileName,
+    int? fallbackSize,
+  }) async {
+    final uri = Uri.tryParse(rawUrl);
+    final fallbackName = fallbackFileName?.trim().isNotEmpty == true
+        ? fallbackFileName!.trim()
+        : uri == null
+            ? null
+            : _fileNameFromUri(uri);
+    if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https')) {
+      return _VideoProbe(fileName: fallbackName, size: fallbackSize);
+    }
+    final client = http.Client();
+    try {
+      final first = await _readRangeWithRetry(
+        client,
+        uri,
+        0,
+        65535,
+        attempts: 3,
+      );
+      if (first == null) {
+        return _VideoProbe(fileName: fallbackName, size: fallbackSize);
+      }
+      final fileName = _fileNameFromHeaders(first.headers) ?? fallbackName;
+      final size = _totalSize(first.statusCode, first.headers) ?? fallbackSize;
+      if (first.statusCode != 206 ||
+          size == null ||
+          size < 131072 ||
+          first.bytes.length < 65536) {
+        return _VideoProbe(fileName: fileName, size: size);
+      }
+      final tail = await _readRangeWithRetry(
+        client,
+        uri,
+        size - 65536,
+        size - 1,
+        attempts: 4,
+        requirePartial: true,
+      );
+      if (tail == null || tail.statusCode != 206 || tail.bytes.length < 65536) {
+        return _VideoProbe(fileName: fileName, size: size);
+      }
+      return _VideoProbe(
+        fileName: fileName,
+        size: size,
+        hash: _openSubtitlesHash(size, first.bytes, tail.bytes),
+      );
+    } catch (_) {
+      return _VideoProbe(fileName: fallbackName, size: fallbackSize);
+    } finally {
+      client.close();
+    }
+  }
+
+  static Future<_RangeRead?> _readRangeWithRetry(
+    http.Client client,
+    Uri uri,
+    int start,
+    int end, {
+    int attempts = 3,
+    bool requirePartial = false,
+  }) async {
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      try {
+        final value = await _readRange(client, uri, start, end);
+        final expected = end - start + 1;
+        final usable = value != null &&
+            value.bytes.length >= expected &&
+            (!requirePartial || value.statusCode == 206);
+        if (usable) return value;
+      } catch (_) {}
+      if (attempt + 1 < attempts) {
+        await Future<void>.delayed(
+          Duration(milliseconds: 650 * (attempt + 1)),
+        );
+      }
+    }
+    return null;
+  }
+
+  static Future<_RangeRead?> _readRange(
+    http.Client client,
+    Uri uri,
+    int start,
+    int end,
+  ) async {
+    final request = http.Request('GET', uri)
+      ..headers['Range'] = 'bytes=$start-$end'
+      ..headers['Accept-Encoding'] = 'identity';
+    final response =
+        await client.send(request).timeout(const Duration(seconds: 10));
+    if (response.statusCode < 200 || response.statusCode >= 400) return null;
+    final limit = end - start + 1;
+    final bytes = <int>[];
+    await for (final chunk in response.stream) {
+      final remaining = limit - bytes.length;
+      if (remaining <= 0) break;
+      if (chunk.length <= remaining) {
+        bytes.addAll(chunk);
+      } else {
+        bytes.addAll(chunk.take(remaining));
+      }
+      if (bytes.length >= limit) break;
+    }
+    return _RangeRead(
+      statusCode: response.statusCode,
+      headers: response.headers,
+      bytes: bytes,
+    );
+  }
+
+  static int? _totalSize(int statusCode, Map<String, String> headers) {
+    final contentRange = headers['content-range'];
+    if (contentRange != null) {
+      final match = RegExp(r'/(\d+)\s*$').firstMatch(contentRange);
+      final value = match == null ? null : int.tryParse(match.group(1)!);
+      if (value != null && value > 0) return value;
+    }
+    if (statusCode == 200) {
+      final length = int.tryParse(headers['content-length'] ?? '');
+      if (length != null && length > 0) return length;
+    }
+    return null;
+  }
+
+  static String? _fileNameFromHeaders(Map<String, String> headers) {
+    final disposition = headers['content-disposition'];
+    if (disposition == null || disposition.isEmpty) return null;
+    final utf = RegExp(r"filename\*=UTF-8''([^;]+)", caseSensitive: false)
+        .firstMatch(disposition);
+    if (utf != null) return Uri.decodeComponent(utf.group(1)!.trim());
+    final plain = RegExp(r'filename="?([^";]+)"?', caseSensitive: false)
+        .firstMatch(disposition);
+    return plain?.group(1)?.trim();
+  }
+
+  static String? _fileNameFromUri(Uri uri) {
+    if (uri.pathSegments.isEmpty) return null;
+    final value = Uri.decodeComponent(uri.pathSegments.last).trim();
+    return value.isEmpty ? null : value;
+  }
+
+  static String _openSubtitlesHash(
+    int size,
+    List<int> first,
+    List<int> last,
+  ) {
+    const mask = 0xFFFFFFFFFFFFFFFF;
+    var hash = size & mask;
+    for (var offset = 0; offset + 7 < 65536; offset += 8) {
+      hash = (hash + _littleEndian64(first, offset)) & mask;
+      hash = (hash + _littleEndian64(last, offset)) & mask;
+    }
+    return hash.toRadixString(16).padLeft(16, '0');
+  }
+
+  static int _littleEndian64(List<int> bytes, int offset) {
+    var value = 0;
+    for (var i = 0; i < 8; i++) {
+      value |= (bytes[offset + i] & 0xff) << (8 * i);
+    }
+    return value;
+  }
+
+  static Future<String> _downloadSubtitle(String url) async {
+    final response = await _httpGetWithRetry(
+      Uri.parse(url),
+      timeout: const Duration(seconds: 15),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw const AiSubtitleException('Subtitle download failed.');
+    }
+    List<int> bytes = response.bodyBytes;
+    if (bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
+      bytes = gzip.decode(bytes);
+    }
+    return utf8.decode(bytes, allowMalformed: true);
+  }
+
+  static List<AiSubtitleCue> _parseSubtitle(String input) {
+    var text = input
+        .replaceFirst('\uFEFF', '')
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n');
+    if (text.trimLeft().startsWith('WEBVTT')) {
+      text = text.replaceFirst(RegExp(r'^\s*WEBVTT[^\n]*\n'), '');
+    }
+    final blocks = text.split(RegExp(r'\n\s*\n'));
+    final cues = <AiSubtitleCue>[];
+    for (final block in blocks) {
+      final lines = block
+          .split('\n')
+          .map((line) => line.trimRight())
+          .toList(growable: false);
+      final timingIndex = lines.indexWhere((line) => line.contains('-->'));
+      if (timingIndex < 0) continue;
+      final timing = lines[timingIndex].split('-->');
+      if (timing.length < 2) continue;
+      final start = _parseTimestamp(timing[0].trim());
+      final endText = timing[1].trim().split(RegExp(r'\s+')).first;
+      final end = _parseTimestamp(endText);
+      if (start == null || end == null || end <= start) continue;
+      final cueText = lines
+          .skip(timingIndex + 1)
+          .join('\n')
+          .replaceAll(RegExp(r'<[^>]+>'), '')
+          .replaceAll(RegExp(r'\{\\[^}]+\}'), '')
+          .trim();
+      if (cueText.isEmpty) continue;
+      cues.add(AiSubtitleCue(start: start, end: end, source: cueText));
+    }
+    cues.sort((a, b) => a.start.compareTo(b.start));
+    return cues;
+  }
+
+  static Duration? _parseTimestamp(String raw) {
+    final clean = raw.replaceAll(',', '.').trim();
+    final parts = clean.split(':');
+    if (parts.length < 2 || parts.length > 3) return null;
+    final secondsPart = parts.last;
+    final secondPieces = secondsPart.split('.');
+    final seconds = int.tryParse(secondPieces.first);
+    if (seconds == null) return null;
+    var milliseconds = 0;
+    if (secondPieces.length > 1) {
+      final fraction = secondPieces[1].replaceAll(RegExp(r'\D'), '');
+      if (fraction.isNotEmpty) {
+        milliseconds =
+            int.tryParse(fraction.padRight(3, '0').substring(0, 3)) ?? 0;
+      }
+    }
+    final minutes = int.tryParse(parts[parts.length - 2]) ?? 0;
+    final hours = parts.length == 3 ? int.tryParse(parts.first) ?? 0 : 0;
+    return Duration(
+      hours: hours,
+      minutes: minutes,
+      seconds: seconds,
+      milliseconds: milliseconds,
+    );
+  }
+
+  static String _mediaKey(MediaItem item, EpisodeItem? episode) =>
+      episode == null
+          ? '${item.kind.name}:${item.id}'
+          : '${item.kind.name}:${item.id}:${episode.season}:${episode.episode}';
+
+  static Future<_TranslationResponse> _invokeTranslation(
+    Map<String, dynamic> body,
+  ) async {
+    final session = Supabase.instance.client.auth.currentSession;
+    if (session != null) {
+      final response = await Supabase.instance.client.functions.invoke(
+        'translate-subtitle-si',
+        body: body,
+      );
+      return _TranslationResponse(
+        status: response.status,
+        data: response.data,
+      );
+    }
+
+    final response = await http
+        .post(
+          _translationEndpoint,
+          headers: const {
+            'Authorization': 'Bearer $_guestFunctionJwt',
+            'apikey': _guestFunctionJwt,
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 25));
+
+    dynamic data;
+    try {
+      data = jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
+    } catch (_) {
+      data = <String, dynamic>{'error': 'invalid_function_response'};
+    }
+    return _TranslationResponse(status: response.statusCode, data: data);
+  }
+
+  static void clearPreparedCache() {
+    _preparedCache.clear();
+    _translationWork.clear();
+    _liveCueCache.clear();
+  }
+}
+
+class _VideoProbe {
+  const _VideoProbe({this.fileName, this.size, this.hash});
+
+  final String? fileName;
+  final int? size;
+  final String? hash;
+}
+
+class _RangeRead {
+  const _RangeRead({
+    required this.statusCode,
+    required this.headers,
+    required this.bytes,
+  });
+
+  final int statusCode;
+  final Map<String, String> headers;
+  final List<int> bytes;
+}
+
+String _normalizeCue(String value) => value
+    .toLowerCase()
+    .replaceAll(RegExp(r'<[^>]+>'), '')
+    .replaceAll(RegExp(r"[^a-z0-9\s'’-]"), ' ')
+    .replaceAll(RegExp(r'\s+'), ' ')
+    .trim();
+
+extension<T> on List<T> {
+  T? get lastOrNull => isEmpty ? null : last;
+}
+
+class _TranslationResponse {
+  const _TranslationResponse({
+    required this.status,
+    required this.data,
+  });
+
+  final int status;
+  final dynamic data;
+}
+
+class AiSubtitleException implements Exception {
+  const AiSubtitleException(this.message, {this.rateLimited = false});
+
+  final String message;
+  final bool rateLimited;
+
+  @override
+  String toString() => message;
+}
+).hasMatch(token) ||
+          RegExp(r'^\d{1,2}x\d{1,3}
+    final ranked = <({String url, int score})>[];
+    for (final entry in entries.whereType<Map>()) {
+      final lang = (entry['lang'] ?? entry['language'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final english = lang == 'eng' ||
+          lang == 'en' ||
+          lang.startsWith('en-') ||
+          lang.contains('english');
+      if (!english) continue;
+      final url = entry['url']?.toString().trim() ?? '';
+      if (!url.startsWith('http')) continue;
+
+      final searchable = '${entry['label'] ?? ''} ${entry['id'] ?? ''} $url'
+          .toString()
+          .toLowerCase();
+      var score = 0;
+      var specificMatches = 0;
+      for (final token in preferredTokens) {
+        if (searchable.contains(token)) score += token.length >= 5 ? 3 : 1;
+      }
+      for (final token in specificTokens) {
+        if (searchable.contains(token)) {
+          specificMatches++;
+          score += token.length >= 5 ? 12 : 6;
+        }
+      }
+      if (specificMatches > 0) score += 30;
+      if (requireReleaseEvidence &&
+          specificTokens.isNotEmpty &&
+          specificMatches == 0) {
+        continue;
+      }
+      if (searchable.contains('forced')) score -= 12;
+      ranked.add((url: url, score: score));
+    }
+    ranked.sort((a, b) => b.score.compareTo(a.score));
+    return ranked.map((entry) => entry.url).toList(growable: false);
+  }
+
+  static Future<void> ensureTranslatedAround(
+    AiPreparedSubtitle prepared,
+    Duration position, {
+    int lookBehind = 4,
+    int lookAhead = 72,
+  }) async {
+    if (!canTranslate || prepared.cues.isEmpty) return;
+
+    for (var pass = 0; pass < 2; pass++) {
+      final center = prepared.cueIndexNear(position);
+      if (center < 0) return;
+      final start = math.max(0, center - lookBehind);
+      final end = math.min(prepared.cues.length, center + lookAhead + 1);
+      final missing = <int>[
+        for (var i = start; i < end; i++)
+          if (!prepared.isTranslatedAt(i)) i,
+      ];
+      if (missing.isEmpty) return;
+
+      final existing = _translationWork[prepared.key];
+      if (existing != null) {
+        await existing;
+        continue;
+      }
+
+      final future = _translateMissingIndices(prepared, missing);
+      _translationWork[prepared.key] = future;
+      try {
+        await future;
+      } finally {
+        if (identical(_translationWork[prepared.key], future)) {
+          _translationWork.remove(prepared.key);
+        }
+      }
+      return;
+    }
+  }
+
+  static Future<void> _translateMissingIndices(
+    AiPreparedSubtitle prepared,
+    List<int> indices,
+  ) async {
+    const batchSize = 36;
+    for (var cursor = 0; cursor < indices.length; cursor += batchSize) {
+      final end = math.min(cursor + batchSize, indices.length);
+      await _translateIndices(prepared, indices.sublist(cursor, end));
+    }
+  }
+
+  static Future<void> _translateRange(
+    AiPreparedSubtitle prepared,
+    int start,
+    int end,
+  ) async {
+    if (start >= end) return;
+    final indices = <int>[
+      for (var i = start; i < end; i++)
+        if (!prepared.isTranslatedAt(i)) i,
+    ];
+    if (indices.isEmpty) return;
+    await _translateIndices(prepared, indices);
+  }
+
+  static Future<void> _translateIndices(
+    AiPreparedSubtitle prepared,
+    List<int> indices,
+  ) async {
+    if (indices.isEmpty) return;
+    final segments = indices
+        .map((index) => prepared.cues[index].source)
+        .toList(growable: false);
+
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final response = await _invokeTranslation(<String, dynamic>{
+          'title': prepared.title,
+          'segments': segments,
+        });
+        final data = response.data;
+        if (response.status == 429 ||
+            (data is Map && data['error'] == 'rate_limited')) {
+          throw const AiSubtitleException(
+            'AI Sinhala subtitle limit reached.',
+            rateLimited: true,
+          );
+        }
+        if (response.status < 200 || response.status >= 300) {
+          if (attempt < 2) {
+            await Future<void>.delayed(
+              Duration(milliseconds: 500 * (attempt + 1)),
+            );
+            continue;
+          }
+          throw const AiSubtitleException(
+            'Could not translate subtitle buffer.',
+          );
+        }
+
+        final raw = data is Map ? data['translations'] : null;
+        if (raw is! List || raw.length != indices.length) {
+          if (attempt < 2) {
+            await Future<void>.delayed(
+              Duration(milliseconds: 500 * (attempt + 1)),
+            );
+            continue;
+          }
+          throw const AiSubtitleException(
+            'AI subtitle buffer was incomplete.',
+          );
+        }
+
+        for (var i = 0; i < indices.length; i++) {
+          final value = raw[i]?.toString().trim() ?? '';
+          if (value.isNotEmpty) {
+            prepared.cues[indices[i]].translation = value;
+          }
+        }
+        return;
+      } on AiSubtitleException catch (error) {
+        if (error.rateLimited || attempt == 2) rethrow;
+        await Future<void>.delayed(
+          Duration(milliseconds: 500 * (attempt + 1)),
+        );
+      } catch (_) {
+        if (attempt == 2) {
+          throw const AiSubtitleException(
+            'Could not translate subtitle buffer.',
+          );
+        }
+        await Future<void>.delayed(
+          Duration(milliseconds: 500 * (attempt + 1)),
+        );
+      }
+    }
+  }
+
+  static Future<String> translateCue({
+    required String title,
+    required String text,
+    List<String> context = const <String>[],
+  }) async {
+    final clean = text.trim();
+    if (clean.isEmpty) return '';
+    final cacheKey = '$title|$clean';
+    final cached = _liveCueCache[cacheKey];
+    if (cached != null && cached.isNotEmpty) return cached;
+
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final response = await _invokeTranslation(<String, dynamic>{
+          'title': title,
+          'text': clean,
+          'context': context.reversed
+              .take(6)
+              .toList(growable: false)
+              .reversed
+              .toList(growable: false),
+        });
+        final data = response.data;
+        if (response.status == 429 ||
+            (data is Map && data['error'] == 'rate_limited')) {
+          throw const AiSubtitleException(
+            'AI Sinhala subtitle limit reached.',
+            rateLimited: true,
+          );
+        }
+        if (response.status < 200 || response.status >= 300) {
+          if (attempt == 0) {
+            await Future<void>.delayed(const Duration(milliseconds: 400));
+            continue;
+          }
+          throw const AiSubtitleException(
+            'Could not translate the current subtitle cue.',
+          );
+        }
+        final translated =
+            data is Map ? data['translation']?.toString().trim() ?? '' : '';
+        if (translated.isEmpty) {
+          if (attempt == 0) {
+            await Future<void>.delayed(const Duration(milliseconds: 400));
+            continue;
+          }
+          throw const AiSubtitleException(
+            'AI returned an empty subtitle cue.',
+          );
+        }
+        _liveCueCache[cacheKey] = translated;
+        return translated;
+      } on AiSubtitleException catch (error) {
+        if (error.rateLimited || attempt == 1) rethrow;
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+      } catch (_) {
+        if (attempt == 1) {
+          throw const AiSubtitleException(
+            'Could not translate the current subtitle cue.',
+          );
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+      }
+    }
+    throw const AiSubtitleException(
+      'Could not translate the current subtitle cue.',
+    );
+  }
+
+  static Future<_VideoProbe> _probeVideo(
+    String rawUrl, {
+    String? fallbackFileName,
+    int? fallbackSize,
+  }) async {
+    final uri = Uri.tryParse(rawUrl);
+    final fallbackName = fallbackFileName?.trim().isNotEmpty == true
+        ? fallbackFileName!.trim()
+        : uri == null
+            ? null
+            : _fileNameFromUri(uri);
+    if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https')) {
+      return _VideoProbe(fileName: fallbackName, size: fallbackSize);
+    }
+    final client = http.Client();
+    try {
+      final first = await _readRangeWithRetry(
+        client,
+        uri,
+        0,
+        65535,
+        attempts: 3,
+      );
+      if (first == null) {
+        return _VideoProbe(fileName: fallbackName, size: fallbackSize);
+      }
+      final fileName = _fileNameFromHeaders(first.headers) ?? fallbackName;
+      final size = _totalSize(first.statusCode, first.headers) ?? fallbackSize;
+      if (first.statusCode != 206 ||
+          size == null ||
+          size < 131072 ||
+          first.bytes.length < 65536) {
+        return _VideoProbe(fileName: fileName, size: size);
+      }
+      final tail = await _readRangeWithRetry(
+        client,
+        uri,
+        size - 65536,
+        size - 1,
+        attempts: 4,
+        requirePartial: true,
+      );
+      if (tail == null || tail.statusCode != 206 || tail.bytes.length < 65536) {
+        return _VideoProbe(fileName: fileName, size: size);
+      }
+      return _VideoProbe(
+        fileName: fileName,
+        size: size,
+        hash: _openSubtitlesHash(size, first.bytes, tail.bytes),
+      );
+    } catch (_) {
+      return _VideoProbe(fileName: fallbackName, size: fallbackSize);
+    } finally {
+      client.close();
+    }
+  }
+
+  static Future<_RangeRead?> _readRangeWithRetry(
+    http.Client client,
+    Uri uri,
+    int start,
+    int end, {
+    int attempts = 3,
+    bool requirePartial = false,
+  }) async {
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      try {
+        final value = await _readRange(client, uri, start, end);
+        final expected = end - start + 1;
+        final usable = value != null &&
+            value.bytes.length >= expected &&
+            (!requirePartial || value.statusCode == 206);
+        if (usable) return value;
+      } catch (_) {}
+      if (attempt + 1 < attempts) {
+        await Future<void>.delayed(
+          Duration(milliseconds: 650 * (attempt + 1)),
+        );
+      }
+    }
+    return null;
+  }
+
+  static Future<_RangeRead?> _readRange(
+    http.Client client,
+    Uri uri,
+    int start,
+    int end,
+  ) async {
+    final request = http.Request('GET', uri)
+      ..headers['Range'] = 'bytes=$start-$end'
+      ..headers['Accept-Encoding'] = 'identity';
+    final response =
+        await client.send(request).timeout(const Duration(seconds: 10));
+    if (response.statusCode < 200 || response.statusCode >= 400) return null;
+    final limit = end - start + 1;
+    final bytes = <int>[];
+    await for (final chunk in response.stream) {
+      final remaining = limit - bytes.length;
+      if (remaining <= 0) break;
+      if (chunk.length <= remaining) {
+        bytes.addAll(chunk);
+      } else {
+        bytes.addAll(chunk.take(remaining));
+      }
+      if (bytes.length >= limit) break;
+    }
+    return _RangeRead(
+      statusCode: response.statusCode,
+      headers: response.headers,
+      bytes: bytes,
+    );
+  }
+
+  static int? _totalSize(int statusCode, Map<String, String> headers) {
+    final contentRange = headers['content-range'];
+    if (contentRange != null) {
+      final match = RegExp(r'/(\d+)\s*$').firstMatch(contentRange);
+      final value = match == null ? null : int.tryParse(match.group(1)!);
+      if (value != null && value > 0) return value;
+    }
+    if (statusCode == 200) {
+      final length = int.tryParse(headers['content-length'] ?? '');
+      if (length != null && length > 0) return length;
+    }
+    return null;
+  }
+
+  static String? _fileNameFromHeaders(Map<String, String> headers) {
+    final disposition = headers['content-disposition'];
+    if (disposition == null || disposition.isEmpty) return null;
+    final utf = RegExp(r"filename\*=UTF-8''([^;]+)", caseSensitive: false)
+        .firstMatch(disposition);
+    if (utf != null) return Uri.decodeComponent(utf.group(1)!.trim());
+    final plain = RegExp(r'filename="?([^";]+)"?', caseSensitive: false)
+        .firstMatch(disposition);
+    return plain?.group(1)?.trim();
+  }
+
+  static String? _fileNameFromUri(Uri uri) {
+    if (uri.pathSegments.isEmpty) return null;
+    final value = Uri.decodeComponent(uri.pathSegments.last).trim();
+    return value.isEmpty ? null : value;
+  }
+
+  static String _openSubtitlesHash(
+    int size,
+    List<int> first,
+    List<int> last,
+  ) {
+    const mask = 0xFFFFFFFFFFFFFFFF;
+    var hash = size & mask;
+    for (var offset = 0; offset + 7 < 65536; offset += 8) {
+      hash = (hash + _littleEndian64(first, offset)) & mask;
+      hash = (hash + _littleEndian64(last, offset)) & mask;
+    }
+    return hash.toRadixString(16).padLeft(16, '0');
+  }
+
+  static int _littleEndian64(List<int> bytes, int offset) {
+    var value = 0;
+    for (var i = 0; i < 8; i++) {
+      value |= (bytes[offset + i] & 0xff) << (8 * i);
+    }
+    return value;
+  }
+
+  static Future<String> _downloadSubtitle(String url) async {
+    final response = await _httpGetWithRetry(
+      Uri.parse(url),
+      timeout: const Duration(seconds: 15),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw const AiSubtitleException('Subtitle download failed.');
+    }
+    List<int> bytes = response.bodyBytes;
+    if (bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
+      bytes = gzip.decode(bytes);
+    }
+    return utf8.decode(bytes, allowMalformed: true);
+  }
+
+  static List<AiSubtitleCue> _parseSubtitle(String input) {
+    var text = input
+        .replaceFirst('\uFEFF', '')
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n');
+    if (text.trimLeft().startsWith('WEBVTT')) {
+      text = text.replaceFirst(RegExp(r'^\s*WEBVTT[^\n]*\n'), '');
+    }
+    final blocks = text.split(RegExp(r'\n\s*\n'));
+    final cues = <AiSubtitleCue>[];
+    for (final block in blocks) {
+      final lines = block
+          .split('\n')
+          .map((line) => line.trimRight())
+          .toList(growable: false);
+      final timingIndex = lines.indexWhere((line) => line.contains('-->'));
+      if (timingIndex < 0) continue;
+      final timing = lines[timingIndex].split('-->');
+      if (timing.length < 2) continue;
+      final start = _parseTimestamp(timing[0].trim());
+      final endText = timing[1].trim().split(RegExp(r'\s+')).first;
+      final end = _parseTimestamp(endText);
+      if (start == null || end == null || end <= start) continue;
+      final cueText = lines
+          .skip(timingIndex + 1)
+          .join('\n')
+          .replaceAll(RegExp(r'<[^>]+>'), '')
+          .replaceAll(RegExp(r'\{\\[^}]+\}'), '')
+          .trim();
+      if (cueText.isEmpty) continue;
+      cues.add(AiSubtitleCue(start: start, end: end, source: cueText));
+    }
+    cues.sort((a, b) => a.start.compareTo(b.start));
+    return cues;
+  }
+
+  static Duration? _parseTimestamp(String raw) {
+    final clean = raw.replaceAll(',', '.').trim();
+    final parts = clean.split(':');
+    if (parts.length < 2 || parts.length > 3) return null;
+    final secondsPart = parts.last;
+    final secondPieces = secondsPart.split('.');
+    final seconds = int.tryParse(secondPieces.first);
+    if (seconds == null) return null;
+    var milliseconds = 0;
+    if (secondPieces.length > 1) {
+      final fraction = secondPieces[1].replaceAll(RegExp(r'\D'), '');
+      if (fraction.isNotEmpty) {
+        milliseconds =
+            int.tryParse(fraction.padRight(3, '0').substring(0, 3)) ?? 0;
+      }
+    }
+    final minutes = int.tryParse(parts[parts.length - 2]) ?? 0;
+    final hours = parts.length == 3 ? int.tryParse(parts.first) ?? 0 : 0;
+    return Duration(
+      hours: hours,
+      minutes: minutes,
+      seconds: seconds,
+      milliseconds: milliseconds,
+    );
+  }
+
+  static String _mediaKey(MediaItem item, EpisodeItem? episode) =>
+      episode == null
+          ? '${item.kind.name}:${item.id}'
+          : '${item.kind.name}:${item.id}:${episode.season}:${episode.episode}';
+
+  static Future<_TranslationResponse> _invokeTranslation(
+    Map<String, dynamic> body,
+  ) async {
+    final session = Supabase.instance.client.auth.currentSession;
+    if (session != null) {
+      final response = await Supabase.instance.client.functions.invoke(
+        'translate-subtitle-si',
+        body: body,
+      );
+      return _TranslationResponse(
+        status: response.status,
+        data: response.data,
+      );
+    }
+
+    final response = await http
+        .post(
+          _translationEndpoint,
+          headers: const {
+            'Authorization': 'Bearer $_guestFunctionJwt',
+            'apikey': _guestFunctionJwt,
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 25));
+
+    dynamic data;
+    try {
+      data = jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
+    } catch (_) {
+      data = <String, dynamic>{'error': 'invalid_function_response'};
+    }
+    return _TranslationResponse(status: response.statusCode, data: data);
+  }
+
+  static void clearPreparedCache() {
+    _preparedCache.clear();
+    _translationWork.clear();
+    _liveCueCache.clear();
+  }
+}
+
+class _VideoProbe {
+  const _VideoProbe({this.fileName, this.size, this.hash});
+
+  final String? fileName;
+  final int? size;
+  final String? hash;
+}
+
+class _RangeRead {
+  const _RangeRead({
+    required this.statusCode,
+    required this.headers,
+    required this.bytes,
+  });
+
+  final int statusCode;
+  final Map<String, String> headers;
+  final List<int> bytes;
+}
+
+String _normalizeCue(String value) => value
+    .toLowerCase()
+    .replaceAll(RegExp(r'<[^>]+>'), '')
+    .replaceAll(RegExp(r"[^a-z0-9\s'’-]"), ' ')
+    .replaceAll(RegExp(r'\s+'), ' ')
+    .trim();
+
+extension<T> on List<T> {
+  T? get lastOrNull => isEmpty ? null : last;
+}
+
+class _TranslationResponse {
+  const _TranslationResponse({
+    required this.status,
+    required this.data,
+  });
+
+  final int status;
+  final dynamic data;
+}
+
+class AiSubtitleException implements Exception {
+  const AiSubtitleException(this.message, {this.rateLimited = false});
+
+  final String message;
+  final bool rateLimited;
+
+  @override
+  String toString() => message;
+}
+).hasMatch(token));
     final ranked = <({String url, int score})>[];
     for (final entry in entries.whereType<Map>()) {
       final lang = (entry['lang'] ?? entry['language'] ?? '')
