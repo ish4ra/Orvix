@@ -508,11 +508,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
               await AiSinhalaSubtitleService.prepareForEmbeddedTiming(
             item: widget.item!,
             episode: widget.episode,
+            onStatus: (message) {
+              if (!mounted || _closing) return;
+              setState(() => _aiPreflightMessage = message);
+            },
           );
-          if (!mounted ||
-              _closing ||
-              _subtitleChoiceOverridden ||
-              prepared == null) {
+          if (!mounted || _closing || _subtitleChoiceOverridden) {
+            return false;
+          }
+          if (prepared == null) {
+            await _restoreNativeSubtitleFallback();
             return false;
           }
 
@@ -523,6 +528,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             _liveAiFallback = false;
             _aiSubtitleLoading = false;
             _aiSubtitleUnavailable = false;
+            _aiPreflightMessage = 'Embedded-timed AI Sinhala ready.';
             _lastAiPrefetchBucket = -1;
           });
           _positionSubscription ??=
@@ -534,6 +540,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
           _startNativeSubtitleClock();
           return true;
         } catch (_) {
+          if (mounted && !_closing) {
+            await _restoreNativeSubtitleFallback();
+          }
           return false;
         }
       }
