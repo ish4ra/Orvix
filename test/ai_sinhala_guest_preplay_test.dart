@@ -10,7 +10,7 @@ void main() {
 
     expect(service, contains('static bool get canTranslate => true;'));
     expect(service, contains("'Authorization': 'Bearer $_guestFunctionJwt'"));
-    expect(service, contains('verify'));
+    expect(service, contains('translate-subtitle-si'));
     expect(details, contains('AiSinhalaPreferencesService.isEnabled()'));
     expect(details, contains('AiSinhalaSubtitleService.prepareBuffered('));
     expect(details, contains('aiSubtitle: preparedAiSubtitle'));
