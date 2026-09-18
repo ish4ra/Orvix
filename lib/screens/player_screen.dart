@@ -205,7 +205,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
 
       // Keep normal subtitles available until AI Sinhala has actually prepared.
-      await _setNativeSubtitleVisibility(true);
+      await _setNativeSubtitleVisibility(false);
 
       if (aiPreferred) {
         if (aiReady) {
@@ -416,7 +416,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _timingTrackIsText = false;
     _liveAiFallback = false;
     _liveCueGeneration++;
-    await _setNativeSubtitleVisibility(true);
+    // media_kit's Flutter SubtitleView is the only visible native-language
+    // subtitle renderer. Keep libmpv's OSD subtitle rendering off or the same
+    // cue is drawn twice (one Flutter layer + one mpv layer).
+    await _setNativeSubtitleVisibility(false);
 
     final player = widget.playback.player;
     final current = player.state.track.subtitle;
@@ -441,7 +444,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               : null;
       if (chosen != null) {
         await player.setSubtitleTrack(chosen);
-        await _setNativeSubtitleVisibility(true);
+        await _setNativeSubtitleVisibility(false);
         await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
         return;
       }
@@ -616,7 +619,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _aiDisplaySubtitle = '';
       });
     }
-    await _setNativeSubtitleVisibility(true);
+    await _setNativeSubtitleVisibility(false);
     await widget.playback.player.setSubtitleTrack(track);
     await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
   }
@@ -635,7 +638,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _aiDisplaySubtitle = '';
       });
     }
-    await _setNativeSubtitleVisibility(true);
+    await _setNativeSubtitleVisibility(false);
     await widget.playback.player.setSubtitleTrack(mk.SubtitleTrack.no());
   }
 
@@ -1379,6 +1382,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  double _effectiveSubtitleFontSize(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final base = _subtitleFontSize;
+
+    // Scale from a 720p logical-height reference so subtitles stay readable on
+    // desktop/TV without making Android phones oversized. The user preference
+    // still acts as the baseline; the viewport supplies the final scale.
+    final heightScale = (size.height / 720.0).clamp(0.72, 1.75);
+
+    if (_androidMobilePlayerMode) {
+      return (base * heightScale).clamp(18.0, 28.0).toDouble();
+    }
+
+    if (_desktop) {
+      return (base * heightScale * 1.18).clamp(24.0, 54.0).toDouble();
+    }
+
+    // Android TV / large-screen Android.
+    return (base * heightScale * 1.10).clamp(22.0, 48.0).toDouble();
+  }
+
   Widget _aiSubtitleOverlay() {
     final baseBottom = _controlsVisible ? 110.0 : 12.0;
     return AnimatedPositioned(
@@ -1417,9 +1441,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: _androidMobilePlayerMode && _subtitleFontSize > 26
-                        ? 26
-                        : _subtitleFontSize,
+                    fontSize: _effectiveSubtitleFontSize(context),
                     height: 1.35,
                     fontWeight: FontWeight.w700,
                     shadows: const [
@@ -2141,7 +2163,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       visible: !_aiSinhalaRequested,
                       style: TextStyle(
                         height: 1.35,
-                        fontSize: _subtitleFontSize,
+                        fontSize: _effectiveSubtitleFontSize(context),
                         color: Colors.white,
                         fontWeight: FontWeight.w600,
                         backgroundColor: _subtitleBackground
