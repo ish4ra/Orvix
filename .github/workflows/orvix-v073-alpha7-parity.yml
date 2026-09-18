@@ -344,7 +344,7 @@ jobs:
         run: |
           set -euo pipefail
           brew install libtorrent-rasterbar boost pkg-config
-          echo "PKG_CONFIG_PATH=$(brew --prefix libtorrent-rasterbar)/lib/pkgconfig:$(brew --prefix)/lib/pkgconfig:$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$(brew --prefix libtorrent-rasterbar)/lib/pkgconfig:$(brew --prefix)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
 
       - name: Build macOS P2P engine
         shell: bash
