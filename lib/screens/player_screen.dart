@@ -271,6 +271,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _aiSubtitleLoading = true;
       _aiSubtitleUnavailable = false;
     });
+
+    // Strongest clock first: if the actual video already contains an English
+    // text subtitle track, keep that track hidden and use its cue events as the
+    // authoritative timing clock. Translation never needs to guess an offset.
+    final embeddedReady = await _tryPrepareEmbeddedAiTiming();
+    if (!mounted || _closing || _subtitleChoiceOverridden) return;
+    if (embeddedReady) return;
+
     try {
       final prepared = await AiSinhalaSubtitleService.prepareBuffered(
         item: widget.item!,
@@ -282,17 +290,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
       if (!mounted || _closing || _subtitleChoiceOverridden) return;
       if (prepared == null) {
-        final embeddedReady = await _tryPrepareEmbeddedAiTiming();
-        if (!mounted || _closing) return;
-        if (!embeddedReady) {
-          setState(() {
-            _aiSubtitleLoading = false;
-            _aiSubtitleUnavailable = true;
-            _aiSinhalaEnabled = false;
-            _aiDisplaySubtitle = '';
-          });
-          await _setNativeSubtitleVisibility(false);
-        }
+        setState(() {
+          _aiSubtitleLoading = false;
+          _aiSubtitleUnavailable = true;
+          _aiSinhalaEnabled = false;
+          _aiDisplaySubtitle = '';
+        });
+        await _setNativeSubtitleVisibility(false);
         return;
       }
 
@@ -316,17 +320,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _refreshAiSubtitle();
     } catch (_) {
       if (!mounted || _closing || _subtitleChoiceOverridden) return;
-      final embeddedReady = await _tryPrepareEmbeddedAiTiming();
-      if (!mounted) return;
-      if (!embeddedReady) {
-        setState(() {
-          _aiSubtitleLoading = false;
-          _aiSubtitleUnavailable = true;
-          _aiSinhalaEnabled = false;
-          _aiDisplaySubtitle = '';
-        });
-        await _setNativeSubtitleVisibility(false);
-      }
+      setState(() {
+        _aiSubtitleLoading = false;
+        _aiSubtitleUnavailable = true;
+        _aiSinhalaEnabled = false;
+        _aiDisplaySubtitle = '';
+      });
+      await _setNativeSubtitleVisibility(false);
     }
   }
 
