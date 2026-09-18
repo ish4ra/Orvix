@@ -1289,6 +1289,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
       constraints: const BoxConstraints(maxWidth: 960),
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) {
+          final compactSheet = MediaQuery.sizeOf(context).width < 680;
           final ranked = freeStreamingRanking
               ? widget.sources.sortForFreeStreaming(results)
               : smoothRanking
@@ -1347,43 +1348,44 @@ class _DetailsScreenState extends State<DetailsScreen> {
             child: SizedBox(
               height: MediaQuery.sizeOf(context).height * .84,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(22, 4, 22, 24),
+                padding: EdgeInsets.fromLTRB(
+                  compactSheet ? 16 : 22,
+                  4,
+                  compactSheet ? 16 : 22,
+                  24,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
+                    Text(
+                      'Choose source',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      summaryParts.join(' • '),
+                      style: TextStyle(color: color.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Choose source',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleLarge
-                                    ?.copyWith(fontWeight: FontWeight.w900),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                summaryParts.join(' • '),
-                                style: TextStyle(color: color.onSurfaceVariant),
-                              ),
-                            ],
-                          ),
-                        ),
                         FilterChip(
                           selected: freeStreamingRanking,
                           avatar: const Icon(Icons.bolt_rounded, size: 18),
                           label: const Text('Free Streaming'),
                           tooltip:
-                              'Prioritize sources likely to stream smoothly without a paid debrid service: healthy seed swarms first, then quality, resolution, manageable size and compatibility.',
+                              'Prioritize healthy torrent swarms for non-debrid playback.',
                           onSelected: (value) => setSheetState(() {
                             freeStreamingRanking = value;
                             if (value) smoothRanking = false;
                           }),
                         ),
-                        const SizedBox(width: 10),
                         FilterChip(
                           selected: compatibilityOnly,
                           avatar: Icon(
@@ -1394,11 +1396,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
                           ),
                           label: const Text('Compatibility'),
                           tooltip:
-                              'Hide known-risk formats such as AV1, 8K, Hi10P and Dolby Vision-only releases. File size is not used.',
+                              'Hide known-risk formats such as AV1, 8K, Hi10P and Dolby Vision-only releases.',
                           onSelected: (value) =>
                               setSheetState(() => compatibilityOnly = value),
                         ),
-                        const SizedBox(width: 10),
                         FilterChip(
                           selected: smoothRanking,
                           avatar: Icon(
@@ -1409,27 +1410,25 @@ class _DetailsScreenState extends State<DetailsScreen> {
                           ),
                           label: const Text('Smooth'),
                           tooltip:
-                              'Prioritize likely smoother playback: compatible formats, 1080p/720p, efficient x265/HEVC encodes, stronger seed counts and then smaller files. Results are reordered, not hidden.',
+                              'Prioritize compatible, efficient and healthy sources.',
                           onSelected: (value) => setSheetState(() {
                             smoothRanking = value;
                             if (value) freeStreamingRanking = false;
                           }),
                         ),
-                        const SizedBox(width: 10),
                         OutlinedButton.icon(
                           onPressed: () =>
                               customizePriority(sheetContext, setSheetState),
                           icon: const Icon(Icons.tune_rounded),
-                          label: const Text('Sort priority'),
+                          label: const Text('Sort'),
                         ),
-                        const SizedBox(width: 10),
                         if (best != null)
                           FilledButton.icon(
                             onPressed: () => Navigator.pop(sheetContext, best),
                             icon: const Icon(Icons.bolt_rounded),
                             label: Text(
                               bestIsPinned
-                                  ? 'Quick Play Pinned'
+                                  ? 'Play pinned'
                                   : 'Quick Play ${best.quality ?? ''}'.trim(),
                             ),
                           ),
@@ -1479,6 +1478,120 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             pinnedIdentity,
                             seriesWide: seriesWidePin,
                           );
+                          final statusLabel = isPinned
+                              ? 'Pinned'
+                              : index == 0
+                                  ? freeStreamingRanking
+                                      ? 'Free Stream'
+                                      : smoothRanking
+                                          ? 'Smooth'
+                                          : 'Best'
+                                  : null;
+                          final providerText =
+                              '${result.provider}${result.isMagnet ? ' • torrent / P2P' : ' • direct URL'}${result.compatibilityFriendly ? '' : ' • ⚠ compatibility risk'}';
+
+                          if (compactSheet) {
+                            return InkWell(
+                              borderRadius: BorderRadius.circular(14),
+                              onTap: () => Navigator.pop(sheetContext, result),
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 10),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    CircleAvatar(
+                                      radius: 23,
+                                      child: Text(
+                                        result.quality?.replaceAll('P', '') ??
+                                            '—',
+                                        style: const TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            result.title,
+                                            maxLines: 3,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(height: 1.35),
+                                          ),
+                                          const SizedBox(height: 5),
+                                          Text(
+                                            providerText,
+                                            style: TextStyle(
+                                              color: color.onSurfaceVariant,
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                          if (statusLabel != null) ...[
+                                            const SizedBox(height: 6),
+                                            Align(
+                                              alignment: Alignment.centerLeft,
+                                              child: Chip(
+                                                visualDensity:
+                                                    VisualDensity.compact,
+                                                avatar: isPinned
+                                                    ? const Icon(
+                                                        Icons.push_pin_rounded,
+                                                        size: 15,
+                                                      )
+                                                    : null,
+                                                label: Text(statusLabel),
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: isPinned
+                                          ? 'Unpin source'
+                                          : 'Pin source',
+                                      icon: Icon(
+                                        isPinned
+                                            ? Icons.push_pin_rounded
+                                            : Icons.push_pin_outlined,
+                                      ),
+                                      onPressed: () async {
+                                        if (isPinned) {
+                                          await widget.sources
+                                              .unpinSource(pinKey);
+                                          if (!context.mounted) return;
+                                          setSheetState(
+                                            () => pinnedIdentity = null,
+                                          );
+                                        } else {
+                                          await widget.sources.pinSource(
+                                            pinKey,
+                                            result,
+                                            seriesWide: seriesWidePin,
+                                          );
+                                          final identity =
+                                              widget.sources.sourceIdentity(
+                                            result,
+                                            seriesWide: seriesWidePin,
+                                          );
+                                          if (!context.mounted) return;
+                                          setSheetState(
+                                            () => pinnedIdentity = identity,
+                                          );
+                                        }
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          }
+
                           return ListTile(
                             contentPadding: const EdgeInsets.symmetric(
                               horizontal: 8,
@@ -1502,35 +1615,26 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             ),
                             subtitle: Padding(
                               padding: const EdgeInsets.only(top: 4),
-                              child: Text(
-                                '${result.provider}${result.isMagnet ? ' • torrent / P2P' : ' • direct URL'}${result.compatibilityFriendly ? '' : ' • ⚠ compatibility risk'}',
-                              ),
+                              child: Text(providerText),
                             ),
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                if (isPinned)
-                                  const Chip(
-                                    avatar: Icon(
-                                      Icons.push_pin_rounded,
-                                      size: 16,
-                                    ),
-                                    label: Text('Pinned'),
-                                  )
-                                else if (index == 0)
+                                if (statusLabel != null)
                                   Chip(
-                                    label: Text(
-                                      freeStreamingRanking
-                                          ? 'Free Stream'
-                                          : smoothRanking
-                                              ? 'Smooth'
-                                              : 'Best',
-                                    ),
+                                    avatar: isPinned
+                                        ? const Icon(
+                                            Icons.push_pin_rounded,
+                                            size: 16,
+                                          )
+                                        : null,
+                                    label: Text(statusLabel),
                                   ),
                                 const SizedBox(width: 4),
                                 IconButton(
-                                  tooltip:
-                                      isPinned ? 'Unpin source' : 'Pin source',
+                                  tooltip: isPinned
+                                      ? 'Unpin source'
+                                      : 'Pin source',
                                   icon: Icon(
                                     isPinned
                                         ? Icons.push_pin_rounded
