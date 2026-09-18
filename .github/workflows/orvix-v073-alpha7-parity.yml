@@ -385,6 +385,34 @@ jobs:
           set -euo pipefail
           git clone --depth 1 --branch v0.1.8 https://github.com/stremio-native/stream-server.git stream-server
           cd stream-server
+
+          # Orvix uses the native server for direct torrent streaming. The
+          # upstream desktop binary aborts startup on macOS when FFmpeg is not
+          # installed, even though FFmpeg is not required for the direct stream
+          # path Orvix uses. Keep the bundled engine self-contained by disabling
+          # that startup-only FFmpeg requirement in headless (--no-tray) mode.
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("server/src/main.rs")
+          text = path.read_text()
+          marker = """    fn run_headless_mode(use_tui: bool) -> anyhow::Result<()> {
+        let rt = tokio::runtime::Runtime::new()?;
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        let mut cfg = stream_server::ServerConfig::binary_default();
+        cfg.use_tui = use_tui;
+"""
+          replacement = """    fn run_headless_mode(use_tui: bool) -> anyhow::Result<()> {
+        let rt = tokio::runtime::Runtime::new()?;
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        let mut cfg = stream_server::ServerConfig::binary_default();
+        cfg.setup_ffmpeg = false;
+        cfg.use_tui = use_tui;
+"""
+          if marker not in text:
+              raise SystemExit("Expected run_headless_mode block was not found")
+          path.write_text(text.replace(marker, replacement, 1))
+          PY
+
           cargo build --release --package server --bin server
 
       - name: Smoke test macOS P2P engine
