@@ -14,15 +14,23 @@ class PlaybackService {
   final Player player;
   late final VideoController controller;
 
-  Future<void> _applySmartStreamingProfile() async {
+  Future<void> _applySmartStreamingProfile(String url) async {
     final platform = player.platform;
     if (platform is! NativePlayer) return;
 
-    const properties = <String, String>{
+    final uri = Uri.tryParse(url);
+    final localP2p = uri != null &&
+        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
+        uri.port == 11470;
+
+    final properties = <String, String>{
       'cache': 'yes',
-      'demuxer-readahead-secs': '180',
-      'cache-secs': '180',
+      'demuxer-readahead-secs': localP2p ? '60' : '180',
+      'cache-secs': localP2p ? '60' : '180',
       'network-timeout': '90',
+      if (localP2p) 'cache-pause': 'yes',
+      if (localP2p) 'cache-pause-initial': 'yes',
+      if (localP2p) 'cache-pause-wait': '8',
       // Prefer English whenever the file exposes language-tagged audio tracks.
       // Users can still switch to any other track from Audio & Subtitles.
       'alang': 'eng,en,en-US,en-GB',
@@ -47,7 +55,7 @@ class PlaybackService {
     String? title,
     Map<String, String>? httpHeaders,
   }) async {
-    await _applySmartStreamingProfile();
+    await _applySmartStreamingProfile(url);
     await player.open(
       Media(
         url,
