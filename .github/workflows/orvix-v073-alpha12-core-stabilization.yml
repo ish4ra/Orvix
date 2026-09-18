@@ -1,0 +1,450 @@
+name: Release Orvix v0.7.3-alpha.12 Core Platform Stabilization
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.3-alpha.12
+    paths:
+      - '.github/workflows/orvix-v073-alpha12-core-stabilization.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  android-native:
+    name: Prepare Android P2P engine
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download pinned native stream-server builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p native/jniLibs/{armeabi-v7a,arm64-v8a,x86,x86_64} native/libs tmp
+
+          download_extract() {
+            abi="$1"
+            file="$2"
+            sha="$3"
+            url="https://github.com/stremio-native/stremio-android/releases/download/v1.2.4/$file"
+            curl --fail --location --retry 4 --retry-delay 2 "$url" -o "tmp/$file"
+            echo "$sha  tmp/$file" | sha256sum -c -
+            unzip -p "tmp/$file" "lib/$abi/libstream_server.so" > "native/jniLibs/$abi/libstream_server.so"
+            unzip -p "tmp/$file" "lib/$abi/libc++_shared.so" > "native/jniLibs/$abi/libc++_shared.so"
+            test -s "native/jniLibs/$abi/libstream_server.so"
+            test -s "native/jniLibs/$abi/libc++_shared.so"
+          }
+
+          download_extract arm64-v8a \
+            StremioMobile-v1.2.4-arm64-v8a-release.apk \
+            3ffd96e6c6f0b23845f7ee6ab721d52ba1534055304959ed84c9589aac8bc97e
+
+          download_extract armeabi-v7a \
+            StremioMobile-v1.2.4-armeabi-v7a-release.apk \
+            519ab54a8a57e93c5a2f2a70cced18673063cffcb88cfdcd0ec6c9a7e5f5570e
+
+          download_extract x86 \
+            StremioMobile-v1.2.4-x86-release.apk \
+            201012b229914b533665f4c477140f174d7b933fdc27c1fae6a2fb3a1f232058
+
+          download_extract x86_64 \
+            StremioMobile-v1.2.4-x86_64-release.apk \
+            bee94497864d46a3b7c1905848e161da03179ca4ff85c6808710cdd435cafc94
+
+          curl --fail --location --retry 4 \
+            "https://raw.githubusercontent.com/stremio-native/stremio-android/4bdef3b6be1186d9aa22acd8b3ec391c22f0e083/app/libs/rustls-platform-verifier-0.1.1.aar" \
+            -o native/libs/rustls-platform-verifier-0.1.1.aar
+          test -s native/libs/rustls-platform-verifier-0.1.1.aar
+
+      - name: Inspect native libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
+            echo "=== $abi ==="
+            file "native/jniLibs/$abi/libstream_server.so"
+            file "native/jniLibs/$abi/libc++_shared.so"
+            readelf -d "native/jniLibs/$abi/libstream_server.so" | grep NEEDED
+            readelf -d "native/jniLibs/$abi/libstream_server.so" | grep -q 'libc++_shared.so'
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-native-engine
+          path: native/
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Orvix Windows icon
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check pillow
+          @'
+          from PIL import Image
+          src = Image.open(r"assets/branding/orvix_icon.png").convert("RGBA")
+          src.save(
+              r"windows/runner/resources/app_icon.ico",
+              format="ICO",
+              sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)],
+          )
+          '@ | Set-Content -Encoding UTF8 make_windows_icon.py
+          python make_windows_icon.py
+          Remove-Item make_windows_icon.py
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      # Subtitle regression gate: seek, gap and source-match behavior.
+      - name: Test AI Sinhala subtitle timeline
+        run: flutter test test/ai_sinhala_subtitle_service_test.dart
+
+      - name: Test Android TV search D-pad focus
+        run: flutter test test/search_tv_focus_test.dart
+        # This also catches MediaCard/Grid overflow regressions on TV-sized focus paths.
+
+      - name: Build Windows
+        run: flutter build windows --release
+
+      - name: Bundle local P2P engine
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseDir = 'build\windows\x64\runner\Release'
+          $url = 'https://github.com/stremio-native/stream-server/releases/download/v0.1.8/stream-server-windows-amd64.exe'
+          $dest = Join-Path $releaseDir 'orvix-stream-server.exe'
+          Invoke-WebRequest -Uri $url -OutFile $dest
+          $expected = '90B7A14B282A9E649FBA5ADB6112C2C191DBA884EC762F8650F45CCF06E17E09'
+          $actual = (Get-FileHash $dest -Algorithm SHA256).Hash
+          if ($actual -ne $expected) { throw "stream-server checksum mismatch: $actual" }
+
+          $licenseDir = Join-Path $releaseDir 'licenses\stream-server'
+          New-Item -ItemType Directory -Force -Path $licenseDir | Out-Null
+          Copy-Item 'licenses\stream-server\LICENSE' (Join-Path $licenseDir 'LICENSE.txt')
+          Copy-Item 'licenses\stream-server\NOTICE.md' (Join-Path $licenseDir 'NOTICE.md')
+
+      - name: Smoke test Windows P2P engine
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Resolve-Path 'build\windows\x64\runner\Release\orvix-stream-server.exe'
+          $work = Join-Path $env:RUNNER_TEMP 'orvix-stream-server-smoke'
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          $proc = Start-Process -FilePath $exe -ArgumentList '--no-tray' -WorkingDirectory $work -PassThru
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 90; $i++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:11470/heartbeat' -TimeoutSec 2
+                if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 300) { $ready = $true; break }
+              } catch {}
+              if ($proc.HasExited) { throw "stream-server exited early with code $($proc.ExitCode)" }
+            }
+            if (-not $ready) { throw 'stream-server heartbeat did not become ready' }
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
+
+      - name: Pack portable build
+        shell: pwsh
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath 'Orvix-v0.7.3-alpha.12-Windows-x64.zip' -Force
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
+          & $iscc '/DMyAppVersion=0.7.3-alpha.12' 'installer\orvix.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            Orvix-v0.7.3-alpha.12-Windows-x64.zip
+            installer-output/Orvix-Setup-v0.7.3-alpha.12-Windows-x64.exe
+
+  android-mobile:
+    runs-on: ubuntu-latest
+    needs: android-native
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform
+        run: flutter create --platforms=android --org com.orvix --project-name orvix .
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-native-engine
+          path: android-native
+
+      - name: Configure Android mobile with native P2P
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check pillow
+
+          mkdir -p android/app/src/main/jniLibs android/app/libs
+          cp -R android-native/jniLibs/. android/app/src/main/jniLibs/
+          cp android-native/libs/rustls-platform-verifier-0.1.1.aar android/app/libs/
+          python3 tools/configure_android_build.py
+
+          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
+            test -s "android/app/src/main/jniLibs/$abi/libstream_server.so"
+            test -s "android/app/src/main/jniLibs/$abi/libc++_shared.so"
+          done
+          grep -q 'orvix/torrent_engine' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
+
+      - name: Restore stable Android signing key
+        env:
+          ORVIX_ANDROID_KEYSTORE_B64: ${{ secrets.ORVIX_ANDROID_KEYSTORE_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${ORVIX_ANDROID_KEYSTORE_B64:-}" ]; then
+            echo "::error::ORVIX_ANDROID_KEYSTORE_B64 repository secret is missing."
+            exit 1
+          fi
+          printf '%s' "$ORVIX_ANDROID_KEYSTORE_B64" | base64 --decode > android/app/orvix-release.jks
+          test -s android/app/orvix-release.jks
+          keytool -list -keystore android/app/orvix-release.jks \
+            -storepass 'OrvixAlpha-2026-Sign!' -alias orvix >/dev/null
+          python3 tools/configure_android_signing.py
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Android mobile APKs
+        run: |
+          flutter build apk --release
+          flutter build apk --release --split-per-abi
+
+      - name: Verify P2P engine packaged
+        shell: bash
+        run: |
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          unzip -l "$APK" | grep 'lib/arm64-v8a/libstream_server.so'
+          unzip -l "$APK" | grep 'lib/arm64-v8a/libc++_shared.so'
+          unzip -l "$APK" | grep 'lib/armeabi-v7a/libstream_server.so'
+          unzip -l "$APK" | grep 'lib/armeabi-v7a/libc++_shared.so'
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee /tmp/orvix-apksigner.txt
+          grep -qi 'c86153a3a0d3f49192b37c6574e23c41716c2b9935fdbcf38d6902a3e60fa4ab' /tmp/orvix-apksigner.txt
+
+      - name: Rename APKs
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.3-alpha.12-Android-Mobile.apk
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk Orvix-v0.7.3-alpha.12-Android-Mobile-arm64-v8a.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk Orvix-v0.7.3-alpha.12-Android-Mobile-armeabi-v7a.apk
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk Orvix-v0.7.3-alpha.12-Android-Mobile-x86_64.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-mobile
+          path: |
+            Orvix-v0.7.3-alpha.12-Android-Mobile.apk
+            Orvix-v0.7.3-alpha.12-Android-Mobile-arm64-v8a.apk
+            Orvix-v0.7.3-alpha.12-Android-Mobile-armeabi-v7a.apk
+            Orvix-v0.7.3-alpha.12-Android-Mobile-x86_64.apk
+
+  android-tv:
+    runs-on: ubuntu-latest
+    needs: android-native
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform
+        run: flutter create --platforms=android --org com.orvix --project-name orvix .
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-native-engine
+          path: android-native
+
+      - name: Configure Android TV with native P2P
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check pillow
+
+          mkdir -p android/app/src/main/jniLibs android/app/libs
+          cp -R android-native/jniLibs/. android/app/src/main/jniLibs/
+          cp android-native/libs/rustls-platform-verifier-0.1.1.aar android/app/libs/
+          python3 tools/configure_android_build.py --tv
+
+          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
+            test -s "android/app/src/main/jniLibs/$abi/libstream_server.so"
+            test -s "android/app/src/main/jniLibs/$abi/libc++_shared.so"
+          done
+          grep -q 'android.intent.category.LEANBACK_LAUNCHER' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:screenOrientation="landscape"' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:banner="@drawable/tv_banner"' android/app/src/main/AndroidManifest.xml
+          grep -q 'orvix/torrent_engine' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
+
+      - name: Verify Android TV launcher banner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s android/app/src/main/res/drawable-xhdpi/tv_banner.png
+          python3 - <<'PY'
+          from PIL import Image
+          p = "android/app/src/main/res/drawable-xhdpi/tv_banner.png"
+          image = Image.open(p)
+          if image.size != (320, 180):
+              raise SystemExit(f"Wrong TV banner size: {image.size}")
+          print("TV banner verified:", image.size, image.mode)
+          PY
+
+      - name: Restore stable Android signing key
+        env:
+          ORVIX_ANDROID_KEYSTORE_B64: ${{ secrets.ORVIX_ANDROID_KEYSTORE_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${ORVIX_ANDROID_KEYSTORE_B64:-}" ]; then
+            echo "::error::ORVIX_ANDROID_KEYSTORE_B64 repository secret is missing."
+            exit 1
+          fi
+          printf '%s' "$ORVIX_ANDROID_KEYSTORE_B64" | base64 --decode > android/app/orvix-release.jks
+          test -s android/app/orvix-release.jks
+          keytool -list -keystore android/app/orvix-release.jks \
+            -storepass 'OrvixAlpha-2026-Sign!' -alias orvix >/dev/null
+          python3 tools/configure_android_signing.py
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Android TV APK
+        run: flutter build apk --release
+
+      - name: Verify P2P engine packaged
+        shell: bash
+        run: |
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          unzip -l "$APK" | grep 'lib/arm64-v8a/libstream_server.so'
+          unzip -l "$APK" | grep 'lib/arm64-v8a/libc++_shared.so'
+          unzip -l "$APK" | grep 'lib/armeabi-v7a/libstream_server.so'
+          unzip -l "$APK" | grep 'lib/armeabi-v7a/libc++_shared.so'
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee /tmp/orvix-apksigner.txt
+          grep -qi 'c86153a3a0d3f49192b37c6574e23c41716c2b9935fdbcf38d6902a3e60fa4ab' /tmp/orvix-apksigner.txt
+
+      - name: Rename APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.3-alpha.12-Android-TV.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-tv
+          path: Orvix-v0.7.3-alpha.12-Android-TV.apk
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [windows, android-mobile, android-tv]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Verify release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/Orvix-v0.7.3-alpha.12-Windows-x64.zip
+          test -s dist/installer-output/Orvix-Setup-v0.7.3-alpha.12-Windows-x64.exe
+          test -s dist/Orvix-v0.7.3-alpha.12-Android-Mobile.apk
+          test -s dist/Orvix-v0.7.3-alpha.12-Android-Mobile-arm64-v8a.apk
+          test -s dist/Orvix-v0.7.3-alpha.12-Android-Mobile-armeabi-v7a.apk
+          test -s dist/Orvix-v0.7.3-alpha.12-Android-Mobile-x86_64.apk
+          test -s dist/Orvix-v0.7.3-alpha.12-Android-TV.apk
+          if find dist -type f -name '*.dmg' | grep -q .; then
+            echo "::error::macOS DMG must not be part of the alpha.12 stabilization release."
+            exit 1
+          fi
+
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > /tmp/orvix-alpha12-notes.md <<'EOF'
+          Orvix alpha.12 is the focused stabilization build for the three active release targets.
+
+          - Active release targets: Windows, Android Mobile and Android TV.
+          - macOS source support remains in the repository, but DMG build/release is intentionally paused for now.
+          - Keeps the alpha.11 Android TV Search D-pad navigation, visible TV focus state, launcher-banner validation and card-overflow fix.
+          - Keeps AI Sinhala seek/retry/live-fallback reliability fixes.
+          - Keeps Android persistent signing and local P2P packaging checks.
+          - Keeps Windows P2P smoke testing and installer validation.
+          - The narrower release train is intended to simplify testing and bug isolation until the three active targets are stable.
+          EOF
+
+          assets=(
+            dist/Orvix-v0.7.3-alpha.12-Windows-x64.zip
+            dist/installer-output/Orvix-Setup-v0.7.3-alpha.12-Windows-x64.exe
+            dist/Orvix-v0.7.3-alpha.12-Android-Mobile.apk
+            dist/Orvix-v0.7.3-alpha.12-Android-Mobile-arm64-v8a.apk
+            dist/Orvix-v0.7.3-alpha.12-Android-Mobile-armeabi-v7a.apk
+            dist/Orvix-v0.7.3-alpha.12-Android-Mobile-x86_64.apk
+            dist/Orvix-v0.7.3-alpha.12-Android-TV.apk
+          )
+
+          if gh release view v0.7.3-alpha.12 >/dev/null 2>&1; then
+            gh release upload v0.7.3-alpha.12 --clobber "${assets[@]}"
+            gh release edit v0.7.3-alpha.12 \
+              --title 'Orvix v0.7.3-alpha.12 — Core Platform Stabilization' \
+              --prerelease \
+              --notes-file /tmp/orvix-alpha12-notes.md
+          else
+            gh release create v0.7.3-alpha.12 \
+              --target '${{ github.sha }}' \
+              --title 'Orvix v0.7.3-alpha.12 — Core Platform Stabilization' \
+              --prerelease \
+              --notes-file /tmp/orvix-alpha12-notes.md \
+              "${assets[@]}"
+          fi
