@@ -107,7 +107,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 12),
               const Text(
                 'Beta note: Orvix uses an available English text subtitle as the translation source. If no suitable subtitle is found, playback continues normally with the original subtitle options.',
-                style: TextStyle(fontSize: 12.5, height: 1.5, color: Color(0xFF9CA99E)),
+                style: TextStyle(
+                    fontSize: 12.5, height: 1.5, color: Color(0xFF9CA99E)),
               ),
               const SizedBox(height: 22),
               Container(
@@ -146,8 +147,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       width: 300,
                       child: DropdownButtonFormField<String>(
                         value: _preferredSubtitleLanguage ??
-                            SubtitlePreferencesService
-                                .defaultPreferredLanguage,
+                            SubtitlePreferencesService.defaultPreferredLanguage,
                         decoration: const InputDecoration(
                           labelText: 'Preferred language',
                           prefixIcon: Icon(Icons.language_rounded),

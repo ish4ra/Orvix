@@ -5,11 +5,9 @@ class SubtitlePreferencesService {
 
   static const _fontSizeKey = 'orvix_subtitle_font_size_v1';
   static const _backgroundKey = 'orvix_subtitle_background_v1';
-  static const _backgroundOpacityKey =
-      'orvix_subtitle_background_opacity_v1';
+  static const _backgroundOpacityKey = 'orvix_subtitle_background_opacity_v1';
   static const _bottomOffsetKey = 'orvix_subtitle_bottom_offset_v1';
-  static const _preferredLanguageKey =
-      'orvix_subtitle_preferred_language_v1';
+  static const _preferredLanguageKey = 'orvix_subtitle_preferred_language_v1';
 
   static const double defaultFontSize = 32;
   static const bool defaultBackground = true;
@@ -41,8 +39,7 @@ class SubtitlePreferencesService {
 
   static Future<double> backgroundOpacity() async {
     final prefs = await SharedPreferences.getInstance();
-    return (prefs.getDouble(_backgroundOpacityKey) ??
-            defaultBackgroundOpacity)
+    return (prefs.getDouble(_backgroundOpacityKey) ?? defaultBackgroundOpacity)
         .clamp(0.0, 1.0)
         .toDouble();
   }

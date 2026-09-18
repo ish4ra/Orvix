@@ -82,8 +82,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _subtitleBackground = SubtitlePreferencesService.defaultBackground;
   double _subtitleBackgroundOpacity =
       SubtitlePreferencesService.defaultBackgroundOpacity;
-  double _subtitleBottomOffset =
-      SubtitlePreferencesService.defaultBottomOffset;
+  double _subtitleBottomOffset = SubtitlePreferencesService.defaultBottomOffset;
   double _subtitleDelaySeconds = 0;
   String _preferredSubtitleLanguage =
       SubtitlePreferencesService.defaultPreferredLanguage;
@@ -889,10 +888,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     children: [
                       Text(
                         'Online subtitles',
-                        style:
-                            Theme.of(context).textTheme.titleLarge?.copyWith(
-                                  fontWeight: FontWeight.w900,
-                                ),
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.w900,
+                            ),
                       ),
                       const SizedBox(height: 5),
                       Text(
@@ -944,8 +942,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           Text(
                             '${visible.length} result${visible.length == 1 ? '' : 's'}',
                             style: TextStyle(
-                              color:
-                                  Theme.of(context).colorScheme.onSurfaceVariant,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
                             ),
                           ),
                         ],
@@ -955,8 +954,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       Expanded(
                         child: ListView.separated(
                           itemCount: visible.length,
-                          separatorBuilder: (_, __) =>
-                              const Divider(height: 1),
+                          separatorBuilder: (_, __) => const Divider(height: 1),
                           itemBuilder: (context, index) {
                             final subtitle = visible[index];
                             return ListTile(
@@ -964,8 +962,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                 horizontal: 4,
                                 vertical: 5,
                               ),
-                              leading:
-                                  const Icon(Icons.closed_caption_rounded),
+                              leading: const Icon(Icons.closed_caption_rounded),
                               title: Text(
                                 subtitle.languageLabel,
                                 style: const TextStyle(
@@ -977,11 +974,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                               ),
-                              trailing:
-                                  const Icon(Icons.play_arrow_rounded),
+                              trailing: const Icon(Icons.play_arrow_rounded),
                               onTap: () async {
-                                _preferredSubtitleLanguage =
-                                    subtitle.language;
+                                _preferredSubtitleLanguage = subtitle.language;
                                 await SubtitlePreferencesService
                                     .setPreferredLanguage(
                                   subtitle.language,
@@ -1202,204 +1197,207 @@ class _PlayerScreenState extends State<PlayerScreen> {
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) => SafeArea(
           child: ConstrainedBox(
-          constraints: BoxConstraints(
-              maxHeight: MediaQuery.sizeOf(sheetContext).height * .72),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Audio & Subtitles',
-                  style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w900,
+            constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(sheetContext).height * .72),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(22, 4, 22, 28),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Audio & Subtitles',
+                    style:
+                        Theme.of(sheetContext).textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.w900,
+                            ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Switch embedded tracks or load a local subtitle file.',
+                    style: TextStyle(
+                        color: Theme.of(sheetContext)
+                            .colorScheme
+                            .onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 22),
+                  const _TrackHeading(
+                      icon: Icons.audiotrack_rounded, text: 'Audio'),
+                  const SizedBox(height: 8),
+                  if (audioTracks.isEmpty)
+                    const _EmptyTrackMessage(
+                        'No selectable audio tracks reported.')
+                  else
+                    ...audioTracks.map(
+                      (track) => _TrackTile(
+                        title:
+                            _trackLabel(track.title, track.language, track.id),
+                        detail: [
+                          track.codec,
+                          if (track.channelscount != null)
+                            '${track.channelscount} ch',
+                        ]
+                            .whereType<String>()
+                            .where((value) => value.isNotEmpty)
+                            .join(' • '),
+                        selected: player.state.track.audio.id == track.id,
+                        onTap: () async {
+                          await player.setAudioTrack(track);
+                          if (sheetContext.mounted) Navigator.pop(sheetContext);
+                        },
                       ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Switch embedded tracks or load a local subtitle file.',
-                  style: TextStyle(
-                      color:
-                          Theme.of(sheetContext).colorScheme.onSurfaceVariant),
-                ),
-                const SizedBox(height: 22),
-                const _TrackHeading(
-                    icon: Icons.audiotrack_rounded, text: 'Audio'),
-                const SizedBox(height: 8),
-                if (audioTracks.isEmpty)
-                  const _EmptyTrackMessage(
-                      'No selectable audio tracks reported.')
-                else
-                  ...audioTracks.map(
+                    ),
+                  const SizedBox(height: 22),
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: _TrackHeading(
+                            icon: Icons.subtitles_rounded, text: 'Subtitles'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          Navigator.pop(sheetContext);
+                          await _showOnlineSubtitles();
+                        },
+                        icon: const Icon(Icons.cloud_download_outlined),
+                        label: const Text('Online'),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          Navigator.pop(sheetContext);
+                          await _pickExternalSubtitle();
+                        },
+                        icon: const Icon(Icons.file_open_outlined),
+                        label: const Text('Load file'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  _subtitleAppearanceControls(setSheetState),
+                  const SizedBox(height: 12),
+                  if (!_aiSinhalaEnabled) ...[
+                    _subtitleSyncControls(setSheetState),
+                    const SizedBox(height: 12),
+                  ],
+                  if (_preparedAiSubtitle != null)
+                    _TrackTile(
+                      title: 'AI Sinhala',
+                      detail: _aiSinhalaEnabled
+                          ? 'Active • translated Sinhala overlay'
+                          : 'Available • switch back to AI Sinhala',
+                      selected: _aiSinhalaEnabled,
+                      onTap: () async {
+                        await _enablePreparedAiSubtitle();
+                        if (sheetContext.mounted) Navigator.pop(sheetContext);
+                      },
+                    ),
+                  if (_aiSubtitleLoading)
+                    const _EmptyTrackMessage(
+                      'AI Sinhala is matching this exact release in the background. Playback is not blocked.',
+                    )
+                  else if (_aiSubtitleUnavailable)
+                    const _EmptyTrackMessage(
+                      'AI Sinhala could not confidently prepare subtitles for this release. Playback is unaffected.',
+                    ),
+                  if ((_aiSubtitleLoading || _aiSubtitleUnavailable) &&
+                      _aiSinhalaEnabled == false)
+                    const SizedBox(height: 12),
+                  if (_aiSinhalaEnabled && _preparedAiSubtitle != null) ...[
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF111A13),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFF263827)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Expanded(
+                                child: Text(
+                                  'AI Sinhala sync',
+                                  style: TextStyle(fontWeight: FontWeight.w800),
+                                ),
+                              ),
+                              Text(_formatSyncOffset(_effectiveSyncOffsetMs)),
+                            ],
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            _autoSyncSamples.isNotEmpty
+                                ? 'Auto-synced from this video’s embedded English subtitle timing. Adjust only if it still looks off.'
+                                : 'Orvix is using release-matched timing. Adjust only if this source is still out of sync.',
+                            style: TextStyle(
+                              color: Theme.of(sheetContext)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              OutlinedButton(
+                                onPressed: () async {
+                                  await _adjustManualSync(-500);
+                                  if (sheetContext.mounted)
+                                    Navigator.pop(sheetContext);
+                                },
+                                child: const Text('Earlier -0.5s'),
+                              ),
+                              OutlinedButton(
+                                onPressed: () async {
+                                  await _resetManualSync();
+                                  if (sheetContext.mounted)
+                                    Navigator.pop(sheetContext);
+                                },
+                                child: const Text('Reset manual'),
+                              ),
+                              OutlinedButton(
+                                onPressed: () async {
+                                  await _adjustManualSync(500);
+                                  if (sheetContext.mounted)
+                                    Navigator.pop(sheetContext);
+                                },
+                                child: const Text('Later +0.5s'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  _TrackTile(
+                    title: 'Off',
+                    detail: 'Disable subtitles',
+                    selected:
+                        player.state.track.subtitle.id.toLowerCase() == 'no',
+                    onTap: () async {
+                      await _disableSubtitles();
+                      if (sheetContext.mounted) Navigator.pop(sheetContext);
+                    },
+                  ),
+                  ...subtitleTracks.map(
                     (track) => _TrackTile(
                       title: _trackLabel(track.title, track.language, track.id),
-                      detail: [
-                        track.codec,
-                        if (track.channelscount != null)
-                          '${track.channelscount} ch',
-                      ]
-                          .whereType<String>()
-                          .where((value) => value.isNotEmpty)
-                          .join(' • '),
-                      selected: player.state.track.audio.id == track.id,
+                      detail: track.codec ?? 'Embedded subtitle',
+                      selected: player.state.track.subtitle.id == track.id,
                       onTap: () async {
-                        await player.setAudioTrack(track);
+                        await _activateNativeSubtitle(track);
                         if (sheetContext.mounted) Navigator.pop(sheetContext);
                       },
                     ),
                   ),
-                const SizedBox(height: 22),
-                Row(
-                  children: [
-                    const Expanded(
-                      child: _TrackHeading(
-                          icon: Icons.subtitles_rounded, text: 'Subtitles'),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        Navigator.pop(sheetContext);
-                        await _showOnlineSubtitles();
-                      },
-                      icon: const Icon(Icons.cloud_download_outlined),
-                      label: const Text('Online'),
-                    ),
-                    const SizedBox(width: 8),
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        Navigator.pop(sheetContext);
-                        await _pickExternalSubtitle();
-                      },
-                      icon: const Icon(Icons.file_open_outlined),
-                      label: const Text('Load file'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                _subtitleAppearanceControls(setSheetState),
-                const SizedBox(height: 12),
-                if (!_aiSinhalaEnabled) ...[
-                  _subtitleSyncControls(setSheetState),
-                  const SizedBox(height: 12),
                 ],
-                if (_preparedAiSubtitle != null)
-                  _TrackTile(
-                    title: 'AI Sinhala',
-                    detail: _aiSinhalaEnabled
-                        ? 'Active • translated Sinhala overlay'
-                        : 'Available • switch back to AI Sinhala',
-                    selected: _aiSinhalaEnabled,
-                    onTap: () async {
-                      await _enablePreparedAiSubtitle();
-                      if (sheetContext.mounted) Navigator.pop(sheetContext);
-                    },
-                  ),
-                if (_aiSubtitleLoading)
-                  const _EmptyTrackMessage(
-                    'AI Sinhala is matching this exact release in the background. Playback is not blocked.',
-                  )
-                else if (_aiSubtitleUnavailable)
-                  const _EmptyTrackMessage(
-                    'AI Sinhala could not confidently prepare subtitles for this release. Playback is unaffected.',
-                  ),
-                if ((_aiSubtitleLoading || _aiSubtitleUnavailable) &&
-                    _aiSinhalaEnabled == false)
-                  const SizedBox(height: 12),
-                if (_aiSinhalaEnabled && _preparedAiSubtitle != null) ...[
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF111A13),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: const Color(0xFF263827)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            const Expanded(
-                              child: Text(
-                                'AI Sinhala sync',
-                                style: TextStyle(fontWeight: FontWeight.w800),
-                              ),
-                            ),
-                            Text(_formatSyncOffset(_effectiveSyncOffsetMs)),
-                          ],
-                        ),
-                        const SizedBox(height: 5),
-                        Text(
-                          _autoSyncSamples.isNotEmpty
-                              ? 'Auto-synced from this video’s embedded English subtitle timing. Adjust only if it still looks off.'
-                              : 'Orvix is using release-matched timing. Adjust only if this source is still out of sync.',
-                          style: TextStyle(
-                            color: Theme.of(sheetContext)
-                                .colorScheme
-                                .onSurfaceVariant,
-                            fontSize: 12,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            OutlinedButton(
-                              onPressed: () async {
-                                await _adjustManualSync(-500);
-                                if (sheetContext.mounted)
-                                  Navigator.pop(sheetContext);
-                              },
-                              child: const Text('Earlier -0.5s'),
-                            ),
-                            OutlinedButton(
-                              onPressed: () async {
-                                await _resetManualSync();
-                                if (sheetContext.mounted)
-                                  Navigator.pop(sheetContext);
-                              },
-                              child: const Text('Reset manual'),
-                            ),
-                            OutlinedButton(
-                              onPressed: () async {
-                                await _adjustManualSync(500);
-                                if (sheetContext.mounted)
-                                  Navigator.pop(sheetContext);
-                              },
-                              child: const Text('Later +0.5s'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                _TrackTile(
-                  title: 'Off',
-                  detail: 'Disable subtitles',
-                  selected:
-                      player.state.track.subtitle.id.toLowerCase() == 'no',
-                  onTap: () async {
-                    await _disableSubtitles();
-                    if (sheetContext.mounted) Navigator.pop(sheetContext);
-                  },
-                ),
-                ...subtitleTracks.map(
-                  (track) => _TrackTile(
-                    title: _trackLabel(track.title, track.language, track.id),
-                    detail: track.codec ?? 'Embedded subtitle',
-                    selected: player.state.track.subtitle.id == track.id,
-                    onTap: () async {
-                      await _activateNativeSubtitle(track);
-                      if (sheetContext.mounted) Navigator.pop(sheetContext);
-                    },
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
-        ),
         ),
       ),
     );

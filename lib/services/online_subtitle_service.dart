@@ -92,11 +92,9 @@ class OnlineSubtitleService {
           final language = normalizeLanguage(
             (raw['lang'] ?? raw['language'] ?? '').toString(),
           );
-          final rawLabel = (raw['label'] ?? raw['id'] ?? 'Subtitle')
-              .toString()
-              .trim();
-          final searchable =
-              '$rawLabel ${raw['id'] ?? ''} $url'.toLowerCase();
+          final rawLabel =
+              (raw['label'] ?? raw['id'] ?? 'Subtitle').toString().trim();
+          final searchable = '$rawLabel ${raw['id'] ?? ''} $url'.toLowerCase();
 
           var score = endpoint.bonus;
           if (language == preferred) score += 500;
