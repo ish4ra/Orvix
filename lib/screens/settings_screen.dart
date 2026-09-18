@@ -47,7 +47,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       SnackBar(
         content: Text(
           enabled
-              ? 'AI Sinhala subtitles enabled. Orvix will prepare Sinhala subtitles in the background after playback starts when possible.'
+              ? 'AI Sinhala subtitles enabled. Orvix will verify timing and prepare an opening Sinhala buffer before playback starts when possible.'
               : 'AI Sinhala subtitles disabled.',
         ),
       ),
@@ -97,8 +97,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       AiSinhalaSubtitleService.canTranslate
-                          ? 'Start playback immediately, then prepare Sinhala subtitles in the background and keep translating ahead. Requires internet.'
-                          : 'Sign in to your Orvix account first. When enabled, Orvix starts playback normally and prepares Sinhala subtitles in the background.',
+                          ? 'Before playback starts, Orvix verifies a safe subtitle timeline and translates an opening Sinhala buffer. If that cannot be done safely, playback opens with normal subtitles instead. Requires internet.'
+                          : 'Sign in to your Orvix account first. When enabled, Orvix prepares Sinhala subtitles before playback when a safe timing source is available.',
                       style: const TextStyle(height: 1.45),
                     ),
                   ),
