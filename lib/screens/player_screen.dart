@@ -201,7 +201,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _markPlaybackStarted();
       } else {
         _startupTimer = Timer(const Duration(seconds: 30), () {
-          if (!mounted) return;
+          if (!mounted || _closing) return;
           if (_hasPlaybackActivity()) {
             _markPlaybackStarted();
             return;
@@ -277,10 +277,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
         releaseHint: widget.releaseHint,
         expectedSizeBytes: widget.expectedSizeBytes,
       );
-      if (!mounted || _subtitleChoiceOverridden) return;
+      if (!mounted || _closing || _subtitleChoiceOverridden) return;
       if (prepared == null) {
         final embeddedReady = await _tryPrepareEmbeddedAiTiming();
-        if (!mounted) return;
+        if (!mounted || _closing) return;
         if (!embeddedReady) {
           setState(() {
             _aiSubtitleLoading = false;
@@ -312,7 +312,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       await _ensureEnglishTimingTrack();
       _refreshAiSubtitle();
     } catch (_) {
-      if (!mounted || _subtitleChoiceOverridden) return;
+      if (!mounted || _closing || _subtitleChoiceOverridden) return;
       final embeddedReady = await _tryPrepareEmbeddedAiTiming();
       if (!mounted) return;
       if (!embeddedReady) {
@@ -889,9 +889,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _ensureEnglishTimingTrack() async {
-    if (!_aiSinhalaEnabled) return;
+    if (!_aiSinhalaEnabled || _closing) return;
     final player = widget.playback.player;
-    for (var attempt = 0; attempt < 12 && mounted; attempt++) {
+    for (var attempt = 0; attempt < 12 && mounted && !_closing; attempt++) {
       final current = player.state.track.subtitle;
       dynamic chosen;
       if (current.id.toLowerCase() != 'no' && _isEnglishTrack(current)) {
@@ -2240,7 +2240,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                         Duration(milliseconds: value.round());
                                     await player.seek(target);
                                     _afterSeek(target);
-                                    if (!mounted) return;
+                                    if (!mounted || _closing) return;
                                     setState(() {
                                       _seeking = false;
                                       _seekPreviewMs = null;
