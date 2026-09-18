@@ -51,38 +51,33 @@ class CatalogService {
 
     final merged = <MediaItem>[];
     final seen = <String>{};
+    final sourceRank = <String, int>{};
     for (final group in results) {
-      for (final item in group) {
+      for (var index = 0; index < group.length; index++) {
+        final item = group[index];
         final key = '${item.kind.name}:${item.id}';
+        sourceRank.putIfAbsent(key, () => index);
         if (seen.add(key)) merged.add(item);
       }
     }
 
+    // IMDb vote counts are a stable popularity signal for exact-title ties.
+    // Search still works if this enrichment request fails.
     final imdbSignals = await _imdbSearchSignals(merged);
     final enriched = merged
         .map((item) => _withSearchSignal(item, imdbSignals[item.id]))
         .toList(growable: false);
-    final originalOrder = <String, int>{
-      for (var i = 0; i < enriched.length; i++)
-        (enriched[i].kind.name + ':' + enriched[i].id): i,
-    };
 
     enriched.sort((a, b) {
-      final byScore = _searchScore(
-        b,
-        normalized,
-        signal: imdbSignals[b.id],
-      ).compareTo(
-        _searchScore(
-          a,
-          normalized,
-          signal: imdbSignals[a.id],
-        ),
-      );
+      int score(MediaItem item) => _searchScore(
+            item,
+            normalized,
+            signal: imdbSignals[item.id],
+            sourceRank: sourceRank['${item.kind.name}:${item.id}'],
+          );
+      final byScore = score(b).compareTo(score(a));
       if (byScore != 0) return byScore;
-      final aRank = originalOrder[a.kind.name + ':' + a.id] ?? 9999;
-      final bRank = originalOrder[b.kind.name + ':' + b.id] ?? 9999;
-      return aRank.compareTo(bRank);
+      return a.title.toLowerCase().compareTo(b.title.toLowerCase());
     });
 
     return enriched.take(limit).toList(growable: false);
@@ -679,6 +674,7 @@ class CatalogService {
     MediaItem item,
     String query, {
     _ImdbSearchSignal? signal,
+    int? sourceRank,
   }) {
     final q = _searchKey(query);
     final title = _searchKey(item.title);
@@ -693,7 +689,7 @@ class CatalogService {
     var score = 0;
     if (title == titleQuery) {
       score += 1000000;
-    } else if (title.startsWith(titleQuery + ' ')) {
+    } else if (title.startsWith('$titleQuery ')) {
       score += 320000;
     } else if (title.contains(titleQuery)) {
       score += 140000;
@@ -718,9 +714,12 @@ class CatalogService {
     if (votes > 0) {
       score += (log(votes + 1) * 9000).round();
     }
-
     final rating = signal?.rating ?? item.rating ?? 0;
     score += (rating * 850).round();
+
+    if (sourceRank != null) {
+      score += (12000 - sourceRank.clamp(0, 20) * 600).clamp(0, 12000);
+    }
     return score;
   }
 
@@ -753,26 +752,13 @@ class CatalogService {
   ) async {
     final ids = items
         .map((item) => item.id)
-        .where((id) => RegExp(r'^tt\d{7,10}
-  String _searchKey(String value) => value
+        .where((id) => RegExp(r'^tt\d{7,10}  String _searchKey(String value) => value
       .toLowerCase()
       .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
       .trim()
       .replaceAll(RegExp(r'\s+'), ' ');
 
   void dispose() => _client.close();
-}
-
-class _ImdbSearchSignal {
-  const _ImdbSearchSignal({
-    this.rating,
-    required this.voteCount,
-    this.poster,
-  });
-
-  final double? rating;
-  final int voteCount;
-  final String? poster;
 }
 
 class _ImdbChartRow {
@@ -793,6 +779,18 @@ class _ImdbChartRow {
   final String? runtime;
 }
 
+class _ImdbSearchSignal {
+  const _ImdbSearchSignal({
+    this.rating,
+    required this.voteCount,
+    this.poster,
+  });
+
+  final double? rating;
+  final int voteCount;
+  final String? poster;
+}
+
 class CatalogException implements Exception {
   const CatalogException(this.message);
   final String message;
@@ -809,12 +807,9 @@ class CatalogException implements Exception {
     final query = StringBuffer('query SearchSignals {\n');
     for (var i = 0; i < ids.length; i++) {
       query.writeln(
-        '  t' +
-            i.toString() +
-            ': title(id: ' +
-            jsonEncode(ids[i]) +
-            ') { ratingsSummary { aggregateRating voteCount } '
-                'primaryImage { url } }',
+        '  t$i: title(id: ${jsonEncode(ids[i])}) { '
+        'ratingsSummary { aggregateRating voteCount } '
+        'primaryImage { url } }',
       );
     }
     query.writeln('}');
@@ -834,7 +829,7 @@ class CatalogException implements Exception {
             },
             body: jsonEncode({'query': query.toString()}),
           )
-          .timeout(const Duration(seconds: 6));
+          .timeout(const Duration(seconds: 7));
       if (response.statusCode != 200) return const {};
 
       final body = jsonDecode(response.body);
@@ -844,14 +839,15 @@ class CatalogException implements Exception {
 
       final out = <String, _ImdbSearchSignal>{};
       for (var i = 0; i < ids.length; i++) {
-        final node = data['t' + i.toString()];
+        final node = data['t$i'];
         if (node is! Map<String, dynamic>) continue;
         final ratings = node['ratingsSummary'];
         final rawRating = ratings is Map<String, dynamic>
             ? ratings['aggregateRating']
             : null;
-        final rawVotes =
-            ratings is Map<String, dynamic> ? ratings['voteCount'] : null;
+        final rawVotes = ratings is Map<String, dynamic>
+            ? ratings['voteCount']
+            : null;
         final image = node['primaryImage'];
         final poster =
             image is Map<String, dynamic> ? image['url']?.toString() : null;
