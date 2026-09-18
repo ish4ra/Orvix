@@ -54,11 +54,10 @@ def patch_android(tv: bool) -> None:
 
     gradle = Path("android/app/build.gradle.kts")
     gradle_text = gradle.read_text()
-    if tv:
-        gradle_text = gradle_text.replace(
-            'applicationId = "com.orvix.orvix"',
-            'applicationId = "com.orvix.orvix.tv"',
-        )
+    gradle_text = gradle_text.replace(
+        "minSdk = flutter.minSdkVersion",
+        "minSdk = 24",
+    )
     aar_dep = 'implementation(files("libs/rustls-platform-verifier-0.1.1.aar"))'
     if aar_dep not in gradle_text:
         gradle_text += f"\n\ndependencies {{\n    {aar_dep}\n}}\n"
