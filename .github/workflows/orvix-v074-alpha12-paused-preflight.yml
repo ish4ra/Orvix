@@ -5,7 +5,7 @@ on:
     branches:
       - orvix-v0.7.4-alpha.12
     paths:
-      - '.github/workflows/orvix-v074-alpha12-preplay-ai.yml'
+      - '.github/workflows/orvix-v074-alpha12-paused-preflight.yml'
       - 'lib/**'
       - 'test/**'
       - 'pubspec.yaml'
@@ -383,7 +383,7 @@ jobs:
 
           - Prefers the video's own embedded English text track as the authoritative playback clock.
           - Uses OpenSubtitles.com REST API v1 through a server-side Supabase Edge Function when an exact file hash + byte size are available.
-          - REST results are accepted for automatic AI Sinhala timing only when OpenSubtitles confirms moviehash_match=true.
+          - REST results are accepted for automatic AI Sinhala timing only from the exact moviehash + moviebytesize search path.
           - Keeps the OpenSubtitles API key server-side; it is never shipped in Windows or Android builds.
           - OpenSubtitles v3 remains a zero-config fallback, but hash-qualified results now require explicit hash-match evidence before Orvix treats them as exact.
           - If exact hash evidence is unavailable, filename + exact size can be used only with release-specific evidence; generic IMDb/title timelines are rejected for automatic AI Sinhala.
