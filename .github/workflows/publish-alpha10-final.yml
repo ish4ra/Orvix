@@ -22,8 +22,8 @@ jobs:
         run: |
           set -euo pipefail
           for i in $(seq 1 160); do
-            status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/35356692243" --jq '.status')"
-            conclusion="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/35356692243" --jq '.conclusion // ""')"
+            status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/35357296450" --jq '.status')"
+            conclusion="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/35357296450" --jq '.conclusion // ""')"
             echo "Final alpha.10 run: status=${status} conclusion=${conclusion}"
             if [ "$status" = "completed" ]; then
               if [ "$conclusion" != "success" ] && [ "$conclusion" != "failure" ]; then
@@ -39,7 +39,7 @@ jobs:
             sleep 15
           done
 
-          names="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/35356692243/artifacts" --jq '.artifacts[].name')"
+          names="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/35357296450/artifacts" --jq '.artifacts[].name')"
           for required in windows android-mobile android-tv macos; do
             if ! printf '%s\n' "$names" | grep -qx "$required"; then
               echo "::error::Missing required artifact: $required"
@@ -53,7 +53,7 @@ jobs:
           name: windows
           path: dist/windows
           github-token: ${{ github.token }}
-          run-id: 35356692243
+          run-id: 35357296450
 
       - name: Download Android mobile
         uses: actions/download-artifact@v4
@@ -61,7 +61,7 @@ jobs:
           name: android-mobile
           path: dist/android-mobile
           github-token: ${{ github.token }}
-          run-id: 35356692243
+          run-id: 35357296450
 
       - name: Download Android TV
         uses: actions/download-artifact@v4
@@ -69,7 +69,7 @@ jobs:
           name: android-tv
           path: dist/android-tv
           github-token: ${{ github.token }}
-          run-id: 35356692243
+          run-id: 35357296450
 
       - name: Download macOS
         uses: actions/download-artifact@v4
@@ -77,7 +77,7 @@ jobs:
           name: macos
           path: dist/macos
           github-token: ${{ github.token }}
-          run-id: 35356692243
+          run-id: 35357296450
 
       - name: Publish final alpha.10 assets
         env:
