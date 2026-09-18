@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 def patch_android(tv: bool) -> None:
@@ -19,7 +19,7 @@ def patch_android(tv: bool) -> None:
 
     text = text.replace(
         'android:label="orvix"',
-        f'android:label="{"Orvix TV" if tv else "Orvix"}"',
+        'android:label="Orvix"',
     )
 
     if "android:usesCleartextTraffic=" not in text:
@@ -134,8 +134,17 @@ def patch_android(tv: bool) -> None:
         banner_path.parent.mkdir(parents=True, exist_ok=True)
         if banner_source.exists():
             banner = Image.open(banner_source).convert("RGB")
-            banner = banner.resize((320, 180), Image.Resampling.LANCZOS)
-            banner.save(banner_path, quality=92, optimize=True)
+            # The supplied board has dark framing at its edges. Android TV
+            # already places banners inside its own rounded tile, so crop a
+            # small outer bleed instead of showing a double black frame.
+            banner = ImageOps.fit(
+                banner,
+                (320, 180),
+                method=Image.Resampling.LANCZOS,
+                bleed=0.06,
+                centering=(0.5, 0.5),
+            )
+            banner.save(banner_path, quality=94, optimize=True)
         else:
             banner = Image.new("RGB", (320, 180), (5, 8, 6))
             logo = src.copy()
@@ -179,7 +188,7 @@ class MainActivity : FlutterActivity() {
                         runOnUiThread {
                             result.error(
                                 "torrent_engine_start_failed",
-                                error.message ?: error.toString(),
+                                "${error::class.java.simpleName}: ${error.message ?: error.toString()}",
                                 null
                             )
                         }
@@ -220,8 +229,18 @@ import java.io.File
 
 class JniStreamingServerController {
     companion object {
-        init {
+        @Volatile
+        private var nativeLoaded = false
+
+        @Synchronized
+        private fun ensureNativeLoaded() {
+            if (nativeLoaded) return
+            // libstream_server.so links against libc++_shared.so. Load it
+            // explicitly first so Android TV/mobile do not leave the JNI
+            // controller in a failed class-initializer state.
+            System.loadLibrary("c++_shared")
             System.loadLibrary("stream_server")
+            nativeLoaded = true
         }
 
         @JvmStatic
@@ -237,6 +256,7 @@ class JniStreamingServerController {
 
         @JvmStatic
         fun start(context: Context): String? {
+            ensureNativeLoaded()
             val configDir = File(context.filesDir, "stream-server")
             val cacheDir = File(context.cacheDir, "stream-server")
             configDir.mkdirs()
@@ -251,6 +271,7 @@ class JniStreamingServerController {
 
         @JvmStatic
         fun stop() {
+            if (!nativeLoaded) return
             stopServerNative()
         }
     }

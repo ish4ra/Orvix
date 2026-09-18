@@ -23,6 +23,10 @@ def main() -> None:
             keyPassword = "{KEY_PASSWORD}"
             storeFile = file("{KEYSTORE_NAME}")
             storePassword = "{KEY_PASSWORD}"
+            // Keep both legacy and modern APK signature schemes enabled.
+            // This maximizes sideload compatibility across Android/TV builds.
+            enableV1Signing = true
+            enableV2Signing = true
         }}
     }}
 

@@ -88,6 +88,7 @@ class _OrvixAppState extends State<OrvixApp> {
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         ),
+        focusColor: const Color(0x66CBFF75),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
@@ -97,8 +98,18 @@ class _OrvixAppState extends State<OrvixApp> {
                 fontWeight: FontWeight.w900, letterSpacing: .15),
             backgroundColor: const Color(0xFFB9FF45),
             foregroundColor: const Color(0xFF081006),
-            shadowColor: const Color(0x553CFF00),
+            shadowColor: const Color(0x993CFF00),
             elevation: 2,
+          ).copyWith(
+            side: WidgetStateProperty.resolveWith<BorderSide?>((states) {
+              if (states.contains(WidgetState.focused)) {
+                return const BorderSide(color: Colors.white, width: 3);
+              }
+              return BorderSide.none;
+            }),
+            elevation: WidgetStateProperty.resolveWith<double?>((states) {
+              return states.contains(WidgetState.focused) ? 9 : 2;
+            }),
           ),
         ),
         outlinedButtonTheme: OutlinedButtonThemeData(
@@ -109,6 +120,22 @@ class _OrvixAppState extends State<OrvixApp> {
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             textStyle: const TextStyle(fontWeight: FontWeight.w800),
+          ).copyWith(
+            backgroundColor: WidgetStateProperty.resolveWith<Color?>((states) {
+              if (states.contains(WidgetState.focused)) {
+                return const Color(0xFF213A1E);
+              }
+              return Colors.transparent;
+            }),
+            side: WidgetStateProperty.resolveWith<BorderSide?>((states) {
+              if (states.contains(WidgetState.focused)) {
+                return const BorderSide(color: Colors.white, width: 3);
+              }
+              return const BorderSide(color: Color(0xFF426B2E));
+            }),
+            elevation: WidgetStateProperty.resolveWith<double?>((states) {
+              return states.contains(WidgetState.focused) ? 7 : 0;
+            }),
           ),
         ),
         inputDecorationTheme: InputDecorationTheme(

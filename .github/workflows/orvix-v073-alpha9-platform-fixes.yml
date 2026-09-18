@@ -29,7 +29,9 @@ jobs:
             curl --fail --location --retry 4 --retry-delay 2 "$url" -o "tmp/$file"
             echo "$sha  tmp/$file" | sha256sum -c -
             unzip -p "tmp/$file" "lib/$abi/libstream_server.so" > "native/jniLibs/$abi/libstream_server.so"
+            unzip -p "tmp/$file" "lib/$abi/libc++_shared.so" > "native/jniLibs/$abi/libc++_shared.so"
             test -s "native/jniLibs/$abi/libstream_server.so"
+            test -s "native/jniLibs/$abi/libc++_shared.so"
           }
 
           download_extract arm64-v8a \
@@ -60,7 +62,9 @@ jobs:
           for abi in armeabi-v7a arm64-v8a x86 x86_64; do
             echo "=== $abi ==="
             file "native/jniLibs/$abi/libstream_server.so"
-            readelf -d "native/jniLibs/$abi/libstream_server.so" | grep NEEDED || true
+            file "native/jniLibs/$abi/libc++_shared.so"
+            readelf -d "native/jniLibs/$abi/libstream_server.so" | grep NEEDED
+            readelf -d "native/jniLibs/$abi/libstream_server.so" | grep -q 'libc++_shared.so'
           done
 
       - uses: actions/upload-artifact@v4
@@ -161,7 +165,7 @@ jobs:
           )
           $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
-          & $iscc '/DMyAppVersion=0.7.3-alpha.8' 'installer\orvix.iss'
+          & $iscc '/DMyAppVersion=0.7.3-alpha.9' 'installer\orvix.iss'
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
 
       - uses: actions/upload-artifact@v4
@@ -208,6 +212,7 @@ jobs:
 
           for abi in armeabi-v7a arm64-v8a x86 x86_64; do
             test -s "android/app/src/main/jniLibs/$abi/libstream_server.so"
+            test -s "android/app/src/main/jniLibs/$abi/libc++_shared.so"
           done
           grep -q 'orvix/torrent_engine' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
 
@@ -230,27 +235,39 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Build Android mobile APK
-        run: flutter build apk --release
+      - name: Build Android mobile APKs
+        run: |
+          flutter build apk --release
+          flutter build apk --release --split-per-abi
 
       - name: Verify P2P engine packaged
         shell: bash
         run: |
           APK=build/app/outputs/flutter-apk/app-release.apk
           unzip -l "$APK" | grep 'lib/arm64-v8a/libstream_server.so'
+          unzip -l "$APK" | grep 'lib/arm64-v8a/libc++_shared.so'
           unzip -l "$APK" | grep 'lib/armeabi-v7a/libstream_server.so'
+          unzip -l "$APK" | grep 'lib/armeabi-v7a/libc++_shared.so'
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
           test -x "$APKSIGNER"
           "$APKSIGNER" verify --verbose --print-certs "$APK" | tee /tmp/orvix-apksigner.txt
           grep -qi 'c86153a3a0d3f49192b37c6574e23c41716c2b9935fdbcf38d6902a3e60fa4ab' /tmp/orvix-apksigner.txt
 
-      - name: Rename APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.3-alpha.9-Android-Mobile.apk
+      - name: Rename APKs
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.3-alpha.9-Android-Mobile.apk
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk Orvix-v0.7.3-alpha.9-Android-Mobile-arm64-v8a.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk Orvix-v0.7.3-alpha.9-Android-Mobile-armeabi-v7a.apk
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk Orvix-v0.7.3-alpha.9-Android-Mobile-x86_64.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: android-mobile
-          path: Orvix-v0.7.3-alpha.9-Android-Mobile.apk
+          path: |
+            Orvix-v0.7.3-alpha.9-Android-Mobile.apk
+            Orvix-v0.7.3-alpha.9-Android-Mobile-arm64-v8a.apk
+            Orvix-v0.7.3-alpha.9-Android-Mobile-armeabi-v7a.apk
+            Orvix-v0.7.3-alpha.9-Android-Mobile-x86_64.apk
 
   android-tv:
     runs-on: ubuntu-latest
@@ -289,6 +306,7 @@ jobs:
 
           for abi in armeabi-v7a arm64-v8a x86 x86_64; do
             test -s "android/app/src/main/jniLibs/$abi/libstream_server.so"
+            test -s "android/app/src/main/jniLibs/$abi/libc++_shared.so"
           done
           grep -q 'android.intent.category.LEANBACK_LAUNCHER' android/app/src/main/AndroidManifest.xml
           grep -q 'orvix/torrent_engine' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
@@ -320,7 +338,9 @@ jobs:
         run: |
           APK=build/app/outputs/flutter-apk/app-release.apk
           unzip -l "$APK" | grep 'lib/arm64-v8a/libstream_server.so'
+          unzip -l "$APK" | grep 'lib/arm64-v8a/libc++_shared.so'
           unzip -l "$APK" | grep 'lib/armeabi-v7a/libstream_server.so'
+          unzip -l "$APK" | grep 'lib/armeabi-v7a/libc++_shared.so'
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
           test -x "$APKSIGNER"
           "$APKSIGNER" verify --verbose --print-certs "$APK" | tee /tmp/orvix-apksigner.txt
@@ -525,19 +545,19 @@ jobs:
         run: |
           gh release create v0.7.3-alpha.9 \
             --target '${{ github.sha }}' \
-            --title 'Orvix v0.7.3-alpha.9 — Brand + Playback Parity' \
+            --title 'Orvix v0.7.3-alpha.9 — Platform Fixes' \
             --prerelease \
-            --notes "Orvix alpha.8 polishes the shared four-platform build.
+            --notes "Orvix alpha.9 fixes the platform-specific issues found during device testing.
 
-          - Uses the supplied full Orvix icon as the master launcher, Dock and taskbar brand asset instead of stripping it to a tiny centre mark.
-          - Enlarges the in-app navigation brand mark and keeps the same visual identity on Windows, Android mobile, Android TV and macOS.
-          - Android TV uses the supplied Orvix brand-board artwork for its launcher banner.
-          - Fixes the P2P startup race where media could begin after the old 12-second timeout while a false playback error remained visible.
-          - Playback activity now cancels and clears transient startup failures automatically, with a 30-second startup window.
-          - Keeps the validated local P2P path and the shared sources, PikPak, TorBox, subtitles, AI Sinhala, library, sync and account feature set on all four targets.
+          - macOS: fixes PikPak/TorBox secure-storage error -34018 in the ad-hoc DMG build.
+          - Android: uses one persistent Orvix signing identity with v1+v2 signatures and publishes smaller per-ABI mobile APKs alongside the universal APK.
+          - Android/TV P2P: packages and explicitly loads libc++_shared.so before libstream_server.so, fixing the failed JNI controller initialization seen during local torrent playback.
+          - Android TV: launcher label is Orvix, the supplied TV artwork is edge-cropped to remove the double dark frame, and focused remote buttons now get an obvious white focus ring.
+          - Windows: corrects the alpha.9 installer version metadata.
+          - Retains the alpha.8 playback-start recovery, branding, source, cloud, subtitle, library and account fixes.
           - macOS remains ad-hoc signed/not notarized, so Gatekeeper may require Open Anyway." \
             dist/Orvix-v0.7.3-alpha.9-Windows-x64.zip \
             dist/installer-output/Orvix-Setup-v0.7.3-alpha.9-Windows-x64.exe \
-            dist/Orvix-v0.7.3-alpha.9-Android-Mobile.apk \
+            dist/Orvix-v0.7.3-alpha.9-Android-Mobile*.apk \
             dist/Orvix-v0.7.3-alpha.9-Android-TV.apk \
             dist/Orvix-v0.7.3-alpha.9-macOS.dmg
