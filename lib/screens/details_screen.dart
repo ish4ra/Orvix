@@ -831,6 +831,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         episode,
         releaseHint: releaseHint,
         expectedSizeBytes: chosen.sizeBytes,
+        expectedVideoHash: chosen.videoHash,
       );
       return;
     }
@@ -1092,6 +1093,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         episode,
         releaseHint: file.name,
         expectedSizeBytes: file.size,
+        expectedVideoHash: chosen.videoHash,
       );
       return;
     }
@@ -1930,6 +1932,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     EpisodeItem? episode, {
     String? releaseHint,
     int? expectedSizeBytes,
+    String? expectedVideoHash,
   }) async {
     if (!mounted) return;
 
@@ -1957,6 +1960,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
           aiSubtitle: null,
           releaseHint: releaseHint,
           expectedSizeBytes: expectedSizeBytes,
+          expectedVideoHash: expectedVideoHash,
           nextEpisodeLabel: next == null ? null : '${next.label} ${next.title}',
           onNext: next == null
               ? null
