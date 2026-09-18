@@ -196,20 +196,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
         });
         return;
       }
+      final autoEnable = !_subtitleChoiceOverridden;
       setState(() {
         _preparedAiSubtitle = prepared;
-        _aiSinhalaEnabled = true;
+        _aiSinhalaEnabled = autoEnable;
         _aiSubtitleLoading = false;
         _aiSubtitleUnavailable = false;
       });
-      _positionSubscription ??=
-          widget.playback.player.stream.position.listen(_onPosition);
-      _subtitleTimingSubscription ??=
-          widget.playback.player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
-      await _loadManualSync();
-      if (!mounted) return;
-      await _ensureEnglishTimingTrack();
-      _refreshAiSubtitle();
+      if (autoEnable) {
+        _positionSubscription ??=
+            widget.playback.player.stream.position.listen(_onPosition);
+        _subtitleTimingSubscription ??= widget.playback.player.stream.subtitle
+            .listen(_onEmbeddedSubtitleCue);
+        await _loadManualSync();
+        if (!mounted) return;
+        await _setNativeSubtitleDelayProperty(0);
+        await _ensureEnglishTimingTrack();
+        _refreshAiSubtitle();
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -610,7 +614,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (platform is! mk.NativePlayer) return;
     try {
       // mpv keeps the selected subtitle decoded while hiding its native render.
-      // That lets Orvix use both text and PGS/bitmap cue timing as a sync clock.
+      // Reset normal-subtitle delay so AI timing uses the source cue clock.
+      await platform.setProperty(
+        'sub-delay',
+        '0',
+        waitForInitialization: false,
+      );
       await platform.setProperty(
         'sub-visibility',
         'no',
@@ -721,19 +730,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Widget _aiSubtitleOverlay() {
+    final baseBottom = _controlsVisible ? 110.0 : 12.0;
     return AnimatedPositioned(
       duration: const Duration(milliseconds: 120),
       curve: Curves.easeOut,
       left: 40,
       right: 40,
-      bottom: _controlsVisible ? 122 : 30,
+      bottom: baseBottom + _subtitleBottomOffset,
       child: IgnorePointer(
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 980),
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: const Color(0xD9000000),
+                color: _subtitleBackground
+                    ? Colors.black.withValues(
+                        alpha: _subtitleBackgroundOpacity,
+                      )
+                    : Colors.transparent,
                 borderRadius: BorderRadius.circular(12),
                 boxShadow: const [
                   BoxShadow(
@@ -749,12 +763,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 child: Text(
                   _aiDisplaySubtitle,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white,
-                    fontSize: 27,
+                    fontSize: _subtitleFontSize,
                     height: 1.35,
                     fontWeight: FontWeight.w700,
-                    shadows: [Shadow(color: Colors.black, blurRadius: 8)],
+                    shadows: const [
+                      Shadow(color: Colors.black, blurRadius: 8),
+                    ],
                   ),
                 ),
               ),
@@ -777,7 +793,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return;
     }
     final name = path.split(RegExp(r'[/\\]')).last;
-    await widget.playback.player.setSubtitleTrack(
+    await _activateNativeSubtitle(
       mk.SubtitleTrack.uri(path, title: name),
     );
     if (mounted) {
