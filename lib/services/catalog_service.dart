@@ -58,16 +58,34 @@ class CatalogService {
       }
     }
 
-    merged.sort((a, b) {
+    final imdbSignals = await _imdbSearchSignals(merged);
+    final enriched = merged
+        .map((item) => _withSearchSignal(item, imdbSignals[item.id]))
+        .toList(growable: false);
+    final originalOrder = <String, int>{
+      for (var i = 0; i < enriched.length; i++)
+        enriched[i].kind.name + ':' + enriched[i].id: i,
+    };
+
+    enriched.sort((a, b) {
       final byScore = _searchScore(
         b,
         normalized,
-      ).compareTo(_searchScore(a, normalized));
+        signal: imdbSignals[b.id],
+      ).compareTo(
+        _searchScore(
+          a,
+          normalized,
+          signal: imdbSignals[a.id],
+        ),
+      );
       if (byScore != 0) return byScore;
-      return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+      final aRank = originalOrder[a.kind.name + ':' + a.id] ?? 9999;
+      final bRank = originalOrder[b.kind.name + ':' + b.id] ?? 9999;
+      return aRank.compareTo(bRank);
     });
 
-    return merged.take(limit).toList(growable: false);
+    return enriched.take(limit).toList(growable: false);
   }
 
   Future<MediaItem?> details(MediaItem item) async {
@@ -657,28 +675,202 @@ class CatalogService {
         .toList(growable: false);
   }
 
-  int _searchScore(MediaItem item, String query) {
+  int _searchScore(
+    MediaItem item,
+    String query, {
+    _ImdbSearchSignal? signal,
+  }) {
     final q = _searchKey(query);
     final title = _searchKey(item.title);
     if (q.isEmpty || title.isEmpty) return 0;
 
+    final queryYearMatch = RegExp(r'\b(?:19|20)\d{2}\b').firstMatch(q);
+    final queryYear = int.tryParse(queryYearMatch?.group(0) ?? '');
+    final titleQuery = queryYearMatch == null
+        ? q
+        : q.replaceFirst(queryYearMatch.group(0)!, '').trim();
+
     var score = 0;
-    if (title == q) {
-      score += 100000;
-    } else if (title.startsWith('$q ')) {
-      score += 40000;
-    } else if (title.contains(q)) {
-      score += 20000;
+    if (title == titleQuery) {
+      score += 1000000;
+    } else if (title.startsWith(titleQuery + ' ')) {
+      score += 320000;
+    } else if (title.contains(titleQuery)) {
+      score += 140000;
+    } else {
+      final words = titleQuery
+          .split(' ')
+          .where((word) => word.isNotEmpty)
+          .toList(growable: false);
+      if (words.isNotEmpty && words.every(title.contains)) {
+        score += 80000;
+      }
     }
 
-    final yearMatch = RegExp(r'\b(?:19|20)\d{2}\b').firstMatch(item.year ?? '');
-    final year = int.tryParse(yearMatch?.group(0) ?? '');
-    if (year != null) {
-      score += year <= DateTime.now().year ? 5000 : -1000;
+    final itemYear = item.startYear;
+    if (queryYear != null) {
+      score += itemYear == queryYear ? 250000 : -50000;
+    } else if (itemYear != null && itemYear > DateTime.now().year) {
+      score -= 15000;
     }
 
-    score += ((item.rating ?? 0) * 100).round();
+    final votes = signal?.voteCount ?? 0;
+    if (votes > 0) {
+      score += (log(votes + 1) * 9000).round();
+    }
+
+    final rating = signal?.rating ?? item.rating ?? 0;
+    score += (rating * 850).round();
     return score;
+  }
+
+  MediaItem _withSearchSignal(MediaItem item, _ImdbSearchSignal? signal) {
+    if (signal == null) return item;
+    return MediaItem(
+      id: item.id,
+      kind: item.kind,
+      title: item.title,
+      year: item.year,
+      poster: signal.poster?.trim().isNotEmpty == true
+          ? signal.poster
+          : item.poster,
+      background: item.background,
+      description: item.description,
+      rating: signal.rating ?? item.rating,
+      runtime: item.runtime,
+      genres: item.genres,
+      episodes: item.episodes,
+      cast: item.cast,
+      directors: item.directors,
+      country: item.country,
+      certification: item.certification,
+    );
+  }
+
+  Future<Map<String, _ImdbSearchSignal>> _imdbSearchSignals(
+    List<MediaItem> items,
+  ) async {
+    final ids = items
+        .map((item) => item.id)
+        .where((id) => RegExp(r'^tt\d{7,10}
+  String _searchKey(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+      .trim()
+      .replaceAll(RegExp(r'\s+'), ' ');
+
+  void dispose() => _client.close();
+}
+
+class _ImdbChartRow {
+  const _ImdbChartRow({
+    required this.id,
+    this.title,
+    this.year,
+    this.poster,
+    this.rating,
+    this.runtime,
+  });
+
+  final String id;
+  final String? title;
+  final String? year;
+  final String? poster;
+  final double? rating;
+  final String? runtime;
+}
+
+class _ImdbSearchSignal {
+  const _ImdbSearchSignal({
+    this.rating,
+    required this.voteCount,
+    this.poster,
+  });
+
+  final double? rating;
+  final int voteCount;
+  final String? poster;
+}
+
+class CatalogException implements Exception {
+  const CatalogException(this.message);
+  final String message;
+
+  @override
+  String toString() => message;
+}
+).hasMatch(id))
+        .toSet()
+        .take(40)
+        .toList(growable: false);
+    if (ids.isEmpty) return const {};
+
+    final query = StringBuffer('query SearchSignals {\n');
+    for (var i = 0; i < ids.length; i++) {
+      query.writeln(
+        '  t' +
+            i.toString() +
+            ': title(id: ' +
+            jsonEncode(ids[i]) +
+            ') { ratingsSummary { aggregateRating voteCount } primaryImage { url } }',
+      );
+    }
+    query.writeln('}');
+
+    try {
+      final response = await _client
+          .post(
+            Uri.parse(_imdbGraphqlUrl),
+            headers: const {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'Origin': 'https://www.imdb.com',
+              'Referer': 'https://www.imdb.com/',
+              'User-Agent':
+                  'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36',
+              'x-imdb-client-name': 'imdb-web-next',
+            },
+            body: jsonEncode({'query': query.toString()}),
+          )
+          .timeout(const Duration(seconds: 6));
+      if (response.statusCode != 200) return const {};
+
+      final body = jsonDecode(response.body);
+      if (body is! Map<String, dynamic>) return const {};
+      final data = body['data'];
+      if (data is! Map<String, dynamic>) return const {};
+
+      final out = <String, _ImdbSearchSignal>{};
+      for (var i = 0; i < ids.length; i++) {
+        final node = data['t' + i.toString()];
+        if (node is! Map<String, dynamic>) continue;
+        final ratings = node['ratingsSummary'];
+        final rawRating = ratings is Map<String, dynamic>
+            ? ratings['aggregateRating']
+            : null;
+        final rawVotes =
+            ratings is Map<String, dynamic> ? ratings['voteCount'] : null;
+        final image = node['primaryImage'];
+        final poster =
+            image is Map<String, dynamic> ? image['url']?.toString() : null;
+
+        final rating = rawRating is num
+            ? rawRating.toDouble()
+            : double.tryParse(rawRating?.toString() ?? '');
+        final votes = rawVotes is num
+            ? rawVotes.toInt()
+            : int.tryParse(rawVotes?.toString() ?? '') ?? 0;
+
+        out[ids[i]] = _ImdbSearchSignal(
+          rating: rating,
+          voteCount: votes,
+          poster: poster,
+        );
+      }
+      return out;
+    } catch (_) {
+      return const {};
+    }
   }
 
   String _searchKey(String value) => value
