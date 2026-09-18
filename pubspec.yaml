@@ -1,7 +1,7 @@
 name: orvix
-description: Multi-cloud cinematic media hub for Windows and Android.
+description: Multi-platform cinematic media hub for Windows, Android mobile, Android TV and macOS.
 publish_to: 'none'
-version: 0.7.3-alpha.7+42
+version: 0.7.3-alpha.8+43
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -42,3 +42,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/branding/orvix_icon.png
+    - assets/branding/orvix_tv_banner.jpg
