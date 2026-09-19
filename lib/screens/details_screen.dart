@@ -140,6 +140,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
         future: _detailsFuture,
         builder: (context, snapshot) {
           final item = snapshot.data ?? widget.item;
+          if (PlatformProfile.isAndroidTv) {
+            return _tvDetailsLayout(item);
+          }
           return Stack(
             children: [
               CustomScrollView(
@@ -175,6 +178,329 @@ class _DetailsScreenState extends State<DetailsScreen> {
             ],
           );
         },
+      ),
+    );
+  }
+
+  Widget _tvDetailsLayout(MediaItem item) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _tvDetailsBackdrop(item),
+        CustomScrollView(
+          cacheExtent: 900,
+          slivers: [
+            SliverToBoxAdapter(
+              child: SizedBox(
+                height: 360,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(42, 52, 36, 24),
+                  child: Align(
+                    alignment: Alignment.bottomLeft,
+                    child: _tvDetailsHeroContent(item),
+                  ),
+                ),
+              ),
+            ),
+            if (item.kind == MediaKind.series && item.episodes.isNotEmpty)
+              SliverToBoxAdapter(child: _tvEpisodeRail(item)),
+            SliverToBoxAdapter(child: _tvFactsSection(item)),
+            const SliverToBoxAdapter(child: SizedBox(height: 64)),
+          ],
+        ),
+        Positioned(
+          top: 18,
+          left: 18,
+          child: SafeArea(
+            child: IconButton.filledTonal(
+              autofocus: true,
+              tooltip: 'Back',
+              onPressed: () => Navigator.of(context).pop(),
+              style: ButtonStyle(
+                side: WidgetStateProperty.resolveWith(
+                  (states) => states.contains(WidgetState.focused)
+                      ? const BorderSide(color: Colors.white, width: 2)
+                      : BorderSide.none,
+                ),
+              ),
+              icon: const Icon(Icons.arrow_back_rounded),
+            ),
+          ),
+        ),
+        if (_resolving) _busyOverlay(),
+      ],
+    );
+  }
+
+  Widget _tvDetailsBackdrop(MediaItem item) {
+    final image = item.background;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (image != null && image.isNotEmpty)
+          CachedNetworkImage(
+            imageUrl: image,
+            fit: BoxFit.cover,
+            alignment: Alignment.topCenter,
+            memCacheWidth: 1280,
+            fadeInDuration: Duration.zero,
+            placeholder: (_, __) =>
+                const ColoredBox(color: Color(0xFF080D09)),
+            errorWidget: (_, __, ___) =>
+                const ColoredBox(color: Color(0xFF080D09)),
+          )
+        else
+          const ColoredBox(color: Color(0xFF050806)),
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color(0x22000000),
+                Color(0xB0050806),
+                Color(0xFF050806),
+              ],
+              stops: [0, .43, .68],
+            ),
+          ),
+        ),
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [
+                Color(0xF2050806),
+                Color(0x99050806),
+                Color(0x11050806),
+              ],
+              stops: [0, .46, .88],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _tvDetailsHeroContent(MediaItem item) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 700),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            item.title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 34,
+              height: 1.02,
+              fontWeight: FontWeight.w900,
+              letterSpacing: -.8,
+            ),
+          ),
+          const SizedBox(height: 11),
+          Wrap(
+            spacing: 14,
+            runSpacing: 6,
+            children: [
+              _TvMetaText(item.typeLabel),
+              if (item.year != null) _TvMetaText(item.year!),
+              if (item.runtime != null) _TvMetaText(item.runtime!),
+              if (item.rating != null)
+                _TvMetaText('★ ${item.rating!.toStringAsFixed(1)}'),
+              ...item.genres.take(3).map(_TvMetaText.new),
+            ],
+          ),
+          if (item.description?.trim().isNotEmpty == true) ...[
+            const SizedBox(height: 13),
+            Text(
+              item.description!,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFFD3DAD4),
+                fontSize: 14,
+                height: 1.45,
+              ),
+            ),
+          ],
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              if (item.kind == MediaKind.movie)
+                FilledButton.icon(
+                  onPressed: _resolving ? null : () => _play(item),
+                  icon: const Icon(Icons.play_arrow_rounded),
+                  label: const Text('Play'),
+                ),
+              if (item.kind == MediaKind.movie)
+                OutlinedButton.icon(
+                  onPressed:
+                      _resolving ? null : () => _findSourcesAndPlay(item),
+                  icon: const Icon(Icons.travel_explore_rounded),
+                  label: const Text('Sources'),
+                ),
+              FilledButton.tonalIcon(
+                onPressed: () => _toggleLibrary(item),
+                icon: Icon(
+                  _inLibrary
+                      ? Icons.video_library_rounded
+                      : Icons.library_add_outlined,
+                ),
+                label: Text(_inLibrary ? 'In Library' : 'Library'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _toggleWatchlist(item),
+                icon: Icon(
+                  _watchlisted
+                      ? Icons.bookmark_rounded
+                      : Icons.bookmark_add_outlined,
+                ),
+                label: Text(_watchlisted ? 'Watchlisted' : 'Watchlist'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tvEpisodeRail(MediaItem item) {
+    final seasons = item.episodes.map((e) => e.season).toSet().toList()..sort();
+    if (seasons.isEmpty) return const SizedBox.shrink();
+    final selected = _selectedSeason ?? seasons.first;
+    final episodes = item.episodes.where((e) => e.season == selected).toList()
+      ..sort((a, b) => a.episode.compareTo(b.episode));
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 18, bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 42),
+            child: Row(
+              children: [
+                const Text(
+                  'Episodes',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -.2,
+                  ),
+                ),
+                const Spacer(),
+                Wrap(
+                  spacing: 7,
+                  children: [
+                    for (final season in seasons)
+                      ChoiceChip(
+                        label: Text('S$season'),
+                        selected: season == selected,
+                        onSelected: (_) =>
+                            setState(() => _selectedSeason = season),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 168,
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 42, vertical: 5),
+              scrollDirection: Axis.horizontal,
+              cacheExtent: 1000,
+              itemCount: episodes.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              itemBuilder: (context, index) {
+                final episode = episodes[index];
+                return RepaintBoundary(
+                  child: _TvEpisodeCard(
+                    episode: episode,
+                    onPlay: _resolving
+                        ? null
+                        : () => _play(item, episode: episode),
+                    onSources: _resolving
+                        ? null
+                        : () => _findSourcesAndPlay(item, episode: episode),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tvFactsSection(MediaItem item) {
+    final hasCredits = item.directors.isNotEmpty || item.cast.isNotEmpty;
+    final hasFacts = item.country?.trim().isNotEmpty == true ||
+        item.certification?.trim().isNotEmpty == true;
+    if (!hasCredits && !hasFacts) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(42, 26, 42, 0),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 980),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'About',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (item.directors.isNotEmpty)
+              Text(
+                'Director${item.directors.length > 1 ? 's' : ''}: '
+                '${item.directors.join(', ')}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFFB7C1B9),
+                  height: 1.45,
+                ),
+              ),
+            if (hasFacts) ...[
+              const SizedBox(height: 5),
+              Text(
+                [
+                  if (item.country?.trim().isNotEmpty == true)
+                    item.country!.trim(),
+                  if (item.certification?.trim().isNotEmpty == true)
+                    'Rated ${item.certification!.trim()}',
+                ].join('  •  '),
+                style: const TextStyle(
+                  color: Color(0xFF8F9A91),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+            if (item.cast.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(
+                'Cast: ${item.cast.take(12).join(', ')}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFFAAB4AC),
+                  height: 1.45,
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -2128,6 +2454,143 @@ class _DetailsScreenState extends State<DetailsScreen> {
     });
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text('Could not play: $error')));
+  }
+}
+
+class _TvMetaText extends StatelessWidget {
+  const _TvMetaText(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: const TextStyle(
+        color: Color(0xFFB6C0B8),
+        fontSize: 12.5,
+        fontWeight: FontWeight.w800,
+      ),
+    );
+  }
+}
+
+class _TvEpisodeCard extends StatefulWidget {
+  const _TvEpisodeCard({
+    required this.episode,
+    required this.onPlay,
+    required this.onSources,
+  });
+
+  final EpisodeItem episode;
+  final VoidCallback? onPlay;
+  final VoidCallback? onSources;
+
+  @override
+  State<_TvEpisodeCard> createState() => _TvEpisodeCardState();
+}
+
+class _TvEpisodeCardState extends State<_TvEpisodeCard> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final episode = widget.episode;
+    final primary = Theme.of(context).colorScheme.primary;
+
+    return AnimatedScale(
+      scale: _focused ? 1.035 : 1,
+      duration: const Duration(milliseconds: 110),
+      curve: Curves.easeOutCubic,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 110),
+        width: 260,
+        decoration: BoxDecoration(
+          color: _focused ? const Color(0xFF151D16) : const Color(0xFF0C120D),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: _focused ? primary : const Color(0xFF1D291F),
+            width: _focused ? 2 : 1,
+          ),
+          boxShadow: _focused
+              ? [
+                  BoxShadow(
+                    color: primary.withValues(alpha: .16),
+                    blurRadius: 18,
+                  ),
+                ]
+              : const [],
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          focusColor: Colors.transparent,
+          onFocusChange: (value) => setState(() => _focused = value),
+          onTap: widget.onPlay,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                height: 92,
+                width: double.infinity,
+                child: ClipRRect(
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(13),
+                  ),
+                  child: episode.thumbnail == null
+                      ? const ColoredBox(
+                          color: Color(0xFF111812),
+                          child: Center(
+                            child: Icon(Icons.movie_outlined, size: 30),
+                          ),
+                        )
+                      : CachedNetworkImage(
+                          imageUrl: episode.thumbnail!,
+                          fit: BoxFit.cover,
+                          memCacheWidth: 520,
+                          fadeInDuration: Duration.zero,
+                          placeholder: (_, __) =>
+                              const ColoredBox(color: Color(0xFF111812)),
+                          errorWidget: (_, __, ___) => const ColoredBox(
+                            color: Color(0xFF111812),
+                            child: Center(
+                              child: Icon(Icons.movie_outlined),
+                            ),
+                          ),
+                        ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(11, 9, 8, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${episode.label}  ${episode.title}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: 'Sources',
+                      onPressed: widget.onSources,
+                      icon: const Icon(
+                        Icons.travel_explore_rounded,
+                        size: 18,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
