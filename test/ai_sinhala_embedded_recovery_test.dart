@@ -24,7 +24,7 @@ void main() {
     expect(player, contains('_liveTranslationFailures < 3'));
     expect(
       player,
-      contains("AI translation service is unavailable — using English subtitles."),
+      contains('AI Sinhala could not keep up'),
     );
   });
 
