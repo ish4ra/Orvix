@@ -349,9 +349,9 @@ class _OrvixShellState extends State<_OrvixShell> {
       return Scaffold(
         backgroundColor: const Color(0xFF050806),
         body: SafeArea(
-          child: Row(
+          child: Column(
             children: [
-              _TvSideNavigation(
+              _TvTopNavigation(
                 selectedIndex: _index,
                 onSelected: _selectDestination,
               ),
@@ -593,6 +593,180 @@ class _FeatureLine extends StatelessWidget {
   }
 }
 
+
+class _TvTopNavigation extends StatelessWidget {
+  const _TvTopNavigation({
+    required this.selectedIndex,
+    required this.onSelected,
+  });
+
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  static const _items = <({IconData icon, String label, int index})>[
+    (icon: Icons.home_rounded, label: 'Home', index: 0),
+    (icon: Icons.search_rounded, label: 'Search', index: 1),
+    (icon: Icons.video_library_rounded, label: 'Library', index: 2),
+    (icon: Icons.cloud_rounded, label: 'Clouds', index: 3),
+    (icon: Icons.hub_rounded, label: 'Sources', index: 4),
+    (icon: Icons.settings_rounded, label: 'Settings', index: 5),
+    (icon: Icons.person_rounded, label: 'Account', index: 6),
+    (icon: Icons.info_rounded, label: 'About', index: 7),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 72,
+      padding: const EdgeInsets.symmetric(horizontal: 22),
+      decoration: const BoxDecoration(
+        color: Color(0xFA080B09),
+        border: Border(
+          bottom: BorderSide(color: Color(0xFF1A211C), width: 1),
+        ),
+      ),
+      child: Row(
+        children: [
+          const _TvWordmark(),
+          const SizedBox(width: 24),
+          Expanded(
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _items.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 5),
+              itemBuilder: (context, index) {
+                final item = _items[index];
+                return _TvTopNavButton(
+                  icon: item.icon,
+                  label: item.label,
+                  selected: selectedIndex == item.index,
+                  onPressed: () => onSelected(item.index),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TvWordmark extends StatelessWidget {
+  const _TvWordmark();
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Row(
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(
+              color: primary.withValues(alpha: .48),
+              width: 1.4,
+            ),
+          ),
+          child: Icon(
+            Icons.play_arrow_rounded,
+            size: 27,
+            color: primary,
+          ),
+        ),
+        const SizedBox(width: 10),
+        const Text(
+          'ORVIX',
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 2.0,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TvTopNavButton extends StatefulWidget {
+  const _TvTopNavButton({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  State<_TvTopNavButton> createState() => _TvTopNavButtonState();
+}
+
+class _TvTopNavButtonState extends State<_TvTopNavButton> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final active = widget.selected || _focused;
+
+    return Center(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 100),
+        decoration: BoxDecoration(
+          color: widget.selected
+              ? const Color(0xFF1B221D)
+              : _focused
+                  ? const Color(0xFF202721)
+                  : Colors.transparent,
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(
+            color: _focused
+                ? Colors.white.withValues(alpha: .9)
+                : widget.selected
+                    ? primary.withValues(alpha: .34)
+                    : Colors.transparent,
+            width: _focused ? 2 : 1,
+          ),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(15),
+          focusColor: Colors.transparent,
+          onFocusChange: (value) => setState(() => _focused = value),
+          onTap: widget.onPressed,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  widget.icon,
+                  size: 18,
+                  color: active ? primary : const Color(0xFF9BA39D),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  widget.label,
+                  style: TextStyle(
+                    color: active
+                        ? const Color(0xFFF0F2F0)
+                        : const Color(0xFF9BA39D),
+                    fontSize: 12.5,
+                    fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _TvSideNavigation extends StatelessWidget {
   const _TvSideNavigation({
