@@ -195,7 +195,82 @@ class AiSinhalaSubtitleService {
     return RegExp(r'[\u0D80-\u0DFF]').hasMatch(translated);
   }
 
-  static const _generatedSubtitleCacheVersion = 'srt-v1';
+  static const _generatedSubtitleCacheVersion = 'srt-v2-online-source';
+
+  static Future<AiGeneratedSubtitleFile>
+      prepareGeneratedSinhalaFromOnlineSubtitle({
+    required String title,
+    required String subtitleUrl,
+    required String subtitleIdentity,
+    required String subtitleLabel,
+    void Function(String message)? onStatus,
+  }) async {
+    final cleanUrl = subtitleUrl.trim();
+    if (!cleanUrl.startsWith(RegExp(r'https?://'))) {
+      throw const AiSubtitleException(
+        'The selected English subtitle has no downloadable URL.',
+      );
+    }
+
+    final cacheKey =
+        'online|$subtitleIdentity|$cleanUrl|$_generatedSubtitleCacheVersion';
+    final cached = await _cachedGeneratedFile(cacheKey);
+    if (cached != null) {
+      onStatus?.call('Cached Sinhala subtitle file is ready.');
+      return AiGeneratedSubtitleFile(
+        path: cached.path,
+        source: 'opensubtitles-online',
+        label: subtitleLabel,
+        cacheHit: true,
+      );
+    }
+
+    onStatus?.call('Downloading the selected English subtitle…');
+    final text = await _downloadSubtitle(cleanUrl);
+    final cues = _parseSubtitle(text);
+    if (cues.length < 8) {
+      throw const AiSubtitleException(
+        'The selected English subtitle could not be parsed safely.',
+      );
+    }
+
+    final prepared = AiPreparedSubtitle(
+      key: cacheKey,
+      title: title,
+      sourceUrl: cleanUrl,
+      cues: cues,
+      sourceMatch: 'user-or-ranked-online-subtitle',
+    );
+
+    onStatus?.call(
+      'English subtitle loaded. Translating the complete file to Sinhala…',
+    );
+    await _translateEntireSubtitle(
+      prepared,
+      onProgress: (done, total) {
+        final percent =
+            total <= 0 ? 100 : ((done * 100) / total).round().clamp(0, 100);
+        onStatus?.call(
+          'Translating complete Sinhala subtitle… $percent% ($done/$total)',
+        );
+      },
+    );
+
+    if (prepared.translatedCount != prepared.cues.length) {
+      throw const AiSubtitleException(
+        'The complete Sinhala subtitle did not finish translating.',
+      );
+    }
+
+    final file = await _writeGeneratedSrt(cacheKey, prepared);
+    onStatus?.call('Sinhala subtitle file generated and cached.');
+    return AiGeneratedSubtitleFile(
+      path: file.path,
+      source: 'opensubtitles-online',
+      label: subtitleLabel,
+      cacheHit: false,
+    );
+  }
 
   static Future<AiGeneratedSubtitleFile> prepareGeneratedSinhalaFile({
     required MediaItem item,
