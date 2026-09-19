@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('startup uses full generated subtitle file instead of live cue AI', () {
+  test('startup uses ranked online English subtitle instead of embedded/live AI', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final start =
@@ -14,24 +14,34 @@ void main() {
     expect(end, greaterThan(start));
     final startup = player.substring(start, end);
 
-    expect(startup, contains('prepareGeneratedSinhalaFile('));
+    expect(startup, contains('OnlineSubtitleService.search('));
+    expect(startup, contains("preferredLanguage: 'eng'"));
+    expect(
+      startup,
+      contains('prepareGeneratedSinhalaFromOnlineSubtitle('),
+    );
     expect(startup, contains('mk.SubtitleTrack.uri('));
     expect(startup, contains("language: 'si'"));
+    expect(startup, isNot(contains('_fetchEmbeddedEnglishSubtitle')));
     expect(startup, isNot(contains('_tryPrepareEmbeddedAiTiming')));
     expect(startup, isNot(contains('_enableEmbeddedLiveAiFallback')));
     expect(startup, isNot(contains('translateCue(')));
   });
 
-  test('generated subtitle is handed to normal player timing', () {
+  test('failed automatic AI preflight does not mutate native subtitle tracks', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
+    final openStart = player.indexOf('Future<void> _open()');
+    final prepareStart =
+        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
+    expect(openStart, greaterThanOrEqualTo(0));
+    expect(prepareStart, greaterThan(openStart));
+    final open = player.substring(openStart, prepareStart);
+
     expect(
-      player,
-      contains(
-        '// media_kit/libmpv owns timing, pause, seek and resume from this point.',
-      ),
+      open,
+      contains('A failed AI preflight\n          // must leave normal playback untouched'),
     );
-    expect(player, contains('await _setNativeSubtitleDelayProperty(0);'));
-    expect(player, contains('_transitionAi(AiSinhalaRuntimeMode.native);'));
+    expect(open, isNot(contains('await _restoreNativeSubtitleFallback();')));
   });
 }
