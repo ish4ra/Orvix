@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('guest AI Sinhala calibrates a full subtitle against native cue timing', () {
+  test('guest AI Sinhala pretranslates a transcript before real playback', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
@@ -13,19 +13,17 @@ void main() {
     expect(service, contains('translate-subtitle-si'));
     expect(
       service,
-      contains('prepareGeneratedSinhalaFromNativeCalibration'),
+      contains('prepareTranslatedTranscriptForNativeTiming'),
     );
-    expect(service, contains('_calibrateAgainstNativeSamples('));
     expect(service, contains('_translateEntireSubtitle('));
-    expect(service, contains('_writeGeneratedSrt('));
 
     expect(player, contains('_captureNativeEnglishSamples()'));
     expect(player, contains('OnlineSubtitleService.search('));
     expect(
       player,
-      contains('prepareGeneratedSinhalaFromNativeCalibration('),
+      contains('prepareTranslatedTranscriptForNativeTiming('),
     );
-    expect(player, contains('prepareGeneratedSinhalaFile('));
-    expect(player, contains('mk.SubtitleTrack.uri('));
+    expect(player, contains('_subtitleTimingSubscription ??='));
+    expect(player, contains('player.stream.subtitle.listen(_onEmbeddedSubtitleCue)'));
   });
 }
