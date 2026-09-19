@@ -3,49 +3,51 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('native calibration retimes the whole candidate before translation', () {
-    final service =
-        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
-
-    expect(
-      service,
-      contains('prepareGeneratedSinhalaFromNativeCalibration'),
-    );
-    expect(service, contains('_calibrateAgainstNativeSamples('));
-    expect(service, contains('cue.start.inMilliseconds * selected.scale'));
-    expect(service, contains('cue.end.inMilliseconds * selected.scale'));
-    expect(service, contains('_translateEntireSubtitle('));
-    expect(service, contains('_writeGeneratedSrt('));
-  });
-
-  test('strict exact-file mode remains available as fallback', () {
+  test('full transcript is translated before real playback starts', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
     final start = service.indexOf(
-      'static Future<AiGeneratedSubtitleFile> prepareGeneratedSinhalaFile',
+      'prepareTranslatedTranscriptForNativeTiming',
     );
-    expect(start, greaterThanOrEqualTo(0));
-    final tail = service.substring(start);
+    final end = service.indexOf(
+      'prepareGeneratedSinhalaFromNativeCalibration',
+      start,
+    );
+    final transcript = service.substring(start, end);
 
-    expect(tail, contains('_probeVideo('));
-    expect(tail, contains('_fetchExactRestSubtitle('));
-    expect(tail, contains('_parseSubtitle(exactText)'));
+    expect(transcript, contains('_downloadSubtitle(candidate.url)'));
+    expect(transcript, contains('_parseSubtitle(text)'));
+    expect(transcript, contains('_translateEntireSubtitle('));
+    expect(
+      transcript,
+      contains('prepared.translatedCount != prepared.cues.length'),
+    );
+    expect(transcript, isNot(contains('_writeGeneratedSrt(')));
   });
 
-  test('generated SRT is loaded after calibration while media is paused', () {
+  test('runtime timing comes from native cue events, never candidate timestamps', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    final openStart = player.indexOf('Future<void> _open()');
-    final prepareStart =
-        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
-    final open = player.substring(openStart, prepareStart);
+    final start =
+        player.indexOf('Future<void> _handleEmbeddedSubtitleCue(List<String> lines)');
+    final end =
+        player.indexOf('Future<void> _registerLiveTranslationFailure(', start);
+    final handler = player.substring(start, end);
 
-    final mediaOpen = open.indexOf('await widget.playback.open(');
-    final prepare = open.indexOf('await _prepareAiSinhalaBeforePlayback()');
-    final subtitleLoad = open.indexOf('mk.SubtitleTrack.uri(');
-    expect(mediaOpen, greaterThanOrEqualTo(0));
-    expect(prepare, greaterThan(mediaOpen));
-    expect(subtitleLoad, greaterThan(prepare));
+    expect(handler, contains('matchSourceCueIndex('));
+    expect(handler, isNot(contains('subtitleAt(')));
+    expect(handler, isNot(contains('_effectiveSyncOffsetMs')));
+  });
+
+  test('desktop subtitle scaling remains restrained', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(
+      player,
+      contains(
+        'return (base * heightScale * 1.08).clamp(24.0, 44.0).toDouble();',
+      ),
+    );
   });
 }
