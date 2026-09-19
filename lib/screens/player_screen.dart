@@ -67,13 +67,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Timer? _liveCueClearTimer;
   StreamSubscription<bool>? _startupPlayingSubscription;
   StreamSubscription<Duration>? _startupPositionActivitySubscription;
-  StreamSubscription<Duration>? _startupDurationSubscription;
   StreamSubscription<bool>? _completedSubscription;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<List<String>>? _subtitleTimingSubscription;
   StreamSubscription<String>? _playbackErrorSubscription;
   bool _playbackStarted = false;
   bool _startupFailureVisible = false;
+  bool _preflightWarmup = false;
+  bool _exitPrepared = false;
   bool _closing = false;
   final FocusNode _focusNode = FocusNode();
   AiPreparedSubtitle? _preparedAiSubtitle;
@@ -135,10 +136,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
         widget.playback.player.stream.position.listen((position) {
       if (position > Duration.zero) _markPlaybackStarted();
     });
-    _startupDurationSubscription =
-        widget.playback.player.stream.duration.listen((duration) {
-      if (duration > Duration.zero) _markPlaybackStarted();
-    });
     if (_aiSinhalaEnabled) {
       _positionSubscription =
           widget.playback.player.stream.position.listen(_onPosition);
@@ -165,11 +162,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final state = widget.playback.player.state;
     return _playbackStarted ||
         state.playing ||
-        state.position > Duration.zero ||
-        state.duration > Duration.zero;
+        state.position > Duration.zero;
   }
 
   void _markPlaybackStarted() {
+    if (_closing || _preflightWarmup) return;
     _playbackStarted = true;
     _startupTimer?.cancel();
     if (mounted && _startupFailureVisible) {
@@ -317,7 +314,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _onPlaybackError(String message) {
-    if (!mounted || message.trim().isEmpty || _hasPlaybackActivity()) return;
+    if (_closing ||
+        _preflightWarmup ||
+        !mounted ||
+        message.trim().isEmpty ||
+        _hasPlaybackActivity()) {
+      return;
+    }
     final state = widget.playback.player.state;
     if (state.duration <= Duration.zero &&
         state.position < const Duration(seconds: 1)) {
@@ -348,6 +351,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       });
     }
 
+    _preflightWarmup = true;
     try {
       await player.setVolume(0);
       await player.play();
@@ -375,6 +379,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
       try {
         await player.setVolume(originalVolume);
       } catch (_) {}
+      _preflightWarmup = false;
+      _playbackStarted = false;
+      _startupFailureVisible = false;
     }
   }
 
@@ -904,7 +911,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _preparePlayerExit() async {
-    if (_closing) return;
+    if (_exitPrepared || _closing) return;
     _closing = true;
     _hideTimer?.cancel();
     _saveTimer?.cancel();
@@ -920,6 +927,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     try {
       await widget.playback.stop();
     } catch (_) {}
+    _exitPrepared = true;
   }
 
   Future<void> _handleEscape() async {
@@ -2214,13 +2222,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
     unawaited(
       _startupPositionActivitySubscription?.cancel() ?? Future<void>.value(),
     );
-    unawaited(_startupDurationSubscription?.cancel() ?? Future<void>.value());
     unawaited(_completedSubscription?.cancel() ?? Future<void>.value());
     unawaited(_positionSubscription?.cancel() ?? Future<void>.value());
     unawaited(_subtitleTimingSubscription?.cancel() ?? Future<void>.value());
     unawaited(_playbackErrorSubscription?.cancel() ?? Future<void>.value());
-    unawaited(_persistProgress().catchError((_) {}));
-    unawaited(widget.playback.stop().catchError((_) {}));
+    if (!_exitPrepared) {
+      unawaited(
+        _persistProgress()
+            .catchError((_) {})
+            .whenComplete(() => widget.playback.stop().catchError((_) {})),
+      );
+    }
     _focusNode.dispose();
     unawaited(_restoreAndroidMobilePlayerMode().catchError((_) {}));
     super.dispose();
