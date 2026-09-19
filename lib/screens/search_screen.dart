@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../models/media_item.dart';
 import '../services/catalog_service.dart';
+import '../services/platform_profile.dart';
 import '../widgets/media_card.dart';
 
 class SearchScreen extends StatefulWidget {
@@ -227,17 +228,33 @@ class _SearchScreenState extends State<SearchScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
-        final columns = width >= 1400
-            ? 7
-            : width >= 1200
-                ? 6
-                : width >= 1000
-                    ? 5
-                    : width >= 840
-                        ? 4
-                        : 3;
-        final compactGrid = MediaQuery.sizeOf(context).shortestSide < 600;
-        final crossSpacing = compactGrid ? 10.0 : 16.0;
+        final tv = PlatformProfile.isAndroidTv;
+        final columns = tv
+            ? width >= 1320
+                ? 9
+                : width >= 1120
+                    ? 8
+                    : width >= 920
+                        ? 7
+                        : width >= 760
+                            ? 6
+                            : 5
+            : width >= 1400
+                ? 7
+                : width >= 1200
+                    ? 6
+                    : width >= 1000
+                        ? 5
+                        : width >= 840
+                            ? 4
+                            : 3;
+        // Android TV commonly reports a much smaller logical width than its
+        // physical 1080p/4K framebuffer. Treat TV as a compact poster surface
+        // explicitly so a 1920x1080 television does not end up with tablet-size
+        // cards after device-pixel-ratio scaling.
+        final compactGrid =
+            tv || MediaQuery.sizeOf(context).shortestSide < 600;
+        final crossSpacing = tv ? 12.0 : compactGrid ? 10.0 : 16.0;
         final cardWidth =
             (width - crossSpacing * (columns - 1)) / columns.toDouble();
         final cardHeight = cardWidth / .675 + (compactGrid ? 44 : 64);
@@ -248,7 +265,7 @@ class _SearchScreenState extends State<SearchScreen> {
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
             crossAxisSpacing: crossSpacing,
-            mainAxisSpacing: compactGrid ? 14 : 22,
+            mainAxisSpacing: tv ? 16 : compactGrid ? 14 : 22,
             mainAxisExtent: cardHeight,
           ),
           itemCount: _results.length,
