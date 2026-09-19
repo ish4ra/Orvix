@@ -124,7 +124,8 @@ class _MediaCardState extends State<MediaCard> {
                                                 context,
                                               ))
                                           .round()
-                                          .clamp(180, 720),
+                                          .clamp(180, 720)
+                                          .toInt(),
                                       placeholder: (_, __) => const DecoratedBox(
                                         decoration: BoxDecoration(
                                           color: Color(0xFF151B16),
