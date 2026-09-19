@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('startup prepares a ranked online subtitle before touching playback', () {
+  test('automatic startup fingerprints the actual video before playback', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final openStart = player.indexOf('Future<void> _open()');
@@ -22,13 +22,10 @@ void main() {
       open.indexOf('await _prepareAiSinhalaBeforePlayback()'),
       lessThan(open.indexOf('await widget.playback.open(')),
     );
-    expect(prepare, contains('OnlineSubtitleService.search('));
-    expect(prepare, contains("preferredLanguage: 'eng'"));
-    expect(
-      prepare,
-      contains('prepareGeneratedSinhalaFromOnlineSubtitle('),
-    );
-    expect(prepare, isNot(contains('_fetchEmbeddedEnglishSubtitle')));
+    expect(prepare, contains('prepareGeneratedSinhalaFile('));
+    expect(prepare, contains('videoUrl: widget.url'));
+    expect(prepare, isNot(contains('OnlineSubtitleService.search(')));
+    expect(prepare, isNot(contains('prepareGeneratedSinhalaFromOnlineSubtitle(')));
     expect(prepare, isNot(contains('_tryPrepareEmbeddedAiTiming')));
     expect(prepare, isNot(contains('_enableEmbeddedLiveAiFallback')));
 
@@ -36,7 +33,7 @@ void main() {
     expect(open, contains("language: 'si'"));
   });
 
-  test('failed automatic AI preflight opens normal playback without track recovery loops', () {
+  test('failed exact preflight opens normal playback without track recovery loops', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final openStart = player.indexOf('Future<void> _open()');
