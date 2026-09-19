@@ -186,19 +186,146 @@ class _DetailsScreenState extends State<DetailsScreen> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        _tvDetailsBackdrop(item),
+        const ColoredBox(color: Color(0xFF0A0C0B)),
         CustomScrollView(
-          cacheExtent: 900,
+          cacheExtent: 1100,
           slivers: [
             SliverToBoxAdapter(
-              child: SizedBox(
-                height: 360,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(42, 52, 36, 24),
-                  child: Align(
-                    alignment: Alignment.bottomLeft,
-                    child: _tvDetailsHeroContent(item),
-                  ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(42, 28, 42, 18),
+                child: Column(
+                  children: [
+                    Text(
+                      item.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 30,
+                        height: 1.05,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -.65,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 14,
+                      runSpacing: 6,
+                      children: [
+                        _TvMetaText(item.typeLabel),
+                        if (item.year != null) _TvMetaText(item.year!),
+                        if (item.runtime != null) _TvMetaText(item.runtime!),
+                        if (item.rating != null)
+                          _TvMetaText('★ ${item.rating!.toStringAsFixed(1)}'),
+                        ...item.genres.take(3).map(_TvMetaText.new),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (item.background?.trim().isNotEmpty == true)
+                          SizedBox(
+                            width: 300,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(18),
+                                  child: AspectRatio(
+                                    aspectRatio: 16 / 9,
+                                    child: CachedNetworkImage(
+                                      imageUrl: item.background!,
+                                      fit: BoxFit.cover,
+                                      memCacheWidth: 720,
+                                      fadeInDuration: Duration.zero,
+                                      placeholder: (_, __) =>
+                                          const ColoredBox(
+                                            color: Color(0xFF151816),
+                                          ),
+                                      errorWidget: (_, __, ___) =>
+                                          const ColoredBox(
+                                            color: Color(0xFF151816),
+                                          ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Overview',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        if (item.background?.trim().isNotEmpty == true)
+                          const SizedBox(width: 26),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (item.description?.trim().isNotEmpty == true)
+                                Text(
+                                  item.description!,
+                                  maxLines: 4,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Color(0xFFD2D7D3),
+                                    fontSize: 14,
+                                    height: 1.5,
+                                  ),
+                                ),
+                              const SizedBox(height: 18),
+                              Wrap(
+                                spacing: 10,
+                                runSpacing: 10,
+                                children: [
+                                  if (item.kind == MediaKind.movie)
+                                    FilledButton.icon(
+                                      onPressed: _resolving
+                                          ? null
+                                          : () => _findSourcesAndPlay(item),
+                                      icon: const Icon(
+                                        Icons.play_arrow_rounded,
+                                      ),
+                                      label: const Text('Choose source'),
+                                    ),
+                                  FilledButton.tonalIcon(
+                                    onPressed: () => _toggleLibrary(item),
+                                    icon: Icon(
+                                      _inLibrary
+                                          ? Icons.video_library_rounded
+                                          : Icons.library_add_outlined,
+                                    ),
+                                    label: Text(
+                                      _inLibrary ? 'In Library' : 'Library',
+                                    ),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: () => _toggleWatchlist(item),
+                                    icon: Icon(
+                                      _watchlisted
+                                          ? Icons.bookmark_rounded
+                                          : Icons.bookmark_add_outlined,
+                                    ),
+                                    label: Text(
+                                      _watchlisted
+                                          ? 'Watchlisted'
+                                          : 'Watchlist',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -217,10 +344,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
               tooltip: 'Back',
               onPressed: () => Navigator.of(context).pop(),
               style: ButtonStyle(
+                backgroundColor:
+                    const WidgetStatePropertyAll(Color(0xFF181C19)),
                 side: WidgetStateProperty.resolveWith(
                   (states) => states.contains(WidgetState.focused)
                       ? const BorderSide(color: Colors.white, width: 2)
-                      : BorderSide.none,
+                      : const BorderSide(color: Color(0xFF323833)),
                 ),
               ),
               icon: const Icon(Icons.arrow_back_rounded),
