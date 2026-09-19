@@ -87,8 +87,12 @@ class LocalTorrentService {
       throw LocalTorrentException('Local torrent engine: $engineError');
     }
 
-    final fileIndex = source.torrentFileIndex ??
-        _asInt(payload?['guessedFileIdx']) ??
+    final guessedFileIndex = _asInt(payload?['guessedFileIdx']);
+    final explicitFileIndex = source.torrentFileIndex;
+    final hasFileHint = source.fileNameHint?.trim().isNotEmpty == true;
+    final fileIndex = (hasFileHint ? guessedFileIndex : null) ??
+        explicitFileIndex ??
+        guessedFileIndex ??
         _asInt(payload?['fileIdx']) ??
         -1;
 
@@ -100,136 +104,18 @@ class LocalTorrentService {
     }
 
     final streamUrl = _buildStreamUrl(
-      source,
       infoHash: infoHash,
       fileIndex: fileIndex,
     );
 
-    if (PlatformProfile.isAndroidTv) {
-      await _warmAndroidTvStream(
-        streamUrl,
-        infoHash: infoHash,
-        fileIndex: fileIndex,
-      );
-    }
-
     return streamUrl;
   }
 
-  String _buildStreamUrl(
-    SourceResult source, {
+  String _buildStreamUrl({
     required String infoHash,
     required int fileIndex,
   }) {
-    final base = '$baseUrl/$infoHash/$fileIndex';
-    final parts = <String>[];
-
-    // Keep tracker hints on the playback URL as well as the original /create
-    // request. If the native engine evicts/recreates the torrent between
-    // resolve and playback, stream-server can still bootstrap the same swarm
-    // instead of falling back to info-hash-only discovery.
-    final magnet = Uri.tryParse(source.resource);
-    for (final tracker in magnet?.queryParametersAll['tr'] ?? const <String>[]) {
-      final clean = tracker.trim();
-      if (clean.isNotEmpty) {
-        parts.add('tr=${Uri.encodeQueryComponent(clean)}');
-      }
-    }
-
-    final fileHint = source.fileNameHint?.trim();
-    if (fileHint != null && fileHint.isNotEmpty) {
-      parts.add('f=${Uri.encodeQueryComponent(fileHint)}');
-    }
-
-    return parts.isEmpty ? base : '$base?${parts.join('&')}';
-  }
-
-  Future<void> _warmAndroidTvStream(
-    String streamUrl, {
-    required String infoHash,
-    required int fileIndex,
-  }) async {
-    final client = http.Client();
-    try {
-      final request = http.Request('GET', Uri.parse(streamUrl))
-        ..headers['Range'] = 'bytes=0-262143'
-        ..headers['enginefs-prio'] = '2'
-        ..headers['Accept'] = '*/*';
-
-      final response = await client
-          .send(request)
-          .timeout(const Duration(seconds: 12));
-
-      if (response.statusCode != HttpStatus.ok &&
-          response.statusCode != HttpStatus.partialContent) {
-        throw LocalTorrentException(
-          'P2P stream warm-up returned HTTP ${response.statusCode}.',
-        );
-      }
-
-      final firstChunk = await response.stream.first
-          .timeout(const Duration(seconds: 25));
-      if (firstChunk.isEmpty) {
-        throw const LocalTorrentException(
-          'The P2P stream opened but returned no video data.',
-        );
-      }
-    } on TimeoutException {
-      final health = await _torrentHealthSummary(
-        infoHash: infoHash,
-        fileIndex: fileIndex,
-      );
-      throw LocalTorrentException(
-        'P2P source did not deliver video data in time.'
-        '${health == null ? '' : ' $health'} '
-        'Try another source with more active seeders.',
-      );
-    } on LocalTorrentException {
-      rethrow;
-    } catch (error) {
-      final health = await _torrentHealthSummary(
-        infoHash: infoHash,
-        fileIndex: fileIndex,
-      );
-      throw LocalTorrentException(
-        'P2P stream could not start: $error'
-        '${health == null ? '' : ' $health'}',
-      );
-    } finally {
-      client.close();
-    }
-  }
-
-  Future<String?> _torrentHealthSummary({
-    required String infoHash,
-    required int fileIndex,
-  }) async {
-    try {
-      final response = await http
-          .get(Uri.parse('$baseUrl/$infoHash/$fileIndex/stats.json'))
-          .timeout(const Duration(seconds: 3));
-      if (response.statusCode < 200 || response.statusCode >= 300) return null;
-      final decoded = jsonDecode(response.body);
-      if (decoded is! Map<String, dynamic>) return null;
-
-      final peers = _asInt(decoded['peers']) ?? 0;
-      final connections = _asInt(decoded['swarmConnections']) ?? peers;
-      final hasMetadata = decoded['hasMetadata'] == true;
-      final rawSpeed = decoded['downloadSpeed'];
-      final speed = rawSpeed is num
-          ? rawSpeed.toDouble()
-          : double.tryParse(rawSpeed?.toString() ?? '') ?? 0;
-      final speedLabel = speed >= 1024 * 1024
-          ? '${(speed / (1024 * 1024)).toStringAsFixed(1)} MB/s'
-          : speed >= 1024
-              ? '${(speed / 1024).toStringAsFixed(0)} KB/s'
-              : '${speed.toStringAsFixed(0)} B/s';
-
-      return '(metadata: ${hasMetadata ? 'ready' : 'waiting'}, '
-          'peers: $peers, connections: $connections, speed: $speedLabel)';
-    } catch (_) {
-      return null;
-    }
+    return '$baseUrl/$infoHash/$fileIndex';
   }
 
   Future<void> ensureRunning() async {
