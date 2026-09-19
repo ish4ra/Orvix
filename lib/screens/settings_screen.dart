@@ -47,7 +47,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       SnackBar(
         content: Text(
           enabled
-              ? 'AI Sinhala subtitles enabled. Orvix first uses the video’s own synced English text track as the timing ground truth, matches an OpenSubtitles transcript by dialogue, calibrates its full timeline, then translates it to Sinhala.'
+              ? 'AI Sinhala subtitles enabled. Orvix uses the video’s own synced English text track as the timing ground truth, matches an OpenSubtitles transcript by dialogue, pre-translates the full transcript, then shows Sinhala on the video’s real cue events.'
               : 'AI Sinhala subtitles disabled.',
         ),
       ),
@@ -97,7 +97,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       AiSinhalaSubtitleService.canTranslate
-                          ? 'Before playback starts, Orvix opens the selected video paused, selects its own English text subtitle track, samples several real cue texts and timestamps, and matches those cues against OpenSubtitles English transcripts. It corrects constant offset and small FPS drift, translates the complete aligned subtitle to Sinhala, caches an SRT, and loads it as a normal player subtitle.'
+                          ? 'Before playback starts, Orvix opens the selected video paused, selects its own English text subtitle track, and samples several real dialogue cues. It finds an OpenSubtitles transcript whose text matches those native cues and translates the complete transcript. During playback, the native English cue events themselves decide exactly when each Sinhala line appears; OpenSubtitles timestamps are ignored.'
                           : 'Sign in to your Orvix account first. When enabled, Orvix prepares Sinhala subtitles before playback when a safe timing source is available.',
                       style: const TextStyle(height: 1.45),
                     ),
@@ -106,7 +106,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 12),
               const Text(
-                'Automatic mode does not trust the top-ranked online subtitle. The native English track decides timing. If native calibration is unavailable, a strict exact-file hash lookup is used as fallback; otherwise normal playback continues. Translation never runs per cue during normal playback.',
+                'Automatic mode does not trust the top-ranked online subtitle and does not load a generated external Sinhala track. The native English track remains selected but hidden and acts as the live subtitle clock. If a readable native English track or matching transcript is unavailable, Orvix keeps normal/native subtitles instead of guessing. Translation never runs per cue during normal playback.',
                 style: TextStyle(
                     fontSize: 12.5, height: 1.5, color: Color(0xFF9CA99E)),
               ),
