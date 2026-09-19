@@ -22,7 +22,7 @@ class SubDlTranscriptService {
   SubDlTranscriptService._();
 
   // Supabase public legacy anon key. This is a publishable client credential,
-  // not the private SubDL key. SUBDL_API_KEY lives only in the Edge Function.
+  // not the private SubDL key. The server-side SubDL secret lives only in the Edge Function.
   static const _guestFunctionJwt =
       'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtwanVpc3hvZndxeGhibm5zeXpmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk2NTMxMDIsImV4cCI6MjEwNTIyOTEwMn0.cBlT4tgZW_WMlkmOagFo7PhtFXwS7ib9Yw9BECCrNew';
 
