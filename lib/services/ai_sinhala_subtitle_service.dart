@@ -137,6 +137,26 @@ class AiSinhalaSubtitleService {
 
   static bool get canTranslate => true;
 
+  static bool isLikelySinhalaTranslation(
+    String source,
+    String translation,
+  ) {
+    final translated = translation.trim();
+    if (translated.isEmpty) return false;
+
+    final sourceWords = RegExp(r"[A-Za-z][A-Za-z'’-]*")
+        .allMatches(source)
+        .map((match) => match.group(0) ?? '')
+        .where((word) => word.isNotEmpty)
+        .toList(growable: false);
+
+    // One/two-word cues are frequently names, interjections, acronyms or
+    // intentionally untranslated terms. Longer English dialogue must contain
+    // Sinhala script or it is not a usable Sinhala subtitle result.
+    if (sourceWords.length < 3) return true;
+    return RegExp(r'[\u0D80-\u0DFF]').hasMatch(translated);
+  }
+
   static Future<AiPreparedSubtitle?> prepareBuffered({
     required MediaItem item,
     required String videoUrl,
@@ -777,11 +797,31 @@ class AiSinhalaSubtitleService {
           );
         }
 
-        for (var i = 0; i < indices.length; i++) {
-          final value = raw[i]?.toString().trim() ?? '';
-          if (value.isNotEmpty) {
-            prepared.cues[indices[i]].translation = value;
+        final values = <String>[
+          for (final value in raw) value?.toString().trim() ?? '',
+        ];
+        var invalid = false;
+        for (var i = 0; i < values.length; i++) {
+          final source = prepared.cues[indices[i]].source;
+          if (!isLikelySinhalaTranslation(source, values[i])) {
+            invalid = true;
+            break;
           }
+        }
+        if (invalid) {
+          if (attempt < 2) {
+            await Future<void>.delayed(
+              Duration(milliseconds: 500 * (attempt + 1)),
+            );
+            continue;
+          }
+          throw const AiSubtitleException(
+            'AI returned an incomplete or non-Sinhala subtitle buffer.',
+          );
+        }
+
+        for (var i = 0; i < indices.length; i++) {
+          prepared.cues[indices[i]].translation = values[i];
         }
         return;
       } on AiSubtitleException catch (error) {
@@ -843,13 +883,13 @@ class AiSinhalaSubtitleService {
         }
         final translated =
             data is Map ? data['translation']?.toString().trim() ?? '' : '';
-        if (translated.isEmpty) {
+        if (!isLikelySinhalaTranslation(clean, translated)) {
           if (attempt == 0) {
             await Future<void>.delayed(const Duration(milliseconds: 400));
             continue;
           }
           throw const AiSubtitleException(
-            'AI returned an empty subtitle cue.',
+            'AI returned an empty or non-Sinhala subtitle cue.',
           );
         }
         _liveCueCache[cacheKey] = translated;
