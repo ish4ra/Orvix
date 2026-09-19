@@ -17,6 +17,7 @@ import '../services/torbox_service.dart';
 import 'android_tv_exo_player_screen.dart';
 import 'player_screen.dart';
 import 'sources_screen.dart';
+import 'tv_source_browser_screen.dart';
 
 class DetailsScreen extends StatefulWidget {
   const DetailsScreen({
@@ -749,6 +750,50 @@ class _DetailsScreenState extends State<DetailsScreen> {
     bool autoUsePinned = false,
   }) async {
     if (!mounted) return;
+
+    if (PlatformProfile.isAndroidTv && !autoUsePinned) {
+      setState(() {
+        _resolving = false;
+        _resolveProgress = null;
+        _status = '';
+      });
+
+      final resultsFuture = widget.sources.resolve(item, episode: episode);
+      final chosen = await Navigator.of(context).push<SourceResult>(
+        PageRouteBuilder(
+          transitionDuration: const Duration(milliseconds: 180),
+          reverseTransitionDuration: const Duration(milliseconds: 140),
+          pageBuilder: (_, animation, __) => FadeTransition(
+            opacity: CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutCubic,
+            ),
+            child: TvSourceBrowserScreen(
+              sources: widget.sources,
+              item: item,
+              episode: episode,
+              resultsFuture: resultsFuture,
+            ),
+          ),
+        ),
+      );
+      if (chosen == null || !mounted) return;
+
+      try {
+        final hasCloudConnection =
+            (await widget.pikpak.isSignedIn) || (await widget.torbox.isConnected);
+        await _playSourceResult(
+          chosen,
+          item,
+          episode,
+          hasCloudConnection: hasCloudConnection,
+        );
+      } catch (error) {
+        _showPlayError(error);
+      }
+      return;
+    }
+
     setState(() {
       _resolving = true;
       _resolveProgress = null;
@@ -1265,6 +1310,27 @@ class _DetailsScreenState extends State<DetailsScreen> {
     MediaItem item,
     EpisodeItem? episode,
   ) async {
+    if (PlatformProfile.isAndroidTv) {
+      if (!mounted) return null;
+      return Navigator.of(context).push<SourceResult>(
+        PageRouteBuilder(
+          transitionDuration: const Duration(milliseconds: 180),
+          reverseTransitionDuration: const Duration(milliseconds: 140),
+          pageBuilder: (_, animation, __) => FadeTransition(
+            opacity: CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutCubic,
+            ),
+            child: TvSourceBrowserScreen(
+              sources: widget.sources,
+              item: item,
+              episode: episode,
+              resultsFuture: Future.value(results),
+            ),
+          ),
+        ),
+      );
+    }
     var priority = await widget.sources.getPriorityOrder();
     var resultLimit = await widget.sources.getResultLimit();
     var compatibilityOnly = false;
