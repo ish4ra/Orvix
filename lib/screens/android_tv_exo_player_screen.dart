@@ -70,7 +70,9 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
     final controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
     _controller = controller;
     try {
-      await controller.initialize();
+      await controller
+          .initialize()
+          .timeout(const Duration(seconds: 25));
       if (_closing) return;
 
       final item = widget.item;
@@ -89,6 +91,16 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
 
       await controller.play();
       if (mounted) setState(() => _error = null);
+    } on TimeoutException {
+      if (mounted && !_closing) {
+        setState(
+          () => _error =
+              'ExoPlayer received the P2P URL but could not initialize the '
+              'video within 25 seconds. Try another source; if this repeats '
+              'with healthy seeders, the remaining problem is the TV '
+              'decoder/container path rather than torrent discovery.',
+        );
+      }
     } catch (error) {
       if (mounted && !_closing) {
         setState(() => _error = 'ExoPlayer could not open this stream.\n$error');
