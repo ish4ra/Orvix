@@ -4,6 +4,7 @@ import '../models/media_item.dart';
 import '../services/catalog_service.dart';
 import '../services/home_preferences_service.dart';
 import '../services/media_state_service.dart';
+import '../services/platform_profile.dart';
 import '../widgets/media_card.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -284,8 +285,9 @@ class _Hero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tv = PlatformProfile.isAndroidTv;
     return SizedBox(
-      height: 430,
+      height: tv ? 330 : 430,
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -316,7 +318,12 @@ class _Hero extends StatelessWidget {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(40, 70, 40, 44),
+            padding: EdgeInsets.fromLTRB(
+              tv ? 28 : 40,
+              tv ? 40 : 70,
+              tv ? 28 : 40,
+              tv ? 28 : 44,
+            ),
             child: Align(
               alignment: Alignment.bottomLeft,
               child: ConstrainedBox(
@@ -403,22 +410,25 @@ class _ContinueRail extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           SizedBox(
-            height: 330,
+            height: PlatformProfile.isAndroidTv ? 270 : 330,
             child: ListView.separated(
-              padding: const EdgeInsets.symmetric(horizontal: 32),
+              padding: EdgeInsets.symmetric(
+                horizontal: PlatformProfile.isAndroidTv ? 24 : 32,
+              ),
               scrollDirection: Axis.horizontal,
               itemCount: items.length,
               separatorBuilder: (_, __) => const SizedBox(width: 16),
               itemBuilder: (context, index) {
                 final entry = items[index];
+                final tv = PlatformProfile.isAndroidTv;
                 return SizedBox(
-                  width: 170,
+                  width: tv ? 138 : 170,
                   child: Column(
                     children: [
                       Expanded(
                         child: MediaCard(
                           item: entry.item,
-                          width: 170,
+                          width: tv ? 138 : 170,
                           onTap: () => onOpen(entry),
                         ),
                       ),
@@ -480,15 +490,22 @@ class _MediaRail extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           SizedBox(
-            height: 300,
+            height: PlatformProfile.isAndroidTv ? 255 : 300,
             child: ListView.separated(
-              padding: const EdgeInsets.symmetric(horizontal: 32),
+              padding: EdgeInsets.symmetric(
+                horizontal: PlatformProfile.isAndroidTv ? 24 : 32,
+              ),
               scrollDirection: Axis.horizontal,
               itemCount: items.length,
               separatorBuilder: (_, __) => const SizedBox(width: 16),
               itemBuilder: (context, index) {
                 final item = items[index];
-                return MediaCard(item: item, onTap: () => onOpen(item));
+                return MediaCard(
+                  item: item,
+                  width: PlatformProfile.isAndroidTv ? 138 : 150,
+                  compact: PlatformProfile.isAndroidTv,
+                  onTap: () => onOpen(item),
+                );
               },
             ),
           ),
