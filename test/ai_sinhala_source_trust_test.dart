@@ -37,4 +37,17 @@ void main() {
     expect(service, contains("request.headers['enginefs-prio'] = '255';"));
     expect(service, contains('uri.port == 11470'));
   });
+  test('local P2P never falls back to addon hash after real fingerprint failure', () {
+    final service =
+        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+
+    final probeStart = service.indexOf('static Future<_VideoProbe> _probeVideo(');
+    final probeEnd =
+        service.indexOf('static Future<_VideoProbe> _probeLocalOpenSubtitlesHash(', probeStart);
+    final probe = service.substring(probeStart, probeEnd);
+
+    expect(probe, contains("uri.port == 11470"));
+    expect(probe, contains('hash: localP2p ? null : suppliedHash'));
+  });
+
 }
