@@ -27,8 +27,8 @@ void main() {
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
     expect(service, contains('selectedMatches < 3'));
-    expect(service, contains('searchFrom = bestIndex + 1'));
-    expect(service, contains('bestSimilarity < .62'));
+    expect(service, contains('searchFrom = bestIndex + bestCount'));
+    expect(service, contains('bestSimilarity < .60'));
     expect(
       service,
       contains("sourceMatch: 'native-cue-text-oracle'"),
