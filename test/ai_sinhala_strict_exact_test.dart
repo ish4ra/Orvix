@@ -35,7 +35,7 @@ void main() {
         player.indexOf('Future<void> _registerLiveTranslationFailure(', start);
     final handler = player.substring(start, end);
 
-    expect(handler, contains('matchSourceCueIndex('));
+    expect(handler, contains('matchSourceCueRange('));
     expect(handler, isNot(contains('subtitleAt(')));
     expect(handler, isNot(contains('_effectiveSyncOffsetMs')));
   });
