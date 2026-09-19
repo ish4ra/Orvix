@@ -210,9 +210,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
         });
       }
 
-      // Alpha.18 prepares the complete Sinhala subtitle BEFORE touching the
-      // playback engine. This keeps OpenSubtitles/Gemini work isolated from
-      // libmpv/P2P startup and removes the preflight crash/race class.
+      // Alpha.19 fingerprints the actual selected video URL first, then uses
+      // only the exact OpenSubtitles REST match for automatic AI Sinhala.
+      // If exact verification fails, normal playback opens without guessing.
       if (aiPreferred && !aiReady) {
         aiReady = await _prepareAiSinhalaBeforePlayback();
       }
@@ -422,48 +422,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _transitionAi(AiSinhalaRuntimeMode.preparing);
       _aiSubtitleUnavailable = false;
       _aiPreflightMessage =
-          'Searching OpenSubtitles for the best English subtitle…';
+          'Fingerprinting the actual selected video file…';
     });
 
     try {
-      final results = await OnlineSubtitleService.search(
+      final generated = await AiSinhalaSubtitleService.prepareGeneratedSinhalaFile(
         item: item,
         episode: widget.episode,
+        videoUrl: widget.url,
         releaseHint: widget.releaseHint,
-        videoSize: widget.expectedSizeBytes,
-        videoHash: widget.expectedVideoHash,
-        preferredLanguage: 'eng',
-      );
-      if (!mounted || _closing || _subtitleChoiceOverridden) return false;
-
-      final english = results.where((entry) {
-        if (OnlineSubtitleService.normalizeLanguage(entry.language) != 'eng') {
-          return false;
-        }
-        final label = entry.label.toLowerCase();
-        return !label.contains('forced') &&
-            !label.contains('foreign only') &&
-            !label.contains('commentary') &&
-            !label.contains('signs');
-      }).toList(growable: false);
-      if (english.isEmpty) {
-        throw const AiSubtitleException(
-          'OpenSubtitles did not return a full English subtitle for this title.',
-        );
-      }
-
-      final chosen = english.first;
-      setState(() {
-        _aiPreflightMessage =
-            'Selected English subtitle: ${chosen.label}';
-      });
-
-      final generated =
-          await AiSinhalaSubtitleService.prepareGeneratedSinhalaFromOnlineSubtitle(
-        title: widget.title,
-        subtitleUrl: chosen.url,
-        subtitleIdentity: chosen.id,
-        subtitleLabel: chosen.label,
+        expectedSizeBytes: widget.expectedSizeBytes,
+        expectedVideoHash: widget.expectedVideoHash,
         onStatus: (message) {
           if (!mounted || _closing) return;
           setState(() => _aiPreflightMessage = message);
@@ -473,13 +442,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (!mounted || _closing || _subtitleChoiceOverridden) return false;
 
       _generatedAiSubtitlePath = generated.path;
-      _generatedAiSubtitleLabel = chosen.label;
+      _generatedAiSubtitleLabel = generated.label;
       setState(() {
         _aiSubtitleUnavailable = false;
         _aiDisplaySubtitle = '';
         _aiPreflightMessage = generated.cacheHit
-            ? 'Cached Sinhala subtitle ready • ${chosen.label}'
-            : 'Sinhala subtitle file ready • ${chosen.label}';
+            ? 'Cached exact-file Sinhala subtitle ready.'
+            : 'Exact-file Sinhala subtitle ready.';
       });
       return true;
     } catch (error) {
@@ -492,7 +461,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _aiSubtitleUnavailable = true;
         _aiDisplaySubtitle = '';
         _aiPreflightMessage = reason.isEmpty
-            ? 'AI Sinhala could not prepare a subtitle.'
+            ? 'AI Sinhala could not verify an exact subtitle for this video.'
             : '$reason Normal playback will continue.';
       });
       return false;
