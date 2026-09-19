@@ -84,34 +84,53 @@ class AiPreparedSubtitle {
     return '';
   }
 
-  AiSubtitleCue? matchSourceCue(String raw) {
+  int matchSourceCueIndex(
+    String raw, {
+    int previousIndex = -1,
+  }) {
     final target = _normalizeCue(raw);
-    if (target.isEmpty) return null;
-    for (final cue in cues) {
-      if (_normalizeCue(cue.source) == target) return cue;
+    if (target.isEmpty || cues.isEmpty) return -1;
+
+    final localStart =
+        previousIndex >= 0 ? math.max(0, previousIndex - 3) : 0;
+    final localEnd = previousIndex >= 0
+        ? math.min(cues.length, previousIndex + 180)
+        : math.min(cues.length, 520);
+
+    for (var i = localStart; i < localEnd; i++) {
+      if (_normalizeCue(cues[i].source) == target) return i;
     }
-    if (target.length < 12) return null;
-    AiSubtitleCue? best;
+
+    var bestIndex = -1;
     var bestScore = 0.0;
-    final targetWords =
-        target.split(' ').where((value) => value.isNotEmpty).toSet();
-    if (targetWords.length < 3) return null;
-    for (final cue in cues) {
-      final source = _normalizeCue(cue.source);
-      if (source.length < 12) continue;
-      final words =
-          source.split(' ').where((value) => value.isNotEmpty).toSet();
-      if (words.length < 3) continue;
-      final intersection = targetWords.intersection(words).length;
-      final union = targetWords.union(words).length;
-      if (union == 0) continue;
-      final score = intersection / union;
+    for (var i = localStart; i < localEnd; i++) {
+      final source = _normalizeCue(cues[i].source);
+      final score = _cueTextSimilarity(target, source);
       if (score > bestScore) {
         bestScore = score;
-        best = cue;
+        bestIndex = i;
       }
     }
-    return bestScore >= .88 ? best : null;
+
+    final wordCount =
+        target.split(' ').where((value) => value.isNotEmpty).length;
+    final threshold = wordCount >= 5 ? .62 : .72;
+    if (bestIndex >= 0 && bestScore >= threshold) return bestIndex;
+
+    // A seek may jump far beyond the local sequence window. Allow only an
+    // exact global recovery so repeated common lines cannot attach to the
+    // wrong point in the episode.
+    if (previousIndex >= 0) {
+      for (var i = 0; i < cues.length; i++) {
+        if (_normalizeCue(cues[i].source) == target) return i;
+      }
+    }
+    return -1;
+  }
+
+  AiSubtitleCue? matchSourceCue(String raw) {
+    final index = matchSourceCueIndex(raw);
+    return index < 0 ? null : cues[index];
   }
 }
 
@@ -229,6 +248,152 @@ class AiSinhalaSubtitleService {
   }
 
   static const _nativeCalibrationCacheVersion = 'native-cal-v1';
+
+  static Future<AiPreparedSubtitle>
+      prepareTranslatedTranscriptForNativeTiming({
+    required String title,
+    required String videoIdentity,
+    required List<AiNativeCueSample> nativeSamples,
+    required List<OnlineSubtitleResult> candidates,
+    void Function(String message)? onStatus,
+  }) async {
+    final usableSamples = nativeSamples
+        .where((sample) => _normalizeCue(sample.text).split(' ').length >= 3)
+        .toList(growable: false);
+    if (usableSamples.length < 3) {
+      throw const AiSubtitleException(
+        'Could not collect enough dialogue from the video’s synced English track.',
+      );
+    }
+
+    final englishCandidates = candidates
+        .where(
+          (entry) =>
+              OnlineSubtitleService.normalizeLanguage(entry.language) == 'eng',
+        )
+        .where((entry) {
+          final label = entry.label.toLowerCase();
+          return !label.contains('forced') &&
+              !label.contains('commentary') &&
+              !label.contains('foreign only') &&
+              !label.contains('signs');
+        })
+        .take(24)
+        .toList(growable: false);
+    if (englishCandidates.isEmpty) {
+      throw const AiSubtitleException(
+        'OpenSubtitles did not return an English transcript for this episode.',
+      );
+    }
+
+    OnlineSubtitleResult? selectedCandidate;
+    List<AiSubtitleCue>? selectedCues;
+    var selectedMatches = -1;
+    var selectedSimilarity = -1.0;
+
+    for (var candidateIndex = 0;
+        candidateIndex < englishCandidates.length;
+        candidateIndex++) {
+      final candidate = englishCandidates[candidateIndex];
+      onStatus?.call(
+        'Matching dialogue against English transcripts… ${candidateIndex + 1}/${englishCandidates.length}',
+      );
+      try {
+        final text = await _downloadSubtitle(candidate.url);
+        final cues = _parseSubtitle(text);
+        if (cues.length < 8) continue;
+
+        var searchFrom = 0;
+        var matches = 0;
+        var similarityTotal = 0.0;
+        for (final sample in usableSamples) {
+          final target = _normalizeCue(sample.text);
+          var bestIndex = -1;
+          var bestSimilarity = 0.0;
+          final upper = math.min(cues.length, searchFrom + 520);
+          for (var i = searchFrom; i < upper; i++) {
+            final similarity =
+                _cueTextSimilarity(target, _normalizeCue(cues[i].source));
+            if (similarity > bestSimilarity) {
+              bestSimilarity = similarity;
+              bestIndex = i;
+            }
+            if (similarity >= .985) break;
+          }
+          if (bestIndex < 0 || bestSimilarity < .62) continue;
+          matches++;
+          similarityTotal += bestSimilarity;
+          searchFrom = bestIndex + 1;
+        }
+
+        if (matches > selectedMatches ||
+            (matches == selectedMatches &&
+                similarityTotal > selectedSimilarity)) {
+          selectedCandidate = candidate;
+          selectedCues = cues;
+          selectedMatches = matches;
+          selectedSimilarity = similarityTotal;
+        }
+
+        if (matches >= math.min(6, usableSamples.length) &&
+            similarityTotal / matches >= .86) {
+          break;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+
+    final candidate = selectedCandidate;
+    final cues = selectedCues;
+    if (candidate == null || cues == null || selectedMatches < 3) {
+      throw const AiSubtitleException(
+        'No English transcript matched the dialogue from the synced video subtitle track.',
+      );
+    }
+
+    final cacheKey =
+        'native-text|$videoIdentity|${candidate.id}|$selectedMatches|native-text-v1';
+    final cached = _preparedCache[cacheKey];
+    if (cached != null &&
+        cached.translatedCount == cached.cues.length) {
+      onStatus?.call('Cached native-timed Sinhala transcript is ready.');
+      return cached;
+    }
+
+    final prepared = AiPreparedSubtitle(
+      key: cacheKey,
+      title: title,
+      sourceUrl: candidate.url,
+      cues: cues,
+      sourceMatch: 'native-cue-text-oracle',
+    );
+    _preparedCache[cacheKey] = prepared;
+
+    onStatus?.call(
+      'Dialogue match verified ($selectedMatches cues). Translating the complete transcript before playback…',
+    );
+    await _translateEntireSubtitle(
+      prepared,
+      onProgress: (done, total) {
+        final percent =
+            total <= 0 ? 100 : ((done * 100) / total).round().clamp(0, 100);
+        onStatus?.call(
+          'Translating complete Sinhala transcript… $percent% ($done/$total)',
+        );
+      },
+    );
+    if (prepared.translatedCount != prepared.cues.length) {
+      throw const AiSubtitleException(
+        'The complete Sinhala transcript did not finish translating.',
+      );
+    }
+
+    onStatus?.call(
+      'Sinhala transcript ready. The video’s own English cues will control every subtitle timestamp.',
+    );
+    return prepared;
+  }
 
   static Future<AiGeneratedSubtitleFile>
       prepareGeneratedSinhalaFromNativeCalibration({
