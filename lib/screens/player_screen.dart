@@ -561,6 +561,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
 
     try {
+      // Ensure the same native English text track the user can select manually
+      // is actually selected before AI preparation. Usually container metadata
+      // already exposes it; if not, prime briefly at normal speed.
+      await _primeSubtitleTracksForAiPreflight();
+      final timingTrack = _bestNativeEnglishTextTrack();
+      if (timingTrack == null) {
+        throw const AiSubtitleException(
+          'This source does not expose a readable native English text subtitle track.',
+        );
+      }
+      await widget.playback.player.setSubtitleTrack(timingTrack);
+      await _setNativeSubtitleDelayProperty(0);
+      await _setNativeSubtitleVisibility(false);
+      _timingTrackSelected = true;
+      _timingTrackIsText = true;
+
       // First try sources that can identify the transcript without playing the
       // video at all: the embedded English file itself, then OpenSubtitles REST
       // matched by the actual selected file hash + byte size. These identify
