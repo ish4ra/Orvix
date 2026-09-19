@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('strict startup no longer depends on embedded cue warmup or live AI', () {
+  test('startup uses full generated subtitle file instead of live cue AI', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final start =
@@ -14,25 +14,24 @@ void main() {
     expect(end, greaterThan(start));
     final startup = player.substring(start, end);
 
-    expect(startup, contains('prepareExactFileFully('));
-    expect(startup, isNot(contains('_primeSubtitleTracksForAiPreflight')));
+    expect(startup, contains('prepareGeneratedSinhalaFile('));
+    expect(startup, contains('mk.SubtitleTrack.uri('));
+    expect(startup, contains("language: 'si'"));
     expect(startup, isNot(contains('_tryPrepareEmbeddedAiTiming')));
     expect(startup, isNot(contains('_enableEmbeddedLiveAiFallback')));
     expect(startup, isNot(contains('translateCue(')));
   });
 
-  test('legacy embedded helpers cannot become startup dependencies again', () {
+  test('generated subtitle is handed to normal player timing', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    expect(player, contains('Future<bool> _tryPrepareEmbeddedAiTiming()'));
-    expect(player, contains('Future<bool> _enableEmbeddedLiveAiFallback'));
     expect(
-      player.indexOf('_tryPrepareEmbeddedAiTiming();'),
-      equals(-1),
+      player,
+      contains(
+        '// media_kit/libmpv owns timing, pause, seek and resume from this point.',
+      ),
     );
-    expect(
-      player.indexOf('await _primeSubtitleTracksForAiPreflight();'),
-      equals(-1),
-    );
+    expect(player, contains('await _setNativeSubtitleDelayProperty(0);'));
+    expect(player, contains('_transitionAi(AiSinhalaRuntimeMode.native);'));
   });
 }
