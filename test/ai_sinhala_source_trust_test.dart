@@ -12,9 +12,10 @@ void main() {
         player.indexOf('Future<void> _restoreNativeSubtitleFallback()', startupStart);
     final startup = player.substring(startupStart, startupEnd);
 
+    expect(startup, contains('prepareTrustedTranscriptForNativeClock('));
     expect(startup, contains('_captureNativeEnglishSamples()'));
     expect(startup, contains('OnlineSubtitleService.search('));
-    expect(startup, contains('videoHash: null'));
+    expect(startup, contains('videoHash: widget.expectedVideoHash'));
     expect(startup, isNot(contains('final chosen = english.first;')));
     expect(
       startup,
@@ -47,7 +48,7 @@ void main() {
     expect(service, contains('combined == target'));
   });
 
-  test('automatic native mode has no exact-hash or external-SRT fallback', () {
+  test('exact hash may choose transcript text but automatic mode never loads an external SRT', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final start =
@@ -56,7 +57,23 @@ void main() {
         player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
     final startup = player.substring(start, end);
 
+    expect(startup, contains('prepareTrustedTranscriptForNativeClock('));
     expect(startup, isNot(contains('prepareGeneratedSinhalaFile(')));
     expect(startup, isNot(contains('mk.SubtitleTrack.uri(')));
+
+    final service =
+        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+    final trustedStart =
+        service.indexOf('prepareTrustedTranscriptForNativeClock');
+    final trustedEnd =
+        service.indexOf('prepareTranslatedTranscriptForNativeTiming', trustedStart);
+    final trusted = service.substring(trustedStart, trustedEnd);
+    expect(trusted, contains('_fetchEmbeddedEnglishSubtitle(videoUrl)'));
+    expect(trusted, contains('_fetchExactRestSubtitle('));
+    expect(
+      trusted,
+      contains("sourceMatch: 'rest-exact-transcript-native-clock'"),
+    );
+    expect(trusted, isNot(contains('_writeGeneratedSrt(')));
   });
 }
