@@ -23,9 +23,9 @@ void main() {
     expect(player, contains('_tryPrepareEmbeddedAiTiming'));
     expect(
       player,
-      contains('embedded text track is the real video clock'),
+      contains('embedded track as the authoritative clock'),
     );
-    expect(player, isNot(contains('_tryEnableLiveAiFallback()')));
+    expect(player, contains('_enableEmbeddedLiveAiFallback('));
   });
 
   test('exact OpenSubtitles file hash is preserved end to end', () {
