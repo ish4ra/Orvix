@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('OpenSubtitles ranking is never trusted as timing truth', () {
+  test('OpenSubtitles is used only as a transcript corpus, not a timing oracle', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final startupStart =
@@ -18,36 +18,44 @@ void main() {
     expect(startup, isNot(contains('final chosen = english.first;')));
     expect(
       startup,
-      contains('prepareGeneratedSinhalaFromNativeCalibration('),
+      contains('prepareTranslatedTranscriptForNativeTiming('),
     );
   });
 
-  test('candidate acceptance requires multiple native dialogue matches', () {
+  test('transcript acceptance requires multiple sequential native dialogue matches', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
-    expect(service, contains('if (pairs.length < 3) return null;'));
-    expect(service, contains('selected.matches < 3'));
-    expect(service, contains('selected.medianResidualMs > 850'));
-    expect(service, contains("sourceMatch: 'native-track-calibrated'"));
+    expect(service, contains('selectedMatches < 3'));
+    expect(service, contains('searchFrom = bestIndex + 1'));
+    expect(service, contains('bestSimilarity < .62'));
+    expect(
+      service,
+      contains("sourceMatch: 'native-cue-text-oracle'"),
+    );
   });
 
-  test('calibration supports constant offsets and small FPS drift', () {
+  test('runtime matching is sequence-aware and seek recovery is exact-only globally', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
-    expect(service, contains('scale < .94 || scale > 1.06'));
-    expect(service, contains('offsets[offsets.length ~/ 2]'));
-    expect(service, contains('medianResidual'));
+    expect(service, contains('int matchSourceCueIndex('));
+    expect(service, contains('previousIndex + 180'));
+    expect(service, contains('previousIndex - 3'));
+    expect(service, contains('if (previousIndex >= 0)'));
+    expect(service, contains('_normalizeCue(cues[i].source) == target'));
   });
 
-  test('exact local P2P hash still fails closed as fallback', () {
-    final service =
-        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+  test('automatic native mode has no exact-hash or external-SRT fallback', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    expect(service, contains("path: '/opensubHash'"));
-    expect(service, contains("'videoUrl': videoUri.toString()"));
-    expect(service, contains('size: null'));
-    expect(service, contains('hash: null'));
+    final start =
+        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
+    final end =
+        player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
+    final startup = player.substring(start, end);
+
+    expect(startup, isNot(contains('prepareGeneratedSinhalaFile(')));
+    expect(startup, isNot(contains('mk.SubtitleTrack.uri(')));
   });
 }
