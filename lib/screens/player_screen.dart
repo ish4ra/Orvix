@@ -15,6 +15,7 @@ import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/media_state_service.dart';
 import '../services/online_subtitle_service.dart';
 import '../services/playback_service.dart';
+import '../services/platform_profile.dart';
 import '../services/subtitle_preferences_service.dart';
 
 class PlayerScreen extends StatefulWidget {
@@ -1099,7 +1100,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _enterAndroidMobilePlayerMode() async {
-    if (!Platform.isAndroid || !mounted) return;
+    if (!Platform.isAndroid || !mounted || PlatformProfile.isAndroidTv) return;
     final size = MediaQuery.sizeOf(context);
     if (size.shortestSide >= 600) return;
 
