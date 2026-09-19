@@ -1,11 +1,23 @@
+import 'dart:io';
+
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+
+import 'platform_profile.dart';
 
 class PlaybackService {
   PlaybackService()
       : player = Player(
-          configuration: const PlayerConfiguration(
-            bufferSize: 512 * 1024 * 1024,
+          configuration: PlayerConfiguration(
+            // 512 MiB is reasonable on desktop but is aggressive for many
+            // Android TV devices and can push the app/native decoder into OOM.
+            // Keep TV/mobile memory bounded; mpv's disk/network cache settings
+            // still provide readahead for slow and P2P streams.
+            bufferSize: PlatformProfile.isAndroidTv
+                ? 64 * 1024 * 1024
+                : Platform.isAndroid
+                    ? 96 * 1024 * 1024
+                    : 512 * 1024 * 1024,
           ),
         ) {
     controller = VideoController(player);
