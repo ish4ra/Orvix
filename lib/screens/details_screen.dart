@@ -2657,7 +2657,7 @@ class _TvEpisodeCardState extends State<_TvEpisodeCard> {
     final episode = widget.episode;
     final primary = Theme.of(context).colorScheme.primary;
     final overview = episode.overview?.replaceFirst(
-      RegExp(r'^★\\s*\\d+(?:\\.\\d+)?\\s*'),
+      RegExp(r'^★\s*\d+(?:\.\d+)?\s*'),
       '',
     );
     final date = _dateLabel(episode);
