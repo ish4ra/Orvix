@@ -47,7 +47,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       SnackBar(
         content: Text(
           enabled
-              ? 'AI Sinhala subtitles enabled. Orvix chooses the best ranked English OpenSubtitles result, translates the complete subtitle file, and loads a cached Sinhala SRT as a normal player subtitle.'
+              ? 'AI Sinhala subtitles enabled. Orvix fingerprints the actual selected video file and auto-translates only an exact OpenSubtitles hash + byte-size match. It never auto-guesses another release.'
               : 'AI Sinhala subtitles disabled.',
         ),
       ),
@@ -97,7 +97,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       AiSinhalaSubtitleService.canTranslate
-                          ? 'Before playback starts, Orvix searches OpenSubtitles for English results using title/episode, release name, file size and hash when available. It translates the selected subtitle without changing its timestamps, caches a Sinhala SRT, and loads it as a normal subtitle track. Requires internet for first-time translation.'
+                          ? 'Before playback starts, Orvix reads the first and last 64 KiB of the actual selected video plus its exact byte size, computes the OpenSubtitles movie hash, and queries the OpenSubtitles REST API for that exact file. The matched subtitle keeps its original timestamps, is translated completely to Sinhala, cached as SRT, and loaded as a normal subtitle track.'
                           : 'Sign in to your Orvix account first. When enabled, Orvix prepares Sinhala subtitles before playback when a safe timing source is available.',
                       style: const TextStyle(height: 1.45),
                     ),
@@ -106,7 +106,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 12),
               const Text(
-                'Selected-subtitle mode: no embedded extraction, no fuzzy cue matching, and no per-cue live translation. You can also open Online subtitles and use the translate button on any English result to generate Sinhala from that exact subtitle.',
+                'Automatic mode is exact-file only: no ranked-result auto guess, embedded extraction, fuzzy cue matching, or per-cue live translation. If no exact match exists, normal playback continues. You can still open Online subtitles and manually translate an English result you personally verified is in sync.',
                 style: TextStyle(
                     fontSize: 12.5, height: 1.5, color: Color(0xFF9CA99E)),
               ),
