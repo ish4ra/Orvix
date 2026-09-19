@@ -206,9 +206,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
         });
       }
 
-      // Critical alpha.12 change: open the real media first but keep it paused.
-      // This exposes embedded subtitle tracks and primes local P2P safely without
-      // letting dialogue run before Sinhala timing/translation is ready.
+      // Strict alpha.16 path: open the real media PAUSED so the local P2P
+      // engine has attached the file, then compute the exact OpenSubtitles
+      // fingerprint and prepare the complete Sinhala subtitle before playback.
       await widget.playback.open(
         widget.url,
         title: widget.title,
@@ -231,11 +231,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
         if (aiReady) {
           await _setNativeSubtitleDelayProperty(0);
           await _setNativeSubtitleVisibility(false);
-          await _ensureEnglishTimingTrack();
+          _timingTrackSelected = false;
+          _timingTrackIsText = false;
           _lastAiPrefetchBucket = -1;
+          _positionSubscription ??=
+              widget.playback.player.stream.position.listen(_onPosition);
+          await _loadManualSync();
           _refreshAiSubtitle();
         } else {
-          await _primeSubtitleTracksForAiPreflight();
           aiReady = await _prepareAiSinhalaBeforePlayback();
         }
 
@@ -270,21 +273,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
         if (resume != null && resume > const Duration(seconds: 10)) {
           await widget.playback.player.seek(resume);
           _afterSeek(resume);
-        }
-      }
-
-      // A resumed episode must also have Sinhala translated around the resume
-      // point before playback starts, otherwise the opening prebuffer is useless.
-      if (aiReady && resume != null && _preparedAiSubtitle != null) {
-        try {
-          await AiSinhalaSubtitleService.ensureTranslatedAround(
-            _preparedAiSubtitle!,
-            resume,
-            lookBehind: 4,
-            lookAhead: 96,
-          );
-        } catch (_) {
-          // The already prepared opening buffer remains usable.
         }
       }
 
@@ -406,6 +394,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (widget.item == null) {
       if (mounted) {
         setState(() {
+          _transitionAi(AiSinhalaRuntimeMode.native);
           _aiSubtitleUnavailable = true;
           _aiPreflightMessage =
               'AI Sinhala needs title metadata for this video.';
@@ -417,23 +406,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     setState(() {
       _transitionAi(AiSinhalaRuntimeMode.preparing);
       _aiSubtitleUnavailable = false;
-      _aiPreflightMessage = 'Checking the video for an embedded English track…';
+      _aiPreflightMessage =
+          'Verifying the exact video file before Sinhala translation…';
     });
 
-    // Strongest clock first: after the media is OPEN but PAUSED we can inspect
-    // its real subtitle tracks. If English text is embedded, those cue events
-    // are the exact video clock; the downloaded transcript supplies only text.
-    final embeddedReady = await _tryPrepareEmbeddedAiTiming();
-    if (!mounted || _closing || _subtitleChoiceOverridden) return false;
-    if (embeddedReady) {
-      setState(() => _aiPreflightMessage = 'AI Sinhala ready.');
-      return true;
-    }
-
     try {
-      setState(() =>
-          _aiPreflightMessage = 'Checking exact file hash and release timing…');
-      final prepared = await AiSinhalaSubtitleService.prepareBuffered(
+      final prepared = await AiSinhalaSubtitleService.prepareExactFileFully(
         item: widget.item!,
         episode: widget.episode,
         videoUrl: widget.url,
@@ -445,46 +423,44 @@ class _PlayerScreenState extends State<PlayerScreen> {
           setState(() => _aiPreflightMessage = message);
         },
       );
+
       if (!mounted || _closing || _subtitleChoiceOverridden) return false;
-      if (prepared == null) {
-        setState(() {
-          _transitionAi(AiSinhalaRuntimeMode.native);
-          _aiSubtitleUnavailable = true;
-          _aiDisplaySubtitle = '';
-          _aiPreflightMessage =
-              'No safe AI Sinhala timing source was found. Using native subtitles.';
-        });
-        await _restoreNativeSubtitleFallback();
-        return false;
+      if (prepared == null ||
+          prepared.translatedCount != prepared.cues.length) {
+        throw const AiSubtitleException(
+          'The complete exact-file Sinhala subtitle was not ready.',
+        );
       }
 
       setState(() {
         _preparedAiSubtitle = prepared;
         _transitionAi(AiSinhalaRuntimeMode.prepared);
-        _preparedTranslationFailures = 0;
         _aiSubtitleUnavailable = false;
-        _aiPreflightMessage = 'AI Sinhala ready.';
+        _aiPreflightMessage =
+            'Complete exact-file Sinhala subtitle ready.';
+        _timingTrackSelected = false;
+        _timingTrackIsText = false;
         _lastAiPrefetchBucket = -1;
       });
+
       _positionSubscription ??=
           widget.playback.player.stream.position.listen(_onPosition);
-      _subtitleTimingSubscription ??=
-          widget.playback.player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
       await _loadManualSync();
       if (!mounted) return false;
       await _setNativeSubtitleDelayProperty(0);
       await _setNativeSubtitleVisibility(false);
-      await _ensureEnglishTimingTrack();
       _refreshAiSubtitle();
       return true;
     } catch (error) {
       if (!mounted || _closing || _subtitleChoiceOverridden) return false;
+      final reason = error.toString().trim();
       setState(() {
         _transitionAi(AiSinhalaRuntimeMode.native);
         _aiSubtitleUnavailable = true;
         _aiDisplaySubtitle = '';
-        _aiPreflightMessage =
-            'AI Sinhala could not prepare safely. Using native subtitles.';
+        _aiPreflightMessage = reason.isEmpty
+            ? 'AI Sinhala unavailable for this exact video file.'
+            : '$reason Using native subtitles instead.';
       });
       await _restoreNativeSubtitleFallback();
       return false;
