@@ -47,7 +47,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       SnackBar(
         content: Text(
           enabled
-              ? 'AI Sinhala subtitles enabled. Orvix will use only an exact-file OpenSubtitles match and translate the complete subtitle before playback starts.'
+              ? 'AI Sinhala subtitles enabled. Orvix first extracts the exact English subtitle from the video itself, translates the whole file, and loads the generated Sinhala SRT as a normal player subtitle. Exact-hash OpenSubtitles is the fallback.'
               : 'AI Sinhala subtitles disabled.',
         ),
       ),
@@ -97,7 +97,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       AiSinhalaSubtitleService.canTranslate
-                          ? 'Before playback starts, Orvix requires an exact OpenSubtitles file-hash + byte-size match and translates the complete English subtitle to Sinhala. If an exact match is unavailable, playback opens with normal subtitles instead. Requires internet.'
+                          ? 'Before playback starts, Orvix prefers an English text subtitle embedded in the selected video/torrent, preserves its timestamps, translates the complete file to Sinhala, caches an SRT, and loads it as a normal subtitle track. If extraction is unavailable, exact-hash OpenSubtitles is tried. Requires internet for translation.'
                           : 'Sign in to your Orvix account first. When enabled, Orvix prepares Sinhala subtitles before playback when a safe timing source is available.',
                       style: const TextStyle(height: 1.45),
                     ),
@@ -106,7 +106,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 12),
               const Text(
-                'Strict mode: Orvix does not fuzzy-match an external transcript to embedded cues and does not use per-cue live AI translation. This lowers availability, but avoids the disappearing/late subtitle behavior seen in earlier alpha builds.',
+                'Generated-file mode: no fuzzy cue matching and no per-cue live translation. Pause, seek and resume timing are handled by the player from the generated Sinhala subtitle file.',
                 style: TextStyle(
                     fontSize: 12.5, height: 1.5, color: Color(0xFF9CA99E)),
               ),
