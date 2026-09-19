@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import 'platform_profile.dart';
 import 'source_provider_service.dart';
 
 class LocalTorrentException implements Exception {
@@ -29,6 +30,7 @@ class LocalTorrentService {
   Process? _process;
   bool _ownsProcess = false;
   Future<void>? _starting;
+  bool _androidProfileConfigured = false;
 
   Future<String> resolve(SourceResult source) async {
     if (!source.isMagnet) return source.resource;
@@ -101,7 +103,10 @@ class LocalTorrentService {
   }
 
   Future<void> ensureRunning() async {
-    if (await _heartbeat()) return;
+    if (await _heartbeat()) {
+      if (Platform.isAndroid) await _configureAndroidSafeProfile();
+      return;
+    }
 
     final existing = _starting;
     if (existing != null) return existing;
@@ -125,6 +130,7 @@ class LocalTorrentService {
 
         for (var attempt = 0; attempt < 80; attempt++) {
           if (await _heartbeat()) {
+            await _configureAndroidSafeProfile();
             completer.complete();
             return;
           }
@@ -203,6 +209,37 @@ class LocalTorrentService {
       rethrow;
     } finally {
       _starting = null;
+    }
+  }
+
+  Future<void> _configureAndroidSafeProfile() async {
+    if (!Platform.isAndroid || _androidProfileConfigured) return;
+
+    // stream-server desktop defaults are intentionally generous (10 GB cache,
+    // hundreds of peer connections and seeding enabled). Those defaults are
+    // inappropriate for many TV boxes. Keep the transport conservative so the
+    // torrent engine cannot pressure the TV while the decoder is starting.
+    final tv = PlatformProfile.isAndroidTv;
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/settings'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'cacheSize': tv
+                  ? 512 * 1024 * 1024
+                  : 2 * 1024 * 1024 * 1024,
+              'btMaxConnections': tv ? 120 : 200,
+              'seedingEnabled': false,
+            }),
+          )
+          .timeout(const Duration(seconds: 4));
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        _androidProfileConfigured = true;
+      }
+    } catch (_) {
+      // A settings failure must not make the transport itself unusable.
+      // The next resolve attempt will retry this best-effort profile.
     }
   }
 
