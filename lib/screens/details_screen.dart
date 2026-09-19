@@ -1937,10 +1937,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
   }) async {
     if (!mounted) return;
 
-    // AI Sinhala preflight now happens inside PlayerScreen after the media has
-    // been opened PAUSED. That lets Orvix inspect the actual embedded subtitle
-    // tracks and avoids probing a local P2P stream before the native engine has
-    // attached the media.
+    // PlayerScreen performs the AI Sinhala exact-file fingerprint and
+    // translation before libmpv opens this URL. The resolved local P2P URL
+    // already identifies the exact torrent file index, so the hash can be
+    // computed with byte-range reads without attaching the player first.
     setState(() {
       _resolving = false;
       _resolveProgress = null;
