@@ -717,9 +717,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _liveCueGeneration++;
     if (mounted) {
       setState(() {
-        _aiSinhalaRequested = false;
-        _aiSinhalaEnabled = false;
-        _liveAiFallback = false;
+        _transitionAi(AiSinhalaRuntimeMode.native);
         _aiDisplaySubtitle = '';
       });
     }
