@@ -413,34 +413,66 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen>
       return const Center(
         key: ValueKey('tv-source-empty'),
         child: Text(
-          'No sources match the current TV-safe filters.',
-          style: TextStyle(color: Color(0xFF9FAAA0)),
+          'No sources match the current filters.',
+          style: TextStyle(
+            color: Color(0xFFB1B7B2),
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+          ),
         ),
       );
     }
 
-    return ListView.separated(
-      key: const ValueKey('tv-source-results'),
-      cacheExtent: 900,
-      itemCount: results.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
-      itemBuilder: (context, index) {
-        final source = results[index];
+    final grouped = <String, List<SourceResult>>{};
+    for (final source in results) {
+      grouped.putIfAbsent(source.provider, () => <SourceResult>[]).add(source);
+    }
+
+    final children = <Widget>[];
+    var autofocusAssigned = false;
+    for (final entry in grouped.entries) {
+      children.add(
+        Padding(
+          padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
+          child: Text(
+            entry.key,
+            style: const TextStyle(
+              color: Color(0xFFE1E5E2),
+              fontSize: 15.5,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+      );
+
+      for (final source in entry.value) {
         final pinned = widget.sources.matchesPinned(
           source,
           _pinnedIdentity,
           seriesWide: _seriesWidePin,
         );
-        return RepaintBoundary(
-          child: _TvSourceTile(
-            source: source,
-            pinned: pinned,
-            autofocus: index == 0,
-            onPlay: () => Navigator.of(context).pop(source),
-            onPin: () => _togglePin(source),
+        final autofocus = !autofocusAssigned;
+        autofocusAssigned = true;
+        children.add(
+          RepaintBoundary(
+            child: _TvSourceTile(
+              source: source,
+              pinned: pinned,
+              autofocus: autofocus,
+              onPlay: () => Navigator.of(context).pop(source),
+              onPin: () => _togglePin(source),
+            ),
           ),
         );
-      },
+        children.add(const SizedBox(height: 12));
+      }
+    }
+
+    return ListView(
+      key: const ValueKey('tv-source-results'),
+      cacheExtent: 1200,
+      padding: const EdgeInsets.only(bottom: 34),
+      children: children,
     );
   }
 }
