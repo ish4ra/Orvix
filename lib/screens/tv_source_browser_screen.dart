@@ -525,37 +525,37 @@ class _TvSourceTileState extends State<_TvSourceTile> {
         '${source.title} ${source.fileNameHint ?? ''}'.toLowerCase();
     final fileName = source.fileNameHint?.trim().isNotEmpty == true
         ? source.fileNameHint!.trim()
-        : source.title.split('\\n').last.trim();
+        : source.title.split('\n').last.trim();
 
     String? codec;
-    if (RegExp(r'\\b(?:x265|h[ ._-]?265|hevc)\\b').hasMatch(combined)) {
+    if (RegExp(r'\b(?:x265|h[ ._-]?265|hevc)\b').hasMatch(combined)) {
       codec = 'HEVC';
-    } else if (RegExp(r'\\b(?:x264|h[ ._-]?264|avc)\\b')
+    } else if (RegExp(r'\b(?:x264|h[ ._-]?264|avc)\b')
         .hasMatch(combined)) {
       codec = 'AVC';
-    } else if (RegExp(r'\\b(?:av1|av01)\\b').hasMatch(combined)) {
+    } else if (RegExp(r'\b(?:av1|av01)\b').hasMatch(combined)) {
       codec = 'AV1';
     }
 
     final hdr = <String>[];
-    if (RegExp(r'\\b(?:dovi|dolby[ ._-]?vision|dv)\\b')
+    if (RegExp(r'\b(?:dovi|dolby[ ._-]?vision|dv)\b')
         .hasMatch(combined)) {
       hdr.add('DOLBY VISION');
     }
-    if (RegExp(r'\\bhdr10\\+?\\b|\\bhdr\\b').hasMatch(combined)) {
+    if (RegExp(r'\bhdr10\+?\b|\bhdr\b').hasMatch(combined)) {
       hdr.add('HDR');
     }
 
     String? audio;
-    if (RegExp(r'\\bdts(?:-hd)?\\b').hasMatch(combined)) {
+    if (RegExp(r'\bdts(?:-hd)?\b').hasMatch(combined)) {
       audio = 'DTS';
-    } else if (RegExp(r'\\btruehd\\b').hasMatch(combined)) {
+    } else if (RegExp(r'\btruehd\b').hasMatch(combined)) {
       audio = 'TRUEHD';
-    } else if (RegExp(r'\\b(?:ddp|eac3)\\b').hasMatch(combined)) {
+    } else if (RegExp(r'\b(?:ddp|eac3)\b').hasMatch(combined)) {
       audio = 'DD+';
-    } else if (RegExp(r'\\bac3\\b').hasMatch(combined)) {
+    } else if (RegExp(r'\bac3\b').hasMatch(combined)) {
       audio = 'AC3';
-    } else if (RegExp(r'\\baac\\b').hasMatch(combined)) {
+    } else if (RegExp(r'\baac\b').hasMatch(combined)) {
       audio = 'AAC';
     }
 
