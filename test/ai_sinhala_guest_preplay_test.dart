@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('guest AI Sinhala translates one complete selected subtitle before playback', () {
+  test('guest AI Sinhala translates one complete exact-file subtitle before playback', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
     final details = File('lib/screens/details_screen.dart').readAsStringSync();
@@ -14,10 +14,8 @@ void main() {
     expect(service, contains('static bool get canTranslate => true;'));
     expect(service, contains(r"'Authorization': 'Bearer $_guestFunctionJwt'"));
     expect(service, contains('translate-subtitle-si'));
-    expect(
-      service,
-      contains('prepareGeneratedSinhalaFromOnlineSubtitle'),
-    );
+    expect(service, contains('prepareGeneratedSinhalaFile('));
+    expect(service, contains('_fetchExactRestSubtitle('));
     expect(service, contains('_translateEntireSubtitle('));
     expect(service, contains('_writeGeneratedSrt('));
 
@@ -26,11 +24,8 @@ void main() {
 
     expect(player, contains('play: !aiReady'));
     expect(player, contains('_prepareAiSinhalaBeforePlayback'));
-    expect(player, contains('OnlineSubtitleService.search('));
-    expect(
-      player,
-      contains('prepareGeneratedSinhalaFromOnlineSubtitle('),
-    );
+    expect(player, contains('prepareGeneratedSinhalaFile('));
+    expect(player, isNot(contains('final chosen = english.first;')));
     expect(player, contains('mk.SubtitleTrack.uri('));
     expect(playback, contains('bool play = true'));
     expect(playback, contains('play: play'));
