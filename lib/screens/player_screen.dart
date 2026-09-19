@@ -203,31 +203,34 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     : AiSinhalaRuntimeMode.native,
           );
           _aiSubtitleUnavailable = false;
-          _aiPreflightMessage =
-              aiPreferred && !aiReady
-                  ? 'Preparing Sinhala subtitle before opening video…'
-                  : '';
+          _aiPreflightMessage = aiPreferred && !aiReady
+              ? 'Opening video paused to verify its real English subtitle track…'
+              : '';
         });
       }
 
-      // Alpha.19 fingerprints the actual selected video URL first, then uses
-      // only the exact OpenSubtitles REST match for automatic AI Sinhala.
-      // If exact verification fails, normal playback opens without guessing.
-      if (aiPreferred && !aiReady) {
-        aiReady = await _prepareAiSinhalaBeforePlayback();
-      }
-
+      // Alpha.20 opens the real media PAUSED first. The native English text
+      // track that the user can see in the track menu is treated as the timing
+      // ground truth. Orvix samples a few of its real cues, finds an
+      // OpenSubtitles transcript with matching dialogue, calibrates that full
+      // transcript to the native cue clock, translates it, then loads the
+      // generated Sinhala SRT. Normal playback never starts during preflight.
       await widget.playback.open(
         widget.url,
         title: widget.title,
-        play: !aiReady,
+        play: !aiPreferred,
       );
+
+      if (aiPreferred && !aiReady) {
+        aiReady = await _prepareAiSinhalaBeforePlayback();
+      }
 
       if (aiReady && _generatedAiSubtitlePath != null) {
         await widget.playback.player.setSubtitleTrack(
           mk.SubtitleTrack.uri(
             _generatedAiSubtitlePath!,
-            title: 'AI Sinhala • ${_generatedAiSubtitleLabel ?? 'English subtitle'}',
+            title:
+                'AI Sinhala • ${_generatedAiSubtitleLabel ?? 'native-timed'}',
             language: 'si',
           ),
         );
@@ -241,8 +244,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
           });
         }
       } else if (aiReady && _preparedAiSubtitle != null) {
-        // Legacy prepared subtitles are retained only for compatibility with
-        // older callers; current details screens pass null here.
         await _setNativeSubtitleDelayProperty(0);
         await _setNativeSubtitleVisibility(false);
         _timingTrackSelected = false;
@@ -267,14 +268,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
           _aiDisplaySubtitle = '';
           if (_aiPreflightMessage.trim().isEmpty) {
             _aiPreflightMessage =
-                'AI Sinhala unavailable for this release. Normal playback will continue.';
+                'AI Sinhala could not verify a native-timed subtitle. Normal playback will continue.';
           }
         });
         if (_aiPreflightMessage.trim().isNotEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(_aiPreflightMessage),
-              duration: const Duration(seconds: 6),
+              duration: const Duration(seconds: 7),
             ),
           );
         }
@@ -292,7 +293,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         }
       }
 
-      if (aiReady) {
+      if (aiPreferred) {
         await widget.playback.player.play();
       }
 
@@ -398,6 +399,137 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  mk.SubtitleTrack? _bestNativeEnglishTextTrack() {
+    final tracks = widget.playback.player.state.tracks.subtitle
+        .where((track) => track.id.toLowerCase() != 'no')
+        .where((track) => !_isImageSubtitleTrack(track))
+        .toList(growable: false);
+
+    final english = tracks.where(_isEnglishTrack).toList(growable: false);
+    if (english.isEmpty) return null;
+
+    int score(mk.SubtitleTrack track) {
+      final language = (track.language ?? '').toLowerCase();
+      final title = (track.title ?? '').toLowerCase();
+      final codec = (track.codec ?? '').toLowerCase();
+      var value = 0;
+      if (language == 'eng' || language == 'en') value += 120;
+      if (title == 'eng' || title.contains('english')) value += 110;
+      if (codec.contains('subrip') ||
+          codec.contains('srt') ||
+          codec.contains('ass') ||
+          codec.contains('ssa') ||
+          codec.contains('webvtt')) {
+        value += 30;
+      }
+      if (title.contains('forced') || title.contains('commentary')) value -= 100;
+      return value;
+    }
+
+    english.sort((a, b) => score(b).compareTo(score(a)));
+    return english.first;
+  }
+
+  Future<List<AiNativeCueSample>> _captureNativeEnglishSamples() async {
+    final player = widget.playback.player;
+
+    mk.SubtitleTrack? track;
+    for (var attempt = 0; attempt < 30 && mounted && !_closing; attempt++) {
+      track = _bestNativeEnglishTextTrack();
+      if (track != null) break;
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+    }
+    if (track == null) return const <AiNativeCueSample>[];
+
+    await player.setSubtitleTrack(track);
+    await _setNativeSubtitleDelayProperty(0);
+    await _setNativeSubtitleVisibility(false);
+
+    final samples = <AiNativeCueSample>[];
+    final seen = <String>{};
+    final done = Completer<void>();
+    Future<void> addSample(List<String> lines) async {
+      if (_closing || done.isCompleted) return;
+      final text = lines
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty)
+          .join('\n')
+          .trim();
+      if (text.isEmpty) return;
+
+      final normalized = text
+          .toLowerCase()
+          .replaceAll(RegExp(r'<[^>]+>'), '')
+          .replaceAll(RegExp(r"[^a-z0-9\s'’-]"), ' ')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+      if (normalized.split(' ').where((word) => word.isNotEmpty).length < 3 ||
+          !seen.add(normalized)) {
+        return;
+      }
+
+      final startMs =
+          await _nativeSubtitleStartMs() ?? player.state.position.inMilliseconds;
+      final endMs = await _nativeSubtitleEndMs() ?? startMs + 2200;
+      if (startMs < 0 || endMs <= startMs) return;
+
+      samples.add(
+        AiNativeCueSample(
+          start: Duration(milliseconds: startMs),
+          end: Duration(milliseconds: endMs),
+          text: text,
+        ),
+      );
+      if (mounted) {
+        setState(() {
+          _aiPreflightMessage =
+              'Reading real English subtitle timing… ${samples.length}/6 cues';
+        });
+      }
+      if (samples.length >= 6 && !done.isCompleted) done.complete();
+    }
+
+    final subscription = player.stream.subtitle.listen(
+      (lines) => unawaited(addSample(lines)),
+    );
+    final originalVolume = player.state.volume;
+    final originalRate = player.state.rate;
+    final originalPosition = player.state.position;
+
+    _preflightWarmup = true;
+    try {
+      await player.setVolume(0);
+      await player.setRate(4.0);
+      await player.play();
+      await Future.any<void>([
+        done.future,
+        Future<void>.delayed(const Duration(seconds: 14)),
+      ]);
+    } catch (_) {
+      // The exact-hash fallback below remains available if native sampling
+      // cannot collect enough text cues.
+    } finally {
+      try {
+        await player.pause();
+      } catch (_) {}
+      await subscription.cancel();
+      try {
+        await player.setRate(originalRate);
+      } catch (_) {}
+      try {
+        await player.seek(originalPosition);
+      } catch (_) {}
+      try {
+        await player.setVolume(originalVolume);
+      } catch (_) {}
+      _preflightWarmup = false;
+      _playbackStarted = false;
+      _startupFailureVisible = false;
+    }
+
+    return samples;
+  }
+
   Future<bool> _prepareAiSinhalaBeforePlayback() async {
     if (_closing) return false;
     final enabled = await AiSinhalaPreferencesService.isEnabled();
@@ -422,11 +554,67 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _transitionAi(AiSinhalaRuntimeMode.preparing);
       _aiSubtitleUnavailable = false;
       _aiPreflightMessage =
-          'Fingerprinting the actual selected video file…';
+          'Finding the video’s real English text subtitle track…';
     });
 
+    Object? nativeCalibrationError;
     try {
-      final generated = await AiSinhalaSubtitleService.prepareGeneratedSinhalaFile(
+      final samples = await _captureNativeEnglishSamples();
+      if (samples.length >= 3 && mounted && !_closing) {
+        setState(() {
+          _aiPreflightMessage =
+              'Searching English subtitle transcripts for a dialogue match…';
+        });
+        final candidates = await OnlineSubtitleService.search(
+          item: item,
+          episode: widget.episode,
+          releaseHint: widget.releaseHint,
+          videoSize: widget.expectedSizeBytes,
+          // Candidate ordering is not trusted for timing. Native cue matching
+          // below decides which transcript is usable, so do not bias this list
+          // with optional addon hash metadata.
+          videoHash: null,
+          preferredLanguage: 'eng',
+        );
+        final generated = await AiSinhalaSubtitleService
+            .prepareGeneratedSinhalaFromNativeCalibration(
+          title: widget.title,
+          videoIdentity: widget.url,
+          nativeSamples: samples,
+          candidates: candidates,
+          onStatus: (message) {
+            if (!mounted || _closing) return;
+            setState(() => _aiPreflightMessage = message);
+          },
+        );
+        if (!mounted || _closing || _subtitleChoiceOverridden) return false;
+        _generatedAiSubtitlePath = generated.path;
+        _generatedAiSubtitleLabel = 'native timed • ${generated.label}';
+        setState(() {
+          _aiSubtitleUnavailable = false;
+          _aiDisplaySubtitle = '';
+          _aiPreflightMessage = generated.cacheHit
+              ? 'Cached native-timed Sinhala subtitle ready.'
+              : 'Native-timed Sinhala subtitle ready.';
+        });
+        return true;
+      }
+    } catch (error) {
+      nativeCalibrationError = error;
+    }
+
+    // If the file exposes no usable English text track, retain a strict exact
+    // OpenSubtitles hash fallback. This path never ranks/guesses another
+    // release.
+    try {
+      if (mounted && !_closing) {
+        setState(() {
+          _aiPreflightMessage =
+              'Native track calibration unavailable. Trying exact file hash…';
+        });
+      }
+      final generated =
+          await AiSinhalaSubtitleService.prepareGeneratedSinhalaFile(
         item: item,
         episode: widget.episode,
         videoUrl: widget.url,
@@ -438,9 +626,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           setState(() => _aiPreflightMessage = message);
         },
       );
-
       if (!mounted || _closing || _subtitleChoiceOverridden) return false;
-
       _generatedAiSubtitlePath = generated.path;
       _generatedAiSubtitleLabel = generated.label;
       setState(() {
@@ -451,18 +637,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
             : 'Exact-file Sinhala subtitle ready.';
       });
       return true;
-    } catch (error) {
+    } catch (exactError) {
       _generatedAiSubtitlePath = null;
       _generatedAiSubtitleLabel = null;
       if (!mounted || _closing || _subtitleChoiceOverridden) return false;
-      final reason = error.toString().trim();
+      final nativeReason = nativeCalibrationError?.toString().trim() ?? '';
+      final exactReason = exactError.toString().trim();
       setState(() {
         _transitionAi(AiSinhalaRuntimeMode.native);
         _aiSubtitleUnavailable = true;
         _aiDisplaySubtitle = '';
-        _aiPreflightMessage = reason.isEmpty
-            ? 'AI Sinhala could not verify an exact subtitle for this video.'
-            : '$reason Normal playback will continue.';
+        _aiPreflightMessage = nativeReason.isNotEmpty
+            ? '$nativeReason Exact-file fallback also failed: $exactReason'
+            : '$exactReason Normal playback will continue.';
       });
       return false;
     }
