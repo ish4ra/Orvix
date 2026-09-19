@@ -97,6 +97,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   int _embeddedMismatchCount = 0;
   int _liveTranslationFailures = 0;
   int _preparedTranslationFailures = 0;
+  int _nativeAiMatchIndex = -1;
   double _subtitleFontSize = SubtitlePreferencesService.defaultFontSize;
   bool _subtitleBackground = SubtitlePreferencesService.defaultBackground;
   double _subtitleBackgroundOpacity =
@@ -210,11 +211,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
 
       // Alpha.20 opens the real media PAUSED first. The native English text
-      // track that the user can see in the track menu is treated as the timing
-      // ground truth. Orvix samples a few of its real cues, finds an
-      // OpenSubtitles transcript with matching dialogue, calibrates that full
-      // transcript to the native cue clock, translates it, then loads the
-      // generated Sinhala SRT. Normal playback never starts during preflight.
+      // track visible in the track menu is the timing ground truth. Orvix
+      // pre-translates a matching transcript, then every native cue event
+      // selects the Sinhala line. Online subtitle timestamps are never used,
+      // and no generated external subtitle track is loaded on this path.
       await widget.playback.open(
         widget.url,
         title: widget.title,
@@ -244,15 +244,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
           });
         }
       } else if (aiReady && _preparedAiSubtitle != null) {
+        // Native-cue mode: keep the video's synced English text track selected
+        // but invisible. Every real cue event drives the already-translated
+        // Sinhala text, so online subtitle timestamps are never used.
         await _setNativeSubtitleDelayProperty(0);
         await _setNativeSubtitleVisibility(false);
-        _timingTrackSelected = false;
-        _timingTrackIsText = false;
-        _lastAiPrefetchBucket = -1;
-        _positionSubscription ??=
-            widget.playback.player.stream.position.listen(_onPosition);
-        await _loadManualSync();
-        _refreshAiSubtitle();
+        _timingTrackSelected = true;
+        _timingTrackIsText = true;
+        _nativeAiMatchIndex = -1;
+        _subtitleTimingSubscription ??=
+            widget.playback.player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
       } else {
         final currentSubtitle = widget.playback.player.state.track.subtitle;
         await _setNativeSubtitleVisibility(
@@ -554,102 +555,77 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _transitionAi(AiSinhalaRuntimeMode.preparing);
       _aiSubtitleUnavailable = false;
       _aiPreflightMessage =
-          'Finding the video’s real English text subtitle track…';
+          'Finding the video’s synced English text subtitle track…';
     });
 
-    Object? nativeCalibrationError;
     try {
       final samples = await _captureNativeEnglishSamples();
-      if (samples.length >= 3 && mounted && !_closing) {
-        setState(() {
-          _aiPreflightMessage =
-              'Searching English subtitle transcripts for a dialogue match…';
-        });
-        final candidates = await OnlineSubtitleService.search(
-          item: item,
-          episode: widget.episode,
-          releaseHint: widget.releaseHint,
-          videoSize: widget.expectedSizeBytes,
-          // Candidate ordering is not trusted for timing. Native cue matching
-          // below decides which transcript is usable, so do not bias this list
-          // with optional addon hash metadata.
-          videoHash: null,
-          preferredLanguage: 'eng',
+      if (samples.length < 3) {
+        throw const AiSubtitleException(
+          'This source does not expose enough readable English subtitle cues for native-timed AI Sinhala.',
         );
-        final generated = await AiSinhalaSubtitleService
-            .prepareGeneratedSinhalaFromNativeCalibration(
-          title: widget.title,
-          videoIdentity: widget.url,
-          nativeSamples: samples,
-          candidates: candidates,
-          onStatus: (message) {
-            if (!mounted || _closing) return;
-            setState(() => _aiPreflightMessage = message);
-          },
-        );
-        if (!mounted || _closing || _subtitleChoiceOverridden) return false;
-        _generatedAiSubtitlePath = generated.path;
-        _generatedAiSubtitleLabel = 'native timed • ${generated.label}';
-        setState(() {
-          _aiSubtitleUnavailable = false;
-          _aiDisplaySubtitle = '';
-          _aiPreflightMessage = generated.cacheHit
-              ? 'Cached native-timed Sinhala subtitle ready.'
-              : 'Native-timed Sinhala subtitle ready.';
-        });
-        return true;
       }
-    } catch (error) {
-      nativeCalibrationError = error;
-    }
+      if (!mounted || _closing || _subtitleChoiceOverridden) return false;
 
-    // If the file exposes no usable English text track, retain a strict exact
-    // OpenSubtitles hash fallback. This path never ranks/guesses another
-    // release.
-    try {
-      if (mounted && !_closing) {
-        setState(() {
-          _aiPreflightMessage =
-              'Native track calibration unavailable. Trying exact file hash…';
-        });
-      }
-      final generated =
-          await AiSinhalaSubtitleService.prepareGeneratedSinhalaFile(
+      setState(() {
+        _aiPreflightMessage =
+            'Matching the synced English dialogue to an OpenSubtitles transcript…';
+      });
+      final candidates = await OnlineSubtitleService.search(
         item: item,
         episode: widget.episode,
-        videoUrl: widget.url,
         releaseHint: widget.releaseHint,
-        expectedSizeBytes: widget.expectedSizeBytes,
-        expectedVideoHash: widget.expectedVideoHash,
+        videoSize: widget.expectedSizeBytes,
+        // Timing never comes from this search result. The video's own English
+        // cue events are authoritative, so optional addon hash metadata cannot
+        // bias the transcript choice.
+        videoHash: null,
+        preferredLanguage: 'eng',
+      );
+
+      final prepared = await AiSinhalaSubtitleService
+          .prepareTranslatedTranscriptForNativeTiming(
+        title: widget.title,
+        videoIdentity: widget.url,
+        nativeSamples: samples,
+        candidates: candidates,
         onStatus: (message) {
           if (!mounted || _closing) return;
           setState(() => _aiPreflightMessage = message);
         },
       );
       if (!mounted || _closing || _subtitleChoiceOverridden) return false;
-      _generatedAiSubtitlePath = generated.path;
-      _generatedAiSubtitleLabel = generated.label;
-      setState(() {
-        _aiSubtitleUnavailable = false;
-        _aiDisplaySubtitle = '';
-        _aiPreflightMessage = generated.cacheHit
-            ? 'Cached exact-file Sinhala subtitle ready.'
-            : 'Exact-file Sinhala subtitle ready.';
-      });
-      return true;
-    } catch (exactError) {
+
       _generatedAiSubtitlePath = null;
       _generatedAiSubtitleLabel = null;
+      _preparedAiSubtitle = prepared;
+      _nativeAiMatchIndex = -1;
+      setState(() {
+        _transitionAi(AiSinhalaRuntimeMode.prepared);
+        _timingTrackSelected = true;
+        _timingTrackIsText = true;
+        _aiSubtitleUnavailable = false;
+        _aiDisplaySubtitle = '';
+        _aiPreflightMessage =
+            'AI Sinhala ready • timing locked to this video’s native English track.';
+      });
+      return true;
+    } catch (error) {
+      _generatedAiSubtitlePath = null;
+      _generatedAiSubtitleLabel = null;
+      _preparedAiSubtitle = null;
+      _nativeAiMatchIndex = -1;
       if (!mounted || _closing || _subtitleChoiceOverridden) return false;
-      final nativeReason = nativeCalibrationError?.toString().trim() ?? '';
-      final exactReason = exactError.toString().trim();
+      final reason = error.toString().trim();
       setState(() {
         _transitionAi(AiSinhalaRuntimeMode.native);
+        _timingTrackSelected = false;
+        _timingTrackIsText = false;
         _aiSubtitleUnavailable = true;
         _aiDisplaySubtitle = '';
-        _aiPreflightMessage = nativeReason.isNotEmpty
-            ? '$nativeReason Exact-file fallback also failed: $exactReason'
-            : '$exactReason Normal playback will continue.';
+        _aiPreflightMessage = reason.isEmpty
+            ? 'Native-timed AI Sinhala could not be prepared.'
+            : '$reason Normal playback will continue with the video’s own subtitles.';
       });
       return false;
     }
@@ -1007,33 +983,46 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _showControls();
   }
 
+  Future<void> _refreshNativeCueAfterSeek() async {
+    if (!_aiSinhalaEnabled ||
+        !_timingTrackSelected ||
+        !_timingTrackIsText ||
+        _closing) {
+      return;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    if (!mounted || _closing) return;
+    final platform = widget.playback.player.platform;
+    if (platform is! mk.NativePlayer) return;
+    try {
+      final text = (await platform.getProperty(
+        'sub-text',
+        waitForInitialization: false,
+      ))
+          .trim();
+      await _handleEmbeddedSubtitleCue(text.isEmpty ? const [] : [text]);
+    } catch (_) {}
+  }
+
   void _afterSeek(Duration target) {
     if (!_aiSinhalaRequested) return;
     _lastNativeSubtitleStartMs = null;
     _lastAiPrefetchBucket = -1;
-    _embeddedMismatchCount = 0;
-    _autoSyncSamples.clear();
+    _nativeAiMatchIndex = -1;
+    _liveCueGeneration++;
     _liveCueClearTimer?.cancel();
     _liveCueClearTimer = null;
     unawaited(_setNativeSubtitleVisibility(false));
 
-    if (_liveAiFallback) {
-      // Any translation request that started before the seek now belongs to
-      // the old playback position. Invalidate it and remove the stale line
-      // immediately instead of leaving it on screen after a jump.
-      _liveCueGeneration++;
-      _liveDialogueContext.clear();
-      if (mounted && _aiDisplaySubtitle.isNotEmpty) {
-        setState(() => _aiDisplaySubtitle = '');
-      }
-      return;
+    if (mounted && _aiDisplaySubtitle.isNotEmpty) {
+      setState(() => _aiDisplaySubtitle = '');
     }
 
-    if (_aiSinhalaEnabled) {
-      // Strict exact-file mode has the complete Sinhala timeline before
-      // playback starts. A seek only changes the lookup position; it must not
-      // reselect subtitle tracks or launch network translation work.
-      _refreshAiSubtitle();
+    if (_aiSinhalaEnabled &&
+        _timingTrackSelected &&
+        _timingTrackIsText &&
+        _preparedAiSubtitle != null) {
+      unawaited(_refreshNativeCueAfterSeek());
     }
   }
 
@@ -1505,7 +1494,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _handleEmbeddedSubtitleCue(List<String> lines) async {
-    if (!_aiSinhalaRequested || !_timingTrackSelected || !mounted) return;
+    if (!_aiSinhalaRequested ||
+        !_timingTrackSelected ||
+        !_timingTrackIsText ||
+        !mounted) {
+      return;
+    }
+
     final source = lines
         .map((line) => line.trim())
         .where((line) => line.isNotEmpty)
@@ -1513,124 +1508,42 @@ class _PlayerScreenState extends State<PlayerScreen> {
         .trim();
 
     if (source.isEmpty) {
-      if (_liveAiFallback) {
-        // mpv can emit an empty subtitle event at cue boundaries. Do not
-        // invalidate a translation request that is still finishing; its
-        // native sub-end timestamp decides whether it is still worth showing.
-        if (_liveCueClearTimer == null &&
-            _aiDisplaySubtitle.isNotEmpty &&
-            mounted) {
-          _liveCueClearTimer = Timer(const Duration(milliseconds: 180), () {
-            _liveCueClearTimer = null;
-            if (mounted && _liveAiFallback) {
-              setState(() => _aiDisplaySubtitle = '');
-            }
-          });
-        }
-      } else if (_timingTrackIsText) {
-        _liveCueGeneration++;
-        if (_aiDisplaySubtitle.isNotEmpty && mounted) {
-          setState(() => _aiDisplaySubtitle = '');
-        }
+      _liveCueGeneration++;
+      if (_aiDisplaySubtitle.isNotEmpty && mounted) {
+        setState(() => _aiDisplaySubtitle = '');
       }
       return;
     }
 
-    _liveCueClearTimer?.cancel();
-    _liveCueClearTimer = null;
-
-    if (_liveAiFallback) {
-      await _translateLiveSubtitleCue(source);
-      return;
-    }
-
-    if (!_aiSinhalaEnabled) return;
     final prepared = _preparedAiSubtitle;
-    if (prepared == null || !_timingTrackIsText) return;
+    if (prepared == null) return;
 
-    // When the file itself has an English text track, its cue events are the
-    // authoritative clock. Match that text to the already translated external
-    // subtitle and render Sinhala on the file's real cue timing instead of
-    // trying to continuously offset a different release timeline.
-    final matched = prepared.matchSourceCue(source);
-    if (matched != null) {
-      _embeddedMismatchCount = 0;
-      final generation = ++_liveCueGeneration;
-      final ready = matched.translation?.trim() ?? '';
-      if (ready.isNotEmpty) {
-        _preparedTranslationFailures = 0;
-        if (mounted) setState(() => _aiDisplaySubtitle = ready);
-      } else {
-        if (_aiDisplaySubtitle.isNotEmpty && mounted) {
-          setState(() => _aiDisplaySubtitle = '');
-        }
-        try {
-          await AiSinhalaSubtitleService.ensureTranslatedAround(
-            prepared,
-            matched.start,
-            lookBehind: 2,
-            lookAhead: 120,
-          );
-          if (!mounted ||
-              generation != _liveCueGeneration ||
-              _liveAiFallback) {
-            return;
-          }
-          final translated = matched.translation?.trim() ?? '';
-          if (translated.isNotEmpty) {
-            _preparedTranslationFailures = 0;
-            setState(() => _aiDisplaySubtitle = translated);
-          }
-        } catch (_) {
-          _preparedTranslationFailures++;
-          if (_preparedTranslationFailures >= 2 &&
-              mounted &&
-              !_closing &&
-              !_subtitleChoiceOverridden) {
-            final switched = await _enableEmbeddedLiveAiFallback(
-              'Buffered Sinhala translation failed repeatedly; using the file’s actual cue text.',
-            );
-            if (switched) {
-              await _translateLiveSubtitleCue(source);
-              return;
-            }
-          }
-        }
+    final index = prepared.matchSourceCueIndex(
+      source,
+      previousIndex: _nativeAiMatchIndex,
+    );
+    if (index < 0) {
+      // Do not guess a line and do not launch a per-cue network request.
+      // The next native cue gets another sequence-aware match attempt.
+      if (_aiDisplaySubtitle.isNotEmpty && mounted) {
+        setState(() => _aiDisplaySubtitle = '');
       }
-
-      // Keep a large translated runway ahead so later dialogue does not
-      // disappear when the next batch is requested.
-      unawaited(
-        AiSinhalaSubtitleService.ensureTranslatedAround(
-          prepared,
-          matched.start,
-          lookBehind: 2,
-          lookAhead: 120,
-        ),
-      );
       return;
     }
 
-    _embeddedMismatchCount++;
-    _liveCueGeneration++;
-    if (_aiDisplaySubtitle.isNotEmpty && mounted) {
-      setState(() => _aiDisplaySubtitle = '');
+    _nativeAiMatchIndex = index;
+    final translated = prepared.cues[index].translation?.trim() ?? '';
+    if (translated.isEmpty) {
+      if (_aiDisplaySubtitle.isNotEmpty && mounted) {
+        setState(() => _aiDisplaySubtitle = '');
+      }
+      return;
     }
 
-    // A few isolated transcript mismatches are harmless. Repeated mismatches
-    // mean the downloaded transcript is the wrong dialogue variant/release.
-    // Keep the embedded track as the authoritative clock and recover by
-    // translating its real cue text directly instead of going permanently blank.
-    if (_embeddedMismatchCount >= 4) {
-      _embeddedMismatchCount = 0;
-      final switched = await _enableEmbeddedLiveAiFallback(
-        'The downloaded transcript did not match this file’s embedded dialogue.',
-      );
-      if (switched) {
-        await _translateLiveSubtitleCue(source);
-      }
+    _liveCueGeneration++;
+    if (translated != _aiDisplaySubtitle && mounted) {
+      setState(() => _aiDisplaySubtitle = translated);
     }
-    return;
   }
 
   Future<void> _registerLiveTranslationFailure(String reason) async {
