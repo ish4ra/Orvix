@@ -193,145 +193,7 @@ class OnlineSubtitleService {
     if (apiKey == null || apiKey.isEmpty) return;
 
     final imdbId = item.id.trim();
-    if (!RegExp(r'^tt\d+    final value = raw.trim().toLowerCase().replaceAll('_', '-');
-    if (value.isEmpty) return 'und';
-    const aliases = <String, String>{
-      'en': 'eng',
-      'en-us': 'eng',
-      'en-gb': 'eng',
-      'english': 'eng',
-      'si': 'sin',
-      'sinhala': 'sin',
-      'sinhalese': 'sin',
-      'ta': 'tam',
-      'tamil': 'tam',
-      'hi': 'hin',
-      'hindi': 'hin',
-      'es': 'spa',
-      'spanish': 'spa',
-      'fr': 'fre',
-      'fra': 'fre',
-      'french': 'fre',
-      'de': 'ger',
-      'deu': 'ger',
-      'german': 'ger',
-      'it': 'ita',
-      'italian': 'ita',
-      'pt': 'por',
-      'pt-br': 'por',
-      'portuguese': 'por',
-      'nl': 'dut',
-      'nld': 'dut',
-      'dutch': 'dut',
-      'ru': 'rus',
-      'russian': 'rus',
-      'ar': 'ara',
-      'arabic': 'ara',
-      'ja': 'jpn',
-      'japanese': 'jpn',
-      'ko': 'kor',
-      'korean': 'kor',
-      'zh': 'chi',
-      'zho': 'chi',
-      'chinese': 'chi',
-      'id': 'ind',
-      'indonesian': 'ind',
-      'tr': 'tur',
-      'turkish': 'tur',
-    };
-    return aliases[value] ?? value;
-  }
-
-  static String languageName(String code) {
-    switch (normalizeLanguage(code)) {
-      case 'eng':
-        return 'English';
-      case 'sin':
-        return 'Sinhala';
-      case 'tam':
-        return 'Tamil';
-      case 'hin':
-        return 'Hindi';
-      case 'spa':
-        return 'Spanish';
-      case 'fre':
-        return 'French';
-      case 'ger':
-        return 'German';
-      case 'ita':
-        return 'Italian';
-      case 'por':
-        return 'Portuguese';
-      case 'dut':
-        return 'Dutch';
-      case 'rus':
-        return 'Russian';
-      case 'ara':
-        return 'Arabic';
-      case 'jpn':
-        return 'Japanese';
-      case 'kor':
-        return 'Korean';
-      case 'chi':
-        return 'Chinese';
-      case 'ind':
-        return 'Indonesian';
-      case 'tur':
-        return 'Turkish';
-      case 'und':
-        return 'Unknown';
-      default:
-        return code.trim().isEmpty ? 'Unknown' : code.toUpperCase();
-    }
-  }
-
-  static Set<String> _releaseTokens(String? release) {
-    if (release == null || release.trim().isEmpty) return const <String>{};
-    final normalized = release
-        .toLowerCase()
-        .replaceAll(RegExp(r'\.[a-z0-9]{2,5}$'), '')
-        .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
-        .trim();
-
-    const ignored = <String>{
-      '1080p',
-      '2160p',
-      '720p',
-      '480p',
-      '4k',
-      'uhd',
-      'hdr',
-      'hdr10',
-      'bluray',
-      'brrip',
-      'webrip',
-      'web',
-      'webdl',
-      'x264',
-      'x265',
-      'h264',
-      'h265',
-      'hevc',
-      'avc',
-      'aac',
-      'dts',
-      'atmos',
-      'remux',
-      'mkv',
-      'mp4',
-      'avi',
-      '10bit',
-      '8bit',
-    };
-
-    return normalized
-        .split(' ')
-        .where((token) => token.length >= 3 && !ignored.contains(token))
-        .take(16)
-        .toSet();
-  }
-}
-).hasMatch(imdbId)) return;
+    if (!RegExp(r'^tt\d+$').hasMatch(imdbId)) return;
 
     final params = <String, String>{
       'api_key': apiKey,
@@ -400,9 +262,8 @@ class OnlineSubtitleService {
               releaseTokens: releaseTokens,
               providerBonus: 35,
             );
-            final rawId = file['file_n_id'] ??
-                file['md5'] ??
-                url.hashCode.toString();
+            final rawId =
+                file['file_n_id'] ?? file['md5'] ?? url.hashCode.toString();
             byUrl[url] = OnlineSubtitleResult(
               id: 'subdl:' + rawId.toString(),
               url: url,
@@ -421,8 +282,9 @@ class OnlineSubtitleService {
         final path = raw['url']?.toString().trim() ?? '';
         if (path.isEmpty) continue;
         final normalizedPath = path.startsWith('/') ? path : '/' + path;
-        final url =
-            path.startsWith('http') ? path : 'https://dl.subdl.com' + normalizedPath;
+        final url = path.startsWith('http')
+            ? path
+            : 'https://dl.subdl.com' + normalizedPath;
         final searchable = (parentLabel +
                 ' ' +
                 (raw['name'] ?? '').toString() +
@@ -434,10 +296,8 @@ class OnlineSubtitleService {
           releaseTokens: releaseTokens,
           providerBonus: 30,
         );
-        final rawId = raw['id'] ??
-            raw['subtitlePage'] ??
-            raw['name'] ??
-            url.hashCode.toString();
+        final rawId =
+            raw['id'] ?? raw['subtitlePage'] ?? raw['name'] ?? url.hashCode.toString();
         byUrl[url] = OnlineSubtitleResult(
           id: 'subdl:' + rawId.toString(),
           url: url,
