@@ -760,7 +760,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
       final resultsFuture = widget.sources.resolve(item, episode: episode);
       final chosen = await Navigator.of(context).push<SourceResult>(
-        PageRouteBuilder(
+        PageRouteBuilder<SourceResult>(
           transitionDuration: const Duration(milliseconds: 180),
           reverseTransitionDuration: const Duration(milliseconds: 140),
           pageBuilder: (_, animation, __) => FadeTransition(
@@ -1313,7 +1313,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     if (PlatformProfile.isAndroidTv) {
       if (!mounted) return null;
       return Navigator.of(context).push<SourceResult>(
-        PageRouteBuilder(
+        PageRouteBuilder<SourceResult>(
           transitionDuration: const Duration(milliseconds: 180),
           reverseTransitionDuration: const Duration(milliseconds: 140),
           pageBuilder: (_, animation, __) => FadeTransition(
