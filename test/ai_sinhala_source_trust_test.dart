@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('automatic AI Sinhala never auto-selects a ranked OpenSubtitles result', () {
+  test('OpenSubtitles ranking is never trusted as timing truth', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final startupStart =
@@ -12,64 +12,42 @@ void main() {
         player.indexOf('Future<void> _restoreNativeSubtitleFallback()', startupStart);
     final startup = player.substring(startupStart, startupEnd);
 
-    expect(startup, contains('prepareGeneratedSinhalaFile('));
-    expect(startup, contains('videoUrl: widget.url'));
-    expect(startup, contains('expectedSizeBytes: widget.expectedSizeBytes'));
-    expect(startup, contains('expectedVideoHash: widget.expectedVideoHash'));
-    expect(startup, isNot(contains('OnlineSubtitleService.search(')));
+    expect(startup, contains('_captureNativeEnglishSamples()'));
+    expect(startup, contains('OnlineSubtitleService.search('));
+    expect(startup, contains('videoHash: null'));
     expect(startup, isNot(contains('final chosen = english.first;')));
+    expect(
+      startup,
+      contains('prepareGeneratedSinhalaFromNativeCalibration('),
+    );
   });
 
-  test('local P2P uses stream-server exact selected-file OpenSubtitles hash', () {
+  test('candidate acceptance requires multiple native dialogue matches', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
-    final probeStart = service.indexOf('static Future<_VideoProbe> _probeVideo(');
-    final probeEnd =
-        service.indexOf('static Future<_VideoProbe> _probeLocalOpenSubtitlesHash(', probeStart);
-    final probe = service.substring(probeStart, probeEnd);
-
-    expect(probe, contains("uri.port == 11470"));
-    expect(probe, contains('_probeLocalOpenSubtitlesHash('));
-
-    final localStart =
-        service.indexOf('static Future<_VideoProbe> _probeLocalOpenSubtitlesHash(');
-    final localEnd =
-        service.indexOf('static Future<_RangeRead?> _readRangeWithRetry(', localStart);
-    final local = service.substring(localStart, localEnd);
-
-    expect(local, contains("path: '/opensubHash'"));
-    expect(local, contains("'videoUrl': videoUri.toString()"));
-    expect(local, contains("result['hash']"));
-    expect(local, contains("result['size']"));
+    expect(service, contains('if (pairs.length < 3) return null;'));
+    expect(service, contains('selected.matches < 3'));
+    expect(service, contains('selected.medianResidualMs > 850'));
+    expect(service, contains("sourceMatch: 'native-track-calibrated'"));
   });
 
-  test('local P2P never falls back to addon hash when exact native probe fails', () {
+  test('calibration supports constant offsets and small FPS drift', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
-    final localStart =
-        service.indexOf('static Future<_VideoProbe> _probeLocalOpenSubtitlesHash(');
-    final localEnd =
-        service.indexOf('static Future<_RangeRead?> _readRangeWithRetry(', localStart);
-    final local = service.substring(localStart, localEnd);
-
-    expect(local, contains('size: null'));
-    expect(local, contains('hash: null'));
-    expect(local, isNot(contains('suppliedHash')));
+    expect(service, contains('scale < .94 || scale > 1.06'));
+    expect(service, contains('offsets[offsets.length ~/ 2]'));
+    expect(service, contains('medianResidual'));
   });
 
-  test('non-local direct streams can compute the canonical hash from byte ranges', () {
+  test('exact local P2P hash still fails closed as fallback', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
-    final probeStart = service.indexOf('static Future<_VideoProbe> _probeVideo(');
-    final probeEnd =
-        service.indexOf('static Future<_VideoProbe> _probeLocalOpenSubtitlesHash(', probeStart);
-    final probe = service.substring(probeStart, probeEnd);
-
-    expect(probe, contains('65535'));
-    expect(probe, contains('size - 65536'));
-    expect(probe, contains('_openSubtitlesHash(size, first.bytes, tail.bytes)'));
+    expect(service, contains("path: '/opensubHash'"));
+    expect(service, contains("'videoUrl': videoUri.toString()"));
+    expect(service, contains('size: null'));
+    expect(service, contains('hash: null'));
   });
 }
