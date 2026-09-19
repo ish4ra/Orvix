@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
@@ -35,7 +36,8 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen>
   String? _pinnedIdentity;
   bool _loading = true;
   String? _error;
-  bool _compatibilityOnly = true;
+  bool _compatibilityOnly = false;
+  String? _providerFilter;
   _TvSourceSort _sort = _TvSourceSort.free;
 
   String get _pinKey =>
@@ -81,6 +83,15 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen>
     }
   }
 
+  List<String> get _providers {
+    final providers = <String>[];
+    for (final source in _results) {
+      final name = source.provider.trim();
+      if (name.isNotEmpty && !providers.contains(name)) providers.add(name);
+    }
+    return providers;
+  }
+
   List<SourceResult> get _visibleResults {
     List<SourceResult> sorted;
     switch (_sort) {
@@ -90,6 +101,12 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen>
         sorted = widget.sources.sortForFreeStreaming(_results);
       case _TvSourceSort.smooth:
         sorted = widget.sources.sortForSmoothPlayback(_results);
+    }
+
+    if (_providerFilter != null) {
+      sorted = sorted
+          .where((source) => source.provider == _providerFilter)
+          .toList(growable: false);
     }
 
     if (_compatibilityOnly) {
@@ -157,10 +174,41 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen>
         ? widget.item.title
         : '${widget.item.title} • ${widget.episode!.label}';
 
+    final backdrop = widget.episode?.thumbnail ?? widget.item.background;
+
     return Scaffold(
-      backgroundColor: const Color(0xFF050806),
-      body: SafeArea(
-        child: Padding(
+      backgroundColor: const Color(0xFF080A09),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (backdrop != null && backdrop.isNotEmpty)
+            CachedNetworkImage(
+              imageUrl: backdrop,
+              fit: BoxFit.cover,
+              alignment: Alignment.topCenter,
+              memCacheWidth: 1280,
+              fadeInDuration: Duration.zero,
+              placeholder: (_, __) =>
+                  const ColoredBox(color: Color(0xFF080A09)),
+              errorWidget: (_, __, ___) =>
+                  const ColoredBox(color: Color(0xFF080A09)),
+            ),
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xE6080A09),
+                  Color(0xF2080A09),
+                  Color(0xFF080A09),
+                ],
+                stops: [0, .42, .76],
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Padding(
           padding: const EdgeInsets.fromLTRB(28, 22, 28, 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -219,52 +267,65 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen>
               ),
             ],
           ),
-        ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildFilterBar() {
-    return Row(
-      children: [
-        _TvFilterPill(
-          selected: _sort == _TvSourceSort.free,
-          icon: Icons.bolt_rounded,
-          label: 'Free',
-          onPressed: () => setState(() => _sort = _TvSourceSort.free),
-        ),
-        const SizedBox(width: 10),
-        _TvFilterPill(
-          selected: _sort == _TvSourceSort.smooth,
-          icon: Icons.speed_rounded,
-          label: 'Smooth',
-          onPressed: () => setState(() => _sort = _TvSourceSort.smooth),
-        ),
-        const SizedBox(width: 10),
-        _TvFilterPill(
-          selected: _sort == _TvSourceSort.best,
-          icon: Icons.auto_awesome_rounded,
-          label: 'Best',
-          onPressed: () => setState(() => _sort = _TvSourceSort.best),
-        ),
-        const SizedBox(width: 10),
-        _TvFilterPill(
-          selected: _compatibilityOnly,
-          icon: Icons.verified_rounded,
-          label: 'TV safe',
-          onPressed: () =>
-              setState(() => _compatibilityOnly = !_compatibilityOnly),
-        ),
-        const Spacer(),
-        const Text(
-          'OK to play  •  ★ to pin',
-          style: TextStyle(
-            color: Color(0xFF7E8A80),
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
+    return SizedBox(
+      height: 46,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          _TvFilterPill(
+            selected: _providerFilter == null,
+            icon: Icons.apps_rounded,
+            label: 'All',
+            onPressed: () => setState(() => _providerFilter = null),
           ),
-        ),
-      ],
+          for (final provider in _providers) ...[
+            const SizedBox(width: 8),
+            _TvFilterPill(
+              selected: _providerFilter == provider,
+              icon: Icons.extension_rounded,
+              label: provider,
+              onPressed: () => setState(() => _providerFilter = provider),
+            ),
+          ],
+          const SizedBox(width: 18),
+          _TvFilterPill(
+            selected: _sort == _TvSourceSort.free,
+            icon: Icons.bolt_rounded,
+            label: 'Free',
+            onPressed: () => setState(() => _sort = _TvSourceSort.free),
+          ),
+          const SizedBox(width: 8),
+          _TvFilterPill(
+            selected: _sort == _TvSourceSort.smooth,
+            icon: Icons.speed_rounded,
+            label: 'Smooth',
+            onPressed: () => setState(() => _sort = _TvSourceSort.smooth),
+          ),
+          const SizedBox(width: 8),
+          _TvFilterPill(
+            selected: _sort == _TvSourceSort.best,
+            icon: Icons.auto_awesome_rounded,
+            label: 'Best',
+            onPressed: () => setState(() => _sort = _TvSourceSort.best),
+          ),
+          const SizedBox(width: 8),
+          _TvFilterPill(
+            selected: _compatibilityOnly,
+            icon: Icons.verified_rounded,
+            label: 'TV safe',
+            onPressed: () =>
+                setState(() => _compatibilityOnly = !_compatibilityOnly),
+          ),
+        ],
+      ),
     );
   }
 
@@ -277,10 +338,10 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen>
         itemCount: 7,
         separatorBuilder: (_, __) => const SizedBox(height: 10),
         itemBuilder: (_, index) => Container(
-          height: 76,
+          height: 132,
           decoration: BoxDecoration(
             color: const Color(0xFF101611),
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(18),
             border: Border.all(color: const Color(0xFF19221A)),
           ),
           child: Padding(
@@ -425,7 +486,7 @@ class _TvSourceTileState extends State<_TvSourceTile> {
         height: 78,
         decoration: BoxDecoration(
           color: _focused ? const Color(0xFF151E16) : const Color(0xFF0C120D),
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(18),
           border: Border.all(
             color: _focused ? focus : const Color(0xFF1B271D),
             width: _focused ? 2 : 1,
@@ -442,7 +503,7 @@ class _TvSourceTileState extends State<_TvSourceTile> {
         ),
         child: InkWell(
           autofocus: widget.autofocus,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(18),
           focusColor: Colors.transparent,
           onFocusChange: (value) => setState(() => _focused = value),
           onTap: widget.onPlay,
