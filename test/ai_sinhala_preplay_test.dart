@@ -3,14 +3,13 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('AI Sinhala opens media paused, calibrates, then starts playback', () {
+  test('AI Sinhala opens media paused and does not show it until preparation finishes', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(
       player,
       contains('Opening video paused to verify its real English subtitle track'),
     );
-    expect(player, contains('Future<bool> _prepareAiSinhalaBeforePlayback()'));
 
     final openStart = player.indexOf('Future<void> _open()');
     final prepareStart =
@@ -23,12 +22,16 @@ void main() {
       lessThan(open.indexOf('await _prepareAiSinhalaBeforePlayback()')),
     );
     expect(open, contains('await widget.playback.player.play();'));
+    expect(player, contains('if (_error == null && _aiSubtitleLoading)'));
+    expect(player, contains('Preparing AI Sinhala before playback'));
   });
 
-  test('loading overlay hides accelerated native-cue sampling', () {
+  test('native timing mode keeps the English track selected but invisible', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    expect(player, contains('if (_error == null && _aiSubtitleLoading)'));
-    expect(player, contains("const Text(\n                            'Preparing AI Sinhala before playback'"));
+    expect(player, contains('await _setNativeSubtitleVisibility(false);'));
+    expect(player, contains('_timingTrackSelected = true;'));
+    expect(player, contains('_timingTrackIsText = true;'));
+    expect(player, contains('player.stream.subtitle.listen(_onEmbeddedSubtitleCue)'));
   });
 }
