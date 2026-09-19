@@ -4,23 +4,40 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:orvix/services/subtitle_preferences_service.dart';
 
 void main() {
-  test('AI Sinhala timing stability guards stay enabled', () {
+  test('AI Sinhala uses a complete generated file, not per-cue live translation', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
+    final start =
+        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
+    final end =
+        player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
+    final startup = player.substring(start, end);
+
     expect(
-      player,
-      contains('(_timingTrackSelected && _timingTrackIsText)'),
+      startup,
+      contains('prepareGeneratedSinhalaFromOnlineSubtitle('),
     );
-    expect(player, contains('_tryPrepareEmbeddedAiTiming'));
-    expect(player, contains('Future<bool> _enableEmbeddedLiveAiFallback'));
-    expect(player, contains('_embeddedMismatchCount >= 4'));
-    expect(player, contains('_registerLiveTranslationFailure'));
-    expect(service, contains('prepareForEmbeddedTiming'));
-    expect(service, contains("sourceMatch: 'embedded-text-timing'"));
-    expect(service, isNot(contains("match: 'title-episode'")));
-    expect(service, contains('requireReleaseEvidence && specificTokens.isEmpty'));
+    expect(startup, isNot(contains('_translateLiveSubtitleCue')));
+    expect(startup, isNot(contains('_handleEmbeddedSubtitleCue')));
+    expect(service, contains('_translateEntireSubtitle('));
+    expect(service, contains('_writeGeneratedSrt('));
+    expect(
+      service,
+      contains("sourceMatch: 'user-or-ranked-online-subtitle'"),
+    );
     expect(SubtitlePreferencesService.defaultFontSize, 26);
+  });
+
+  test('generated file path is cached by subtitle identity and URL', () {
+    final service =
+        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+
+    expect(
+      service,
+      contains("'online|\$subtitleIdentity|\$cleanUrl|\$_generatedSubtitleCacheVersion'"),
+    );
+    expect(service, contains("'srt-v2-online-source'"));
   });
 }
