@@ -327,11 +327,13 @@ class AiSinhalaSubtitleService {
       final startMs =
           (cue.start.inMilliseconds * selected.scale + selected.offsetMs)
               .round()
-              .clamp(0, 1 << 53);
+              .clamp(0, 1 << 53)
+              .toInt();
       final endMs =
           (cue.end.inMilliseconds * selected.scale + selected.offsetMs)
               .round()
-              .clamp(startMs + 80, 1 << 53);
+              .clamp(startMs + 80, 1 << 53)
+              .toInt();
       return AiSubtitleCue(
         start: Duration(milliseconds: startMs),
         end: Duration(milliseconds: endMs),
@@ -479,7 +481,7 @@ class AiSinhalaSubtitleService {
     final longer = a.length < b.length ? b : a;
     final containment =
         longer.contains(shorter) ? shorter.length / longer.length : 0.0;
-    return math.max(jaccard, containment);
+    return math.max(jaccard, containment).toDouble();
   }
 
 
