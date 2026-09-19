@@ -12,32 +12,11 @@ void main() {
     expect(player, contains('bool get _liveAiFallback => _aiState.liveEmbedded;'));
     expect(player, contains('bool get _aiSubtitleLoading => _aiState.loading;'));
 
-    // These used to be independently mutable booleans and allowed impossible
-    // combinations such as "AI requested but no reachable live fallback".
-    expect(
-      RegExp(r'(?<!get )_aiSinhalaRequested\s*=')
-          .allMatches(player)
-          .length,
-      0,
-    );
-    expect(
-      RegExp(r'(?<!get )_aiSinhalaEnabled\s*=')
-          .allMatches(player)
-          .length,
-      0,
-    );
-    expect(
-      RegExp(r'(?<!get )_liveAiFallback\s*=')
-          .allMatches(player)
-          .length,
-      0,
-    );
-    expect(
-      RegExp(r'(?<!get )_aiSubtitleLoading\s*=')
-          .allMatches(player)
-          .length,
-      0,
-    );
+    // Assignment only (single '='); comparisons such as '== false' are allowed.
+    expect(RegExp(r'_aiSinhalaRequested\s*=(?!=)').allMatches(player), isEmpty);
+    expect(RegExp(r'_aiSinhalaEnabled\s*=(?!=)').allMatches(player), isEmpty);
+    expect(RegExp(r'_liveAiFallback\s*=(?!=)').allMatches(player), isEmpty);
+    expect(RegExp(r'_aiSubtitleLoading\s*=(?!=)').allMatches(player), isEmpty);
   });
 
   test('embedded mismatch has a reachable recovery path', () {
@@ -79,9 +58,6 @@ void main() {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(player, contains('content: Text(_aiPreflightMessage)'));
-    expect(
-      player,
-      contains("_aiPreflightMessage.trim().isEmpty"),
-    );
+    expect(player, contains('_aiPreflightMessage.trim().isEmpty'));
   });
 }
