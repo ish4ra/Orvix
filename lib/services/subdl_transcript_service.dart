@@ -3,7 +3,20 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/media_item.dart';
-import 'online_subtitle_service.dart';
+
+class SubDlTranscriptCandidate {
+  const SubDlTranscriptCandidate({
+    required this.id,
+    required this.url,
+    required this.label,
+    required this.score,
+  });
+
+  final String id;
+  final String url;
+  final String label;
+  final int score;
+}
 
 class SubDlTranscriptService {
   SubDlTranscriptService._();
@@ -17,7 +30,7 @@ class SubDlTranscriptService {
     'https://kpjuisxofwqxhbnnsyzf.supabase.co/functions/v1/subdl-transcript',
   );
 
-  static Future<List<OnlineSubtitleResult>> searchEnglish({
+  static Future<List<SubDlTranscriptCandidate>> searchEnglish({
     required MediaItem item,
     EpisodeItem? episode,
     String? releaseHint,
@@ -61,20 +74,17 @@ class SubDlTranscriptService {
       final candidates = decoded['candidates'];
       if (candidates is! List) return const [];
 
-      final out = <OnlineSubtitleResult>[];
+      final out = <SubDlTranscriptCandidate>[];
       for (final raw in candidates.whereType<Map>()) {
         final url = raw['url']?.toString().trim() ?? '';
         if (!url.startsWith(RegExp(r'https?://'))) continue;
         final label = raw['label']?.toString().trim() ?? 'SubDL subtitle';
         final score = int.tryParse(raw['score']?.toString() ?? '') ?? 520;
         out.add(
-          OnlineSubtitleResult(
+          SubDlTranscriptCandidate(
             id: raw['id']?.toString() ?? url,
             url: url,
-            language: 'eng',
-            languageLabel: 'English',
             label: label.isEmpty ? 'SubDL subtitle' : label,
-            provider: 'SubDL',
             score: score,
           ),
         );
