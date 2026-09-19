@@ -11,6 +11,7 @@ import '../services/media_state_service.dart';
 import '../services/pikpak_service.dart';
 import '../services/pikpak_transfer_service.dart';
 import '../services/playback_service.dart';
+import '../services/platform_profile.dart';
 import '../services/source_provider_service.dart';
 import '../services/torbox_service.dart';
 import 'player_screen.dart';
@@ -177,8 +178,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
   }
 
   Widget _hero(MediaItem item) {
+    final tv = PlatformProfile.isAndroidTv;
     return SizedBox(
-      height: 560,
+      height: tv ? 400 : 560,
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -213,7 +215,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(42, 100, 42, 52),
+            padding: EdgeInsets.fromLTRB(
+              tv ? 30 : 42,
+              tv ? 64 : 100,
+              tv ? 30 : 42,
+              tv ? 34 : 52,
+            ),
             child: Align(
               alignment: Alignment.bottomLeft,
               child: ConstrainedBox(
