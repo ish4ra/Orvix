@@ -739,45 +739,6 @@ class _TvSourceTileState extends State<_TvSourceTile> {
     );
   }
 
-  static String _formatBytes(int? bytes) {
-    if (bytes == null || bytes <= 0) return '—';
-    final gb = bytes / (1024 * 1024 * 1024);
-    if (gb >= 1) return '${gb.toStringAsFixed(gb >= 10 ? 0 : 1)} GB';
-    final mb = bytes / (1024 * 1024);
-    return '${mb.toStringAsFixed(0)} MB';
-  }
-}
-
-class _MiniStat extends StatelessWidget {
-  const _MiniStat({required this.icon, required this.text});
-
-  final IconData icon;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 72,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          Icon(icon, size: 15, color: const Color(0xFF79837B)),
-          const SizedBox(width: 5),
-          Flexible(
-            child: Text(
-              text,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFFADB6AF),
-                fontWeight: FontWeight.w700,
-                fontSize: 11.5,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _TvFilterPill extends StatelessWidget {
