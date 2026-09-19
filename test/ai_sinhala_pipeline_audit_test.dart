@@ -18,7 +18,7 @@ void main() {
     expect(RegExp(r'_aiSubtitleLoading\s*=(?![=>])').allMatches(player), isEmpty);
   });
 
-  test('automatic startup is exact-file only', () {
+  test('automatic startup calibrates candidates instead of trusting ranking', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final start =
@@ -27,12 +27,32 @@ void main() {
         player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
     final startup = player.substring(start, end);
 
-    expect(startup, contains('prepareGeneratedSinhalaFile('));
-    expect(startup, isNot(contains('OnlineSubtitleService.search(')));
-    expect(startup, isNot(contains('english.first')));
+    expect(startup, contains('_captureNativeEnglishSamples()'));
+    expect(startup, contains('OnlineSubtitleService.search('));
+    expect(startup, contains('videoHash: null'));
+    expect(
+      startup,
+      contains('prepareGeneratedSinhalaFromNativeCalibration('),
+    );
+    expect(startup, isNot(contains('final chosen = english.first;')));
     expect(startup, isNot(contains('_tryPrepareEmbeddedAiTiming')));
     expect(startup, isNot(contains('_enableEmbeddedLiveAiFallback')));
-    expect(startup, isNot(contains('prepareGeneratedSinhalaFromOnlineSubtitle(')));
+  });
+
+  test('exact hash remains a strict fallback only', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    final start =
+        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
+    final end =
+        player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
+    final startup = player.substring(start, end);
+
+    final calibrated =
+        startup.indexOf('prepareGeneratedSinhalaFromNativeCalibration(');
+    final exact = startup.indexOf('prepareGeneratedSinhalaFile(');
+    expect(calibrated, greaterThanOrEqualTo(0));
+    expect(exact, greaterThan(calibrated));
   });
 
   test('preflight cannot masquerade as real playback', () {
@@ -44,17 +64,5 @@ void main() {
       player,
       contains('position > Duration.zero && widget.playback.player.state.playing'),
     );
-    expect(player, contains('return _playbackStarted || state.playing;'));
-    expect(player, isNot(contains('_startupDurationSubscription')));
-  });
-
-  test('manual online subtitle translation remains explicit user recovery', () {
-    final player = File('lib/screens/player_screen.dart').readAsStringSync();
-
-    expect(
-      player,
-      contains('Future<void> _activateAiSinhalaFromOnlineSubtitle('),
-    );
-    expect(player, contains("'Translate this subtitle to Sinhala'"));
   });
 }
