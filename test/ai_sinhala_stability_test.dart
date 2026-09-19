@@ -14,8 +14,9 @@ void main() {
       contains('(_timingTrackSelected && _timingTrackIsText)'),
     );
     expect(player, contains('_tryPrepareEmbeddedAiTiming'));
-    expect(player, contains('Never fall back to translating'));
-    expect(player, isNot(contains('_tryEnableLiveAiFallback()')));
+    expect(player, contains('Future<bool> _enableEmbeddedLiveAiFallback'));
+    expect(player, contains('_embeddedMismatchCount >= 4'));
+    expect(player, contains('_registerLiveTranslationFailure'));
     expect(service, contains('prepareForEmbeddedTiming'));
     expect(service, contains("sourceMatch: 'embedded-text-timing'"));
     expect(service, isNot(contains("match: 'title-episode'")));
