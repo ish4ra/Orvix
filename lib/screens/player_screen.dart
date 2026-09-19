@@ -527,7 +527,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _aiSubtitleUnavailable = false;
       _aiDisplaySubtitle = '';
       _aiPreflightMessage =
-          'Using the video’s own English cues for live Sinhala translation.';
+          'Using the video’s own English cues for live Sinhala translation. $reason';
     });
 
     _subtitleTimingSubscription ??=
@@ -552,7 +552,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final current = player.state.track.subtitle;
       dynamic chosen;
       if (current.id.toLowerCase() != 'no' &&
-          _isEnglishTextTrack(current)) {
+          (_isEnglishTextTrack(current) ||
+              (!_isImageSubtitleTrack(current) &&
+                  (current.language ?? '').toString().trim().isEmpty &&
+                  (current.title ?? '').toString().trim().isEmpty))) {
         chosen = current;
       } else {
         final allTracks = player.state.tracks.subtitle
