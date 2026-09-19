@@ -417,7 +417,7 @@ class AiSinhalaSubtitleService {
       );
     }
 
-    final englishCandidates = candidates
+    final filteredEnglish = candidates
         .where(
           (entry) =>
               OnlineSubtitleService.normalizeLanguage(entry.language) == 'eng',
@@ -429,11 +429,28 @@ class AiSinhalaSubtitleService {
               !label.contains('foreign only') &&
               !label.contains('signs');
         })
-        .take(24)
         .toList(growable: false);
+
+    // Preserve provider diversity. A long OpenSubtitles list must not crowd
+    // SubDL out of the bounded dialogue-matching pass.
+    final primary = filteredEnglish
+        .where((entry) => entry.provider.toLowerCase() != 'subdl')
+        .take(18)
+        .toList(growable: false);
+    final subDl = filteredEnglish
+        .where((entry) => entry.provider.toLowerCase() == 'subdl')
+        .take(12)
+        .toList(growable: false);
+    final englishCandidates = <OnlineSubtitleResult>[];
+    final rounds = math.max(primary.length, subDl.length);
+    for (var i = 0; i < rounds; i++) {
+      if (i < primary.length) englishCandidates.add(primary[i]);
+      if (i < subDl.length) englishCandidates.add(subDl[i]);
+    }
+
     if (englishCandidates.isEmpty) {
       throw const AiSubtitleException(
-        'OpenSubtitles did not return an English transcript for this episode.',
+        'No configured subtitle provider returned an English transcript for this episode.',
       );
     }
 
