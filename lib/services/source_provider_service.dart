@@ -698,16 +698,19 @@ class SourceProviderService {
   }
 
   int _freeStreamingScore(SourceResult result) {
+    final direct = result.isMagnet ? 0 : 1;
     final seedHealth = _freeSeederHealthRank(result.seeders);
     final release = _freeReleaseRank(result);
     final resolution = _freeResolutionRank(result);
     final size = _freeSizeEfficiencyRank(result);
     final compatibility = result.compatibilityFriendly ? 1 : 0;
 
-    // Seeder health dominates. The remaining factors refine results within a
-    // health tier instead of allowing a 300-seeder CAM/480p row to win merely
-    // because its raw seeder number is enormous.
-    return seedHealth * 100000 +
+    // A real HTTP stream is already playable and should beat a torrent that
+    // still has to build a swarm. For torrents, swarm health remains the
+    // strongest signal, but huge remux/4K payloads are deliberately pushed
+    // down because "many seeders" does not mean enough real-time throughput.
+    return direct * 10000000 +
+        seedHealth * 100000 +
         release * 1000 +
         resolution * 100 +
         size * 10 +
@@ -765,9 +768,11 @@ class SourceProviderService {
     if (bytes == null || bytes <= 0) return 3;
     const gb = 1024 * 1024 * 1024;
     if (bytes < 150 * 1024 * 1024) return 1;
-    if (bytes <= 8 * gb) return 5;
-    if (bytes <= 15 * gb) return 4;
-    if (bytes <= 30 * gb) return 2;
+    if (bytes <= 1500 * 1024 * 1024) return 8;
+    if (bytes <= 3 * gb) return 9;
+    if (bytes <= 5 * gb) return 7;
+    if (bytes <= 8 * gb) return 4;
+    if (bytes <= 15 * gb) return 2;
     return 0;
   }
 
