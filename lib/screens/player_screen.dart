@@ -1143,12 +1143,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
           chosen = tracks.first;
           await player.setSubtitleTrack(chosen);
         } else {
-          final unknownText = allTracks.where((track) {
-            if (_isImageSubtitleTrack(track)) return false;
-            final language = (track.language ?? '').toString().trim();
-            final title = (track.title ?? '').toString().trim();
-            return language.isEmpty && title.isEmpty;
-          }).toList(growable: false);
+          final unknownText =
+              allTracks.where(_isUnlabeledTextTrack).toList(growable: false);
           if (unknownText.length == 1) {
             chosen = unknownText.first;
             await player.setSubtitleTrack(chosen);
