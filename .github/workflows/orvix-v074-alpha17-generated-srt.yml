@@ -436,9 +436,9 @@ jobs:
           - The complete subtitle is translated before playback, preserving original cue timestamps, then written to a cached Sinhala SRT file.
           - The generated SRT is loaded through media_kit as a normal external subtitle track, so the player owns pause, seek, resume and cue timing.
           - If embedded extraction is unavailable, exact OpenSubtitles moviehash + byte-size remains the fallback; fuzzy/live translation is not used.
-          - OpenSubtitles v3 remains a zero-config fallback, but hash-qualified results now require explicit hash-match evidence before Orvix treats them as exact.
-          - If exact hash evidence is unavailable, filename + exact size can be used only with release-specific evidence; generic IMDb/title timelines are rejected for automatic AI Sinhala.
-          - Free/local P2P obtains the canonical OpenSubtitles hash from the bundled stream-server, while direct/cloud streams can compute it from the first and last 64 KiB plus exact file size.
+          - Normal online subtitle browsing remains separate from AI Sinhala and still uses the existing OpenSubtitles integration.
+          - AI Sinhala does not use filename/title fuzzy timing or per-cue live translation in this build.
+          - Generated Sinhala SRT files are cached in app support storage and reused on later playback.
           - Includes the alpha.09 exact-hash, alpha.08 playback/back/pinned-source recovery fixes on Windows, Android Mobile and Android TV.
           EOF
 
@@ -460,5 +460,5 @@ jobs:
             gh release upload v0.7.4-alpha.17 --clobber "${assets[@]}"
             gh release edit v0.7.4-alpha.17               --title 'Orvix v0.7.4-alpha.17 — Generated Sinhala SRT • Windows + Mobile + TV'               --prerelease               --notes-file /tmp/orvix-alpha17-notes.md
           else
-            gh release create v0.7.4-alpha.17               --target '${{ github.sha }}'               --title 'Orvix v0.7.4-alpha.17 — AI Pipeline Audit • Windows + Mobile + TV'               --prerelease               --notes-file /tmp/orvix-alpha17-notes.md               "${assets[@]}"
+            gh release create v0.7.4-alpha.17               --target '${{ github.sha }}'               --title 'Orvix v0.7.4-alpha.17 — Generated Sinhala SRT • Windows + Mobile + TV'               --prerelease               --notes-file /tmp/orvix-alpha17-notes.md               "${assets[@]}"
           fi
