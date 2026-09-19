@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
@@ -11,6 +12,8 @@ class MediaCard extends StatefulWidget {
     this.focusNode,
     this.autofocus = false,
     this.compact = false,
+    this.focusScale = 1.035,
+    this.onFocusChanged,
   });
 
   final MediaItem item;
@@ -19,6 +22,8 @@ class MediaCard extends StatefulWidget {
   final FocusNode? focusNode;
   final bool autofocus;
   final bool compact;
+  final double focusScale;
+  final ValueChanged<bool>? onFocusChanged;
 
   @override
   State<MediaCard> createState() => _MediaCardState();
@@ -31,6 +36,7 @@ class _MediaCardState extends State<MediaCard> {
     if (_focused != focused && mounted) {
       setState(() => _focused = focused);
     }
+    widget.onFocusChanged?.call(focused);
     if (focused) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -50,7 +56,7 @@ class _MediaCardState extends State<MediaCard> {
     final focusColor = Theme.of(context).colorScheme.primary;
 
     return AnimatedScale(
-      scale: _focused ? 1.035 : 1,
+      scale: _focused ? widget.focusScale : 1,
       duration: const Duration(milliseconds: 120),
       curve: Curves.easeOut,
       child: SizedBox(
@@ -106,33 +112,25 @@ class _MediaCardState extends State<MediaCard> {
                                   ? const Center(
                                       child: Icon(Icons.movie_outlined, size: 36),
                                     )
-                                  : Image.network(
-                                      poster,
+                                  : CachedNetworkImage(
+                                      imageUrl: poster,
                                       fit: BoxFit.cover,
                                       alignment: Alignment.topCenter,
-                                      filterQuality: FilterQuality.medium,
-                                      frameBuilder: (
-                                        context,
-                                        child,
-                                        frame,
-                                        wasSynchronouslyLoaded,
-                                      ) {
-                                        if (wasSynchronouslyLoaded ||
-                                            frame != null) {
-                                          return child;
-                                        }
-                                        return const Center(
-                                          child: SizedBox(
-                                            width: 22,
-                                            height: 22,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                      errorBuilder: (_, __, ___) =>
-                                          const Center(
+                                      fadeInDuration: Duration.zero,
+                                      fadeOutDuration: Duration.zero,
+                                      useOldImageOnUrlChange: true,
+                                      memCacheWidth: (constraints.maxWidth *
+                                              MediaQuery.devicePixelRatioOf(
+                                                context,
+                                              ))
+                                          .round()
+                                          .clamp(180, 720),
+                                      placeholder: (_, __) => const DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          color: Color(0xFF151B16),
+                                        ),
+                                      ),
+                                      errorWidget: (_, __, ___) => const Center(
                                         child: Icon(
                                           Icons.broken_image_outlined,
                                           size: 34,
