@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('automatic startup fingerprints the actual video before playback', () {
+  test('automatic startup uses the native English track as timing ground truth', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final openStart = player.indexOf('Future<void> _open()');
@@ -19,13 +19,17 @@ void main() {
     final prepare = player.substring(prepareStart, prepareEnd);
 
     expect(
-      open.indexOf('await _prepareAiSinhalaBeforePlayback()'),
-      lessThan(open.indexOf('await widget.playback.open(')),
+      open.indexOf('await widget.playback.open('),
+      lessThan(open.indexOf('await _prepareAiSinhalaBeforePlayback()')),
+    );
+    expect(open, contains('play: !aiPreferred'));
+    expect(prepare, contains('_captureNativeEnglishSamples()'));
+    expect(prepare, contains('OnlineSubtitleService.search('));
+    expect(
+      prepare,
+      contains('prepareGeneratedSinhalaFromNativeCalibration('),
     );
     expect(prepare, contains('prepareGeneratedSinhalaFile('));
-    expect(prepare, contains('videoUrl: widget.url'));
-    expect(prepare, isNot(contains('OnlineSubtitleService.search(')));
-    expect(prepare, isNot(contains('prepareGeneratedSinhalaFromOnlineSubtitle(')));
     expect(prepare, isNot(contains('_tryPrepareEmbeddedAiTiming')));
     expect(prepare, isNot(contains('_enableEmbeddedLiveAiFallback')));
 
@@ -33,15 +37,21 @@ void main() {
     expect(open, contains("language: 'si'"));
   });
 
-  test('failed exact preflight opens normal playback without track recovery loops', () {
+  test('native cue preflight stays hidden and restores playback state', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    final openStart = player.indexOf('Future<void> _open()');
-    final prepareStart =
-        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
-    final open = player.substring(openStart, prepareStart);
+    final start =
+        player.indexOf('Future<List<AiNativeCueSample>> _captureNativeEnglishSamples()');
+    final end =
+        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()', start);
+    final capture = player.substring(start, end);
 
-    expect(open, contains('play: !aiReady'));
-    expect(open, isNot(contains('await _restoreNativeSubtitleFallback();')));
+    expect(capture, contains('_preflightWarmup = true;'));
+    expect(capture, contains('await player.setVolume(0);'));
+    expect(capture, contains('await player.setRate(4.0);'));
+    expect(capture, contains('await player.pause();'));
+    expect(capture, contains('await player.setRate(originalRate);'));
+    expect(capture, contains('await player.seek(originalPosition);'));
+    expect(capture, contains('await player.setVolume(originalVolume);'));
   });
 }
