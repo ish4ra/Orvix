@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
@@ -208,6 +209,9 @@ class _HomeScreenState extends State<HomeScreen> {
       future: _homeFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
+          if (PlatformProfile.isAndroidTv) {
+            return const _TvHomeSkeleton();
+          }
           return const Center(child: CircularProgressIndicator());
         }
         if (snapshot.hasError) {
@@ -231,6 +235,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
         final data = snapshot.data ?? _HomeData.empty();
         final hero = data.hero;
+
+        if (PlatformProfile.isAndroidTv) {
+          return _TvHomeView(
+            data: data,
+            onOpen: widget.onOpen,
+          );
+        }
 
         return RefreshIndicator(
           onRefresh: () async {
@@ -542,5 +553,444 @@ class _HomeData {
     }
     if (continueWatching.isNotEmpty) return continueWatching.first.item;
     return null;
+  }
+}
+
+
+class _TvHomeView extends StatefulWidget {
+  const _TvHomeView({
+    required this.data,
+    required this.onOpen,
+  });
+
+  final _HomeData data;
+  final ValueChanged<MediaItem> onOpen;
+
+  @override
+  State<_TvHomeView> createState() => _TvHomeViewState();
+}
+
+class _TvHomeViewState extends State<_TvHomeView> {
+  MediaItem? _spotlight;
+
+  MediaItem? get spotlight => _spotlight ?? widget.data.hero;
+
+  void _focus(MediaItem item, bool focused) {
+    if (!focused || identical(_spotlight, item)) return;
+    setState(() => _spotlight = item);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final item = spotlight;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _TvBackdrop(item: item),
+        ListView(
+          key: const PageStorageKey('orvix-tv-home'),
+          padding: const EdgeInsets.only(bottom: 46),
+          cacheExtent: 1200,
+          children: [
+            SizedBox(
+              height: 292,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(34, 34, 34, 12),
+                child: Align(
+                  alignment: Alignment.bottomLeft,
+                  child: _TvSpotlightInfo(
+                    item: item,
+                    onOpen: item == null ? null : () => widget.onOpen(item),
+                  ),
+                ),
+              ),
+            ),
+            if (widget.data.continueWatching.isNotEmpty)
+              _TvContinueRail(
+                items: widget.data.continueWatching,
+                onOpen: (entry) => widget.onOpen(entry.item),
+                onFocus: (entry, focused) => _focus(entry.item, focused),
+              ),
+            for (final section in widget.data.sections)
+              if (section != HomeSectionId.continueWatching)
+                _TvMediaRail(
+                  title: section.label,
+                  items: widget.data.items(section),
+                  onOpen: widget.onOpen,
+                  onFocus: _focus,
+                ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _TvBackdrop extends StatelessWidget {
+  const _TvBackdrop({required this.item});
+
+  final MediaItem? item;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = item?.background;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 260),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          child: url == null || url.isEmpty
+              ? const ColoredBox(
+                  key: ValueKey('tv-backdrop-empty'),
+                  color: Color(0xFF050806),
+                )
+              : CachedNetworkImage(
+                  key: ValueKey(url),
+                  imageUrl: url,
+                  fit: BoxFit.cover,
+                  alignment: Alignment.topCenter,
+                  fadeInDuration: Duration.zero,
+                  memCacheWidth: 1280,
+                  placeholder: (_, __) =>
+                      const ColoredBox(color: Color(0xFF080D09)),
+                  errorWidget: (_, __, ___) =>
+                      const ColoredBox(color: Color(0xFF080D09)),
+                ),
+        ),
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color(0x22000000),
+                Color(0x99050806),
+                Color(0xFF050806),
+              ],
+              stops: [0, .46, .74],
+            ),
+          ),
+        ),
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [
+                Color(0xE6050806),
+                Color(0x77050806),
+                Color(0x00050806),
+              ],
+              stops: [0, .46, .82],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TvSpotlightInfo extends StatelessWidget {
+  const _TvSpotlightInfo({
+    required this.item,
+    required this.onOpen,
+  });
+
+  final MediaItem? item;
+  final VoidCallback? onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = item;
+    if (current == null) return const SizedBox.shrink();
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      child: SizedBox(
+        key: ValueKey(current.id),
+        width: 570,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              current.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 31,
+                height: 1.05,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -.7,
+              ),
+            ),
+            const SizedBox(height: 9),
+            Text(
+              [
+                current.typeLabel,
+                if (current.year != null) current.year!,
+                if (current.rating != null)
+                  '★ ${current.rating!.toStringAsFixed(1)}',
+                if (current.runtime != null) current.runtime!,
+              ].join('   •   '),
+              style: const TextStyle(
+                color: Color(0xFFB7C1B9),
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            if (current.description != null &&
+                current.description!.trim().isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(
+                current.description!,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFFD5DBD6),
+                  height: 1.4,
+                  fontSize: 13.5,
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              autofocus: false,
+              onPressed: onOpen,
+              icon: const Icon(Icons.play_arrow_rounded),
+              label: const Text('View & Play'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TvMediaRail extends StatelessWidget {
+  const _TvMediaRail({
+    required this.title,
+    required this.items,
+    required this.onOpen,
+    required this.onFocus,
+  });
+
+  final String title;
+  final List<MediaItem> items;
+  final ValueChanged<MediaItem> onOpen;
+  final void Function(MediaItem item, bool focused) onFocus;
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 34),
+            child: Text(
+              title,
+              style: const TextStyle(
+                fontSize: 18.5,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -.15,
+              ),
+            ),
+          ),
+          const SizedBox(height: 11),
+          SizedBox(
+            height: 230,
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 34, vertical: 7),
+              scrollDirection: Axis.horizontal,
+              cacheExtent: 1400,
+              itemCount: items.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              itemBuilder: (context, index) {
+                final item = items[index];
+                return RepaintBoundary(
+                  child: MediaCard(
+                    item: item,
+                    width: 126,
+                    compact: true,
+                    focusScale: 1.065,
+                    onFocusChanged: (focused) => onFocus(item, focused),
+                    onTap: () => onOpen(item),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TvContinueRail extends StatelessWidget {
+  const _TvContinueRail({
+    required this.items,
+    required this.onOpen,
+    required this.onFocus,
+  });
+
+  final List<ContinueWatchingEntry> items;
+  final ValueChanged<ContinueWatchingEntry> onOpen;
+  final void Function(ContinueWatchingEntry entry, bool focused) onFocus;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 34),
+            child: Text(
+              'Continue Watching',
+              style: TextStyle(
+                fontSize: 18.5,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -.15,
+              ),
+            ),
+          ),
+          const SizedBox(height: 11),
+          SizedBox(
+            height: 244,
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 34, vertical: 7),
+              scrollDirection: Axis.horizontal,
+              cacheExtent: 1100,
+              itemCount: items.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              itemBuilder: (context, index) {
+                final entry = items[index];
+                return SizedBox(
+                  width: 126,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      MediaCard(
+                        item: entry.item,
+                        width: 126,
+                        compact: true,
+                        focusScale: 1.065,
+                        onFocusChanged: (focused) => onFocus(entry, focused),
+                        onTap: () => onOpen(entry),
+                      ),
+                      const SizedBox(height: 5),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(99),
+                        child: LinearProgressIndicator(
+                          minHeight: 3,
+                          value: entry.progress,
+                          backgroundColor: const Color(0xFF1B241C),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TvHomeSkeleton extends StatefulWidget {
+  const _TvHomeSkeleton();
+
+  @override
+  State<_TvHomeSkeleton> createState() => _TvHomeSkeletonState();
+}
+
+class _TvHomeSkeletonState extends State<_TvHomeSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+      lowerBound: .42,
+      upperBound: .86,
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _pulse,
+      child: ListView(
+        physics: const NeverScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(34, 42, 0, 28),
+        children: [
+          Container(
+            width: 430,
+            height: 28,
+            margin: const EdgeInsets.only(right: 440),
+            decoration: BoxDecoration(
+              color: const Color(0xFF182019),
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Container(
+            height: 14,
+            margin: const EdgeInsets.only(right: 610),
+            decoration: BoxDecoration(
+              color: const Color(0xFF131A14),
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+          const SizedBox(height: 128),
+          for (var row = 0; row < 3; row++) ...[
+            Container(
+              width: 170,
+              height: 16,
+              margin: const EdgeInsets.only(right: 680),
+              decoration: BoxDecoration(
+                color: const Color(0xFF171F18),
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 194,
+              child: ListView.separated(
+                physics: const NeverScrollableScrollPhysics(),
+                scrollDirection: Axis.horizontal,
+                itemCount: 7,
+                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                itemBuilder: (_, __) => Container(
+                  width: 126,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF111812),
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
+        ],
+      ),
+    );
   }
 }
