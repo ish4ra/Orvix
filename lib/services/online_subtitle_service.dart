@@ -344,13 +344,13 @@ class OnlineSubtitleService {
       'client': 'custom_integration',
     };
     final year = item.startYear;
-    if (year != null) params['year'] = '${year}';
+    if (year != null) params['year'] = year.toString();
     if (releaseHint != null && releaseHint.trim().isNotEmpty) {
       params['file_name'] = releaseHint.trim();
     }
     if (item.kind == MediaKind.series && episode != null) {
-      params['season_number'] = '${episode.season}';
-      params['episode_number'] = '${episode.episode}';
+      params['season_number'] = episode.season.toString();
+      params['episode_number'] = episode.episode.toString();
     }
 
     try {
@@ -381,24 +381,30 @@ class OnlineSubtitleService {
             if (!_subDlEpisodeFileMatches(file, episode)) continue;
             final path = file['url']?.toString().trim() ?? '';
             if (path.isEmpty) continue;
+            final normalizedPath = path.startsWith('/') ? path : '/' + path;
             final url = path.startsWith('http')
                 ? path
-                : 'https://dl.subdl.com${path.startsWith('/') ? path : '/$path'}';
+                : 'https://dl.subdl.com' + normalizedPath;
             final fileLabel =
                 (file['release_name'] ?? file['name'] ?? parentLabel)
                     .toString()
                     .trim();
-            final searchable =
-                '${parentLabel} ${fileLabel} ${file['name'] ?? ''}'
-                    .toLowerCase();
-            final score = _providerScore(
+            final searchable = (parentLabel +
+                    ' ' +
+                    fileLabel +
+                    ' ' +
+                    (file['name'] ?? '').toString())
+                .toLowerCase();
+            final score = _subDlProviderScore(
               searchable: searchable,
               releaseTokens: releaseTokens,
               providerBonus: 35,
             );
+            final rawId = file['file_n_id'] ??
+                file['md5'] ??
+                url.hashCode.toString();
             byUrl[url] = OnlineSubtitleResult(
-              id:
-                  'subdl:${file['file_n_id'] ?? file['md5'] ?? url.hashCode}',
+              id: 'subdl:' + rawId.toString(),
               url: url,
               language: 'eng',
               languageLabel: 'English',
@@ -412,24 +418,28 @@ class OnlineSubtitleService {
 
         if (addedDirect) continue;
 
-        // Some SubDL entries are delivered as ZIP archives. Keep those for
-        // the AI transcript fallback; the downloader extracts subtitle text.
         final path = raw['url']?.toString().trim() ?? '';
         if (path.isEmpty) continue;
-        final url = path.startsWith('http')
-            ? path
-            : 'https://dl.subdl.com${path.startsWith('/') ? path : '/$path'}';
-        final searchable =
-            '${parentLabel} ${raw['name'] ?? ''} ${raw['releases'] ?? ''}'
-                .toLowerCase();
-        final score = _providerScore(
+        final normalizedPath = path.startsWith('/') ? path : '/' + path;
+        final url =
+            path.startsWith('http') ? path : 'https://dl.subdl.com' + normalizedPath;
+        final searchable = (parentLabel +
+                ' ' +
+                (raw['name'] ?? '').toString() +
+                ' ' +
+                (raw['releases'] ?? '').toString())
+            .toLowerCase();
+        final score = _subDlProviderScore(
           searchable: searchable,
           releaseTokens: releaseTokens,
           providerBonus: 30,
         );
+        final rawId = raw['id'] ??
+            raw['subtitlePage'] ??
+            raw['name'] ??
+            url.hashCode.toString();
         byUrl[url] = OnlineSubtitleResult(
-          id:
-              'subdl:${raw['id'] ?? raw['subtitlePage'] ?? raw['name'] ?? url.hashCode}',
+          id: 'subdl:' + rawId.toString(),
           url: url,
           language: 'eng',
           languageLabel: 'English',
@@ -452,7 +462,7 @@ class OnlineSubtitleService {
     return true;
   }
 
-  static int _providerScore({
+  static int _subDlProviderScore({
     required String searchable,
     required Set<String> releaseTokens,
     required int providerBonus,
