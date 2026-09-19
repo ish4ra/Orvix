@@ -2322,6 +2322,25 @@ class _RangeRead {
   final List<int> bytes;
 }
 
+double _cueTextSimilarity(String a, String b) {
+  if (a.isEmpty || b.isEmpty) return 0;
+  if (a == b) return 1;
+
+  final aw = a.split(' ').where((word) => word.isNotEmpty).toSet();
+  final bw = b.split(' ').where((word) => word.isNotEmpty).toSet();
+  if (aw.isEmpty || bw.isEmpty) return 0;
+
+  final intersection = aw.intersection(bw).length.toDouble();
+  final union = aw.union(bw).length.toDouble();
+  final jaccard = union == 0 ? 0.0 : intersection / union;
+
+  final shorter = a.length < b.length ? a : b;
+  final longer = a.length < b.length ? b : a;
+  final containment =
+      longer.contains(shorter) ? shorter.length / longer.length : 0.0;
+  return math.max(jaccard, containment).toDouble();
+}
+
 String _normalizeCue(String value) => value
     .toLowerCase()
     .replaceAll(RegExp(r'<[^>]+>'), '')
