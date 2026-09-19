@@ -250,6 +250,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
             }
           });
           await _restoreNativeSubtitleFallback();
+          if (mounted && _aiPreflightMessage.trim().isNotEmpty) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(_aiPreflightMessage),
+                duration: const Duration(seconds: 6),
+              ),
+            );
+          }
         }
       }
 
@@ -1482,6 +1490,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _aiDisplaySubtitle = '';
     });
     await _restoreNativeSubtitleFallback();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_aiPreflightMessage),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    }
   }
 
   Future<void> _translateLiveSubtitleCue(String source) async {
@@ -2150,8 +2166,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       'AI Sinhala is preparing a verified subtitle timeline.',
                     )
                   else if (_aiSubtitleUnavailable)
-                    const _EmptyTrackMessage(
-                      'AI Sinhala could not confidently prepare subtitles for this release. Playback is unaffected.',
+                    _EmptyTrackMessage(
+                      _aiPreflightMessage.trim().isEmpty
+                          ? 'AI Sinhala could not confidently prepare subtitles for this release. Playback is unaffected.'
+                          : _aiPreflightMessage,
                     ),
                   if ((_aiSubtitleLoading || _aiSubtitleUnavailable) &&
                       _aiSinhalaEnabled == false)
