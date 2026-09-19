@@ -135,7 +135,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
     _startupPositionActivitySubscription =
         widget.playback.player.stream.position.listen((position) {
-      if (position > Duration.zero) _markPlaybackStarted();
+      if (position > Duration.zero && widget.playback.player.state.playing) {
+        _markPlaybackStarted();
+      }
     });
     if (_aiSinhalaEnabled) {
       _positionSubscription =
@@ -161,9 +163,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   bool _hasPlaybackActivity() {
     final state = widget.playback.player.state;
-    return _playbackStarted ||
-        state.playing ||
-        state.position > Duration.zero;
+    return _playbackStarted || state.playing;
   }
 
   void _markPlaybackStarted() {
@@ -380,7 +380,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       try {
         final current = player.state.position;
         if ((current - originalPosition).abs() >
-            const Duration(milliseconds: 180)) {
+            const Duration(milliseconds: 20)) {
           await player.seek(originalPosition);
         }
       } catch (_) {}
