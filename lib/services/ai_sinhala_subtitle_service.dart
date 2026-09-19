@@ -195,7 +195,7 @@ class AiSinhalaSubtitleService {
     return RegExp(r'[\u0D80-\u0DFF]').hasMatch(translated);
   }
 
-  static const _generatedSubtitleCacheVersion = 'srt-v2-online-source';
+  static const _generatedSubtitleCacheVersion = 'srt-v3-exact-video';
 
   static Future<AiGeneratedSubtitleFile>
       prepareGeneratedSinhalaFromOnlineSubtitle({
@@ -284,61 +284,8 @@ class AiSinhalaSubtitleService {
     final title =
         episode == null ? item.title : '${item.title} ${episode.label}';
 
-    onStatus?.call('Looking for the exact English subtitle inside this video…');
-    final embedded = await _fetchEmbeddedEnglishSubtitle(videoUrl);
-    if (embedded != null) {
-      final cacheKey =
-          'embedded|$videoUrl|${embedded.identity}|$_generatedSubtitleCacheVersion';
-      final cached = await _cachedGeneratedFile(cacheKey);
-      if (cached != null) {
-        onStatus?.call('Cached Sinhala subtitle ready from this exact video.');
-        return AiGeneratedSubtitleFile(
-          path: cached.path,
-          source: 'embedded',
-          label: embedded.label,
-          cacheHit: true,
-        );
-      }
-
-      final cues = _parseSubtitle(embedded.content);
-      if (cues.length >= 8) {
-        final prepared = AiPreparedSubtitle(
-          key: cacheKey,
-          title: title,
-          sourceUrl: embedded.identity,
-          cues: cues,
-          sourceMatch: 'embedded-exact-file',
-        );
-        onStatus?.call(
-          'Exact embedded timing found. Translating the complete subtitle…',
-        );
-        await _translateEntireSubtitle(
-          prepared,
-          onProgress: (done, total) {
-            final percent =
-                total <= 0 ? 100 : ((done * 100) / total).round().clamp(0, 100);
-            onStatus?.call(
-              'Translating complete Sinhala subtitle… $percent% ($done/$total)',
-            );
-          },
-        );
-        if (prepared.translatedCount == prepared.cues.length) {
-          final file = await _writeGeneratedSrt(cacheKey, prepared);
-          onStatus?.call(
-            'Sinhala subtitle file ready from the video’s own timing.',
-          );
-          return AiGeneratedSubtitleFile(
-            path: file.path,
-            source: 'embedded',
-            label: embedded.label,
-            cacheHit: false,
-          );
-        }
-      }
-    }
-
     onStatus?.call(
-      'No usable embedded English track. Checking exact OpenSubtitles hash…',
+      'Reading the actual video file fingerprint (first + last 64 KiB)…',
     );
     final probe = await _probeVideo(
       videoUrl,
@@ -346,32 +293,36 @@ class AiSinhalaSubtitleService {
       fallbackSize: expectedSizeBytes,
       expectedVideoHash: expectedVideoHash,
     );
+
     if (probe.hash == null || probe.size == null || probe.size! <= 0) {
       throw const AiSubtitleException(
-        'No extractable embedded English subtitle and no exact file fingerprint were available.',
+        'Orvix could not verify the actual video file hash and byte size. Automatic AI Sinhala was not started.',
       );
     }
 
     final exactKey =
-        'opensub|${probe.hash}|${probe.size}|$_generatedSubtitleCacheVersion';
-    final cachedExact = await _cachedGeneratedFile(exactKey);
-    if (cachedExact != null) {
+        'exact-video|${probe.hash}|${probe.size}|$_generatedSubtitleCacheVersion';
+    final cached = await _cachedGeneratedFile(exactKey);
+    if (cached != null) {
       onStatus?.call('Cached exact-file Sinhala subtitle is ready.');
       return AiGeneratedSubtitleFile(
-        path: cachedExact.path,
-        source: 'opensubtitles-exact',
-        label: 'OpenSubtitles exact file match',
+        path: cached.path,
+        source: 'opensubtitles-rest-exact',
+        label: 'Exact video-file match',
         cacheHit: true,
       );
     }
 
+    onStatus?.call(
+      'Searching OpenSubtitles REST with the actual movie hash + byte size…',
+    );
     final exactText = await _fetchExactRestSubtitle(
       movieHash: probe.hash!,
       movieByteSize: probe.size!,
     );
     if (exactText == null) {
       throw const AiSubtitleException(
-        'No embedded English subtitle could be extracted, and OpenSubtitles has no exact-file English subtitle for this source.',
+        'OpenSubtitles returned no subtitle for this exact video file. Automatic AI Sinhala will not guess another release.',
       );
     }
 
@@ -387,10 +338,11 @@ class AiSinhalaSubtitleService {
       title: title,
       sourceUrl: 'opensubtitles-rest-v1://moviehash/${probe.hash}',
       cues: cues,
-      sourceMatch: 'rest-moviehash-generated-file',
+      sourceMatch: 'rest-moviehash+moviebytesize-generated-srt',
     );
+
     onStatus?.call(
-      'Exact OpenSubtitles timing found. Translating the complete subtitle…',
+      'Exact timing verified. Translating the complete subtitle to Sinhala…',
     );
     await _translateEntireSubtitle(
       prepared,
@@ -409,11 +361,11 @@ class AiSinhalaSubtitleService {
     }
 
     final file = await _writeGeneratedSrt(exactKey, prepared);
-    onStatus?.call('Generated Sinhala subtitle file ready.');
+    onStatus?.call('Exact-file Sinhala subtitle generated and cached.');
     return AiGeneratedSubtitleFile(
       path: file.path,
-      source: 'opensubtitles-exact',
-      label: 'OpenSubtitles exact file match',
+      source: 'opensubtitles-rest-exact',
+      label: 'Exact video-file match',
       cacheHit: false,
     );
   }
@@ -1511,31 +1463,20 @@ class AiSinhalaSubtitleService {
             ? null
             : _fileNameFromUri(uri);
     final suppliedHash = _normalizeVideoHash(expectedVideoHash);
-    if (suppliedHash != null) {
+
+    if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https')) {
       return _VideoProbe(
         fileName: fallbackName,
         size: fallbackSize,
         hash: suppliedHash,
       );
     }
-    if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https')) {
-      return _VideoProbe(fileName: fallbackName, size: fallbackSize);
-    }
 
-    final localP2p = (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
-        uri.port == 11470;
-    if (localP2p) {
-      // The bundled stream-server exposes a native OpenSubtitles hash route.
-      // Let the torrent engine fetch/prioritize the exact first + last 64 KiB
-      // instead of issuing raw range reads against the active local stream.
-      // This gives free P2P the same exact-file matching used by direct/cloud
-      // streams while playback itself remains non-blocking in PlayerScreen.
-      return _probeLocalOpenSubtitlesHash(
-        uri,
-        fallbackFileName: fallbackName,
-        fallbackSize: fallbackSize,
-      );
-    }
+    // Always fingerprint the actual selected URL first. For local P2P the URL
+    // already contains the exact torrent file index (/{infoHash}/{fileIdx}),
+    // and stream-server v0.1.8 supports byte ranges on that route. This avoids
+    // trusting optional addon metadata and avoids the nonexistent /opensubHash
+    // route used by earlier alpha builds.
     final client = http.Client();
     try {
       final first = await _readRangeWithRetry(
@@ -1543,40 +1484,46 @@ class AiSinhalaSubtitleService {
         uri,
         0,
         65535,
-        attempts: 3,
-      );
-      if (first == null) {
-        return _VideoProbe(fileName: fallbackName, size: fallbackSize);
-      }
-      final fileName = _fileNameFromHeaders(first.headers) ?? fallbackName;
-      final size = _totalSize(first.statusCode, first.headers) ?? fallbackSize;
-      if (first.statusCode != 206 ||
-          size == null ||
-          size < 131072 ||
-          first.bytes.length < 65536) {
-        return _VideoProbe(fileName: fileName, size: size);
-      }
-      final tail = await _readRangeWithRetry(
-        client,
-        uri,
-        size - 65536,
-        size - 1,
         attempts: 4,
         requirePartial: true,
       );
-      if (tail == null || tail.statusCode != 206 || tail.bytes.length < 65536) {
-        return _VideoProbe(fileName: fileName, size: size);
+      if (first != null && first.statusCode == 206) {
+        final fileName = _fileNameFromHeaders(first.headers) ?? fallbackName;
+        final size = _totalSize(first.statusCode, first.headers) ?? fallbackSize;
+        if (size != null &&
+            size >= 131072 &&
+            first.bytes.length >= 65536) {
+          final tail = await _readRangeWithRetry(
+            client,
+            uri,
+            size - 65536,
+            size - 1,
+            attempts: 5,
+            requirePartial: true,
+          );
+          if (tail != null &&
+              tail.statusCode == 206 &&
+              tail.bytes.length >= 65536) {
+            return _VideoProbe(
+              fileName: fileName,
+              size: size,
+              hash: _openSubtitlesHash(size, first.bytes, tail.bytes),
+            );
+          }
+        }
       }
-      return _VideoProbe(
-        fileName: fileName,
-        size: size,
-        hash: _openSubtitlesHash(size, first.bytes, tail.bytes),
-      );
     } catch (_) {
-      return _VideoProbe(fileName: fallbackName, size: fallbackSize);
+      // Fall through to provider metadata only when direct byte fingerprinting
+      // is unavailable. Automatic exact matching still requires hash + size.
     } finally {
       client.close();
     }
+
+    return _VideoProbe(
+      fileName: fallbackName,
+      size: fallbackSize,
+      hash: suppliedHash,
+    );
   }
 
   static Future<_VideoProbe> _probeLocalOpenSubtitlesHash(
@@ -1664,11 +1611,20 @@ class AiSinhalaSubtitleService {
     int start,
     int end,
   ) async {
+    final localP2p =
+        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
+            uri.port == 11470;
     final request = http.Request('GET', uri)
       ..headers['Range'] = 'bytes=$start-$end'
       ..headers['Accept-Encoding'] = 'identity';
-    final response =
-        await client.send(request).timeout(const Duration(seconds: 10));
+    if (localP2p) {
+      // stream-server v0.1.8 treats priority 255 as InternalProbe and
+      // prioritizes the exact pieces required for the hash.
+      request.headers['enginefs-prio'] = '255';
+    }
+    final response = await client
+        .send(request)
+        .timeout(Duration(seconds: localP2p ? 35 : 12));
     if (response.statusCode < 200 || response.statusCode >= 400) return null;
     final limit = end - start + 1;
     final bytes = <int>[];
