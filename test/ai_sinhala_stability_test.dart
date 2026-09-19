@@ -4,43 +4,40 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:orvix/services/subtitle_preferences_service.dart';
 
 void main() {
-  test('native timing calibration produces one complete generated SRT', () {
+  test('native cue text is the final subtitle clock at runtime', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
-    expect(player, contains('_captureNativeEnglishSamples()'));
-    expect(
-      player,
-      contains('prepareGeneratedSinhalaFromNativeCalibration('),
-    );
-    expect(service, contains('_translateEntireSubtitle('));
-    expect(service, contains('_writeGeneratedSrt('));
+    expect(player, contains('_nativeAiMatchIndex'));
+    expect(player, contains('matchSourceCueIndex('));
     expect(
       service,
-      contains("sourceMatch: 'native-track-calibrated'"),
+      contains("sourceMatch: 'native-cue-text-oracle'"),
     );
     expect(SubtitlePreferencesService.defaultFontSize, 26);
   });
 
-  test('native calibration cache includes video identity and alignment', () {
-    final service =
-        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
-
-    expect(service, contains("'native-cal|"));
-    expect(service, contains('videoIdentity'));
-    expect(service, contains('scaleKey'));
-    expect(service, contains('offsetKey'));
-    expect(service, contains("'native-cal-v1'"));
-  });
-
-  test('cue sampling is bounded and restores the player', () {
+  test('no per-cue network work happens in the native timing handler', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    expect(player, contains('samples.length >= 6'));
-    expect(player, contains('Duration(seconds: 14)'));
-    expect(player, contains('await player.setRate(originalRate);'));
-    expect(player, contains('await player.seek(originalPosition);'));
-    expect(player, contains('await player.setVolume(originalVolume);'));
+    final start =
+        player.indexOf('Future<void> _handleEmbeddedSubtitleCue(List<String> lines)');
+    final end =
+        player.indexOf('Future<void> _registerLiveTranslationFailure(', start);
+    final handler = player.substring(start, end);
+
+    expect(handler, isNot(contains('AiSinhalaSubtitleService.translateCue')));
+    expect(handler, isNot(contains('AiSinhalaSubtitleService.ensureTranslatedAround')));
+    expect(handler, contains("setState(() => _aiDisplaySubtitle = translated)"));
+  });
+
+  test('seek clears stale Sinhala and re-reads the current native cue', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(player, contains('Future<void> _refreshNativeCueAfterSeek()'));
+    expect(player, contains("'sub-text'"));
+    expect(player, contains('_nativeAiMatchIndex = -1;'));
+    expect(player, contains('unawaited(_refreshNativeCueAfterSeek());'));
   });
 }
