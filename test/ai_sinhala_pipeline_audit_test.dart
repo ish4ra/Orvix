@@ -22,8 +22,9 @@ void main() {
         player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
     final startup = player.substring(start, end);
 
+    expect(startup, contains('prepareTrustedTranscriptForNativeClock('));
     expect(startup, contains('_captureNativeEnglishSamples()'));
-    expect(startup, contains('videoHash: null'));
+    expect(startup, contains('videoHash: widget.expectedVideoHash'));
     expect(
       startup,
       contains('prepareTranslatedTranscriptForNativeTiming('),
