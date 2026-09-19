@@ -41,7 +41,7 @@ void main() {
         player.indexOf('Future<void> _registerLiveTranslationFailure(', start);
     final handler = player.substring(start, end);
 
-    expect(handler, contains('matchSourceCueIndex('));
+    expect(handler, contains('matchSourceCueRange('));
     expect(handler, contains('_nativeAiMatchIndex'));
     expect(handler, isNot(contains('translateCue(')));
     expect(handler, isNot(contains('ensureTranslatedAround(')));
