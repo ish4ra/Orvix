@@ -123,6 +123,18 @@ def patch_android(tv: bool) -> None:
                 '                <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>',
             )
 
+    if 'android:name=".TorrentEngineService"' not in text:
+        text = text.replace(
+            "</application>",
+            '        <service\n'
+            '            android:name=".TorrentEngineService"\n'
+            '            android:exported="false"\n'
+            '            android:stopWithTask="true"\n'
+            '            android:process=":torrent_engine" />\n'
+            "    </application>",
+            1,
+        )
+
     manifest.write_text(text)
 
     gradle = Path("android/app/build.gradle.kts")
@@ -258,15 +270,12 @@ def patch_android(tv: bool) -> None:
     main_activity.write_text(
         """package com.orvix.orvix
 
-import com.stremio.mobile.server.JniStreamingServerController
+import android.content.Intent
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
-    private val executor = Executors.newSingleThreadExecutor()
-
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(
@@ -274,38 +283,80 @@ class MainActivity : FlutterActivity() {
             "orvix/torrent_engine"
         ).setMethodCallHandler { call, result ->
             when (call.method) {
-                "start" -> executor.execute {
+                "start" -> {
                     try {
-                        val url = JniStreamingServerController.start(applicationContext)
-                        runOnUiThread { result.success(url) }
+                        startService(Intent(this, TorrentEngineService::class.java))
+                        result.success("starting")
                     } catch (error: Throwable) {
-                        runOnUiThread {
-                            result.error(
-                                "torrent_engine_start_failed",
-                                "${error::class.java.simpleName}: ${error.message ?: error.toString()}",
-                                null
-                            )
-                        }
+                        result.error(
+                            "torrent_engine_start_failed",
+                            "${error::class.java.simpleName}: ${error.message ?: error.toString()}",
+                            null
+                        )
                     }
                 }
-                "stop" -> executor.execute {
+                "stop" -> {
                     try {
-                        JniStreamingServerController.stop()
-                        runOnUiThread { result.success(null) }
+                        stopService(Intent(this, TorrentEngineService::class.java))
+                        result.success(null)
                     } catch (error: Throwable) {
-                        runOnUiThread {
-                            result.error(
-                                "torrent_engine_stop_failed",
-                                error.message ?: error.toString(),
-                                null
-                            )
-                        }
+                        result.error(
+                            "torrent_engine_stop_failed",
+                            error.message ?: error.toString(),
+                            null
+                        )
                     }
                 }
                 else -> result.notImplemented()
             }
         }
     }
+}
+"""
+    )
+
+    torrent_service = Path(
+        "android/app/src/main/kotlin/com/orvix/orvix/TorrentEngineService.kt"
+    )
+    torrent_service.write_text(
+        """package com.orvix.orvix
+
+import android.app.Service
+import android.content.Intent
+import android.os.IBinder
+import android.util.Log
+import com.stremio.mobile.server.JniStreamingServerController
+import java.util.concurrent.Executors
+
+class TorrentEngineService : Service() {
+    private val executor = Executors.newSingleThreadExecutor()
+
+    override fun onCreate() {
+        super.onCreate()
+        executor.execute {
+            try {
+                JniStreamingServerController.start(applicationContext)
+            } catch (error: Throwable) {
+                Log.e("OrvixTorrentEngine", "Native torrent engine failed to start", error)
+                stopSelf()
+            }
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int =
+        START_NOT_STICKY
+
+    override fun onDestroy() {
+        try {
+            JniStreamingServerController.stop()
+        } catch (error: Throwable) {
+            Log.w("OrvixTorrentEngine", "Torrent engine shutdown failed", error)
+        }
+        executor.shutdownNow()
+        super.onDestroy()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
 }
 """
     )
