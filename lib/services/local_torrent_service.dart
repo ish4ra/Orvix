@@ -90,6 +90,13 @@ class LocalTorrentService {
         _asInt(payload?['fileIdx']) ??
         -1;
 
+    if (fileIndex < 0) {
+      throw const LocalTorrentException(
+        'The local torrent engine could not select a playable video file. '
+        'Orvix will not open an invalid P2P stream URL.',
+      );
+    }
+
     return '$baseUrl/$infoHash/$fileIndex';
   }
 
