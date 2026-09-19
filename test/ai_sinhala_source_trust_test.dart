@@ -3,24 +3,10 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('AI Sinhala source order is embedded exact timing then exact hash', () {
-    final service =
-        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+  test('AI Sinhala startup uses the same ranked OpenSubtitles source system as the player UI', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
-
-    final generatedStart =
-        service.indexOf('prepareGeneratedSinhalaFile');
-    final generatedEnd =
-        service.indexOf('prepareExactFileFully', generatedStart);
-    expect(generatedStart, greaterThanOrEqualTo(0));
-    expect(generatedEnd, greaterThan(generatedStart));
-    final generated = service.substring(generatedStart, generatedEnd);
-
-    expect(generated, contains('_fetchEmbeddedEnglishSubtitle(videoUrl)'));
-    expect(generated, contains('_probeVideo('));
-    expect(generated, contains('_fetchExactRestSubtitle('));
-    expect(generated, contains('_translateEntireSubtitle('));
-    expect(generated, contains('_writeGeneratedSrt('));
+    final online =
+        File('lib/services/online_subtitle_service.dart').readAsStringSync();
 
     final startupStart =
         player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
@@ -28,28 +14,31 @@ void main() {
         player.indexOf('Future<void> _restoreNativeSubtitleFallback()', startupStart);
     final startup = player.substring(startupStart, startupEnd);
 
-    expect(startup, contains('prepareGeneratedSinhalaFile('));
-    expect(startup, isNot(contains('_tryPrepareEmbeddedAiTiming()')));
-    expect(startup, isNot(contains('prepareBuffered(')));
-    expect(startup, isNot(contains('_enableEmbeddedLiveAiFallback(')));
+    expect(startup, contains('OnlineSubtitleService.search('));
+    expect(startup, contains('releaseHint: widget.releaseHint'));
+    expect(startup, contains('videoSize: widget.expectedSizeBytes'));
+    expect(startup, contains('videoHash: widget.expectedVideoHash'));
+    expect(startup, contains("preferredLanguage: 'eng'"));
+    expect(startup, contains('final chosen = english.first;'));
+
+    expect(online, contains("extras.add('videoHash="));
+    expect(online, contains("extras.add('filename="));
+    expect(online, contains("extras.add('videoSize="));
+    expect(online, contains('releaseMatches'));
   });
 
-  test('exact OpenSubtitles fingerprint remains the fallback', () {
-    final sources =
-        File('lib/services/source_provider_service.dart').readAsStringSync();
-    final details = File('lib/screens/details_screen.dart').readAsStringSync();
+  test('startup never calls embedded extraction or exact-only REST path', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
-    final service =
-        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
-    expect(sources, contains("hints?['videoHash']"));
-    expect(sources, contains('final String? videoHash;'));
-    expect(details, contains('expectedVideoHash: chosen.videoHash'));
-    expect(player, contains('expectedVideoHash: widget.expectedVideoHash'));
-    expect(service, contains('_normalizeVideoHash(expectedVideoHash)'));
-    expect(service, contains('_probeLocalOpenSubtitlesHash('));
-    expect(service, contains("path: '/opensubHash'"));
-    expect(service, contains('_openSubtitlesExactEndpoint'));
-    expect(service, contains('_fetchExactRestSubtitle('));
+    final start =
+        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
+    final end =
+        player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
+    final startup = player.substring(start, end);
+
+    expect(startup, isNot(contains('prepareGeneratedSinhalaFile(')));
+    expect(startup, isNot(contains('prepareExactFileFully(')));
+    expect(startup, isNot(contains('_fetchEmbeddedEnglishSubtitle')));
+    expect(startup, isNot(contains('_fetchExactRestSubtitle')));
   });
 }
