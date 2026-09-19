@@ -43,7 +43,8 @@ void main() {
     expect(capture, contains('_preflightWarmup = true;'));
     expect(capture, contains('await player.setVolume(0);'));
     expect(capture, isNot(contains('await player.setRate(4.0);')));
-    expect(capture, contains('Duration(seconds: 12)'));
+    expect(capture, contains('samples.length >= 5'));
+    expect(capture, contains('Duration(seconds: 18)'));
     expect(capture, contains('await player.pause();'));
     expect(capture, contains('await player.seek(originalPosition);'));
     expect(capture, contains('await player.setVolume(originalVolume);'));
