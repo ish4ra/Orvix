@@ -1518,11 +1518,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final prepared = _preparedAiSubtitle;
     if (prepared == null) return;
 
-    final index = prepared.matchSourceCueIndex(
+    final match = prepared.matchSourceCueRange(
       source,
       previousIndex: _nativeAiMatchIndex,
     );
-    if (index < 0) {
+    if (match == null) {
       // Do not guess a line and do not launch a per-cue network request.
       // The next native cue gets another sequence-aware match attempt.
       if (_aiDisplaySubtitle.isNotEmpty && mounted) {
@@ -1531,8 +1531,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return;
     }
 
-    _nativeAiMatchIndex = index;
-    final translated = prepared.cues[index].translation?.trim() ?? '';
+    _nativeAiMatchIndex = match.index + match.count - 1;
+    final translated = prepared.cues
+        .sublist(match.index, match.index + match.count)
+        .map((cue) => cue.translation?.trim() ?? '')
+        .where((line) => line.isNotEmpty)
+        .join('\n');
     if (translated.isEmpty) {
       if (_aiDisplaySubtitle.isNotEmpty && mounted) {
         setState(() => _aiDisplaySubtitle = '');
