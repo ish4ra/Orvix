@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../services/ai_sinhala_preferences_service.dart';
 import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/online_subtitle_service.dart';
 import '../services/subtitle_preferences_service.dart';
-import '../services/subtitle_provider_credentials_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -17,10 +15,6 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool? _aiSinhala;
   String? _preferredSubtitleLanguage;
-  final TextEditingController _subDlApiKeyController = TextEditingController();
-  bool _subDlConfigured = false;
-  bool _subDlSaving = false;
-  bool _subDlKeyVisible = false;
 
   @override
   void initState() {
@@ -31,14 +25,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _load() async {
     final enabled = await AiSinhalaPreferencesService.isEnabled();
     final language = await SubtitlePreferencesService.preferredLanguage();
-    final subDlConfigured =
-        await SubtitleProviderCredentialsService.hasSubDlApiKey();
     if (!mounted) return;
     setState(() {
       _aiSinhala = enabled;
       _preferredSubtitleLanguage =
           OnlineSubtitleService.normalizeLanguage(language);
-      _subDlConfigured = subDlConfigured;
     });
   }
 
@@ -46,57 +37,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final normalized = OnlineSubtitleService.normalizeLanguage(language);
     setState(() => _preferredSubtitleLanguage = normalized);
     await SubtitlePreferencesService.setPreferredLanguage(normalized);
-  }
-
-  Future<void> _saveSubDlApiKey() async {
-    final key = _subDlApiKeyController.text.trim();
-    if (key.isEmpty || _subDlSaving) return;
-    setState(() => _subDlSaving = true);
-    final valid = await OnlineSubtitleService.validateSubDlApiKey(key);
-    if (!mounted) return;
-    if (!valid) {
-      setState(() => _subDlSaving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'SubDL rejected this API key or could not be reached. Check the key and try again.',
-          ),
-        ),
-      );
-      return;
-    }
-
-    await SubtitleProviderCredentialsService.setSubDlApiKey(key);
-    if (!mounted) return;
-    _subDlApiKeyController.clear();
-    setState(() {
-      _subDlConfigured = true;
-      _subDlSaving = false;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'SubDL connected. It will be used only as a secondary AI Sinhala transcript source.',
-        ),
-      ),
-    );
-  }
-
-  Future<void> _removeSubDlApiKey() async {
-    await SubtitleProviderCredentialsService.clearSubDlApiKey();
-    if (!mounted) return;
-    _subDlApiKeyController.clear();
-    setState(() => _subDlConfigured = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('SubDL disconnected.')),
-    );
-  }
-
-  Future<void> _openSubDlApiPage() async {
-    await launchUrl(
-      Uri.parse('https://subdl.com/panel/api'),
-      mode: LaunchMode.externalApplication,
-    );
   }
 
   Future<void> _setAiSinhala(bool enabled) async {
@@ -107,17 +47,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       SnackBar(
         content: Text(
           enabled
-              ? 'AI Sinhala subtitles enabled. Orvix uses the video’s own synced English text track as the timing ground truth, prefers the embedded/exact-file English transcript, can use SubDL as an optional second transcript database, pre-translates the full transcript, then shows Sinhala on the video’s real cue events.'
+              ? 'AI Sinhala subtitles enabled. Orvix uses the video’s own synced English text track as the timing ground truth, matches an OpenSubtitles transcript by dialogue, pre-translates the full transcript, then shows Sinhala on the video’s real cue events.'
               : 'AI Sinhala subtitles disabled.',
         ),
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    _subDlApiKeyController.dispose();
-    super.dispose();
   }
 
   @override
@@ -163,7 +97,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       AiSinhalaSubtitleService.canTranslate
-                          ? 'Before playback starts, Orvix selects the video’s own English text subtitle track. It first tries the embedded transcript and an exact-file OpenSubtitles REST match; if those are unavailable it safely samples native dialogue and can compare OpenSubtitles v3 plus an optional SubDL fallback. During playback, only the video’s native English cue events decide when each Sinhala line appears; provider timestamps are ignored.'
+                          ? 'Before playback starts, Orvix selects the video’s own English text subtitle track. It first tries the embedded transcript and an exact-file OpenSubtitles REST match; if those are unavailable, Orvix automatically compares OpenSubtitles v3 with the built-in SubDL backend fallback. During playback, only the video’s native English cue events decide when each Sinhala line appears; provider timestamps are ignored.'
                           : 'Sign in to your Orvix account first. When enabled, Orvix prepares Sinhala subtitles before playback when a safe timing source is available.',
                       style: const TextStyle(height: 1.45),
                     ),
@@ -172,7 +106,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 12),
               const Text(
-                'Automatic mode does not trust the top-ranked online subtitle and does not load a generated external Sinhala track. The native English track remains selected but hidden and acts as the live subtitle clock. If a readable native English track or matching transcript is unavailable, Orvix keeps normal/native subtitles instead of guessing. Translation never runs per cue during normal playback.',
+                'Automatic mode does not trust provider timestamps and does not require users to configure subtitle API keys. OpenSubtitles and the server-side SubDL fallback are built into the AI Sinhala transcript pipeline, while the native English track remains selected but hidden as the live subtitle clock. If no safe transcript can be verified, Orvix keeps normal/native subtitles instead of guessing.',
                 style: TextStyle(
                     fontSize: 12.5, height: 1.5, color: Color(0xFF9CA99E)),
               ),
@@ -309,112 +243,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.add_to_queue_rounded),
-                        const SizedBox(width: 10),
-                        const Expanded(
-                          child: Text(
-                            'SubDL transcript fallback',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ),
-                        if (_subDlConfigured)
-                          const Chip(label: Text('Connected')),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Optional second subtitle database for AI Sinhala. Orvix asks SubDL only when the primary embedded/exact OpenSubtitles path cannot identify a transcript. SubDL timestamps are never trusted; the video’s native English cue events still control Sinhala timing.',
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        height: 1.45,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    TextField(
-                      controller: _subDlApiKeyController,
-                      obscureText: !_subDlKeyVisible,
-                      enableSuggestions: false,
-                      autocorrect: false,
-                      decoration: InputDecoration(
-                        labelText: _subDlConfigured
-                            ? 'Replace SubDL API key'
-                            : 'SubDL API key',
-                        hintText: 'Paste your free API key',
-                        prefixIcon: const Icon(Icons.key_rounded),
-                        suffixIcon: IconButton(
-                          onPressed: () => setState(
-                            () => _subDlKeyVisible = !_subDlKeyVisible,
-                          ),
-                          icon: Icon(
-                            _subDlKeyVisible
-                                ? Icons.visibility_off_rounded
-                                : Icons.visibility_rounded,
-                          ),
-                        ),
-                      ),
-                      onSubmitted: (_) => _saveSubDlApiKey(),
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 8,
-                      children: [
-                        FilledButton.icon(
-                          onPressed: _subDlSaving ? null : _saveSubDlApiKey,
-                          icon: _subDlSaving
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.verified_rounded),
-                          label: Text(
-                            _subDlSaving ? 'Testing…' : 'Test & save',
-                          ),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: _openSubDlApiPage,
-                          icon: const Icon(Icons.open_in_new_rounded),
-                          label: const Text('Get free key'),
-                        ),
-                        if (_subDlConfigured)
-                          TextButton.icon(
-                            onPressed: _removeSubDlApiKey,
-                            icon: const Icon(Icons.link_off_rounded),
-                            label: const Text('Disconnect'),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'The key stays in the device secure store and is not committed to the Orvix repository.',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.4,
-                        color: Color(0xFF9CA99E),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 22),
-              Container(
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0D120E),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: const Color(0xFF263827)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
                     const Text(
                       'Built-in addon stack',
                       style: TextStyle(
@@ -431,15 +259,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const _AddonLine(
                       icon: Icons.subtitles_rounded,
-                      title: 'OpenSubtitles v3 + REST exact-file',
+                      title: 'OpenSubtitles + SubDL fallback',
                       detail:
-                          'OpenSubtitles v3 powers the online picker; the official REST API is used for exact-file AI transcript identity when available.',
-                    ),
-                    const _AddonLine(
-                      icon: Icons.library_add_rounded,
-                      title: 'SubDL (optional)',
-                      detail:
-                          'User-keyed secondary English transcript source for AI Sinhala when the primary transcript path cannot identify a match.',
+                          'OpenSubtitles v3 powers the online picker; AI Sinhala also uses official OpenSubtitles exact-file matching and a server-side SubDL transcript fallback automatically.',
                     ),
                     const _AddonLine(
                       icon: Icons.hub_rounded,
