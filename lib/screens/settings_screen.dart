@@ -47,7 +47,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       SnackBar(
         content: Text(
           enabled
-              ? 'AI Sinhala subtitles enabled. Orvix fingerprints the actual selected video file and auto-translates only an exact OpenSubtitles hash + byte-size match. It never auto-guesses another release.'
+              ? 'AI Sinhala subtitles enabled. Orvix first uses the video’s own synced English text track as the timing ground truth, matches an OpenSubtitles transcript by dialogue, calibrates its full timeline, then translates it to Sinhala.'
               : 'AI Sinhala subtitles disabled.',
         ),
       ),
@@ -97,7 +97,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       AiSinhalaSubtitleService.canTranslate
-                          ? 'Before playback starts, Orvix reads the first and last 64 KiB of the actual selected video plus its exact byte size, computes the OpenSubtitles movie hash, and queries the OpenSubtitles REST API for that exact file. The matched subtitle keeps its original timestamps, is translated completely to Sinhala, cached as SRT, and loaded as a normal subtitle track.'
+                          ? 'Before playback starts, Orvix opens the selected video paused, selects its own English text subtitle track, samples several real cue texts and timestamps, and matches those cues against OpenSubtitles English transcripts. It corrects constant offset and small FPS drift, translates the complete aligned subtitle to Sinhala, caches an SRT, and loads it as a normal player subtitle.'
                           : 'Sign in to your Orvix account first. When enabled, Orvix prepares Sinhala subtitles before playback when a safe timing source is available.',
                       style: const TextStyle(height: 1.45),
                     ),
@@ -106,7 +106,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 12),
               const Text(
-                'Automatic mode is exact-file only: no ranked-result auto guess, embedded extraction, fuzzy cue matching, or per-cue live translation. If no exact match exists, normal playback continues. You can still open Online subtitles and manually translate an English result you personally verified is in sync.',
+                'Automatic mode does not trust the top-ranked online subtitle. The native English track decides timing. If native calibration is unavailable, a strict exact-file hash lookup is used as fallback; otherwise normal playback continues. Translation never runs per cue during normal playback.',
                 style: TextStyle(
                     fontSize: 12.5, height: 1.5, color: Color(0xFF9CA99E)),
               ),
