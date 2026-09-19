@@ -484,41 +484,43 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (mounted) {
         setState(() {
           _aiPreflightMessage =
-              'Reading real English subtitle timing… ${samples.length}/6 cues';
+              'Reading a few real English cues safely… ${samples.length}/3';
         });
       }
-      if (samples.length >= 6 && !done.isCompleted) done.complete();
+      if (samples.length >= 3 && !done.isCompleted) done.complete();
     }
 
     final subscription = player.stream.subtitle.listen(
       (lines) => unawaited(addSample(lines)),
     );
     final originalVolume = player.state.volume;
-    final originalRate = player.state.rate;
     final originalPosition = player.state.position;
 
+    // This fallback deliberately runs at normal speed. Alpha.20 accelerated
+    // network/P2P playback to 4x during preflight, which can aggressively
+    // request pieces, then pause + seek immediately afterwards. Some free
+    // sources become unstable or crash the native player after that sequence.
     _preflightWarmup = true;
     try {
       await player.setVolume(0);
-      await player.setRate(4.0);
       await player.play();
       await Future.any<void>([
         done.future,
-        Future<void>.delayed(const Duration(seconds: 14)),
+        Future<void>.delayed(const Duration(seconds: 12)),
       ]);
     } catch (_) {
-      // The exact-hash fallback below remains available if native sampling
-      // cannot collect enough text cues.
+      // Safe fallback: normal playback will resume with native subtitles.
     } finally {
       try {
         await player.pause();
       } catch (_) {}
       await subscription.cancel();
       try {
-        await player.setRate(originalRate);
-      } catch (_) {}
-      try {
-        await player.seek(originalPosition);
+        final current = player.state.position;
+        if ((current - originalPosition).abs() >
+            const Duration(milliseconds: 250)) {
+          await player.seek(originalPosition);
+        }
       } catch (_) {}
       try {
         await player.setVolume(originalVolume);
@@ -559,27 +561,63 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
 
     try {
+      // First try sources that can identify the transcript without playing the
+      // video at all: the embedded English file itself, then OpenSubtitles REST
+      // matched by the actual selected file hash + byte size. These identify
+      // TEXT only; runtime timing still comes from the native subtitle cues.
+      final trusted = await AiSinhalaSubtitleService
+          .prepareTrustedTranscriptForNativeClock(
+        title: widget.title,
+        videoUrl: widget.url,
+        releaseHint: widget.releaseHint,
+        expectedSizeBytes: widget.expectedSizeBytes,
+        expectedVideoHash: widget.expectedVideoHash,
+        onStatus: (message) {
+          if (!mounted || _closing) return;
+          setState(() => _aiPreflightMessage = message);
+        },
+      );
+      if (!mounted || _closing || _subtitleChoiceOverridden) return false;
+
+      if (trusted != null) {
+        _generatedAiSubtitlePath = null;
+        _generatedAiSubtitleLabel = null;
+        _preparedAiSubtitle = trusted;
+        _nativeAiMatchIndex = -1;
+        setState(() {
+          _transitionAi(AiSinhalaRuntimeMode.prepared);
+          _timingTrackSelected = true;
+          _timingTrackIsText = true;
+          _aiSubtitleUnavailable = false;
+          _aiDisplaySubtitle = '';
+          _aiPreflightMessage =
+              'AI Sinhala ready • transcript verified without stressing playback; native English cues control timing.';
+        });
+        return true;
+      }
+
+      // Only if exact/embedded transcript discovery is unavailable do a short
+      // NORMAL-SPEED native-cue sample and text-match generic candidates.
       final samples = await _captureNativeEnglishSamples();
       if (samples.length < 3) {
         throw const AiSubtitleException(
-          'This source does not expose enough readable English subtitle cues for native-timed AI Sinhala.',
+          'This source has an English track, but Orvix could not safely collect enough dialogue to identify its transcript.',
         );
       }
       if (!mounted || _closing || _subtitleChoiceOverridden) return false;
 
       setState(() {
         _aiPreflightMessage =
-            'Matching the synced English dialogue to an OpenSubtitles transcript…';
+            'Exact-file lookup was unavailable. Matching native dialogue against fallback transcripts…';
       });
       final candidates = await OnlineSubtitleService.search(
         item: item,
         episode: widget.episode,
         releaseHint: widget.releaseHint,
         videoSize: widget.expectedSizeBytes,
-        // Timing never comes from this search result. The video's own English
-        // cue events are authoritative, so optional addon hash metadata cannot
-        // bias the transcript choice.
-        videoHash: null,
+        // Hash/size/filename are useful for choosing the transcript. They are
+        // never used as the subtitle clock; native cue events remain final.
+        videoHash: widget.expectedVideoHash,
         preferredLanguage: 'eng',
       );
 
