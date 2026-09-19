@@ -3,16 +3,12 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('AI Sinhala completes network translation before libmpv/P2P open', () {
-    final details = File('lib/screens/details_screen.dart').readAsStringSync();
+  test('AI Sinhala opens media paused, calibrates, then starts playback', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
-
-    expect(details, isNot(contains('AiSinhalaSubtitleService.prepareBuffered(')));
-    expect(details, contains('aiSubtitle: null'));
 
     expect(
       player,
-      contains('Preparing Sinhala subtitle before opening video'),
+      contains('Opening video paused to verify its real English subtitle track'),
     );
     expect(player, contains('Future<bool> _prepareAiSinhalaBeforePlayback()'));
 
@@ -20,17 +16,19 @@ void main() {
     final prepareStart =
         player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
     final open = player.substring(openStart, prepareStart);
-    expect(
-      open.indexOf('await _prepareAiSinhalaBeforePlayback()'),
-      lessThan(open.indexOf('await widget.playback.open(')),
-    );
-    expect(open, contains('play: !aiReady'));
-    expect(open, contains('await widget.playback.player.play();'));
-    expect(open, isNot(contains('await _restoreNativeSubtitleFallback();')));
 
+    expect(open, contains('play: !aiPreferred'));
     expect(
-      player,
-      isNot(contains('unawaited(_prepareAiSinhalaAfterPlaybackStarts());')),
+      open.indexOf('await widget.playback.open('),
+      lessThan(open.indexOf('await _prepareAiSinhalaBeforePlayback()')),
     );
+    expect(open, contains('await widget.playback.player.play();'));
+  });
+
+  test('loading overlay hides accelerated native-cue sampling', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(player, contains('if (_error == null && _aiSubtitleLoading)'));
+    expect(player, contains("const Text(\n                            'Preparing AI Sinhala before playback'"));
   });
 }
