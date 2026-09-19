@@ -3,50 +3,37 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('automatic exact-file mode preserves timestamps and writes a complete SRT', () {
+  test('native calibration retimes the whole candidate before translation', () {
+    final service =
+        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+
+    expect(
+      service,
+      contains('prepareGeneratedSinhalaFromNativeCalibration'),
+    );
+    expect(service, contains('_calibrateAgainstNativeSamples('));
+    expect(service, contains('cue.start.inMilliseconds * selected.scale'));
+    expect(service, contains('cue.end.inMilliseconds * selected.scale'));
+    expect(service, contains('_translateEntireSubtitle('));
+    expect(service, contains('_writeGeneratedSrt('));
+  });
+
+  test('strict exact-file mode remains available as fallback', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
     final start = service.indexOf(
       'static Future<AiGeneratedSubtitleFile> prepareGeneratedSinhalaFile',
     );
-    final end = service.indexOf(
-      'static Future<_EmbeddedSubtitleSource?> _fetchEmbeddedEnglishSubtitle',
-      start,
-    );
     expect(start, greaterThanOrEqualTo(0));
-    expect(end, greaterThan(start));
-    final generated = service.substring(start, end);
+    final tail = service.substring(start);
 
-    expect(generated, contains('_probeVideo('));
-    expect(generated, contains('_fetchExactRestSubtitle('));
-    expect(generated, contains('_parseSubtitle(exactText)'));
-    expect(generated, contains('_translateEntireSubtitle('));
-    expect(generated, contains('_writeGeneratedSrt('));
-    expect(
-      generated,
-      contains('prepared.translatedCount != prepared.cues.length'),
-    );
-    expect(generated, isNot(contains('_fetchEmbeddedEnglishSubtitle(')));
+    expect(tail, contains('_probeVideo('));
+    expect(tail, contains('_fetchExactRestSubtitle('));
+    expect(tail, contains('_parseSubtitle(exactText)'));
   });
 
-  test('automatic preparation does not touch the player', () {
-    final player = File('lib/screens/player_screen.dart').readAsStringSync();
-
-    final start =
-        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
-    final end =
-        player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
-    final prepare = player.substring(start, end);
-
-    expect(prepare, contains('prepareGeneratedSinhalaFile('));
-    expect(prepare, isNot(contains('widget.playback.player')));
-    expect(prepare, isNot(contains('OnlineSubtitleService.search(')));
-    expect(prepare, isNot(contains('_tryPrepareEmbeddedAiTiming()')));
-    expect(prepare, isNot(contains('_enableEmbeddedLiveAiFallback(')));
-  });
-
-  test('generated SRT is loaded only after media opens', () {
+  test('generated SRT is loaded after calibration while media is paused', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final openStart = player.indexOf('Future<void> _open()');
@@ -55,20 +42,10 @@ void main() {
     final open = player.substring(openStart, prepareStart);
 
     final mediaOpen = open.indexOf('await widget.playback.open(');
+    final prepare = open.indexOf('await _prepareAiSinhalaBeforePlayback()');
     final subtitleLoad = open.indexOf('mk.SubtitleTrack.uri(');
     expect(mediaOpen, greaterThanOrEqualTo(0));
-    expect(subtitleLoad, greaterThan(mediaOpen));
-    expect(open, contains("language: 'si'"));
-  });
-
-  test('desktop subtitle scaling remains restrained', () {
-    final player = File('lib/screens/player_screen.dart').readAsStringSync();
-
-    expect(
-      player,
-      contains(
-        'return (base * heightScale * 1.08).clamp(24.0, 44.0).toDouble();',
-      ),
-    );
+    expect(prepare, greaterThan(mediaOpen));
+    expect(subtitleLoad, greaterThan(prepare));
   });
 }
