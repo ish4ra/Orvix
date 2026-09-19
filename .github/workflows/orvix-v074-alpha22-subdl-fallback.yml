@@ -460,7 +460,7 @@ jobs:
             gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/v0.7.4-alpha.22" \
               -f sha='${{ github.sha }}' -F force=true >/dev/null
             gh release upload v0.7.4-alpha.22 --clobber "${assets[@]}"
-            gh release edit v0.7.4-alpha.22               --title 'Orvix v0.7.4-alpha.22 — Multi-Provider Native-Cue Sinhala • Windows + Mobile + TV'               --prerelease               --notes-file /tmp/orvix-alpha22-native-cue-notes.md
+            gh release edit v0.7.4-alpha.22               --title 'Orvix v0.7.4-alpha.22 — Multi-Provider Native-Cue Sinhala • Windows + Mobile + TV'               --prerelease               --notes-file /tmp/orvix-alpha22-subdl-fallback-notes.md
           else
-            gh release create v0.7.4-alpha.22               --target '${{ github.sha }}'               --title 'Orvix v0.7.4-alpha.22 — Multi-Provider Native-Cue Sinhala • Windows + Mobile + TV'               --prerelease               --notes-file /tmp/orvix-alpha22-native-cue-notes.md               "${assets[@]}"
+            gh release create v0.7.4-alpha.22               --target '${{ github.sha }}'               --title 'Orvix v0.7.4-alpha.22 — Multi-Provider Native-Cue Sinhala • Windows + Mobile + TV'               --prerelease               --notes-file /tmp/orvix-alpha22-subdl-fallback-notes.md               "${assets[@]}"
           fi
