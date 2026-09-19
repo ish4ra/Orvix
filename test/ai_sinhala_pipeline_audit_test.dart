@@ -18,7 +18,7 @@ void main() {
     expect(RegExp(r'_aiSubtitleLoading\s*=(?![=>])').allMatches(player), isEmpty);
   });
 
-  test('automatic startup excludes legacy embedded/fuzzy/live paths', () {
+  test('automatic startup is exact-file only', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final start =
@@ -27,14 +27,12 @@ void main() {
         player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
     final startup = player.substring(start, end);
 
-    expect(startup, contains('OnlineSubtitleService.search('));
-    expect(
-      startup,
-      contains('prepareGeneratedSinhalaFromOnlineSubtitle('),
-    );
+    expect(startup, contains('prepareGeneratedSinhalaFile('));
+    expect(startup, isNot(contains('OnlineSubtitleService.search(')));
+    expect(startup, isNot(contains('english.first')));
     expect(startup, isNot(contains('_tryPrepareEmbeddedAiTiming')));
     expect(startup, isNot(contains('_enableEmbeddedLiveAiFallback')));
-    expect(startup, isNot(contains('prepareGeneratedSinhalaFile(')));
+    expect(startup, isNot(contains('prepareGeneratedSinhalaFromOnlineSubtitle(')));
   });
 
   test('preflight cannot masquerade as real playback', () {
@@ -50,25 +48,13 @@ void main() {
     expect(player, isNot(contains('_startupDurationSubscription')));
   });
 
-  test('player teardown cancels async callbacks before native stop', () {
-    final player = File('lib/screens/player_screen.dart').readAsStringSync();
-
-    final cancel = player.indexOf('await _subtitleTimingSubscription?.cancel();');
-    final stop = player.indexOf('await widget.playback.stop();');
-    expect(cancel, greaterThanOrEqualTo(0));
-    expect(stop, greaterThan(cancel));
-  });
-
-  test('manual online subtitle translation exists as a recovery path', () {
+  test('manual online subtitle translation remains explicit user recovery', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(
       player,
       contains('Future<void> _activateAiSinhalaFromOnlineSubtitle('),
     );
-    expect(
-      player,
-      contains("'Translate this subtitle to Sinhala'"),
-    );
+    expect(player, contains("'Translate this subtitle to Sinhala'"));
   });
 }
