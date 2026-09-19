@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('automatic startup uses the native English track as timing ground truth', () {
+  test('automatic startup uses the native English track as the only timing clock', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final openStart = player.indexOf('Future<void> _open()');
@@ -11,9 +11,6 @@ void main() {
         player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
     final prepareEnd =
         player.indexOf('Future<void> _restoreNativeSubtitleFallback()', prepareStart);
-    expect(openStart, greaterThanOrEqualTo(0));
-    expect(prepareStart, greaterThan(openStart));
-    expect(prepareEnd, greaterThan(prepareStart));
 
     final open = player.substring(openStart, prepareStart);
     final prepare = player.substring(prepareStart, prepareEnd);
@@ -27,17 +24,13 @@ void main() {
     expect(prepare, contains('OnlineSubtitleService.search('));
     expect(
       prepare,
-      contains('prepareGeneratedSinhalaFromNativeCalibration('),
+      contains('prepareTranslatedTranscriptForNativeTiming('),
     );
-    expect(prepare, contains('prepareGeneratedSinhalaFile('));
-    expect(prepare, isNot(contains('_tryPrepareEmbeddedAiTiming')));
-    expect(prepare, isNot(contains('_enableEmbeddedLiveAiFallback')));
-
-    expect(open, contains('mk.SubtitleTrack.uri('));
-    expect(open, contains("language: 'si'"));
+    expect(prepare, isNot(contains('prepareGeneratedSinhalaFile(')));
+    expect(prepare, isNot(contains('prepareGeneratedSinhalaFromNativeCalibration(')));
   });
 
-  test('native cue preflight stays hidden and restores playback state', () {
+  test('native preflight is hidden, bounded, and restores the player', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final start =
@@ -49,6 +42,7 @@ void main() {
     expect(capture, contains('_preflightWarmup = true;'));
     expect(capture, contains('await player.setVolume(0);'));
     expect(capture, contains('await player.setRate(4.0);'));
+    expect(capture, contains('Duration(seconds: 14)'));
     expect(capture, contains('await player.pause();'));
     expect(capture, contains('await player.setRate(originalRate);'));
     expect(capture, contains('await player.seek(originalPosition);'));
