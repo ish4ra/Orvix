@@ -931,6 +931,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _liveCueClearTimer?.cancel();
     _liveCueGeneration++;
 
+    // Stop async player callbacks before tearing down libmpv. This prevents
+    // completed/error/subtitle events from mutating UI or launching "next"
+    // while the route is already closing.
+    try {
+      await _startupPlayingSubscription?.cancel();
+      await _startupPositionActivitySubscription?.cancel();
+      await _completedSubscription?.cancel();
+      await _positionSubscription?.cancel();
+      await _subtitleTimingSubscription?.cancel();
+      await _playbackErrorSubscription?.cancel();
+    } catch (_) {}
+
     try {
       await _persistProgress();
     } catch (_) {}
@@ -982,7 +994,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _startNextCountdown() {
-    if (widget.onNext == null || _advancing || _nextCountdown > 0) return;
+    if (_closing ||
+        widget.onNext == null ||
+        _advancing ||
+        _nextCountdown > 0) {
+      return;
+    }
     _hideTimer?.cancel();
     if (mounted) {
       setState(() {
