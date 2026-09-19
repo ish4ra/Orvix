@@ -206,9 +206,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
         });
       }
 
-      // Strict alpha.16 path: open the real media PAUSED so the local P2P
-      // engine has attached the file, then compute the exact OpenSubtitles
-      // fingerprint and prepare the complete Sinhala subtitle before playback.
+      // Alpha.17 generated-file path: open the real media PAUSED, extract the
+      // exact embedded English subtitle when available (or exact OpenSubtitles
+      // fallback), translate the whole file, then load Sinhala as a normal
+      // external subtitle track before playback begins.
       await widget.playback.open(
         widget.url,
         title: widget.title,
@@ -383,9 +384,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<bool> _prepareAiSinhalaBeforePlayback() async {
-    if (_preparedAiSubtitle != null || _closing) {
-      return _preparedAiSubtitle != null;
-    }
+    if (_closing) return false;
     final enabled = await AiSinhalaPreferencesService.isEnabled();
     if (!enabled || !mounted || _closing || _subtitleChoiceOverridden) {
       return false;
@@ -407,11 +406,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _transitionAi(AiSinhalaRuntimeMode.preparing);
       _aiSubtitleUnavailable = false;
       _aiPreflightMessage =
-          'Verifying the exact video file before Sinhala translation…';
+          'Extracting the exact English subtitle from this video…';
     });
 
     try {
-      final prepared = await AiSinhalaSubtitleService.prepareExactFileFully(
+      final generated =
+          await AiSinhalaSubtitleService.prepareGeneratedSinhalaFile(
         item: widget.item!,
         episode: widget.episode,
         videoUrl: widget.url,
@@ -425,41 +425,44 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
 
       if (!mounted || _closing || _subtitleChoiceOverridden) return false;
-      if (prepared == null ||
-          prepared.translatedCount != prepared.cues.length) {
-        throw const AiSubtitleException(
-          'The complete exact-file Sinhala subtitle was not ready.',
-        );
-      }
 
-      setState(() {
-        _preparedAiSubtitle = prepared;
-        _transitionAi(AiSinhalaRuntimeMode.prepared);
-        _aiSubtitleUnavailable = false;
-        _aiPreflightMessage =
-            'Complete exact-file Sinhala subtitle ready.';
-        _timingTrackSelected = false;
-        _timingTrackIsText = false;
-        _lastAiPrefetchBucket = -1;
-      });
+      final sourceLabel = generated.source == 'embedded'
+          ? 'Embedded exact timing'
+          : 'OpenSubtitles exact timing';
+      await widget.playback.player.setSubtitleTrack(
+        mk.SubtitleTrack.uri(
+          generated.path,
+          title: 'AI Sinhala • $sourceLabel',
+          language: 'si',
+        ),
+      );
 
-      _positionSubscription ??=
-          widget.playback.player.stream.position.listen(_onPosition);
-      await _loadManualSync();
-      if (!mounted) return false;
+      // The generated Sinhala file is now a normal player subtitle track.
+      // media_kit/libmpv owns timing, pause, seek and resume from this point.
       await _setNativeSubtitleDelayProperty(0);
       await _setNativeSubtitleVisibility(false);
-      _refreshAiSubtitle();
+
+      if (!mounted) return false;
+      setState(() {
+        _preparedAiSubtitle = null;
+        _transitionAi(AiSinhalaRuntimeMode.native);
+        _aiSubtitleUnavailable = false;
+        _aiDisplaySubtitle = '';
+        _aiPreflightMessage = generated.cacheHit
+            ? 'Cached Sinhala subtitle file loaded • $sourceLabel'
+            : 'Sinhala subtitle file generated and loaded • $sourceLabel';
+      });
       return true;
     } catch (error) {
       if (!mounted || _closing || _subtitleChoiceOverridden) return false;
       final reason = error.toString().trim();
       setState(() {
+        _preparedAiSubtitle = null;
         _transitionAi(AiSinhalaRuntimeMode.native);
         _aiSubtitleUnavailable = true;
         _aiDisplaySubtitle = '';
         _aiPreflightMessage = reason.isEmpty
-            ? 'AI Sinhala unavailable for this exact video file.'
+            ? 'AI Sinhala unavailable for this source.'
             : '$reason Using native subtitles instead.';
       });
       await _restoreNativeSubtitleFallback();
