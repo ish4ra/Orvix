@@ -72,7 +72,7 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
     try {
       await controller
           .initialize()
-          .timeout(const Duration(seconds: 25));
+          .timeout(const Duration(seconds: 40));
       if (_closing) return;
 
       final item = widget.item;
@@ -92,13 +92,17 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
       await controller.play();
       if (mounted) setState(() => _error = null);
     } on TimeoutException {
+      try {
+        await controller.dispose();
+      } catch (_) {}
+      if (identical(_controller, controller)) _controller = null;
       if (mounted && !_closing) {
         setState(
           () => _error =
-              'ExoPlayer received the P2P URL but could not initialize the '
-              'video within 25 seconds. Try another source; if this repeats '
-              'with healthy seeders, the remaining problem is the TV '
-              'decoder/container path rather than torrent discovery.',
+              'This P2P source did not become playable within 40 seconds. '
+              'Go back and choose another source with healthier seeders. '
+              'If several healthy sources fail the same way, we will treat '
+              'it as a TV decoder/container issue.',
         );
       }
     } catch (error) {
@@ -292,15 +296,31 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
                 style: const TextStyle(fontSize: 18, height: 1.45),
               ),
               const SizedBox(height: 22),
-              FilledButton.icon(
-                onPressed: () async {
-                  await _controller?.dispose();
-                  _controller = null;
-                  if (mounted) setState(() => _error = null);
-                  await _open();
-                },
-                icon: const Icon(Icons.refresh_rounded),
-                label: const Text('Retry'),
+              Wrap(
+                spacing: 12,
+                runSpacing: 10,
+                alignment: WrapAlignment.center,
+                children: [
+                  OutlinedButton.icon(
+                    autofocus: true,
+                    onPressed: () async {
+                      await _close();
+                      if (mounted) Navigator.of(context).maybePop();
+                    },
+                    icon: const Icon(Icons.arrow_back_rounded),
+                    label: const Text('Choose another source'),
+                  ),
+                  FilledButton.icon(
+                    onPressed: () async {
+                      await _controller?.dispose();
+                      _controller = null;
+                      if (mounted) setState(() => _error = null);
+                      await _open();
+                    },
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Retry'),
+                  ),
+                ],
               ),
             ],
           ),
