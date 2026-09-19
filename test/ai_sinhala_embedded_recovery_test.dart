@@ -19,9 +19,9 @@ void main() {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(player, contains('Future<bool> _enableEmbeddedLiveAiFallback'));
-    expect(player, contains('_liveAiFallback = true;'));
+    expect(player, contains('_transitionAi(AiSinhalaRuntimeMode.liveEmbedded)'));
     expect(player, contains('AiSinhalaSubtitleService.translateCue('));
-    expect(player, contains('_liveTranslationFailures >= 3'));
+    expect(player, contains('_liveTranslationFailures < 3'));
     expect(
       player,
       contains("AI translation service is unavailable — using English subtitles."),
@@ -31,7 +31,6 @@ void main() {
   test('selected unlabeled text track is accepted as timing source', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    expect(player, contains("(current.language ?? '').toString().trim().isEmpty"));
-    expect(player, contains("(current.title ?? '').toString().trim().isEmpty"));
+    expect(player, contains('_isUnlabeledTextTrack(current)'));
   });
 }
