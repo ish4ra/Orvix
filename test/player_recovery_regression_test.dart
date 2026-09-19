@@ -20,20 +20,18 @@ void main() {
     expect(player, contains('_closing'));
     expect(player, isNot(contains('final wasPlaying = player.state.playing;')));
 
-    // AI Sinhala fail-closed means English timing tracks stay hidden unless
-    // the user explicitly switches back to a native subtitle track.
     expect(
       player,
       contains('await _setNativeSubtitleVisibility(false);'),
     );
 
-    // Exact OpenSubtitles matching requires the actual first + last 64 KiB.
-    // Alpha.19 performs those reads before libmpv opens, using stream-server's
-    // InternalProbe priority so the old playback-time tail-seek race stays gone.
+    // The bundled stream-server computes the canonical hash for the exact
+    // selected torrent file index before libmpv opens. This avoids the old
+    // playback-time probe race while still giving OpenSubtitles exact timing.
     expect(service, contains("uri.host == '127.0.0.1'"));
     expect(service, contains('uri.port == 11470'));
-    expect(service, contains('size - 65536'));
-    expect(service, contains("request.headers['enginefs-prio'] = '255';"));
+    expect(service, contains("path: '/opensubHash'"));
+    expect(service, contains("'videoUrl': videoUri.toString()"));
 
     // Low-seed local streams should wait for a healthier cache before resume.
     expect(playback, contains("'cache-pause-initial': 'yes'"));
