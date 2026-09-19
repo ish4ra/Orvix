@@ -20,6 +20,7 @@ void main() {
       lessThan(open.indexOf('await _prepareAiSinhalaBeforePlayback()')),
     );
     expect(open, contains('play: !aiPreferred'));
+    expect(prepare, contains('prepareTrustedTranscriptForNativeClock('));
     expect(prepare, contains('_captureNativeEnglishSamples()'));
     expect(prepare, contains('OnlineSubtitleService.search('));
     expect(
@@ -41,10 +42,9 @@ void main() {
 
     expect(capture, contains('_preflightWarmup = true;'));
     expect(capture, contains('await player.setVolume(0);'));
-    expect(capture, contains('await player.setRate(4.0);'));
-    expect(capture, contains('Duration(seconds: 14)'));
+    expect(capture, isNot(contains('await player.setRate(4.0);')));
+    expect(capture, contains('Duration(seconds: 12)'));
     expect(capture, contains('await player.pause();'));
-    expect(capture, contains('await player.setRate(originalRate);'));
     expect(capture, contains('await player.seek(originalPosition);'));
     expect(capture, contains('await player.setVolume(originalVolume);'));
   });
