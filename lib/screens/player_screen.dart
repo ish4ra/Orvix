@@ -496,7 +496,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     final player = widget.playback.player;
     final current = player.state.track.subtitle;
-    if (current.id.toLowerCase() != 'no') {
+    if (current.id.toLowerCase() != 'no' &&
+        (_isEnglishTrack(current) || _isUnlabeledTextTrack(current))) {
       await _setNativeSubtitleVisibility(_isImageSubtitleTrack(current));
       await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
       return;
@@ -511,11 +512,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final englishText =
           tracks.where(_isEnglishTextTrack).toList(growable: false);
       final englishAny = tracks.where(_isEnglishTrack).toList(growable: false);
+      final unknownText =
+          tracks.where(_isUnlabeledTextTrack).toList(growable: false);
       final chosen = englishText.isNotEmpty
           ? englishText.first
           : englishAny.isNotEmpty
               ? englishAny.first
-              : null;
+              : unknownText.length == 1
+                  ? unknownText.first
+                  : null;
       if (chosen != null) {
         await player.setSubtitleTrack(chosen);
         await _setNativeSubtitleVisibility(_isImageSubtitleTrack(chosen));
@@ -523,6 +528,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
         return;
       }
       await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+
+    // No English-labelled track was discoverable. Preserve the player's
+    // current native choice as a last-resort fallback instead of leaving
+    // subtitles blank.
+    if (current.id.toLowerCase() != 'no') {
+      await _setNativeSubtitleVisibility(_isImageSubtitleTrack(current));
+      await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
     }
   }
 
@@ -562,9 +575,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       dynamic chosen;
       if (current.id.toLowerCase() != 'no' &&
           (_isEnglishTextTrack(current) ||
-              (!_isImageSubtitleTrack(current) &&
-                  (current.language ?? '').toString().trim().isEmpty &&
-                  (current.title ?? '').toString().trim().isEmpty))) {
+              _isUnlabeledTextTrack(current))) {
         chosen = current;
       } else {
         final allTracks = player.state.tracks.subtitle
@@ -576,12 +587,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
           chosen = englishText.first;
           await player.setSubtitleTrack(chosen);
         } else {
-          final unknownText = allTracks.where((track) {
-            if (_isImageSubtitleTrack(track)) return false;
-            final language = (track.language ?? '').toString().trim();
-            final title = (track.title ?? '').toString().trim();
-            return language.isEmpty && title.isEmpty;
-          }).toList(growable: false);
+          final unknownText =
+              allTracks.where(_isUnlabeledTextTrack).toList(growable: false);
           if (unknownText.length == 1) {
             chosen = unknownText.first;
             await player.setSubtitleTrack(chosen);
@@ -1179,6 +1186,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   bool _isEnglishTextTrack(dynamic track) =>
       _isEnglishTrack(track) && !_isImageSubtitleTrack(track);
+
+  bool _isUnlabeledTextTrack(dynamic track) {
+    if (_isImageSubtitleTrack(track)) return false;
+    final language = (track.language ?? '').toString().trim();
+    final title = (track.title ?? '').toString().trim();
+    return language.isEmpty && title.isEmpty;
+  }
 
   Future<void> _hideNativeTimingSubtitle() async {
     final platform = widget.playback.player.platform;
