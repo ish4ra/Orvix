@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/media_item.dart';
-import 'subtitle_provider_credentials_service.dart';
+import 'subdl_transcript_service.dart';
 
 class OnlineSubtitleResult {
   const OnlineSubtitleResult({
@@ -161,27 +161,6 @@ class OnlineSubtitleService {
     return results;
   }
 
-  static Future<bool> validateSubDlApiKey(String rawKey) async {
-    final key = rawKey.trim();
-    if (key.isEmpty) return false;
-    try {
-      final response = await http
-          .get(
-            Uri.https('api.subdl.com', '/api/v1/me', <String, String>{
-              'api_key': key,
-            }),
-            headers: const {'Accept': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 15));
-      if (response.statusCode < 200 || response.statusCode >= 300) return false;
-      final decoded =
-          jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
-      return decoded is Map && decoded['status'] != false;
-    } catch (_) {
-      return false;
-    }
-  }
-
   static Future<void> _addSubDlEnglishResults(
     Map<String, OnlineSubtitleResult> byUrl, {
     required MediaItem item,
@@ -189,159 +168,44 @@ class OnlineSubtitleService {
     required String? releaseHint,
     required Set<String> releaseTokens,
   }) async {
-    final apiKey = await SubtitleProviderCredentialsService.subDlApiKey();
-    if (apiKey == null || apiKey.isEmpty) return;
+    final candidates = await SubDlTranscriptService.searchEnglish(
+      item: item,
+      episode: episode,
+      releaseHint: releaseHint,
+    );
 
-    final imdbId = item.id.trim();
-    if (!RegExp(r'^tt\d+$').hasMatch(imdbId)) return;
-
-    final params = <String, String>{
-      'api_key': apiKey,
-      'imdb_id': imdbId,
-      'type': item.kind == MediaKind.movie ? 'movie' : 'tv',
-      'languages': 'EN',
-      'releases': '1',
-      'unpack': '1',
-      'subs_per_page': '30',
-      'client': 'custom_integration',
-    };
-    final year = item.startYear;
-    if (year != null) params['year'] = year.toString();
-    if (releaseHint != null && releaseHint.trim().isNotEmpty) {
-      params['file_name'] = releaseHint.trim();
-    }
-    if (item.kind == MediaKind.series && episode != null) {
-      params['season_number'] = episode.season.toString();
-      params['episode_number'] = episode.episode.toString();
-    }
-
-    try {
-      final response = await http
-          .get(
-            Uri.https('api.subdl.com', '/api/v1/subtitles', params),
-            headers: const {'Accept': 'application/json'},
-          )
-          .timeout(const Duration(seconds: 20));
-      if (response.statusCode < 200 || response.statusCode >= 300) return;
-
-      final decoded =
-          jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
-      if (decoded is! Map || decoded['status'] == false) return;
-      final subtitles = decoded['subtitles'];
-      if (subtitles is! List) return;
-
-      for (final raw in subtitles.whereType<Map>()) {
-        final parentLabel =
-            (raw['release_name'] ?? raw['name'] ?? 'SubDL subtitle')
-                .toString()
-                .trim();
-        final unpack = raw['unpack_files'];
-
-        var addedDirect = false;
-        if (unpack is List) {
-          for (final file in unpack.whereType<Map>()) {
-            if (!_subDlEpisodeFileMatches(file, episode)) continue;
-            final path = file['url']?.toString().trim() ?? '';
-            if (path.isEmpty) continue;
-            final normalizedPath = path.startsWith('/') ? path : '/' + path;
-            final url = path.startsWith('http')
-                ? path
-                : 'https://dl.subdl.com' + normalizedPath;
-            final fileLabel =
-                (file['release_name'] ?? file['name'] ?? parentLabel)
-                    .toString()
-                    .trim();
-            final searchable = (parentLabel +
-                    ' ' +
-                    fileLabel +
-                    ' ' +
-                    (file['name'] ?? '').toString())
-                .toLowerCase();
-            final score = _subDlProviderScore(
-              searchable: searchable,
-              releaseTokens: releaseTokens,
-              providerBonus: 35,
-            );
-            final rawId =
-                file['file_n_id'] ?? file['md5'] ?? url.hashCode.toString();
-            byUrl[url] = OnlineSubtitleResult(
-              id: 'subdl:' + rawId.toString(),
-              url: url,
-              language: 'eng',
-              languageLabel: 'English',
-              label: fileLabel.isEmpty ? parentLabel : fileLabel,
-              provider: 'SubDL',
-              score: score,
-            );
-            addedDirect = true;
-          }
+    for (final candidate in candidates) {
+      final searchable = candidate.label.toLowerCase();
+      var score = candidate.score;
+      var releaseMatches = 0;
+      for (final token in releaseTokens) {
+        if (searchable.contains(token)) {
+          releaseMatches++;
+          score += token.length >= 5 ? 16 : 7;
         }
-
-        if (addedDirect) continue;
-
-        final path = raw['url']?.toString().trim() ?? '';
-        if (path.isEmpty) continue;
-        final normalizedPath = path.startsWith('/') ? path : '/' + path;
-        final url = path.startsWith('http')
-            ? path
-            : 'https://dl.subdl.com' + normalizedPath;
-        final searchable = (parentLabel +
-                ' ' +
-                (raw['name'] ?? '').toString() +
-                ' ' +
-                (raw['releases'] ?? '').toString())
-            .toLowerCase();
-        final score = _subDlProviderScore(
-          searchable: searchable,
-          releaseTokens: releaseTokens,
-          providerBonus: 30,
-        );
-        final rawId =
-            raw['id'] ?? raw['subtitlePage'] ?? raw['name'] ?? url.hashCode.toString();
-        byUrl[url] = OnlineSubtitleResult(
-          id: 'subdl:' + rawId.toString(),
-          url: url,
-          language: 'eng',
-          languageLabel: 'English',
-          label: parentLabel.isEmpty ? 'SubDL subtitle' : parentLabel,
-          provider: 'SubDL',
-          score: score,
-        );
       }
-    } catch (_) {
-      // Optional provider failures must never affect playback.
-    }
-  }
+      if (releaseMatches > 0) score += 60;
+      if (searchable.contains('forced') ||
+          searchable.contains('foreign only') ||
+          searchable.contains('commentary') ||
+          searchable.contains('signs')) {
+        score -= 80;
+      }
 
-  static bool _subDlEpisodeFileMatches(Map file, EpisodeItem? episode) {
-    if (episode == null) return true;
-    final season = int.tryParse(file['season']?.toString() ?? '');
-    final ep = int.tryParse(file['episode']?.toString() ?? '');
-    if (season != null && season > 0 && season != episode.season) return false;
-    if (ep != null && ep > 0 && ep != episode.episode) return false;
-    return true;
-  }
-
-  static int _subDlProviderScore({
-    required String searchable,
-    required Set<String> releaseTokens,
-    required int providerBonus,
-  }) {
-    var score = providerBonus + 520;
-    var releaseMatches = 0;
-    for (final token in releaseTokens) {
-      if (searchable.contains(token)) {
-        releaseMatches++;
-        score += token.length >= 5 ? 16 : 7;
+      final result = OnlineSubtitleResult(
+        id: candidate.id,
+        url: candidate.url,
+        language: 'eng',
+        languageLabel: 'English',
+        label: candidate.label,
+        provider: 'SubDL',
+        score: score,
+      );
+      final existing = byUrl[candidate.url];
+      if (existing == null || result.score > existing.score) {
+        byUrl[candidate.url] = result;
       }
     }
-    if (releaseMatches > 0) score += 60;
-    if (searchable.contains('forced') ||
-        searchable.contains('foreign only') ||
-        searchable.contains('commentary')) {
-      score -= 80;
-    }
-    return score;
   }
 
   static String normalizeLanguage(String raw) {
