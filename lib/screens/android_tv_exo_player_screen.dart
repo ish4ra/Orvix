@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
 import '../models/media_item.dart';
+import '../services/local_torrent_service.dart';
 import '../services/media_state_service.dart';
 
 /// Android-TV-only safe player used for local P2P HTTP streams.
@@ -44,6 +45,8 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
   Timer? _uiTimer;
   Timer? _saveTimer;
   Timer? _hideTimer;
+  Timer? _torrentHealthTimer;
+  LocalTorrentHealth? _torrentHealth;
   String? _error;
   bool _controlsVisible = true;
   bool _closing = false;
@@ -59,6 +62,11 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
       const Duration(seconds: 10),
       (_) => unawaited(_persistProgress()),
     );
+    _torrentHealthTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => unawaited(_refreshTorrentHealth()),
+    );
+    unawaited(_refreshTorrentHealth());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _focusNode.requestFocus();
@@ -98,11 +106,7 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
       if (identical(_controller, controller)) _controller = null;
       if (mounted && !_closing) {
         setState(
-          () => _error =
-              'This P2P source did not become playable within 40 seconds. '
-              'Go back and choose another source with healthier seeders. '
-              'If several healthy sources fail the same way, we will treat '
-              'it as a TV decoder/container issue.',
+          () => _error = _timeoutMessage(),
         );
       }
     } catch (error) {
@@ -110,6 +114,40 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
         setState(() => _error = 'ExoPlayer could not open this stream.\n$error');
       }
     }
+  }
+
+  Future<void> _refreshTorrentHealth() async {
+    final health =
+        await LocalTorrentService.instance.healthForStreamUrl(widget.url);
+    if (!mounted || _closing || health == null) return;
+    setState(() => _torrentHealth = health);
+  }
+
+  String _timeoutMessage() {
+    final health = _torrentHealth;
+    if (health == null) {
+      return 'The local P2P route did not initialize in the TV player. '
+          'The torrent engine did not expose enough live diagnostics to '
+          'separate a slow swarm from a player handoff failure.';
+    }
+
+    final summary = health.summary;
+    final speed = health.downloadSpeedBytesPerSecond;
+    if (health.metadataReady && health.peers > 0 && speed < 512 * 1024) {
+      return 'The torrent engine is working, but this swarm is only delivering '
+          '${health.speedLabel}. That is too slow for reliable real-time TV '
+          'startup. This is a source/swarm problem, not proof of a decoder '
+          'failure. ($summary)';
+    }
+
+    if (health.metadataReady && health.peers > 0 && speed >= 1024 * 1024) {
+      return 'The torrent engine is healthy and delivering '
+          '${health.speedLabel}, but the Android TV player still did not '
+          'initialize. This points to the local-HTTP → Media3/container player '
+          'handoff rather than torrent discovery. ($summary)';
+    }
+
+    return 'The torrent route did not become playable in time. ($summary)';
   }
 
   void _scheduleHide() {
@@ -172,6 +210,7 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
     _hideTimer?.cancel();
     _uiTimer?.cancel();
     _saveTimer?.cancel();
+    _torrentHealthTimer?.cancel();
     await _persistProgress();
     try {
       await _controller?.pause();
@@ -218,6 +257,7 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
     _hideTimer?.cancel();
     _uiTimer?.cancel();
     _saveTimer?.cancel();
+    _torrentHealthTimer?.cancel();
     _focusNode.dispose();
     unawaited(_persistProgress());
     unawaited(_controller?.dispose() ?? Future<void>.value());
@@ -258,7 +298,25 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
                     ),
                   )
                 else
-                  const Center(child: CircularProgressIndicator()),
+                  Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircularProgressIndicator(),
+                        if (_torrentHealth != null) ...[
+                          const SizedBox(height: 16),
+                          Text(
+                            'P2P  •  ${_torrentHealth!.peers} peers'
+                            '  •  ${_torrentHealth!.speedLabel}',
+                            style: const TextStyle(
+                              color: Color(0xFFB8C2B5),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                 if (_error == null &&
                     value?.isInitialized == true &&
                     value!.isBuffering)
