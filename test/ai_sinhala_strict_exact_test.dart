@@ -28,26 +28,37 @@ void main() {
     );
   });
 
-  test('player startup loads Sinhala as a normal external subtitle track', () {
+  test('automatic preparation does not touch the player', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final start =
         player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
     final end =
         player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
-    expect(start, greaterThanOrEqualTo(0));
-    expect(end, greaterThan(start));
     final prepare = player.substring(start, end);
 
     expect(
       prepare,
       contains('prepareGeneratedSinhalaFromOnlineSubtitle('),
     );
-    expect(prepare, contains('mk.SubtitleTrack.uri('));
-    expect(prepare, contains("language: 'si'"));
-    expect(prepare, contains('_transitionAi(AiSinhalaRuntimeMode.native)'));
+    expect(prepare, isNot(contains('widget.playback.player')));
     expect(prepare, isNot(contains('_tryPrepareEmbeddedAiTiming()')));
     expect(prepare, isNot(contains('_enableEmbeddedLiveAiFallback(')));
+  });
+
+  test('generated SRT is loaded only after the media opens', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    final openStart = player.indexOf('Future<void> _open()');
+    final prepareStart =
+        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
+    final open = player.substring(openStart, prepareStart);
+
+    final mediaOpen = open.indexOf('await widget.playback.open(');
+    final subtitleLoad = open.indexOf('mk.SubtitleTrack.uri(');
+    expect(mediaOpen, greaterThanOrEqualTo(0));
+    expect(subtitleLoad, greaterThan(mediaOpen));
+    expect(open, contains("language: 'si'"));
   });
 
   test('desktop subtitle scaling remains restrained', () {
