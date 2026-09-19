@@ -59,4 +59,45 @@ void main() {
     expect(prepared.matchSourceCue('First line!')?.source, 'First line');
     expect(prepared.matchSourceCue('Completely unrelated dialogue'), isNull);
   });
+
+  test('substantial English dialogue must come back in Sinhala script', () {
+    expect(
+      AiSinhalaSubtitleService.isLikelySinhalaTranslation(
+        'You are just going to walk out of here',
+        'ඔයා මෙතනින් නිකම්ම යන්නද හදන්නේ?',
+      ),
+      isTrue,
+    );
+    expect(
+      AiSinhalaSubtitleService.isLikelySinhalaTranslation(
+        'You are just going to walk out of here',
+        'You are just going to walk out of here',
+      ),
+      isFalse,
+    );
+    expect(
+      AiSinhalaSubtitleService.isLikelySinhalaTranslation(
+        'You are just going to walk out of here',
+        '',
+      ),
+      isFalse,
+    );
+  });
+
+  test('short names and interjections are not falsely rejected', () {
+    expect(
+      AiSinhalaSubtitleService.isLikelySinhalaTranslation(
+        'Michael!',
+        'Michael!',
+      ),
+      isTrue,
+    );
+    expect(
+      AiSinhalaSubtitleService.isLikelySinhalaTranslation(
+        'Oh no!',
+        'අයියෝ!',
+      ),
+      isTrue,
+    );
+  });
 }
