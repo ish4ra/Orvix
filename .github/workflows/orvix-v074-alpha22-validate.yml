@@ -10,6 +10,10 @@ on:
       - 'pubspec.yaml'
       - '.github/workflows/orvix-v074-alpha22-validate.yml'
 
+concurrency:
+  group: orvix-alpha22-validate-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     runs-on: ubuntu-latest
