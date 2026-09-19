@@ -217,7 +217,7 @@ jobs:
           )
           $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
-          & $iscc '/DMyAppVersion=0.7.4-alpha.22' 'installer\orvix.iss'
+          & $iscc '/DMyAppVersion=0.7.4-alpha.23' 'installer\orvix.iss'
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
 
       - uses: actions/upload-artifact@v4
@@ -433,7 +433,7 @@ jobs:
         run: |
           set -euo pipefail
           cat > /tmp/orvix-alpha23-subdl-fallback-notes.md <<'EOF'
-          Orvix alpha.22 adds a second transcript database without changing the subtitle clock.
+          Orvix alpha.23 adds the server-backed SubDL fallback without changing the subtitle clock.
 
           - The selected video's native English text track remains the only runtime timing authority for AI Sinhala.
           - Transcript discovery order is: embedded English transcript -> official OpenSubtitles REST exact-file match -> native-dialogue matching against OpenSubtitles v3 plus optional SubDL.
