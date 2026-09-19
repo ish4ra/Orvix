@@ -94,6 +94,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   final Map<int, int> _bitmapOffsetVotes = <int, int>{};
   int _embeddedMismatchCount = 0;
   int _liveTranslationFailures = 0;
+  int _preparedTranslationFailures = 0;
   double _subtitleFontSize = SubtitlePreferencesService.defaultFontSize;
   bool _subtitleBackground = SubtitlePreferencesService.defaultBackground;
   double _subtitleBackgroundOpacity =
@@ -452,6 +453,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       setState(() {
         _preparedAiSubtitle = prepared;
         _transitionAi(AiSinhalaRuntimeMode.prepared);
+        _preparedTranslationFailures = 0;
         _aiSubtitleUnavailable = false;
         _aiPreflightMessage = 'AI Sinhala ready.';
         _lastAiPrefetchBucket = -1;
@@ -632,6 +634,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           setState(() {
             _preparedAiSubtitle = prepared;
             _transitionAi(AiSinhalaRuntimeMode.prepared);
+            _preparedTranslationFailures = 0;
             _aiSubtitleUnavailable = false;
             _aiPreflightMessage = 'Embedded-timed AI Sinhala ready.';
             _lastAiPrefetchBucket = -1;
@@ -1374,6 +1377,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final generation = ++_liveCueGeneration;
       final ready = matched.translation?.trim() ?? '';
       if (ready.isNotEmpty) {
+        _preparedTranslationFailures = 0;
         if (mounted) setState(() => _aiDisplaySubtitle = ready);
       } else {
         if (_aiDisplaySubtitle.isNotEmpty && mounted) {
@@ -1393,9 +1397,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
           }
           final translated = matched.translation?.trim() ?? '';
           if (translated.isNotEmpty) {
+            _preparedTranslationFailures = 0;
             setState(() => _aiDisplaySubtitle = translated);
           }
-        } catch (_) {}
+        } catch (_) {
+          _preparedTranslationFailures++;
+          if (_preparedTranslationFailures >= 2 &&
+              mounted &&
+              !_closing &&
+              !_subtitleChoiceOverridden) {
+            final switched = await _enableEmbeddedLiveAiFallback(
+              'Buffered Sinhala translation failed repeatedly; using the file’s actual cue text.',
+            );
+            if (switched) {
+              await _translateLiveSubtitleCue(source);
+              return;
+            }
+          }
+        }
       }
 
       // Keep a large translated runway ahead so later dialogue does not
@@ -1417,18 +1436,44 @@ class _PlayerScreenState extends State<PlayerScreen> {
       setState(() => _aiDisplaySubtitle = '');
     }
 
-    // The embedded text track is the real video clock. If a transcript line
-    // cannot be matched, omit only that line. Never fall back to translating
-    // the already-started cue live, because network latency makes that path
-    // inherently late and caused the disappear/flash behaviour seen in alpha.04.
-    if (_embeddedMismatchCount >= 12) {
+    // A few isolated transcript mismatches are harmless. Repeated mismatches
+    // mean the downloaded transcript is the wrong dialogue variant/release.
+    // Keep the embedded track as the authoritative clock and recover by
+    // translating its real cue text directly instead of going permanently blank.
+    if (_embeddedMismatchCount >= 4) {
       _embeddedMismatchCount = 0;
+      final switched = await _enableEmbeddedLiveAiFallback(
+        'The downloaded transcript did not match this file’s embedded dialogue.',
+      );
+      if (switched) {
+        await _translateLiveSubtitleCue(source);
+      }
     }
     return;
   }
 
+  Future<void> _registerLiveTranslationFailure(String reason) async {
+    _liveTranslationFailures++;
+    if (_liveTranslationFailures < 3 ||
+        !mounted ||
+        !_liveAiFallback ||
+        _closing) {
+      return;
+    }
+
+    setState(() {
+      _aiPreflightMessage =
+          'AI Sinhala could not keep up ($reason) — using English subtitles.';
+      _aiSubtitleUnavailable = true;
+      _transitionAi(AiSinhalaRuntimeMode.native);
+      _aiDisplaySubtitle = '';
+    });
+    await _restoreNativeSubtitleFallback();
+  }
+
   Future<void> _translateLiveSubtitleCue(String source) async {
     final generation = ++_liveCueGeneration;
+    final requestStartedAt = DateTime.now();
     _liveCueClearTimer?.cancel();
     _liveCueClearTimer = null;
 
@@ -1454,13 +1499,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
 
       final nowMs = widget.playback.player.state.position.inMilliseconds;
-      final remainingMs =
-          cueEndMs == null ? 1800 : cueEndMs - nowMs;
+      final elapsedMs =
+          DateTime.now().difference(requestStartedAt).inMilliseconds;
+      final remainingMs = cueEndMs == null
+          ? 2200 - elapsedMs
+          : cueEndMs - nowMs;
 
-      // If AI returned after the actual cue has essentially ended, skip it.
-      // Showing a late result for 100-300ms is the "flashing" behaviour that
-      // made subtitles look broken.
-      if (remainingMs < 700) return;
+      // A translation that repeatedly arrives after the cue is no longer a
+      // functioning subtitle path. Count it as a delivery failure and recover
+      // to English instead of leaving the user with a permanently blank overlay.
+      if (remainingMs < 700) {
+        await _registerLiveTranslationFailure('translation arrived too late');
+        return;
+      }
 
       _liveTranslationFailures = 0;
       setState(() => _aiDisplaySubtitle = translation);
@@ -1482,21 +1533,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         },
       );
     } catch (_) {
-      _liveTranslationFailures++;
-      if (_liveTranslationFailures >= 3 &&
-          mounted &&
-          _liveAiFallback &&
-          !_closing) {
-        setState(() {
-          _aiPreflightMessage =
-              'AI translation service is unavailable — using English subtitles.';
-          _aiSubtitleUnavailable = true;
-          _transitionAi(AiSinhalaRuntimeMode.native);
-          _aiDisplaySubtitle = '';
-        });
-        await _restoreNativeSubtitleFallback();
-      }
-      // A failed/late cue is better omitted than flashed at the wrong time.
+      await _registerLiveTranslationFailure('translation service failed');
     }
   }
 
