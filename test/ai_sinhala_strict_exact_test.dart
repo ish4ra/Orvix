@@ -3,29 +3,31 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('selected-subtitle mode preserves timestamps and writes a complete SRT', () {
+  test('automatic exact-file mode preserves timestamps and writes a complete SRT', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
     final start = service.indexOf(
-      'prepareGeneratedSinhalaFromOnlineSubtitle',
+      'static Future<AiGeneratedSubtitleFile> prepareGeneratedSinhalaFile',
     );
     final end = service.indexOf(
-      'static Future<AiGeneratedSubtitleFile> prepareGeneratedSinhalaFile',
+      'static Future<_EmbeddedSubtitleSource?> _fetchEmbeddedEnglishSubtitle',
       start,
     );
     expect(start, greaterThanOrEqualTo(0));
     expect(end, greaterThan(start));
     final generated = service.substring(start, end);
 
-    expect(generated, contains('_downloadSubtitle(cleanUrl)'));
-    expect(generated, contains('_parseSubtitle(text)'));
+    expect(generated, contains('_probeVideo('));
+    expect(generated, contains('_fetchExactRestSubtitle('));
+    expect(generated, contains('_parseSubtitle(exactText)'));
     expect(generated, contains('_translateEntireSubtitle('));
     expect(generated, contains('_writeGeneratedSrt('));
     expect(
       generated,
       contains('prepared.translatedCount != prepared.cues.length'),
     );
+    expect(generated, isNot(contains('_fetchEmbeddedEnglishSubtitle(')));
   });
 
   test('automatic preparation does not touch the player', () {
@@ -37,16 +39,14 @@ void main() {
         player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
     final prepare = player.substring(start, end);
 
-    expect(
-      prepare,
-      contains('prepareGeneratedSinhalaFromOnlineSubtitle('),
-    );
+    expect(prepare, contains('prepareGeneratedSinhalaFile('));
     expect(prepare, isNot(contains('widget.playback.player')));
+    expect(prepare, isNot(contains('OnlineSubtitleService.search(')));
     expect(prepare, isNot(contains('_tryPrepareEmbeddedAiTiming()')));
     expect(prepare, isNot(contains('_enableEmbeddedLiveAiFallback(')));
   });
 
-  test('generated SRT is loaded only after the media opens', () {
+  test('generated SRT is loaded only after media opens', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final openStart = player.indexOf('Future<void> _open()');
