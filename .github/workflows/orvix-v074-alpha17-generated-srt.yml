@@ -1,9 +1,9 @@
-name: Release Orvix v0.7.4-alpha.18 Selected English Subtitle to Sinhala
+name: Release Orvix v0.7.4-alpha.19 Exact File Sinhala
 
 on:
   push:
     branches:
-      - orvix-v0.7.4-alpha.18
+      - orvix-v0.7.4-alpha.19
     paths:
       - '.github/workflows/orvix-v074-alpha17-generated-srt.yml'
       - 'lib/**'
@@ -17,7 +17,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: orvix-alpha18-${{ github.ref }}
+  group: orvix-alpha19-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -200,7 +200,7 @@ jobs:
 
       - name: Pack portable build
         shell: pwsh
-        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath 'Orvix-v0.7.4-alpha.18-Windows-x64.zip' -Force
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath 'Orvix-v0.7.4-alpha.19-Windows-x64.zip' -Force
 
       - name: Install Inno Setup
         shell: pwsh
@@ -215,15 +215,15 @@ jobs:
           )
           $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
-          & $iscc '/DMyAppVersion=0.7.4-alpha.18' 'installer\orvix.iss'
+          & $iscc '/DMyAppVersion=0.7.4-alpha.19' 'installer\orvix.iss'
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
 
       - uses: actions/upload-artifact@v4
         with:
           name: windows
           path: |
-            Orvix-v0.7.4-alpha.18-Windows-x64.zip
-            installer-output/Orvix-Setup-v0.7.4-alpha.18-Windows-x64.exe
+            Orvix-v0.7.4-alpha.19-Windows-x64.zip
+            installer-output/Orvix-Setup-v0.7.4-alpha.19-Windows-x64.exe
 
   android-mobile:
     runs-on: ubuntu-latest
@@ -297,19 +297,19 @@ jobs:
 
       - name: Rename APKs
         run: |
-          cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.4-alpha.18-Android-Mobile.apk
-          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk Orvix-v0.7.4-alpha.18-Android-Mobile-arm64-v8a.apk
-          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk Orvix-v0.7.4-alpha.18-Android-Mobile-armeabi-v7a.apk
-          cp build/app/outputs/flutter-apk/app-x86_64-release.apk Orvix-v0.7.4-alpha.18-Android-Mobile-x86_64.apk
+          cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.4-alpha.19-Android-Mobile.apk
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk Orvix-v0.7.4-alpha.19-Android-Mobile-arm64-v8a.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk Orvix-v0.7.4-alpha.19-Android-Mobile-armeabi-v7a.apk
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk Orvix-v0.7.4-alpha.19-Android-Mobile-x86_64.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: android-mobile
           path: |
-            Orvix-v0.7.4-alpha.18-Android-Mobile.apk
-            Orvix-v0.7.4-alpha.18-Android-Mobile-arm64-v8a.apk
-            Orvix-v0.7.4-alpha.18-Android-Mobile-armeabi-v7a.apk
-            Orvix-v0.7.4-alpha.18-Android-Mobile-x86_64.apk
+            Orvix-v0.7.4-alpha.19-Android-Mobile.apk
+            Orvix-v0.7.4-alpha.19-Android-Mobile-arm64-v8a.apk
+            Orvix-v0.7.4-alpha.19-Android-Mobile-armeabi-v7a.apk
+            Orvix-v0.7.4-alpha.19-Android-Mobile-x86_64.apk
 
   android-tv:
     runs-on: ubuntu-latest
@@ -393,12 +393,12 @@ jobs:
           "$APKSIGNER" verify --verbose "$APK"
 
       - name: Rename APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.4-alpha.18-Android-TV.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.4-alpha.19-Android-TV.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: android-tv
-          path: Orvix-v0.7.4-alpha.18-Android-TV.apk
+          path: Orvix-v0.7.4-alpha.19-Android-TV.apk
 
   release:
     runs-on: ubuntu-latest
@@ -415,13 +415,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -s dist/Orvix-v0.7.4-alpha.18-Windows-x64.zip
-          test -s dist/installer-output/Orvix-Setup-v0.7.4-alpha.18-Windows-x64.exe
-          test -s dist/Orvix-v0.7.4-alpha.18-Android-Mobile.apk
-          test -s dist/Orvix-v0.7.4-alpha.18-Android-Mobile-arm64-v8a.apk
-          test -s dist/Orvix-v0.7.4-alpha.18-Android-Mobile-armeabi-v7a.apk
-          test -s dist/Orvix-v0.7.4-alpha.18-Android-Mobile-x86_64.apk
-          test -s dist/Orvix-v0.7.4-alpha.18-Android-TV.apk
+          test -s dist/Orvix-v0.7.4-alpha.19-Windows-x64.zip
+          test -s dist/installer-output/Orvix-Setup-v0.7.4-alpha.19-Windows-x64.exe
+          test -s dist/Orvix-v0.7.4-alpha.19-Android-Mobile.apk
+          test -s dist/Orvix-v0.7.4-alpha.19-Android-Mobile-arm64-v8a.apk
+          test -s dist/Orvix-v0.7.4-alpha.19-Android-Mobile-armeabi-v7a.apk
+          test -s dist/Orvix-v0.7.4-alpha.19-Android-Mobile-x86_64.apk
+          test -s dist/Orvix-v0.7.4-alpha.19-Android-TV.apk
 
       - name: Publish three-platform prerelease
         env:
@@ -429,13 +429,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/orvix-alpha18-notes.md <<'EOF'
-          Orvix alpha.18 generates Sinhala from a ranked or user-selected English OpenSubtitles file, then loads the generated SRT as a normal player subtitle.
+          cat > /tmp/orvix-alpha19-notes.md <<'EOF'
+          Orvix alpha.19 uses the exact selected video file fingerprint for automatic AI Sinhala instead of ranked OpenSubtitles guesses.
 
-          - Automatic mode searches the same OpenSubtitles v3 results used by the player UI and chooses the highest-ranked English subtitle for the title/release.
-          - Manual mode adds a translate button beside every English Online subtitles result so the user can choose the exact English file to convert.
-          - The complete selected subtitle is translated before playback with original timestamps untouched, cached as Sinhala SRT, and loaded as a normal media_kit subtitle track.
-          - Embedded extraction, exact-hash-only gating, fuzzy cue matching and per-cue live AI translation are not used by the alpha.18 startup path.
+          - Local P2P uses stream-server's /opensubHash route for the exact selected torrent file index; direct/cloud streams compute the canonical hash from the actual URL.
+          - Automatic mode queries OpenSubtitles REST only with the exact moviehash + byte size. Ranked v3 results are never auto-selected; manual translation remains available for a user-verified English subtitle.
+          - The exact English subtitle is translated completely before playback with timestamps untouched, cached as Sinhala SRT, and loaded as a normal media_kit subtitle track.
+          - If exact-file verification fails, Orvix opens normal playback and does not guess a different release.
           - Normal online subtitle browsing remains separate from AI Sinhala and still uses the existing OpenSubtitles integration.
           - AI Sinhala does not use filename/title fuzzy timing or per-cue live translation in this build.
           - Generated Sinhala SRT files are cached in app support storage and reused on later playback.
@@ -443,22 +443,22 @@ jobs:
           EOF
 
           assets=(
-            dist/Orvix-v0.7.4-alpha.18-Windows-x64.zip
-            dist/installer-output/Orvix-Setup-v0.7.4-alpha.18-Windows-x64.exe
-            dist/Orvix-v0.7.4-alpha.18-Android-Mobile.apk
-            dist/Orvix-v0.7.4-alpha.18-Android-Mobile-arm64-v8a.apk
-            dist/Orvix-v0.7.4-alpha.18-Android-Mobile-armeabi-v7a.apk
-            dist/Orvix-v0.7.4-alpha.18-Android-Mobile-x86_64.apk
-            dist/Orvix-v0.7.4-alpha.18-Android-TV.apk
+            dist/Orvix-v0.7.4-alpha.19-Windows-x64.zip
+            dist/installer-output/Orvix-Setup-v0.7.4-alpha.19-Windows-x64.exe
+            dist/Orvix-v0.7.4-alpha.19-Android-Mobile.apk
+            dist/Orvix-v0.7.4-alpha.19-Android-Mobile-arm64-v8a.apk
+            dist/Orvix-v0.7.4-alpha.19-Android-Mobile-armeabi-v7a.apk
+            dist/Orvix-v0.7.4-alpha.19-Android-Mobile-x86_64.apk
+            dist/Orvix-v0.7.4-alpha.19-Android-TV.apk
           )
 
-          if gh release view v0.7.4-alpha.18 >/dev/null 2>&1; then
+          if gh release view v0.7.4-alpha.19 >/dev/null 2>&1; then
             # Keep the prerelease tag aligned with the exact commit that
             # produced the clobbered assets.
-            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/v0.7.4-alpha.18" \
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/v0.7.4-alpha.19" \
               -f sha='${{ github.sha }}' -F force=true >/dev/null
-            gh release upload v0.7.4-alpha.18 --clobber "${assets[@]}"
-            gh release edit v0.7.4-alpha.18               --title 'Orvix v0.7.4-alpha.18 — Selected English Subtitle to Sinhala • Windows + Mobile + TV'               --prerelease               --notes-file /tmp/orvix-alpha18-notes.md
+            gh release upload v0.7.4-alpha.19 --clobber "${assets[@]}"
+            gh release edit v0.7.4-alpha.19               --title 'Orvix v0.7.4-alpha.19 — Exact File Sinhala • Windows + Mobile + TV'               --prerelease               --notes-file /tmp/orvix-alpha19-notes.md
           else
-            gh release create v0.7.4-alpha.18               --target '${{ github.sha }}'               --title 'Orvix v0.7.4-alpha.18 — Generated Sinhala SRT • Windows + Mobile + TV'               --prerelease               --notes-file /tmp/orvix-alpha18-notes.md               "${assets[@]}"
+            gh release create v0.7.4-alpha.19               --target '${{ github.sha }}'               --title 'Orvix v0.7.4-alpha.19 — Generated Sinhala SRT • Windows + Mobile + TV'               --prerelease               --notes-file /tmp/orvix-alpha19-notes.md               "${assets[@]}"
           fi
