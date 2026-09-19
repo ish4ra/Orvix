@@ -84,12 +84,12 @@ class AiPreparedSubtitle {
     return '';
   }
 
-  int matchSourceCueIndex(
+  ({int index, int count})? matchSourceCueRange(
     String raw, {
     int previousIndex = -1,
   }) {
     final target = _normalizeCue(raw);
-    if (target.isEmpty || cues.isEmpty) return -1;
+    if (target.isEmpty || cues.isEmpty) return null;
 
     final localStart =
         previousIndex >= 0 ? math.max(0, previousIndex - 3) : 0;
@@ -97,41 +97,67 @@ class AiPreparedSubtitle {
         ? math.min(cues.length, previousIndex + 180)
         : math.min(cues.length, 520);
 
-    for (var i = localStart; i < localEnd; i++) {
-      if (_normalizeCue(cues[i].source) == target) return i;
-    }
+    ({int index, int count, double score})? best;
 
-    var bestIndex = -1;
-    var bestScore = 0.0;
     for (var i = localStart; i < localEnd; i++) {
-      final source = _normalizeCue(cues[i].source);
-      final score = _cueTextSimilarity(target, source);
-      if (score > bestScore) {
-        bestScore = score;
-        bestIndex = i;
+      for (var count = 1; count <= 3 && i + count <= localEnd; count++) {
+        final combined = _normalizeCue(
+          cues
+              .sublist(i, i + count)
+              .map((cue) => cue.source)
+              .join(' '),
+        );
+        if (combined == target) {
+          return (index: i, count: count);
+        }
+        final score = _cueTextSimilarity(target, combined);
+        if (best == null || score > best.score) {
+          best = (index: i, count: count, score: score);
+        }
       }
     }
 
     final wordCount =
         target.split(' ').where((value) => value.isNotEmpty).length;
-    final threshold = wordCount >= 5 ? .62 : .72;
-    if (bestIndex >= 0 && bestScore >= threshold) return bestIndex;
+    final threshold = wordCount >= 5 ? .60 : .70;
+    if (best != null && best.score >= threshold) {
+      return (index: best.index, count: best.count);
+    }
 
-    // A seek may jump far beyond the local sequence window. Allow only an
-    // exact global recovery so repeated common lines cannot attach to the
-    // wrong point in the episode.
+    // A seek can jump outside the local sequence window. Global recovery is
+    // exact-only, including 2–3 adjacent candidate cues, to avoid attaching a
+    // common repeated line to the wrong point in the episode.
     if (previousIndex >= 0) {
       for (var i = 0; i < cues.length; i++) {
-        if (_normalizeCue(cues[i].source) == target) return i;
+        for (var count = 1; count <= 3 && i + count <= cues.length; count++) {
+          final combined = _normalizeCue(
+            cues
+                .sublist(i, i + count)
+                .map((cue) => cue.source)
+                .join(' '),
+          );
+          if (combined == target) {
+            return (index: i, count: count);
+          }
+        }
       }
     }
-    return -1;
+    return null;
+  }
+
+  int matchSourceCueIndex(
+    String raw, {
+    int previousIndex = -1,
+  }) {
+    final match = matchSourceCueRange(raw, previousIndex: previousIndex);
+    return match?.index ?? -1;
   }
 
   AiSubtitleCue? matchSourceCue(String raw) {
-    final index = matchSourceCueIndex(raw);
-    return index < 0 ? null : cues[index];
+    final match = matchSourceCueRange(raw);
+    return match == null ? null : cues[match.index];
   }
+
 }
 
 class AiNativeCueSample {
@@ -309,21 +335,33 @@ class AiSinhalaSubtitleService {
         for (final sample in usableSamples) {
           final target = _normalizeCue(sample.text);
           var bestIndex = -1;
+          var bestCount = 1;
           var bestSimilarity = 0.0;
           final upper = math.min(cues.length, searchFrom + 520);
           for (var i = searchFrom; i < upper; i++) {
-            final similarity =
-                _cueTextSimilarity(target, _normalizeCue(cues[i].source));
-            if (similarity > bestSimilarity) {
-              bestSimilarity = similarity;
-              bestIndex = i;
+            for (var count = 1;
+                count <= 3 && i + count <= upper;
+                count++) {
+              final combined = _normalizeCue(
+                cues
+                    .sublist(i, i + count)
+                    .map((cue) => cue.source)
+                    .join(' '),
+              );
+              final similarity = _cueTextSimilarity(target, combined);
+              if (similarity > bestSimilarity) {
+                bestSimilarity = similarity;
+                bestIndex = i;
+                bestCount = count;
+              }
+              if (similarity >= .985) break;
             }
-            if (similarity >= .985) break;
+            if (bestSimilarity >= .985) break;
           }
-          if (bestIndex < 0 || bestSimilarity < .62) continue;
+          if (bestIndex < 0 || bestSimilarity < .60) continue;
           matches++;
           similarityTotal += bestSimilarity;
-          searchFrom = bestIndex + 1;
+          searchFrom = bestIndex + bestCount;
         }
 
         if (matches > selectedMatches ||
