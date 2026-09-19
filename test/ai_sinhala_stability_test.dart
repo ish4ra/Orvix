@@ -10,7 +10,7 @@ void main() {
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
     expect(player, contains('_nativeAiMatchIndex'));
-    expect(player, contains('matchSourceCueIndex('));
+    expect(player, contains('matchSourceCueRange('));
     expect(
       service,
       contains("sourceMatch: 'native-cue-text-oracle'"),
