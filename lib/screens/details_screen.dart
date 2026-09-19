@@ -794,7 +794,19 @@ class _DetailsScreenState extends State<DetailsScreen> {
       // fully manual.
       if (autoUsePinned && !hasCloudConnection && chosen == null) {
         final freeResults = widget.sources.sortForFreeStreaming(results);
-        if (freeResults.isNotEmpty) chosen = freeResults.first;
+        if (PlatformProfile.isAndroidTv) {
+          // Do not auto-pick a known risky TV encode merely because it has
+          // more seeders. The full list is still available in Find Sources.
+          for (final candidate in freeResults) {
+            if (candidate.compatibilityFriendly) {
+              chosen = candidate;
+              break;
+            }
+          }
+        }
+        if (chosen == null && freeResults.isNotEmpty) {
+          chosen = freeResults.first;
+        }
       }
 
       chosen ??= await _chooseSource(results, item, episode);
