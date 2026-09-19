@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/media_item.dart';
@@ -112,6 +114,32 @@ class AiPreparedSubtitle {
   }
 }
 
+class AiGeneratedSubtitleFile {
+  const AiGeneratedSubtitleFile({
+    required this.path,
+    required this.source,
+    required this.label,
+    required this.cacheHit,
+  });
+
+  final String path;
+  final String source;
+  final String label;
+  final bool cacheHit;
+}
+
+class _EmbeddedSubtitleSource {
+  const _EmbeddedSubtitleSource({
+    required this.content,
+    required this.identity,
+    required this.label,
+  });
+
+  final String content;
+  final String identity;
+  final String label;
+}
+
 class AiSinhalaSubtitleService {
   AiSinhalaSubtitleService._();
 
@@ -155,6 +183,309 @@ class AiSinhalaSubtitleService {
     // Sinhala script or it is not a usable Sinhala subtitle result.
     if (sourceWords.length < 3) return true;
     return RegExp(r'[\u0D80-\u0DFF]').hasMatch(translated);
+  }
+
+  static const _generatedSubtitleCacheVersion = 'srt-v1';
+
+  static Future<AiGeneratedSubtitleFile> prepareGeneratedSinhalaFile({
+    required MediaItem item,
+    required String videoUrl,
+    EpisodeItem? episode,
+    String? releaseHint,
+    int? expectedSizeBytes,
+    String? expectedVideoHash,
+    void Function(String message)? onStatus,
+  }) async {
+    final title =
+        episode == null ? item.title : '${item.title} ${episode.label}';
+
+    onStatus?.call('Looking for the exact English subtitle inside this video…');
+    final embedded = await _fetchEmbeddedEnglishSubtitle(videoUrl);
+    if (embedded != null) {
+      final cacheKey =
+          'embedded|${embedded.identity}|$_generatedSubtitleCacheVersion';
+      final cached = await _cachedGeneratedFile(cacheKey);
+      if (cached != null) {
+        onStatus?.call('Cached Sinhala subtitle ready from this exact video.');
+        return AiGeneratedSubtitleFile(
+          path: cached.path,
+          source: 'embedded',
+          label: embedded.label,
+          cacheHit: true,
+        );
+      }
+
+      final cues = _parseSubtitle(embedded.content);
+      if (cues.length >= 8) {
+        final prepared = AiPreparedSubtitle(
+          key: cacheKey,
+          title: title,
+          sourceUrl: embedded.identity,
+          cues: cues,
+          sourceMatch: 'embedded-exact-file',
+        );
+        onStatus?.call(
+          'Exact embedded timing found. Translating the complete subtitle…',
+        );
+        await _translateEntireSubtitle(
+          prepared,
+          onProgress: (done, total) {
+            final percent =
+                total <= 0 ? 100 : ((done * 100) / total).round().clamp(0, 100);
+            onStatus?.call(
+              'Translating complete Sinhala subtitle… $percent% ($done/$total)',
+            );
+          },
+        );
+        if (prepared.translatedCount == prepared.cues.length) {
+          final file = await _writeGeneratedSrt(cacheKey, prepared);
+          onStatus?.call(
+            'Sinhala subtitle file ready from the video’s own timing.',
+          );
+          return AiGeneratedSubtitleFile(
+            path: file.path,
+            source: 'embedded',
+            label: embedded.label,
+            cacheHit: false,
+          );
+        }
+      }
+    }
+
+    onStatus?.call(
+      'No usable embedded English track. Checking exact OpenSubtitles hash…',
+    );
+    final probe = await _probeVideo(
+      videoUrl,
+      fallbackFileName: releaseHint,
+      fallbackSize: expectedSizeBytes,
+      expectedVideoHash: expectedVideoHash,
+    );
+    if (probe.hash == null || probe.size == null || probe.size! <= 0) {
+      throw const AiSubtitleException(
+        'No extractable embedded English subtitle and no exact file fingerprint were available.',
+      );
+    }
+
+    final exactKey =
+        'opensub|${probe.hash}|${probe.size}|$_generatedSubtitleCacheVersion';
+    final cachedExact = await _cachedGeneratedFile(exactKey);
+    if (cachedExact != null) {
+      onStatus?.call('Cached exact-file Sinhala subtitle is ready.');
+      return AiGeneratedSubtitleFile(
+        path: cachedExact.path,
+        source: 'opensubtitles-exact',
+        label: 'OpenSubtitles exact file match',
+        cacheHit: true,
+      );
+    }
+
+    final exactText = await _fetchExactRestSubtitle(
+      movieHash: probe.hash!,
+      movieByteSize: probe.size!,
+    );
+    if (exactText == null) {
+      throw const AiSubtitleException(
+        'No embedded English subtitle could be extracted, and OpenSubtitles has no exact-file English subtitle for this source.',
+      );
+    }
+
+    final cues = _parseSubtitle(exactText);
+    if (cues.length < 8) {
+      throw const AiSubtitleException(
+        'The exact-file English subtitle could not be parsed safely.',
+      );
+    }
+
+    final prepared = AiPreparedSubtitle(
+      key: exactKey,
+      title: title,
+      sourceUrl: 'opensubtitles-rest-v1://moviehash/${probe.hash}',
+      cues: cues,
+      sourceMatch: 'rest-moviehash-generated-file',
+    );
+    onStatus?.call(
+      'Exact OpenSubtitles timing found. Translating the complete subtitle…',
+    );
+    await _translateEntireSubtitle(
+      prepared,
+      onProgress: (done, total) {
+        final percent =
+            total <= 0 ? 100 : ((done * 100) / total).round().clamp(0, 100);
+        onStatus?.call(
+          'Translating complete Sinhala subtitle… $percent% ($done/$total)',
+        );
+      },
+    );
+    if (prepared.translatedCount != prepared.cues.length) {
+      throw const AiSubtitleException(
+        'The complete Sinhala subtitle did not finish translating.',
+      );
+    }
+
+    final file = await _writeGeneratedSrt(exactKey, prepared);
+    onStatus?.call('Generated Sinhala subtitle file ready.');
+    return AiGeneratedSubtitleFile(
+      path: file.path,
+      source: 'opensubtitles-exact',
+      label: 'OpenSubtitles exact file match',
+      cacheHit: false,
+    );
+  }
+
+  static Future<_EmbeddedSubtitleSource?> _fetchEmbeddedEnglishSubtitle(
+    String rawVideoUrl,
+  ) async {
+    final videoUri = Uri.tryParse(rawVideoUrl);
+    if (videoUri == null ||
+        !(videoUri.host == '127.0.0.1' || videoUri.host == 'localhost') ||
+        videoUri.port != 11470) {
+      return null;
+    }
+
+    final tracksUri = videoUri.replace(
+      path: '/subtitlesTracks',
+      queryParameters: <String, String>{'subsUrl': videoUri.toString()},
+      fragment: '',
+    );
+
+    dynamic decoded;
+    try {
+      final response = await http
+          .get(tracksUri)
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+      decoded = jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
+    } catch (_) {
+      return null;
+    }
+
+    final raw = decoded is Map ? decoded['result'] : null;
+    if (raw is! List || raw.isEmpty) return null;
+
+    final candidates = <Map<String, dynamic>>[];
+    for (final entry in raw) {
+      if (entry is! Map) continue;
+      final map = Map<String, dynamic>.from(entry);
+      final url = map['url']?.toString().trim() ?? '';
+      final label = map['label']?.toString().trim() ?? '';
+      if (url.isEmpty || label.isEmpty) continue;
+      final score = _englishTrackScore(label);
+      if (score <= 0) continue;
+      map['_score'] = score;
+      candidates.add(map);
+    }
+    candidates.sort(
+      (a, b) => (b['_score'] as int).compareTo(a['_score'] as int),
+    );
+
+    for (final candidate in candidates) {
+      final relativeUrl = candidate['url']?.toString() ?? '';
+      final label = candidate['label']?.toString() ?? 'English';
+      final subtitleUri = videoUri.resolve(relativeUrl);
+      try {
+        final response = await http
+            .get(subtitleUri)
+            .timeout(const Duration(seconds: 35));
+        if (response.statusCode < 200 || response.statusCode >= 300) continue;
+        final content =
+            utf8.decode(response.bodyBytes, allowMalformed: true).trim();
+        if (content.isEmpty || _parseSubtitle(content).length < 8) continue;
+        return _EmbeddedSubtitleSource(
+          content: content,
+          identity: subtitleUri.toString(),
+          label: label,
+        );
+      } catch (_) {
+        continue;
+      }
+    }
+    return null;
+  }
+
+  static int _englishTrackScore(String rawLabel) {
+    final label = rawLabel.toLowerCase();
+    var score = 0;
+    if (label.contains('english')) score += 120;
+    if (RegExp(r'(^|[^a-z])eng([^a-z]|$)').hasMatch(label)) score += 110;
+    if (RegExp(r'(^|[^a-z])en([^a-z]|$)').hasMatch(label)) score += 80;
+    if (label.contains('.en.') ||
+        label.contains('_en.') ||
+        label.contains('-en.')) {
+      score += 80;
+    }
+    if (label.contains('commentary')) score -= 160;
+    if (label.contains('forced') || label.contains('foreign')) score -= 90;
+    if (label.contains('sign') || label.contains('song')) score -= 80;
+    if (label.contains('sdh') || label.contains('hearing')) score -= 20;
+    return score;
+  }
+
+  static Future<File?> _cachedGeneratedFile(String cacheKey) async {
+    try {
+      final file = await _generatedCacheFile(cacheKey);
+      if (!await file.exists()) return null;
+      final length = await file.length();
+      if (length < 128) return null;
+      final head = await file.openRead(0, math.min(length, 4096)).transform(utf8.decoder).join();
+      if (!head.contains('-->')) return null;
+      return file;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<File> _generatedCacheFile(String cacheKey) async {
+    final support = await getApplicationSupportDirectory();
+    final directory = Directory(
+      '${support.path}${Platform.pathSeparator}subtitle_cache${Platform.pathSeparator}si',
+    );
+    await directory.create(recursive: true);
+    final digest = sha256.convert(utf8.encode(cacheKey)).toString();
+    return File(
+      '${directory.path}${Platform.pathSeparator}orvix_si_$digest.srt',
+    );
+  }
+
+  static Future<File> _writeGeneratedSrt(
+    String cacheKey,
+    AiPreparedSubtitle prepared,
+  ) async {
+    final file = await _generatedCacheFile(cacheKey);
+    final buffer = StringBuffer();
+    for (var i = 0; i < prepared.cues.length; i++) {
+      final cue = prepared.cues[i];
+      final translated = cue.translation?.trim() ?? '';
+      if (translated.isEmpty) {
+        throw const AiSubtitleException(
+          'A translated subtitle cue was unexpectedly empty.',
+        );
+      }
+      buffer
+        ..writeln(i + 1)
+        ..writeln(
+          '${_formatSrtTimestamp(cue.start)} --> ${_formatSrtTimestamp(cue.end)}',
+        )
+        ..writeln(translated)
+        ..writeln();
+    }
+    await file.writeAsString(
+      buffer.toString(),
+      encoding: utf8,
+      flush: true,
+    );
+    return file;
+  }
+
+  static String _formatSrtTimestamp(Duration value) {
+    final totalMs = value.inMilliseconds < 0 ? 0 : value.inMilliseconds;
+    final hours = totalMs ~/ 3600000;
+    final minutes = (totalMs % 3600000) ~/ 60000;
+    final seconds = (totalMs % 60000) ~/ 1000;
+    final millis = totalMs % 1000;
+    String two(int number) => number.toString().padLeft(2, '0');
+    String three(int number) => number.toString().padLeft(3, '0');
+    return '${two(hours)}:${two(minutes)}:${two(seconds)},${three(millis)}';
   }
 
   static Future<AiPreparedSubtitle?> prepareExactFileFully({
