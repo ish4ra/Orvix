@@ -1,0 +1,29 @@
+name: Validate Orvix v0.7.4-alpha.23 Native Cue Calibration
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.4-alpha.23
+    paths:
+      - 'lib/**'
+      - 'test/**'
+      - 'pubspec.yaml'
+      - 'supabase/functions/subdl-transcript/**'
+      - '.github/workflows/orvix-v074-alpha23-validate.yml'
+
+concurrency:
+  group: orvix-alpha23-validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-warnings --no-fatal-infos
+      - run: flutter test
