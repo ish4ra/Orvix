@@ -24,7 +24,7 @@ void main() {
     expect(details, isNot(contains('AiSinhalaSubtitleService.prepareBuffered(')));
     expect(details, contains('aiSubtitle: null'));
 
-    expect(player, contains('play: !aiPreferred'));
+    expect(player, contains('play: !aiReady'));
     expect(player, contains('_prepareAiSinhalaBeforePlayback'));
     expect(player, contains('OnlineSubtitleService.search('));
     expect(
