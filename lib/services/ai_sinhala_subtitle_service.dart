@@ -1472,11 +1472,26 @@ class AiSinhalaSubtitleService {
       );
     }
 
-    // Always fingerprint the actual selected URL first. For local P2P the URL
-    // already contains the exact torrent file index (/{infoHash}/{fileIdx}),
-    // and stream-server v0.1.8 supports byte ranges on that route. This avoids
-    // trusting optional addon metadata and avoids the nonexistent /opensubHash
-    // route used by earlier alpha builds.
+    final localP2p =
+        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
+            uri.port == 11470;
+
+    if (localP2p) {
+      // stream-server v0.1.8 exposes /opensubHash and computes the canonical
+      // OpenSubtitles hash from the EXACT selected torrent file index.
+      // LocalTorrentService.resolve() creates the engine before returning this
+      // URL, so this endpoint is safe to call before libmpv opens the media.
+      // Never fall back to addon metadata for local P2P if this exact probe
+      // fails; guessing would recreate the sync bug.
+      return _probeLocalOpenSubtitlesHash(
+        uri,
+        fallbackFileName: fallbackName,
+        fallbackSize: fallbackSize,
+      );
+    }
+
+    // Direct/cloud URLs do not have the native hash endpoint, so compute the
+    // canonical hash from byte ranges on the actual selected URL.
     final client = http.Client();
     try {
       final first = await _readRangeWithRetry(
@@ -1513,22 +1528,16 @@ class AiSinhalaSubtitleService {
         }
       }
     } catch (_) {
-      // Fall through to provider metadata only when direct byte fingerprinting
-      // is unavailable. Automatic exact matching still requires hash + size.
+      // Fall through to provider metadata only for non-local direct/cloud
+      // sources where byte-range fingerprinting is genuinely unavailable.
     } finally {
       client.close();
     }
 
-    final localP2p =
-        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
-            uri.port == 11470;
     return _VideoProbe(
       fileName: fallbackName,
       size: fallbackSize,
-      // For local P2P, never fall back to addon metadata after an actual-file
-      // byte fingerprint fails. Wrong metadata would recreate the exact bug
-      // this release is designed to eliminate.
-      hash: localP2p ? null : suppliedHash,
+      hash: suppliedHash,
     );
   }
 
@@ -1543,14 +1552,13 @@ class AiSinhalaSubtitleService {
       fragment: '',
     );
 
-    // The native engine returns HTTP 200 even when the hash is not ready, so
-    // retry the JSON result itself. PlayerScreen must open the media first
-    // (paused during AI preflight) before this route is queried; probing a local
-    // P2P stream before the player attaches it caused the alpha.11 regression.
-    for (var attempt = 0; attempt < 2; attempt++) {
+    // The native route calls engine.get_opensub_hash(fileIdx), which reads the
+    // selected file's first + last 64 KiB at internal priority 255 and returns
+    // both the canonical hash and exact byte size.
+    for (var attempt = 0; attempt < 4; attempt++) {
       try {
         final response =
-            await http.get(endpoint).timeout(const Duration(seconds: 30));
+            await http.get(endpoint).timeout(const Duration(seconds: 45));
         if (response.statusCode >= 200 && response.statusCode < 300) {
           final decoded = jsonDecode(
             utf8.decode(response.bodyBytes, allowMalformed: true),
@@ -1562,12 +1570,10 @@ class AiSinhalaSubtitleService {
             final nativeSize = rawSize is num
                 ? rawSize.toInt()
                 : int.tryParse(rawSize?.toString() ?? '');
-            if (hash != null) {
+            if (hash != null && nativeSize != null && nativeSize > 0) {
               return _VideoProbe(
                 fileName: fallbackFileName,
-                size: nativeSize != null && nativeSize > 0
-                    ? nativeSize
-                    : fallbackSize,
+                size: nativeSize,
                 hash: hash,
               );
             }
@@ -1575,16 +1581,20 @@ class AiSinhalaSubtitleService {
         }
       } catch (_) {}
 
-      if (attempt == 0) {
-        await Future<void>.delayed(const Duration(milliseconds: 900));
+      if (attempt < 3) {
+        await Future<void>.delayed(
+          Duration(milliseconds: 800 * (attempt + 1)),
+        );
       }
     }
 
     return _VideoProbe(
       fileName: fallbackFileName,
-      size: fallbackSize,
+      size: null,
+      hash: null,
     );
   }
+
   static Future<_RangeRead?> _readRangeWithRetry(
     http.Client client,
     Uri uri,
