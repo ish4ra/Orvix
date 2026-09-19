@@ -1519,10 +1519,16 @@ class AiSinhalaSubtitleService {
       client.close();
     }
 
+    final localP2p =
+        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
+            uri.port == 11470;
     return _VideoProbe(
       fileName: fallbackName,
       size: fallbackSize,
-      hash: suppliedHash,
+      // For local P2P, never fall back to addon metadata after an actual-file
+      // byte fingerprint fails. Wrong metadata would recreate the exact bug
+      // this release is designed to eliminate.
+      hash: localP2p ? null : suppliedHash,
     );
   }
 
