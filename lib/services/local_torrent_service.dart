@@ -16,6 +16,35 @@ class LocalTorrentException implements Exception {
   String toString() => message;
 }
 
+class LocalTorrentHealth {
+  const LocalTorrentHealth({
+    required this.metadataReady,
+    required this.peers,
+    required this.connections,
+    required this.downloadSpeedBytesPerSecond,
+  });
+
+  final bool metadataReady;
+  final int peers;
+  final int connections;
+  final double downloadSpeedBytesPerSecond;
+
+  bool get hasActiveDownload => downloadSpeedBytesPerSecond > 0;
+
+  String get speedLabel {
+    final speed = downloadSpeedBytesPerSecond;
+    if (speed <= 0) return '0 KB/s';
+    if (speed >= 1024 * 1024) {
+      return '${(speed / (1024 * 1024)).toStringAsFixed(speed >= 10 * 1024 * 1024 ? 1 : 2)} MB/s';
+    }
+    return '${(speed / 1024).toStringAsFixed(speed >= 1024 * 100 ? 0 : 1)} KB/s';
+  }
+
+  String get summary =>
+      'metadata: ${metadataReady ? 'ready' : 'pending'}, '
+      'peers: $peers, connections: $connections, speed: $speedLabel';
+}
+
 class LocalTorrentService {
   LocalTorrentService._();
 
@@ -116,6 +145,72 @@ class LocalTorrentService {
     required int fileIndex,
   }) {
     return '$baseUrl/$infoHash/$fileIndex';
+  }
+
+  Future<LocalTorrentHealth?> healthForStreamUrl(String streamUrl) async {
+    final uri = Uri.tryParse(streamUrl);
+    if (uri == null ||
+        (uri.host != '127.0.0.1' && uri.host != 'localhost') ||
+        uri.port != 11470 ||
+        uri.pathSegments.length < 2) {
+      return null;
+    }
+
+    final infoHash = uri.pathSegments[0];
+    final fileIndex = int.tryParse(uri.pathSegments[1]);
+    if (fileIndex == null) return null;
+
+    try {
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/$infoHash/$fileIndex/stats.json'),
+            headers: const {'Accept': 'application/json'},
+          )
+          .timeout(const Duration(seconds: 2));
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) return null;
+
+      final peers = _asInt(decoded['peers']) ??
+          _asInt(decoded['numPeers']) ??
+          _asInt(decoded['connectedPeers']) ??
+          0;
+      final connections = _asInt(decoded['swarmConnections']) ??
+          _asInt(decoded['connections']) ??
+          peers;
+      final metadataReady = decoded['hasMetadata'] == true ||
+          decoded['metadata'] == true ||
+          decoded['metadata']?.toString().toLowerCase() == 'ready';
+
+      double speed = 0;
+      for (final key in const [
+        'downloadSpeed',
+        'downloadRate',
+        'downloadRateBytesPerSecond',
+        'speed',
+      ]) {
+        final raw = decoded[key];
+        if (raw is num) {
+          speed = raw.toDouble();
+          break;
+        }
+        final parsed = double.tryParse(raw?.toString() ?? '');
+        if (parsed != null) {
+          speed = parsed;
+          break;
+        }
+      }
+
+      return LocalTorrentHealth(
+        metadataReady: metadataReady,
+        peers: peers,
+        connections: connections,
+        downloadSpeedBytesPerSecond: speed,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> ensureRunning() async {
