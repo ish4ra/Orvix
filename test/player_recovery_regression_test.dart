@@ -27,10 +27,13 @@ void main() {
       contains('await _setNativeSubtitleVisibility(false);'),
     );
 
-    // Local P2P must not seek to the file tail for a subtitle hash.
+    // Exact OpenSubtitles matching requires the actual first + last 64 KiB.
+    // Alpha.19 performs those reads before libmpv opens, using stream-server's
+    // InternalProbe priority so the old playback-time tail-seek race stays gone.
     expect(service, contains("uri.host == '127.0.0.1'"));
     expect(service, contains('uri.port == 11470'));
-    expect(service, contains('return _VideoProbe(fileName: fallbackName, size: fallbackSize);'));
+    expect(service, contains('size - 65536'));
+    expect(service, contains("request.headers['enginefs-prio'] = '255';"));
 
     // Low-seed local streams should wait for a healthier cache before resume.
     expect(playback, contains("'cache-pause-initial': 'yes'"));
