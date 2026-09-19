@@ -62,7 +62,7 @@ void main() {
       contains('position > Duration.zero && widget.playback.player.state.playing'),
     );
     expect(player, contains('return _playbackStarted || state.playing;'));
-    expect(player, isNot(contains('state.duration > Duration.zero')));
+    expect(player, isNot(contains('_startupDurationSubscription')));
   });
 
   test('player teardown cancels async callbacks before native stop', () {
