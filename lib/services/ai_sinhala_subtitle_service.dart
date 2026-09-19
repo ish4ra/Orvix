@@ -203,7 +203,7 @@ class AiSinhalaSubtitleService {
     final embedded = await _fetchEmbeddedEnglishSubtitle(videoUrl);
     if (embedded != null) {
       final cacheKey =
-          'embedded|${embedded.identity}|$_generatedSubtitleCacheVersion';
+          'embedded|$videoUrl|${embedded.identity}|$_generatedSubtitleCacheVersion';
       final cached = await _cachedGeneratedFile(cacheKey);
       if (cached != null) {
         onStatus?.call('Cached Sinhala subtitle ready from this exact video.');
