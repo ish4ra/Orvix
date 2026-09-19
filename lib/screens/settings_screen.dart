@@ -107,7 +107,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       SnackBar(
         content: Text(
           enabled
-              ? 'AI Sinhala subtitles enabled. Orvix uses the video’s own synced English text track as the timing ground truth, matches an OpenSubtitles transcript by dialogue, pre-translates the full transcript, then shows Sinhala on the video’s real cue events.'
+              ? 'AI Sinhala subtitles enabled. Orvix uses the video’s own synced English text track as the timing ground truth, prefers the embedded/exact-file English transcript, can use SubDL as an optional second transcript database, pre-translates the full transcript, then shows Sinhala on the video’s real cue events.'
               : 'AI Sinhala subtitles disabled.',
         ),
       ),
@@ -163,7 +163,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       AiSinhalaSubtitleService.canTranslate
-                          ? 'Before playback starts, Orvix opens the selected video paused, selects its own English text subtitle track, and samples several real dialogue cues. It finds an OpenSubtitles transcript whose text matches those native cues and translates the complete transcript. During playback, the native English cue events themselves decide exactly when each Sinhala line appears; OpenSubtitles timestamps are ignored.'
+                          ? 'Before playback starts, Orvix selects the video’s own English text subtitle track. It first tries the embedded transcript and an exact-file OpenSubtitles REST match; if those are unavailable it safely samples native dialogue and can compare OpenSubtitles v3 plus an optional SubDL fallback. During playback, only the video’s native English cue events decide when each Sinhala line appears; provider timestamps are ignored.'
                           : 'Sign in to your Orvix account first. When enabled, Orvix prepares Sinhala subtitles before playback when a safe timing source is available.',
                       style: const TextStyle(height: 1.45),
                     ),
