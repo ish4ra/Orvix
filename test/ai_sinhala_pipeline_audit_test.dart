@@ -25,6 +25,7 @@ void main() {
     expect(startup, contains('prepareTrustedTranscriptForNativeClock('));
     expect(startup, contains('_captureNativeEnglishSamples()'));
     expect(startup, contains('videoHash: widget.expectedVideoHash'));
+    expect(startup, contains('includeTranscriptFallbacks: true'));
     expect(
       startup,
       contains('prepareTranslatedTranscriptForNativeTiming('),
