@@ -14,6 +14,7 @@ import '../services/playback_service.dart';
 import '../services/platform_profile.dart';
 import '../services/source_provider_service.dart';
 import '../services/torbox_service.dart';
+import 'android_tv_exo_player_screen.dart';
 import 'player_screen.dart';
 import 'sources_screen.dart';
 
@@ -1958,6 +1959,37 @@ class _DetailsScreenState extends State<DetailsScreen> {
         ? item.title
         : '${item.title} • ${episode.label} ${episode.title}';
     final next = _nextEpisode(item, episode);
+
+    final uri = Uri.tryParse(url);
+    final localP2p = uri != null &&
+        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
+        uri.port == 11470;
+
+    // Android TV P2P is intentionally routed through Media3/ExoPlayer first.
+    // This isolates the local torrent transport from media_kit/libmpv and gives
+    // us a safe, native Android A/B path for the TV crash.
+    if (PlatformProfile.isAndroidTv && localP2p) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => AndroidTvExoPlayerScreen(
+            url: url,
+            title: title,
+            mediaState: widget.mediaState,
+            item: item,
+            episode: episode,
+            nextEpisodeLabel:
+                next == null ? null : '${next.label} ${next.title}',
+            onNext: next == null
+                ? null
+                : () async {
+                    if (!mounted) return;
+                    await _play(item, episode: next);
+                  },
+          ),
+        ),
+      );
+      return;
+    }
 
     await Navigator.of(context).push(
       MaterialPageRoute(
