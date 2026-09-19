@@ -47,7 +47,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       SnackBar(
         content: Text(
           enabled
-              ? 'AI Sinhala subtitles enabled. Orvix will verify timing and prepare an opening Sinhala buffer before playback starts when possible.'
+              ? 'AI Sinhala subtitles enabled. Orvix will use only an exact-file OpenSubtitles match and translate the complete subtitle before playback starts.'
               : 'AI Sinhala subtitles disabled.',
         ),
       ),
@@ -97,7 +97,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       AiSinhalaSubtitleService.canTranslate
-                          ? 'Before playback starts, Orvix verifies a safe subtitle timeline and translates an opening Sinhala buffer. If that cannot be done safely, playback opens with normal subtitles instead. Requires internet.'
+                          ? 'Before playback starts, Orvix requires an exact OpenSubtitles file-hash + byte-size match and translates the complete English subtitle to Sinhala. If an exact match is unavailable, playback opens with normal subtitles instead. Requires internet.'
                           : 'Sign in to your Orvix account first. When enabled, Orvix prepares Sinhala subtitles before playback when a safe timing source is available.',
                       style: const TextStyle(height: 1.45),
                     ),
@@ -106,7 +106,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 12),
               const Text(
-                'Beta note: Orvix uses an available English text subtitle as the translation source. If no suitable subtitle is found, playback continues normally with the original subtitle options.',
+                'Strict mode: Orvix does not fuzzy-match an external transcript to embedded cues and does not use per-cue live AI translation. This lowers availability, but avoids the disappearing/late subtitle behavior seen in earlier alpha builds.',
                 style: TextStyle(
                     fontSize: 12.5, height: 1.5, color: Color(0xFF9CA99E)),
               ),
