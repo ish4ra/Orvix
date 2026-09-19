@@ -57,10 +57,19 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen>
     unawaited(_load());
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool refresh = false}) async {
+    if (refresh && mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
+      final resultsFuture = refresh
+          ? widget.sources.resolve(widget.item, episode: widget.episode)
+          : widget.resultsFuture;
       final values = await Future.wait<dynamic>([
-        widget.resultsFuture,
+        resultsFuture,
         widget.sources.getPriorityOrder(),
         widget.sources.getResultLimit(),
         widget.sources.getPinnedSourceIdentity(_pinKey),
@@ -280,6 +289,13 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen>
       child: ListView(
         scrollDirection: Axis.horizontal,
         children: [
+          _TvFilterPill(
+            selected: false,
+            icon: Icons.refresh_rounded,
+            label: 'Refresh',
+            onPressed: _loading ? null : () => _load(refresh: true),
+          ),
+          const SizedBox(width: 8),
           _TvFilterPill(
             selected: _providerFilter == null,
             icon: Icons.apps_rounded,
@@ -775,7 +791,7 @@ class _TvFilterPill extends StatelessWidget {
   final bool selected;
   final IconData icon;
   final String label;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
