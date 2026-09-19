@@ -10,6 +10,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../models/media_item.dart';
 import '../services/ai_sinhala_preferences_service.dart';
+import '../services/ai_sinhala_runtime_state.dart';
 import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/media_state_service.dart';
 import '../services/online_subtitle_service.dart';
@@ -76,13 +77,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _closing = false;
   final FocusNode _focusNode = FocusNode();
   AiPreparedSubtitle? _preparedAiSubtitle;
-  bool _aiSinhalaEnabled = false;
-  bool _aiSinhalaRequested = false;
-  bool _liveAiFallback = false;
+  AiSinhalaRuntimeState _aiState = const AiSinhalaRuntimeState.native();
   int _liveCueGeneration = 0;
   int _lastAiPrefetchBucket = -1;
   final List<String> _liveDialogueContext = <String>[];
-  bool _aiSubtitleLoading = false;
   bool _aiSubtitleUnavailable = false;
   String _aiPreflightMessage = '';
   bool _timingTrackSelected = false;
@@ -110,12 +108,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool get _desktop =>
       Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
+  bool get _aiSinhalaRequested => _aiState.requested;
+  bool get _aiSinhalaEnabled => _aiState.enabled;
+  bool get _liveAiFallback => _aiState.liveEmbedded;
+  bool get _aiSubtitleLoading => _aiState.loading;
+
+  void _transitionAi(AiSinhalaRuntimeMode next) {
+    _aiState = _aiState.transition(next);
+  }
+
   @override
   void initState() {
     super.initState();
     _preparedAiSubtitle = widget.aiSubtitle;
-    _aiSinhalaEnabled = _preparedAiSubtitle != null;
-    _aiSinhalaRequested = _preparedAiSubtitle != null;
+    _aiState = _preparedAiSubtitle == null
+        ? const AiSinhalaRuntimeState.native()
+        : const AiSinhalaRuntimeState(AiSinhalaRuntimeMode.prepared);
     unawaited(_loadSubtitlePreferences());
     _playbackErrorSubscription =
         widget.playback.player.stream.error.listen(_onPlaybackError);
