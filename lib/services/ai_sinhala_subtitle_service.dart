@@ -157,6 +157,121 @@ class AiSinhalaSubtitleService {
     return RegExp(r'[\u0D80-\u0DFF]').hasMatch(translated);
   }
 
+  static Future<AiPreparedSubtitle?> prepareExactFileFully({
+    required MediaItem item,
+    required String videoUrl,
+    EpisodeItem? episode,
+    String? releaseHint,
+    int? expectedSizeBytes,
+    String? expectedVideoHash,
+    void Function(String message)? onStatus,
+  }) async {
+    onStatus?.call('Computing the exact video fingerprint…');
+    final probe = await _probeVideo(
+      videoUrl,
+      fallbackFileName: releaseHint,
+      fallbackSize: expectedSizeBytes,
+      expectedVideoHash: expectedVideoHash,
+    );
+
+    if (probe.hash == null || probe.size == null || probe.size! <= 0) {
+      throw const AiSubtitleException(
+        'This source does not expose an exact OpenSubtitles file hash and size.',
+      );
+    }
+
+    final key =
+        '${_mediaKey(item, episode)}:strict:${probe.hash}:${probe.size}';
+    final cached = _preparedCache[key];
+    if (cached != null && cached.translatedCount == cached.cues.length) {
+      onStatus?.call('Exact-file Sinhala subtitle is ready from cache.');
+      return cached;
+    }
+
+    return _inFlight.putIfAbsent(key, () async {
+      try {
+        onStatus?.call('Finding the subtitle for this exact video file…');
+        final exactText = await _fetchExactRestSubtitle(
+          movieHash: probe.hash!,
+          movieByteSize: probe.size!,
+        );
+        if (exactText == null) {
+          throw const AiSubtitleException(
+            'OpenSubtitles has no exact-file English subtitle for this source.',
+          );
+        }
+
+        final cues = _parseSubtitle(exactText);
+        if (cues.length < 8) {
+          throw const AiSubtitleException(
+            'The exact-file subtitle could not be parsed safely.',
+          );
+        }
+
+        final prepared = AiPreparedSubtitle(
+          key: key,
+          title:
+              episode == null ? item.title : '${item.title} ${episode.label}',
+          sourceUrl: 'opensubtitles-rest-v1://moviehash/${probe.hash}',
+          cues: cues,
+          sourceMatch: 'rest-moviehash-full',
+        );
+        _preparedCache[key] = prepared;
+
+        onStatus?.call(
+          'Exact timing verified. Translating the complete subtitle before playback…',
+        );
+        await _translateEntireSubtitle(
+          prepared,
+          onProgress: (done, total) {
+            final percent =
+                total <= 0 ? 100 : ((done * 100) / total).round().clamp(0, 100);
+            onStatus?.call(
+              'Translating complete Sinhala subtitle… $percent% ($done/$total)',
+            );
+          },
+        );
+
+        if (prepared.translatedCount != prepared.cues.length) {
+          throw const AiSubtitleException(
+            'The complete Sinhala subtitle did not finish translating.',
+          );
+        }
+
+        onStatus?.call(
+          'Complete exact-file Sinhala subtitle ready — starting playback.',
+        );
+        return prepared;
+      } finally {
+        _inFlight.remove(key);
+      }
+    });
+  }
+
+  static Future<void> _translateEntireSubtitle(
+    AiPreparedSubtitle prepared, {
+    void Function(int done, int total)? onProgress,
+  }) async {
+    final missing = <int>[
+      for (var i = 0; i < prepared.cues.length; i++)
+        if (!prepared.isTranslatedAt(i)) i,
+    ];
+    if (missing.isEmpty) {
+      onProgress?.call(prepared.cues.length, prepared.cues.length);
+      return;
+    }
+
+    const batchSize = 60;
+    for (var cursor = 0; cursor < missing.length; cursor += batchSize) {
+      final end = math.min(cursor + batchSize, missing.length);
+      await _translateIndices(prepared, missing.sublist(cursor, end));
+      onProgress?.call(
+        prepared.translatedCount,
+        prepared.cues.length,
+      );
+    }
+  }
+
   static Future<AiPreparedSubtitle?> prepareBuffered({
     required MediaItem item,
     required String videoUrl,
