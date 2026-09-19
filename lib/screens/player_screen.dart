@@ -484,10 +484,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (mounted) {
         setState(() {
           _aiPreflightMessage =
-              'Reading a few real English cues safely… ${samples.length}/3';
+              'Reading a few real English cues safely… ${samples.length}/5';
         });
       }
-      if (samples.length >= 3 && !done.isCompleted) done.complete();
+      if (samples.length >= 5 && !done.isCompleted) done.complete();
     }
 
     final subscription = player.stream.subtitle.listen(
@@ -506,7 +506,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       await player.play();
       await Future.any<void>([
         done.future,
-        Future<void>.delayed(const Duration(seconds: 12)),
+        Future<void>.delayed(const Duration(seconds: 18)),
       ]);
     } catch (_) {
       // Safe fallback: normal playback will resume with native subtitles.
