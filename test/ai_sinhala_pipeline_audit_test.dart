@@ -12,26 +12,32 @@ void main() {
     expect(player, contains('bool get _liveAiFallback => _aiState.liveEmbedded;'));
     expect(player, contains('bool get _aiSubtitleLoading => _aiState.loading;'));
 
-    // Assignment only (single '='); comparisons such as '== false' are allowed.
     expect(RegExp(r'_aiSinhalaRequested\s*=(?![=>])').allMatches(player), isEmpty);
     expect(RegExp(r'_aiSinhalaEnabled\s*=(?![=>])').allMatches(player), isEmpty);
     expect(RegExp(r'_liveAiFallback\s*=(?![=>])').allMatches(player), isEmpty);
     expect(RegExp(r'_aiSubtitleLoading\s*=(?![=>])').allMatches(player), isEmpty);
   });
 
-  test('embedded mismatch has a reachable recovery path', () {
+  test('automatic startup excludes legacy embedded/fuzzy/live paths', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    expect(player, contains('_embeddedMismatchCount >= 4'));
-    expect(player, contains('_enableEmbeddedLiveAiFallback('));
+    final start =
+        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
+    final end =
+        player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
+    final startup = player.substring(start, end);
+
+    expect(startup, contains('OnlineSubtitleService.search('));
     expect(
-      player,
-      contains('_transitionAi(AiSinhalaRuntimeMode.liveEmbedded)'),
+      startup,
+      contains('prepareGeneratedSinhalaFromOnlineSubtitle('),
     );
-    expect(player, contains('await _translateLiveSubtitleCue(source);'));
+    expect(startup, isNot(contains('_tryPrepareEmbeddedAiTiming')));
+    expect(startup, isNot(contains('_enableEmbeddedLiveAiFallback')));
+    expect(startup, isNot(contains('prepareGeneratedSinhalaFile(')));
   });
 
-  test('preflight warmup cannot masquerade as real playback', () {
+  test('preflight cannot masquerade as real playback', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(player, contains('bool _preflightWarmup = false;'));
@@ -51,13 +57,18 @@ void main() {
     final stop = player.indexOf('await widget.playback.stop();');
     expect(cancel, greaterThanOrEqualTo(0));
     expect(stop, greaterThan(cancel));
-    expect(player, contains('if (_closing ||'));
   });
 
-  test('AI fallback exposes the exact failure reason', () {
+  test('manual online subtitle translation exists as a recovery path', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    expect(player, contains('content: Text(_aiPreflightMessage)'));
-    expect(player, contains('_aiPreflightMessage.trim().isEmpty'));
+    expect(
+      player,
+      contains('Future<void> _activateAiSinhalaFromOnlineSubtitle('),
+    );
+    expect(
+      player,
+      contains("'Translate this subtitle to Sinhala'"),
+    );
   });
 }
