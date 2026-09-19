@@ -739,11 +739,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
     _positionSubscription ??=
         widget.playback.player.stream.position.listen(_onPosition);
-    _subtitleTimingSubscription ??=
-        widget.playback.player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
+    _timingTrackSelected = false;
+    _timingTrackIsText = false;
     await _loadManualSync();
     if (!mounted) return;
-    await _ensureEnglishTimingTrack();
     _refreshAiSubtitle();
   }
 
@@ -843,9 +842,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
 
     if (_aiSinhalaEnabled) {
+      // Strict exact-file mode has the complete Sinhala timeline before
+      // playback starts. A seek only changes the lookup position; it must not
+      // reselect subtitle tracks or launch network translation work.
       _refreshAiSubtitle();
-      unawaited(_ensureEnglishTimingTrack());
-      unawaited(_ensureAiTranslationNear(target));
     }
   }
 
@@ -1080,13 +1080,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
       setState(() => _aiDisplaySubtitle = next);
     }
 
-    final cueIndex = prepared.cueIndexNear(adjusted);
-    if (cueIndex < 0) return;
-    final bucket = cueIndex ~/ 12;
-    if (bucket != _lastAiPrefetchBucket) {
-      _lastAiPrefetchBucket = bucket;
-      unawaited(_ensureAiTranslationNear(adjusted, bucket: bucket));
-    }
+    // Exact-file alpha.16 translates every cue before playback, so position
+    // updates are pure in-memory lookups. No background translation or subtitle
+    // track switching is allowed during playback.
   }
 
   Future<void> _ensureAiTranslationNear(
@@ -1556,11 +1552,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
 
     if (_desktop) {
-      return (base * heightScale * 1.30).clamp(26.0, 54.0).toDouble();
+      return (base * heightScale * 1.08).clamp(24.0, 44.0).toDouble();
     }
 
     // Android TV / large-screen Android.
-    return (base * heightScale * 1.18).clamp(22.0, 48.0).toDouble();
+    return (base * heightScale * 1.10).clamp(22.0, 44.0).toDouble();
   }
 
   Widget _aiSubtitleOverlay() {
