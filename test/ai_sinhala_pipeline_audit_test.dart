@@ -13,10 +13,10 @@ void main() {
     expect(player, contains('bool get _aiSubtitleLoading => _aiState.loading;'));
 
     // Assignment only (single '='); comparisons such as '== false' are allowed.
-    expect(RegExp(r'_aiSinhalaRequested\s*=(?!=)').allMatches(player), isEmpty);
-    expect(RegExp(r'_aiSinhalaEnabled\s*=(?!=)').allMatches(player), isEmpty);
-    expect(RegExp(r'_liveAiFallback\s*=(?!=)').allMatches(player), isEmpty);
-    expect(RegExp(r'_aiSubtitleLoading\s*=(?!=)').allMatches(player), isEmpty);
+    expect(RegExp(r'_aiSinhalaRequested\s*=(?![=>])').allMatches(player), isEmpty);
+    expect(RegExp(r'_aiSinhalaEnabled\s*=(?![=>])').allMatches(player), isEmpty);
+    expect(RegExp(r'_liveAiFallback\s*=(?![=>])').allMatches(player), isEmpty);
+    expect(RegExp(r'_aiSubtitleLoading\s*=(?![=>])').allMatches(player), isEmpty);
   });
 
   test('embedded mismatch has a reachable recovery path', () {
