@@ -504,119 +504,216 @@ class _TvSourceTileState extends State<_TvSourceTile> {
   @override
   Widget build(BuildContext context) {
     final source = widget.source;
-    final titleParts = source.title.split('\n');
-    final release = titleParts.isEmpty ? source.title : titleParts.last.trim();
     final focus = Theme.of(context).colorScheme.primary;
+    final combined =
+        '${source.title} ${source.fileNameHint ?? ''}'.toLowerCase();
+    final fileName = source.fileNameHint?.trim().isNotEmpty == true
+        ? source.fileNameHint!.trim()
+        : source.title.split('\\n').last.trim();
+
+    String? codec;
+    if (RegExp(r'\\b(?:x265|h[ ._-]?265|hevc)\\b').hasMatch(combined)) {
+      codec = 'HEVC';
+    } else if (RegExp(r'\\b(?:x264|h[ ._-]?264|avc)\\b')
+        .hasMatch(combined)) {
+      codec = 'AVC';
+    } else if (RegExp(r'\\b(?:av1|av01)\\b').hasMatch(combined)) {
+      codec = 'AV1';
+    }
+
+    final hdr = <String>[];
+    if (RegExp(r'\\b(?:dovi|dolby[ ._-]?vision|dv)\\b')
+        .hasMatch(combined)) {
+      hdr.add('DOLBY VISION');
+    }
+    if (RegExp(r'\\bhdr10\\+?\\b|\\bhdr\\b').hasMatch(combined)) {
+      hdr.add('HDR');
+    }
+
+    String? audio;
+    if (RegExp(r'\\bdts(?:-hd)?\\b').hasMatch(combined)) {
+      audio = 'DTS';
+    } else if (RegExp(r'\\btruehd\\b').hasMatch(combined)) {
+      audio = 'TRUEHD';
+    } else if (RegExp(r'\\b(?:ddp|eac3)\\b').hasMatch(combined)) {
+      audio = 'DD+';
+    } else if (RegExp(r'\\bac3\\b').hasMatch(combined)) {
+      audio = 'AC3';
+    } else if (RegExp(r'\\baac\\b').hasMatch(combined)) {
+      audio = 'AAC';
+    }
+
+    final heading = [
+      if (source.cached) '⚡',
+      source.provider,
+      source.quality ?? source.releaseQuality ?? 'Source',
+    ].join(' ');
+
+    final formatLine = [
+      if (source.releaseQuality != null) source.releaseQuality!,
+      if (codec != null) codec,
+      ...hdr,
+      if (audio != null) audio,
+    ].join('  •  ');
+
+    final statsLine = [
+      if (source.sizeLabel != null) source.sizeLabel!,
+      if (source.seeders != null) '👥 ${source.seeders}',
+      source.isMagnet ? 'P2P torrent' : 'Direct stream',
+      if (source.cached) 'Cached',
+    ].join('   •   ');
+
+    final badges = <String>[
+      if (source.quality != null) source.quality!.toUpperCase(),
+      if (source.releaseQuality != null) source.releaseQuality!.toUpperCase(),
+      if (codec != null) codec,
+      ...hdr,
+      if (audio != null) audio,
+      if (source.compatibilityFriendly) 'TV SAFE',
+    ].toSet().toList(growable: false);
 
     return AnimatedScale(
-      scale: _focused ? 1.012 : 1,
-      duration: const Duration(milliseconds: 110),
+      scale: _focused ? 1.008 : 1,
+      duration: const Duration(milliseconds: 100),
       curve: Curves.easeOutCubic,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 110),
-        curve: Curves.easeOutCubic,
-        height: 78,
+        constraints: const BoxConstraints(minHeight: 142),
         decoration: BoxDecoration(
-          color: _focused ? const Color(0xFF151E16) : const Color(0xFF0C120D),
-          borderRadius: BorderRadius.circular(18),
+          color:
+              _focused ? const Color(0xE52B302C) : const Color(0xC9222623),
+          borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: _focused ? focus : const Color(0xFF1B271D),
+            color: _focused
+                ? Colors.white.withValues(alpha: .94)
+                : const Color(0xFF343A36),
             width: _focused ? 2 : 1,
           ),
           boxShadow: _focused
               ? [
                   BoxShadow(
-                    color: focus.withValues(alpha: .18),
-                    blurRadius: 20,
-                    spreadRadius: 1,
+                    color: Colors.black.withValues(alpha: .35),
+                    blurRadius: 22,
+                    offset: const Offset(0, 8),
                   ),
                 ]
               : const [],
         ),
         child: InkWell(
           autofocus: widget.autofocus,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(20),
           focusColor: Colors.transparent,
           onFocusChange: (value) => setState(() => _focused = value),
           onTap: widget.onPlay,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+            padding: const EdgeInsets.fromLTRB(18, 15, 14, 14),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SizedBox(
-                  width: 86,
-                  child: Text(
-                    source.quality ?? source.releaseQuality ?? 'SOURCE',
-                    style: TextStyle(
-                      color: source.compatibilityFriendly
-                          ? focus
-                          : const Color(0xFFFFC56B),
-                      fontWeight: FontWeight.w900,
-                      fontSize: 15,
-                    ),
-                  ),
-                ),
                 Expanded(
-                  flex: 5,
                   child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        release,
+                        heading,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 14.5,
+                          color: Color(0xFFF1F3F1),
+                          fontSize: 15.5,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 7),
+                      Text(
+                        formatLine.isEmpty ? 'Stream source' : formatLine,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFFB6BCB7),
+                          fontSize: 12.3,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                       const SizedBox(height: 5),
                       Text(
-                        [
-                          source.provider,
-                          if (source.releaseQuality != null)
-                            source.releaseQuality!,
-                          if (source.cached) 'Cached',
-                          source.isMagnet ? 'P2P' : 'Direct',
-                        ].join('  •  '),
+                        statsLine,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: Color(0xFF8E9A90),
-                          fontSize: 11.5,
+                          color: Color(0xFFA8AEA9),
+                          fontSize: 12.1,
                           fontWeight: FontWeight.w600,
                         ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        fileName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF989F99),
+                          fontSize: 11.6,
+                        ),
+                      ),
+                      const SizedBox(height: 9),
+                      Wrap(
+                        spacing: 7,
+                        runSpacing: 5,
+                        children: [
+                          for (final badge in badges.take(6))
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xAA171B18),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: const Color(0xFF3B423D),
+                                ),
+                              ),
+                              child: Text(
+                                badge,
+                                style: TextStyle(
+                                  color: badge == 'TV SAFE'
+                                      ? focus
+                                      : const Color(0xFFCFD4D0),
+                                  fontSize: 10.2,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 16),
-                _MiniStat(
-                  icon: Icons.people_alt_outlined,
-                  text: source.seeders?.toString() ?? '—',
-                ),
-                const SizedBox(width: 18),
-                _MiniStat(
-                  icon: Icons.storage_rounded,
-                  text: _formatBytes(source.sizeBytes),
-                ),
-                const SizedBox(width: 14),
-                IconButton(
-                  tooltip: widget.pinned ? 'Unpin release' : 'Pin release',
-                  onPressed: widget.onPin,
-                  icon: Icon(
-                    widget.pinned
-                        ? Icons.star_rounded
-                        : Icons.star_border_rounded,
-                    color: widget.pinned ? focus : null,
-                  ),
-                ),
-                const SizedBox(width: 2),
-                Icon(
-                  Icons.play_circle_fill_rounded,
-                  color: _focused ? focus : const Color(0xFF6E786F),
-                  size: 30,
+                const SizedBox(width: 12),
+                Column(
+                  children: [
+                    IconButton(
+                      tooltip:
+                          widget.pinned ? 'Unpin release' : 'Pin release',
+                      onPressed: widget.onPin,
+                      icon: Icon(
+                        widget.pinned
+                            ? Icons.star_rounded
+                            : Icons.star_border_rounded,
+                        color: widget.pinned
+                            ? focus
+                            : const Color(0xFFBEC4BF),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Icon(
+                      Icons.play_circle_fill_rounded,
+                      size: 36,
+                      color:
+                          _focused ? focus : const Color(0xFF8E958F),
+                    ),
+                  ],
                 ),
               ],
             ),
