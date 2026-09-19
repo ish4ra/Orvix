@@ -334,9 +334,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
             children: [
               if (item.kind == MediaKind.movie)
                 FilledButton.icon(
-                  onPressed: _resolving ? null : () => _play(item),
+                  onPressed:
+                      _resolving ? null : () => _findSourcesAndPlay(item),
                   icon: const Icon(Icons.play_arrow_rounded),
-                  label: const Text('Play'),
+                  label: const Text('Choose source'),
                 ),
               if (item.kind == MediaKind.movie)
                 OutlinedButton.icon(
@@ -378,47 +379,68 @@ class _DetailsScreenState extends State<DetailsScreen> {
       ..sort((a, b) => a.episode.compareTo(b.episode));
 
     return Padding(
-      padding: const EdgeInsets.only(top: 18, bottom: 8),
+      padding: const EdgeInsets.only(top: 18, bottom: 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 42),
-            child: Row(
-              children: [
-                const Text(
-                  'Episodes',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: -.2,
-                  ),
-                ),
-                const Spacer(),
-                Wrap(
-                  spacing: 7,
-                  children: [
-                    for (final season in seasons)
-                      ChoiceChip(
-                        label: Text('S$season'),
-                        selected: season == selected,
-                        onSelected: (_) =>
-                            setState(() => _selectedSeason = season),
-                      ),
-                  ],
-                ),
-              ],
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 42),
+            child: Text(
+              'Seasons',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -.25,
+              ),
             ),
           ),
           const SizedBox(height: 12),
           SizedBox(
-            height: 168,
+            height: 48,
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 42),
+              scrollDirection: Axis.horizontal,
+              itemCount: seasons.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final season = seasons[index];
+                final active = season == selected;
+                return ChoiceChip(
+                  label: Text('Season $season'),
+                  selected: active,
+                  showCheckmark: false,
+                  labelStyle: TextStyle(
+                    fontSize: 14,
+                    fontWeight: active ? FontWeight.w900 : FontWeight.w700,
+                  ),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+                  onSelected: (_) => setState(() => _selectedSeason = season),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 20),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 42),
+            child: Text(
+              'Season $selected',
+              style: const TextStyle(
+                fontSize: 21,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -.2,
+              ),
+            ),
+          ),
+          const SizedBox(height: 13),
+          SizedBox(
+            height: 238,
             child: ListView.separated(
               padding: const EdgeInsets.symmetric(horizontal: 42, vertical: 5),
               scrollDirection: Axis.horizontal,
-              cacheExtent: 1000,
+              cacheExtent: 1400,
               itemCount: episodes.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              separatorBuilder: (_, __) => const SizedBox(width: 15),
               itemBuilder: (context, index) {
                 final episode = episodes[index];
                 return RepaintBoundary(
@@ -426,10 +448,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     episode: episode,
                     onPlay: _resolving
                         ? null
-                        : () => _play(item, episode: episode),
-                    onSources: _resolving
-                        ? null
-                        : () => _findSourcesAndPlay(item, episode: episode),
+                        : () => _findSourcesAndPlay(
+                              item,
+                              episode: episode,
+                            ),
                   ),
                 );
               },
@@ -2479,12 +2501,10 @@ class _TvEpisodeCard extends StatefulWidget {
   const _TvEpisodeCard({
     required this.episode,
     required this.onPlay,
-    required this.onSources,
   });
 
   final EpisodeItem episode;
   final VoidCallback? onPlay;
-  final VoidCallback? onSources;
 
   @override
   State<_TvEpisodeCard> createState() => _TvEpisodeCardState();
@@ -2493,100 +2513,177 @@ class _TvEpisodeCard extends StatefulWidget {
 class _TvEpisodeCardState extends State<_TvEpisodeCard> {
   bool _focused = false;
 
+  String? _dateLabel(EpisodeItem episode) {
+    final date = episode.releaseDate;
+    if (date == null) return null;
+    const months = <String>[
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${months[date.month - 1]} ${date.day}, ${date.year}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final episode = widget.episode;
     final primary = Theme.of(context).colorScheme.primary;
+    final overview = episode.overview?.replaceFirst(
+      RegExp(r'^★\\s*\\d+(?:\\.\\d+)?\\s*'),
+      '',
+    );
+    final date = _dateLabel(episode);
 
     return AnimatedScale(
-      scale: _focused ? 1.035 : 1,
+      scale: _focused ? 1.025 : 1,
       duration: const Duration(milliseconds: 110),
       curve: Curves.easeOutCubic,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 110),
-        width: 260,
+        width: 340,
         decoration: BoxDecoration(
-          color: _focused ? const Color(0xFF151D16) : const Color(0xFF0C120D),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: _focused ? primary : const Color(0xFF1D291F),
-            width: _focused ? 2 : 1,
+            color: _focused
+                ? Colors.white.withValues(alpha: .95)
+                : const Color(0xFF2A302C),
+            width: _focused ? 2.5 : 1,
           ),
           boxShadow: _focused
               ? [
                   BoxShadow(
-                    color: primary.withValues(alpha: .16),
+                    color: Colors.black.withValues(alpha: .44),
+                    blurRadius: 24,
+                    offset: const Offset(0, 9),
+                  ),
+                  BoxShadow(
+                    color: primary.withValues(alpha: .12),
                     blurRadius: 18,
                   ),
                 ]
               : const [],
         ),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          focusColor: Colors.transparent,
-          onFocusChange: (value) => setState(() => _focused = value),
-          onTap: widget.onPlay,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                height: 92,
-                width: double.infinity,
-                child: ClipRRect(
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(13),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(17),
+          child: Material(
+            color: const Color(0xFF111412),
+            child: InkWell(
+              focusColor: Colors.transparent,
+              onFocusChange: (value) => setState(() => _focused = value),
+              onTap: widget.onPlay,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (episode.thumbnail != null &&
+                      episode.thumbnail!.trim().isNotEmpty)
+                    CachedNetworkImage(
+                      imageUrl: episode.thumbnail!,
+                      fit: BoxFit.cover,
+                      memCacheWidth: 720,
+                      fadeInDuration: Duration.zero,
+                      placeholder: (_, __) =>
+                          const ColoredBox(color: Color(0xFF171B18)),
+                      errorWidget: (_, __, ___) =>
+                          const ColoredBox(color: Color(0xFF171B18)),
+                    )
+                  else
+                    const ColoredBox(color: Color(0xFF171B18)),
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0x00000000),
+                          Color(0x22000000),
+                          Color(0xE6070908),
+                        ],
+                        stops: [0, .44, 1],
+                      ),
+                    ),
                   ),
-                  child: episode.thumbnail == null
-                      ? const ColoredBox(
-                          color: Color(0xFF111812),
-                          child: Center(
-                            child: Icon(Icons.movie_outlined, size: 30),
+                  Positioned(
+                    left: 15,
+                    right: 15,
+                    bottom: 13,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
                           ),
-                        )
-                      : CachedNetworkImage(
-                          imageUrl: episode.thumbnail!,
-                          fit: BoxFit.cover,
-                          memCacheWidth: 520,
-                          fadeInDuration: Duration.zero,
-                          placeholder: (_, __) =>
-                              const ColoredBox(color: Color(0xFF111812)),
-                          errorWidget: (_, __, ___) => const ColoredBox(
-                            color: Color(0xFF111812),
-                            child: Center(
-                              child: Icon(Icons.movie_outlined),
+                          decoration: BoxDecoration(
+                            color: const Color(0x99000000),
+                            borderRadius: BorderRadius.circular(7),
+                          ),
+                          child: Text(
+                            'S${episode.season}E${episode.episode}',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
                             ),
                           ),
                         ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(11, 9, 8, 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '${episode.label}  ${episode.title}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w800,
+                        const SizedBox(height: 7),
+                        Text(
+                          episode.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
+                        if (overview != null && overview.trim().isNotEmpty) ...[
+                          const SizedBox(height: 5),
+                          Text(
+                            overview,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFFE0E4E1),
+                              fontSize: 12.2,
+                              height: 1.35,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                        if (date != null) ...[
+                          const SizedBox(height: 6),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              date,
+                              style: const TextStyle(
+                                color: Color(0xFFB5BBB6),
+                                fontSize: 10.8,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  Positioned(
+                    top: 10,
+                    right: 10,
+                    child: AnimatedOpacity(
+                      opacity: _focused ? 1 : .72,
+                      duration: const Duration(milliseconds: 100),
+                      child: Icon(
+                        Icons.play_circle_fill_rounded,
+                        size: 32,
+                        color: _focused
+                            ? primary
+                            : Colors.white.withValues(alpha: .84),
                       ),
                     ),
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      tooltip: 'Sources',
-                      onPressed: widget.onSources,
-                      icon: const Icon(
-                        Icons.travel_explore_rounded,
-                        size: 18,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
