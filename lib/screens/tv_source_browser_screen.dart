@@ -57,7 +57,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen>
 
   Future<void> _load() async {
     try {
-      final values = await Future.wait<Object>([
+      final values = await Future.wait<dynamic>([
         widget.resultsFuture,
         widget.sources.getPriorityOrder(),
         widget.sources.getResultLimit(),
