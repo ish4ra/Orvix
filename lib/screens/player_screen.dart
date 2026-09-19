@@ -195,9 +195,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       if (mounted && !_subtitleChoiceOverridden) {
         setState(() {
-          _aiSinhalaRequested = aiPreferred;
-          _aiSinhalaEnabled = aiReady;
-          _aiSubtitleLoading = aiPreferred && !aiReady;
+          _transitionAi(
+            aiReady
+                ? AiSinhalaRuntimeMode.prepared
+                : aiPreferred
+                    ? AiSinhalaRuntimeMode.preparing
+                    : AiSinhalaRuntimeMode.native,
+          );
           _aiSubtitleUnavailable = false;
           _aiPreflightMessage =
               aiPreferred && !aiReady ? 'Opening video paused for AI Sinhala…' : '';
@@ -239,9 +243,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
         if (!aiReady && mounted && !_closing) {
           setState(() {
-            _aiSinhalaRequested = false;
-            _aiSinhalaEnabled = false;
-            _aiSubtitleLoading = false;
+            _transitionAi(AiSinhalaRuntimeMode.native);
             _aiSubtitleUnavailable = true;
             _aiDisplaySubtitle = '';
             if (_aiPreflightMessage.trim().isEmpty) {
@@ -307,7 +309,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _aiSubtitleLoading = false;
+          _transitionAi(AiSinhalaRuntimeMode.native);
           _error = e.toString();
         });
       }
@@ -388,7 +390,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (widget.item == null) {
       if (mounted) {
         setState(() {
-          _aiSubtitleLoading = false;
           _aiSubtitleUnavailable = true;
           _aiPreflightMessage =
               'AI Sinhala needs title metadata for this video.';
@@ -398,8 +399,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
 
     setState(() {
-      _aiSinhalaRequested = true;
-      _aiSubtitleLoading = true;
+      _transitionAi(AiSinhalaRuntimeMode.preparing);
       _aiSubtitleUnavailable = false;
       _aiPreflightMessage = 'Checking the video for an embedded English track…';
     });
@@ -432,9 +432,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (!mounted || _closing || _subtitleChoiceOverridden) return false;
       if (prepared == null) {
         setState(() {
-          _aiSubtitleLoading = false;
+          _transitionAi(AiSinhalaRuntimeMode.native);
           _aiSubtitleUnavailable = true;
-          _aiSinhalaEnabled = false;
           _aiDisplaySubtitle = '';
           _aiPreflightMessage =
               'No safe AI Sinhala timing source was found. Using native subtitles.';
@@ -445,10 +444,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       setState(() {
         _preparedAiSubtitle = prepared;
-        _aiSinhalaRequested = true;
-        _aiSinhalaEnabled = true;
-        _liveAiFallback = false;
-        _aiSubtitleLoading = false;
+        _transitionAi(AiSinhalaRuntimeMode.prepared);
         _aiSubtitleUnavailable = false;
         _aiPreflightMessage = 'AI Sinhala ready.';
         _lastAiPrefetchBucket = -1;
@@ -467,9 +463,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     } catch (error) {
       if (!mounted || _closing || _subtitleChoiceOverridden) return false;
       setState(() {
-        _aiSubtitleLoading = false;
+        _transitionAi(AiSinhalaRuntimeMode.native);
         _aiSubtitleUnavailable = true;
-        _aiSinhalaEnabled = false;
         _aiDisplaySubtitle = '';
         _aiPreflightMessage =
             'AI Sinhala could not prepare safely. Using native subtitles.';
@@ -483,8 +478,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _nativeSubtitleClockTimer?.cancel();
     _timingTrackSelected = false;
     _timingTrackIsText = false;
-    _liveAiFallback = false;
     _liveCueGeneration++;
+    if (mounted && _aiState.mode != AiSinhalaRuntimeMode.native) {
+      setState(() => _transitionAi(AiSinhalaRuntimeMode.native));
+    }
     // media_kit's Flutter SubtitleView is the only visible native-language
     // subtitle renderer. Keep libmpv's OSD subtitle rendering off or the same
     // cue is drawn twice (one Flutter layer + one mpv layer).
@@ -528,10 +525,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _liveTranslationFailures = 0;
     setState(() {
       _preparedAiSubtitle = null;
-      _aiSinhalaRequested = true;
-      _aiSinhalaEnabled = true;
-      _liveAiFallback = true;
-      _aiSubtitleLoading = false;
+      _transitionAi(AiSinhalaRuntimeMode.liveEmbedded);
       _aiSubtitleUnavailable = false;
       _aiDisplaySubtitle = '';
       _aiPreflightMessage =
@@ -591,7 +585,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (chosen != null) {
         _timingTrackSelected = true;
         _timingTrackIsText = true;
-        _liveAiFallback = false;
         _liveCueGeneration++;
         _liveDialogueContext.clear();
         await _hideNativeTimingSubtitle();
@@ -599,7 +592,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         try {
           if (mounted) {
             setState(() {
-              _aiSubtitleLoading = true;
+              _transitionAi(AiSinhalaRuntimeMode.preparing);
               _aiSubtitleUnavailable = false;
               _aiDisplaySubtitle = '';
             });
@@ -624,10 +617,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
           setState(() {
             _preparedAiSubtitle = prepared;
-            _aiSinhalaRequested = true;
-            _aiSinhalaEnabled = true;
-            _liveAiFallback = false;
-            _aiSubtitleLoading = false;
+            _transitionAi(AiSinhalaRuntimeMode.prepared);
             _aiSubtitleUnavailable = false;
             _aiPreflightMessage = 'Embedded-timed AI Sinhala ready.';
             _lastAiPrefetchBucket = -1;
@@ -710,9 +700,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _liveCueGeneration++;
     if (mounted) {
       setState(() {
-        _aiSinhalaRequested = false;
-        _aiSinhalaEnabled = false;
-        _liveAiFallback = false;
+        _transitionAi(AiSinhalaRuntimeMode.native);
         _aiDisplaySubtitle = '';
       });
     }
@@ -747,9 +735,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await _setNativeSubtitleVisibility(false);
     if (!mounted) return;
     setState(() {
-      _aiSinhalaRequested = true;
-      _aiSinhalaEnabled = true;
-      _liveAiFallback = false;
+      _transitionAi(AiSinhalaRuntimeMode.prepared);
       _lastAiPrefetchBucket = -1;
     });
     _positionSubscription ??=
@@ -1485,9 +1471,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           _aiPreflightMessage =
               'AI translation service is unavailable — using English subtitles.';
           _aiSubtitleUnavailable = true;
-          _aiSinhalaRequested = false;
-          _aiSinhalaEnabled = false;
-          _liveAiFallback = false;
+          _transitionAi(AiSinhalaRuntimeMode.native);
           _aiDisplaySubtitle = '';
         });
         await _restoreNativeSubtitleFallback();
