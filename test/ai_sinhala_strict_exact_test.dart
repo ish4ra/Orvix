@@ -3,38 +3,28 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('generated-file mode preserves whole-file translation and SRT output', () {
+  test('selected-subtitle mode preserves timestamps and writes a complete SRT', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
     final start = service.indexOf(
-      'static Future<AiGeneratedSubtitleFile> prepareGeneratedSinhalaFile',
+      'prepareGeneratedSinhalaFromOnlineSubtitle',
     );
     final end = service.indexOf(
-      'static Future<AiPreparedSubtitle?> prepareExactFileFully',
+      'static Future<AiGeneratedSubtitleFile> prepareGeneratedSinhalaFile',
       start,
     );
     expect(start, greaterThanOrEqualTo(0));
     expect(end, greaterThan(start));
     final generated = service.substring(start, end);
 
-    expect(generated, contains('_fetchEmbeddedEnglishSubtitle(videoUrl)'));
+    expect(generated, contains('_downloadSubtitle(cleanUrl)'));
+    expect(generated, contains('_parseSubtitle(text)'));
     expect(generated, contains('_translateEntireSubtitle('));
     expect(generated, contains('_writeGeneratedSrt('));
-    expect(generated, contains('_fetchExactRestSubtitle('));
-    expect(generated, contains('_generatedSubtitleCacheVersion'));
-    expect(generated, contains('subtitle_cache'));
-  });
-
-  test('embedded extraction is guarded against the wrong pack episode', () {
-    final service =
-        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
-
-    expect(service, contains('_parseLocalP2pFileIdentity'));
-    expect(service, contains('_guessStreamServerPrimaryVideoIndex'));
     expect(
-      service,
-      contains('extractorFileIndex != identity.fileIndex'),
+      generated,
+      contains('prepared.translatedCount != prepared.cues.length'),
     );
   });
 
@@ -49,7 +39,10 @@ void main() {
     expect(end, greaterThan(start));
     final prepare = player.substring(start, end);
 
-    expect(prepare, contains('prepareGeneratedSinhalaFile('));
+    expect(
+      prepare,
+      contains('prepareGeneratedSinhalaFromOnlineSubtitle('),
+    );
     expect(prepare, contains('mk.SubtitleTrack.uri('));
     expect(prepare, contains("language: 'si'"));
     expect(prepare, contains('_transitionAi(AiSinhalaRuntimeMode.native)'));
