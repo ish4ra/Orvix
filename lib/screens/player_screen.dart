@@ -635,6 +635,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         // never used as the subtitle clock; native cue events remain final.
         videoHash: widget.expectedVideoHash,
         preferredLanguage: 'eng',
+        includeTranscriptFallbacks: true,
       );
 
       final prepared = await AiSinhalaSubtitleService
