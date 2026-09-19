@@ -557,7 +557,7 @@ class _HomeData {
 }
 
 
-class _TvHomeView extends StatefulWidget {
+class _TvHomeView extends StatelessWidget {
   const _TvHomeView({
     required this.data,
     required this.onOpen,
@@ -567,258 +567,236 @@ class _TvHomeView extends StatefulWidget {
   final ValueChanged<MediaItem> onOpen;
 
   @override
-  State<_TvHomeView> createState() => _TvHomeViewState();
-}
-
-class _TvHomeViewState extends State<_TvHomeView> {
-  MediaItem? _spotlight;
-
-  MediaItem? get spotlight => _spotlight ?? widget.data.hero;
-
-  void _focus(MediaItem item, bool focused) {
-    if (!focused || identical(_spotlight, item)) return;
-    setState(() => _spotlight = item);
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final item = spotlight;
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        _TvBackdrop(item: item),
-        ListView(
-          key: const PageStorageKey('orvix-tv-home'),
-          padding: const EdgeInsets.only(bottom: 46),
-          cacheExtent: 1200,
-          children: [
-            SizedBox(
-              height: 292,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(34, 34, 34, 12),
-                child: Align(
-                  alignment: Alignment.bottomLeft,
-                  child: _TvSpotlightInfo(
-                    item: item,
-                    onOpen: item == null ? null : () => widget.onOpen(item),
-                  ),
-                ),
+    final hero = data.hero;
+    return ColoredBox(
+      color: const Color(0xFF080A09),
+      child: ListView(
+        key: const PageStorageKey('orvix-tv-home-v2'),
+        cacheExtent: 1500,
+        padding: const EdgeInsets.only(bottom: 54),
+        children: [
+          if (hero != null)
+            _TvFeaturedHero(
+              item: hero,
+              onOpen: () => onOpen(hero),
+            ),
+          if (data.continueWatching.isNotEmpty)
+            _TvContinueLandscapeRail(
+              items: data.continueWatching,
+              onOpen: (entry) => onOpen(entry.item),
+            ),
+          for (final section in data.sections)
+            if (section != HomeSectionId.continueWatching)
+              _TvPosterShelf(
+                title: section.label,
+                items: data.items(section),
+                onOpen: onOpen,
               ),
-            ),
-            if (widget.data.continueWatching.isNotEmpty)
-              _TvContinueRail(
-                items: widget.data.continueWatching,
-                onOpen: (entry) => widget.onOpen(entry.item),
-                onFocus: (entry, focused) => _focus(entry.item, focused),
-              ),
-            for (final section in widget.data.sections)
-              if (section != HomeSectionId.continueWatching)
-                _TvMediaRail(
-                  title: section.label,
-                  items: widget.data.items(section),
-                  onOpen: widget.onOpen,
-                  onFocus: _focus,
-                ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _TvBackdrop extends StatelessWidget {
-  const _TvBackdrop({required this.item});
-
-  final MediaItem? item;
-
-  @override
-  Widget build(BuildContext context) {
-    final url = item?.background;
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 260),
-          switchInCurve: Curves.easeOutCubic,
-          switchOutCurve: Curves.easeInCubic,
-          child: url == null || url.isEmpty
-              ? const ColoredBox(
-                  key: ValueKey('tv-backdrop-empty'),
-                  color: Color(0xFF050806),
-                )
-              : CachedNetworkImage(
-                  key: ValueKey(url),
-                  imageUrl: url,
-                  fit: BoxFit.cover,
-                  alignment: Alignment.topCenter,
-                  fadeInDuration: Duration.zero,
-                  memCacheWidth: 1280,
-                  placeholder: (_, __) =>
-                      const ColoredBox(color: Color(0xFF080D09)),
-                  errorWidget: (_, __, ___) =>
-                      const ColoredBox(color: Color(0xFF080D09)),
-                ),
-        ),
-        const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Color(0x22000000),
-                Color(0x99050806),
-                Color(0xFF050806),
-              ],
-              stops: [0, .46, .74],
-            ),
-          ),
-        ),
-        const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
-              colors: [
-                Color(0xE6050806),
-                Color(0x77050806),
-                Color(0x00050806),
-              ],
-              stops: [0, .46, .82],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _TvSpotlightInfo extends StatelessWidget {
-  const _TvSpotlightInfo({
-    required this.item,
-    required this.onOpen,
-  });
-
-  final MediaItem? item;
-  final VoidCallback? onOpen;
-
-  @override
-  Widget build(BuildContext context) {
-    final current = item;
-    if (current == null) return const SizedBox.shrink();
-
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 180),
-      child: SizedBox(
-        key: ValueKey(current.id),
-        width: 570,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              current.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 31,
-                height: 1.05,
-                fontWeight: FontWeight.w900,
-                letterSpacing: -.7,
-              ),
-            ),
-            const SizedBox(height: 9),
-            Text(
-              [
-                current.typeLabel,
-                if (current.year != null) current.year!,
-                if (current.rating != null)
-                  '★ ${current.rating!.toStringAsFixed(1)}',
-                if (current.runtime != null) current.runtime!,
-              ].join('   •   '),
-              style: const TextStyle(
-                color: Color(0xFFB7C1B9),
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            if (current.description != null &&
-                current.description!.trim().isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Text(
-                current.description!,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFFD5DBD6),
-                  height: 1.4,
-                  fontSize: 13.5,
-                ),
-              ),
-            ],
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              autofocus: false,
-              onPressed: onOpen,
-              icon: const Icon(Icons.play_arrow_rounded),
-              label: const Text('View & Play'),
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }
 }
 
-class _TvMediaRail extends StatelessWidget {
-  const _TvMediaRail({
+class _TvFeaturedHero extends StatelessWidget {
+  const _TvFeaturedHero({
+    required this.item,
+    required this.onOpen,
+  });
+
+  final MediaItem item;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final backdrop = item.background;
+    return SizedBox(
+      height: 390,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (backdrop != null && backdrop.isNotEmpty)
+            CachedNetworkImage(
+              imageUrl: backdrop,
+              fit: BoxFit.cover,
+              alignment: Alignment.centerRight,
+              memCacheWidth: 1280,
+              fadeInDuration: Duration.zero,
+              placeholder: (_, __) =>
+                  const ColoredBox(color: Color(0xFF0B0E0C)),
+              errorWidget: (_, __, ___) =>
+                  const ColoredBox(color: Color(0xFF0B0E0C)),
+            )
+          else
+            const ColoredBox(color: Color(0xFF0B0E0C)),
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [
+                  Color(0xFF080A09),
+                  Color(0xF5080A09),
+                  Color(0x88080A09),
+                  Color(0x08080A09),
+                ],
+                stops: [0, .28, .60, 1],
+              ),
+            ),
+          ),
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0x10000000),
+                  Color(0x22000000),
+                  Color(0xFF080A09),
+                ],
+                stops: [0, .70, 1],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(42, 44, 42, 36),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 570),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 40,
+                        height: 1.0,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -1.0,
+                      ),
+                    ),
+                    const SizedBox(height: 13),
+                    Text(
+                      [
+                        item.typeLabel,
+                        if (item.year != null) item.year!,
+                        if (item.rating != null)
+                          '★ ${item.rating!.toStringAsFixed(1)}',
+                        if (item.runtime != null) item.runtime!,
+                        ...item.genres.take(2),
+                      ].join('   •   '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFFC8CECA),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (item.description?.trim().isNotEmpty == true) ...[
+                      const SizedBox(height: 13),
+                      Text(
+                        item.description!,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFFE0E4E1),
+                          fontSize: 14,
+                          height: 1.45,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    FilledButton.icon(
+                      autofocus: true,
+                      onPressed: onOpen,
+                      icon: const Icon(Icons.play_arrow_rounded),
+                      label: const Text('Open'),
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 15,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TvPosterShelf extends StatelessWidget {
+  const _TvPosterShelf({
     required this.title,
     required this.items,
     required this.onOpen,
-    required this.onFocus,
   });
 
   final String title;
   final List<MediaItem> items;
   final ValueChanged<MediaItem> onOpen;
-  final void Function(MediaItem item, bool focused) onFocus;
 
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.only(top: 22),
+      padding: const EdgeInsets.only(top: 8, bottom: 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 34),
-            child: Text(
-              title,
-              style: const TextStyle(
-                fontSize: 18.5,
-                fontWeight: FontWeight.w900,
-                letterSpacing: -.15,
-              ),
+            padding: const EdgeInsets.symmetric(horizontal: 42),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -.2,
+                    ),
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFF8E9690),
+                  size: 24,
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 11),
+          const SizedBox(height: 10),
           SizedBox(
-            height: 230,
+            height: 252,
             child: ListView.separated(
-              padding: const EdgeInsets.symmetric(horizontal: 34, vertical: 7),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 42,
+                vertical: 8,
+              ),
               scrollDirection: Axis.horizontal,
-              cacheExtent: 1400,
+              cacheExtent: 1500,
               itemCount: items.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              separatorBuilder: (_, __) => const SizedBox(width: 13),
               itemBuilder: (context, index) {
                 final item = items[index];
                 return RepaintBoundary(
                   child: MediaCard(
                     item: item,
-                    width: 126,
+                    width: 142,
                     compact: true,
-                    focusScale: 1.065,
-                    onFocusChanged: (focused) => onFocus(item, focused),
+                    focusScale: 1.055,
+                    autofocus: false,
                     onTap: () => onOpen(item),
                   ),
                 );
@@ -831,75 +809,178 @@ class _TvMediaRail extends StatelessWidget {
   }
 }
 
-class _TvContinueRail extends StatelessWidget {
-  const _TvContinueRail({
+class _TvContinueLandscapeRail extends StatelessWidget {
+  const _TvContinueLandscapeRail({
     required this.items,
     required this.onOpen,
-    required this.onFocus,
   });
 
   final List<ContinueWatchingEntry> items;
   final ValueChanged<ContinueWatchingEntry> onOpen;
-  final void Function(ContinueWatchingEntry entry, bool focused) onFocus;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.only(top: 8, bottom: 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 34),
+            padding: EdgeInsets.symmetric(horizontal: 42),
             child: Text(
               'Continue Watching',
               style: TextStyle(
-                fontSize: 18.5,
+                fontSize: 20,
                 fontWeight: FontWeight.w900,
-                letterSpacing: -.15,
+                letterSpacing: -.2,
               ),
             ),
           ),
-          const SizedBox(height: 11),
+          const SizedBox(height: 12),
           SizedBox(
-            height: 244,
+            height: 174,
             child: ListView.separated(
-              padding: const EdgeInsets.symmetric(horizontal: 34, vertical: 7),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 42,
+                vertical: 6,
+              ),
               scrollDirection: Axis.horizontal,
-              cacheExtent: 1100,
+              cacheExtent: 1200,
               itemCount: items.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              separatorBuilder: (_, __) => const SizedBox(width: 13),
               itemBuilder: (context, index) {
                 final entry = items[index];
-                return SizedBox(
-                  width: 126,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      MediaCard(
-                        item: entry.item,
-                        width: 126,
-                        compact: true,
-                        focusScale: 1.065,
-                        onFocusChanged: (focused) => onFocus(entry, focused),
-                        onTap: () => onOpen(entry),
-                      ),
-                      const SizedBox(height: 5),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(99),
-                        child: LinearProgressIndicator(
-                          minHeight: 3,
-                          value: entry.progress,
-                          backgroundColor: const Color(0xFF1B241C),
-                        ),
-                      ),
-                    ],
+                return RepaintBoundary(
+                  child: _TvContinueCard(
+                    entry: entry,
+                    onTap: () => onOpen(entry),
                   ),
                 );
               },
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _TvContinueCard extends StatefulWidget {
+  const _TvContinueCard({
+    required this.entry,
+    required this.onTap,
+  });
+
+  final ContinueWatchingEntry entry;
+  final VoidCallback onTap;
+
+  @override
+  State<_TvContinueCard> createState() => _TvContinueCardState();
+}
+
+class _TvContinueCardState extends State<_TvContinueCard> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final entry = widget.entry;
+    final item = entry.item;
+    final image = item.background ?? item.poster;
+    final primary = Theme.of(context).colorScheme.primary;
+
+    return AnimatedScale(
+      scale: _focused ? 1.025 : 1,
+      duration: const Duration(milliseconds: 110),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 110),
+        width: 270,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: _focused
+                ? Colors.white.withValues(alpha: .92)
+                : const Color(0xFF2A302C),
+            width: _focused ? 2.2 : 1,
+          ),
+          boxShadow: _focused
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: .35),
+                    blurRadius: 20,
+                    offset: const Offset(0, 8),
+                  ),
+                ]
+              : const [],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(15),
+          child: Material(
+            color: const Color(0xFF141815),
+            child: InkWell(
+              focusColor: Colors.transparent,
+              onFocusChange: (value) => setState(() => _focused = value),
+              onTap: widget.onTap,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (image != null && image.isNotEmpty)
+                    CachedNetworkImage(
+                      imageUrl: image,
+                      fit: BoxFit.cover,
+                      memCacheWidth: 600,
+                      fadeInDuration: Duration.zero,
+                      placeholder: (_, __) =>
+                          const ColoredBox(color: Color(0xFF151A16)),
+                      errorWidget: (_, __, ___) =>
+                          const ColoredBox(color: Color(0xFF151A16)),
+                    ),
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0x00000000),
+                          Color(0x33000000),
+                          Color(0xE6000000),
+                        ],
+                        stops: [0, .55, 1],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 12,
+                    right: 12,
+                    bottom: 14,
+                    child: Text(
+                      item.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 12,
+                    right: 12,
+                    bottom: 7,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(99),
+                      child: LinearProgressIndicator(
+                        minHeight: 3,
+                        value: entry.progress,
+                        backgroundColor: Colors.white.withValues(alpha: .18),
+                        color: _focused ? primary : const Color(0xFFB9FF45),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -923,7 +1004,7 @@ class _TvHomeSkeletonState extends State<_TvHomeSkeleton>
       vsync: this,
       duration: const Duration(milliseconds: 900),
       lowerBound: .42,
-      upperBound: .86,
+      upperBound: .82,
     )..repeat(reverse: true);
   }
 
@@ -939,55 +1020,41 @@ class _TvHomeSkeletonState extends State<_TvHomeSkeleton>
       opacity: _pulse,
       child: ListView(
         physics: const NeverScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(34, 42, 0, 28),
+        padding: const EdgeInsets.only(bottom: 30),
         children: [
           Container(
-            width: 430,
-            height: 28,
-            margin: const EdgeInsets.only(right: 440),
-            decoration: BoxDecoration(
-              color: const Color(0xFF182019),
-              borderRadius: BorderRadius.circular(10),
-            ),
+            height: 380,
+            color: const Color(0xFF111512),
           ),
-          const SizedBox(height: 14),
-          Container(
-            height: 14,
-            margin: const EdgeInsets.only(right: 610),
-            decoration: BoxDecoration(
-              color: const Color(0xFF131A14),
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-          const SizedBox(height: 128),
+          const SizedBox(height: 18),
           for (var row = 0; row < 3; row++) ...[
             Container(
-              width: 170,
-              height: 16,
-              margin: const EdgeInsets.only(right: 680),
+              height: 18,
+              margin: const EdgeInsets.only(left: 42, right: 920),
               decoration: BoxDecoration(
-                color: const Color(0xFF171F18),
+                color: const Color(0xFF1A201B),
                 borderRadius: BorderRadius.circular(8),
               ),
             ),
             const SizedBox(height: 12),
             SizedBox(
-              height: 194,
+              height: 220,
               child: ListView.separated(
                 physics: const NeverScrollableScrollPhysics(),
+                padding: const EdgeInsets.symmetric(horizontal: 42),
                 scrollDirection: Axis.horizontal,
                 itemCount: 7,
-                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                separatorBuilder: (_, __) => const SizedBox(width: 13),
                 itemBuilder: (_, __) => Container(
-                  width: 126,
+                  width: 142,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF111812),
-                    borderRadius: BorderRadius.circular(11),
+                    color: const Color(0xFF141915),
+                    borderRadius: BorderRadius.circular(13),
                   ),
                 ),
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 18),
           ],
         ],
       ),
