@@ -44,6 +44,64 @@ jobs:
           set -euo pipefail
           flutter test
 
+      - name: Smoke test deployed AI Sinhala backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="$(python3 - <<'PY'
+          import re
+          text = open("lib/services/ai_sinhala_subtitle_service.dart", encoding="utf-8").read()
+          match = re.search(r"static const _guestFunctionJwt\s*=\s*'([^']+)'", text, re.S)
+          if not match:
+              raise SystemExit("guest function JWT not found")
+          print(match.group(1))
+          PY
+          )"
+          RESPONSE="$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            --url 'https://kpjuisxofwqxhbnnsyzf.supabase.co/functions/v1/translate-subtitle-si' \
+            --header "Authorization: Bearer $TOKEN" \
+            --header "apikey: $TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data '{"title":"Orvix CI","text":"You are telling me you are just going to walk out of here","context":[]}')"
+          printf '%s' "$RESPONSE" | python3 -c '
+          import json, re, sys
+          data = json.load(sys.stdin)
+          text = str(data.get("translation", "")).strip()
+          if not re.search(r"[\u0D80-\u0DFF]", text):
+              raise SystemExit(f"AI backend did not return Sinhala: {data}")
+          '
+
+      - name: Smoke test OpenSubtitles REST backend wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="$(python3 - <<'PY'
+          import re
+          text = open("lib/services/ai_sinhala_subtitle_service.dart", encoding="utf-8").read()
+          match = re.search(r"static const _guestFunctionJwt\s*=\s*'([^']+)'", text, re.S)
+          if not match:
+              raise SystemExit("guest function JWT not found")
+          print(match.group(1))
+          PY
+          )"
+          STATUS="$(curl --silent --show-error \
+            --output /tmp/opensubtitles-smoke.json \
+            --write-out '%{http_code}' \
+            --request POST \
+            --url 'https://kpjuisxofwqxhbnnsyzf.supabase.co/functions/v1/opensubtitles-exact' \
+            --header "Authorization: Bearer $TOKEN" \
+            --header "apikey: $TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data '{"moviehash":"0000000000000000","moviebytesize":1000000000,"language":"en"}')"
+          # 404 means the deliberately fake fingerprint had no exact match.
+          # 200 is also acceptable in the extremely unlikely event it matches.
+          if [ "$STATUS" != "200" ] && [ "$STATUS" != "404" ]; then
+            cat /tmp/opensubtitles-smoke.json
+            echo "Unexpected OpenSubtitles backend status: $STATUS" >&2
+            exit 1
+          fi
+
   android-native:
     name: Prepare Android P2P engine
     needs: validate
