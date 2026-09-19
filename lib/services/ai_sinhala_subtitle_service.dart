@@ -429,7 +429,7 @@ class AiSinhalaSubtitleService {
     final parts = uri.pathSegments;
     for (var i = 0; i + 1 < parts.length; i++) {
       final hash = parts[i].toLowerCase();
-      if (!RegExp(r'^[0-9a-f]{40}\$').hasMatch(hash)) continue;
+      if (!RegExp(r'^[0-9a-f]{40}$').hasMatch(hash)) continue;
       final index = int.tryParse(parts[i + 1]);
       if (index == null || index < 0) return null;
       return _LocalP2pFileIdentity(infoHash: hash, fileIndex: index);
@@ -442,7 +442,7 @@ class AiSinhalaSubtitleService {
     String infoHash,
   ) async {
     final endpoint = videoUri.replace(
-      path: '/\$infoHash/create',
+      path: '/$infoHash/create',
       query: '',
       fragment: '',
     );
@@ -472,8 +472,8 @@ class AiSinhalaSubtitleService {
     final label = rawLabel.toLowerCase();
     var score = 0;
     if (label.contains('english')) score += 120;
-    if (RegExp(r'(^|[^a-z])eng([^a-z]|\$)').hasMatch(label)) score += 110;
-    if (RegExp(r'(^|[^a-z])en([^a-z]|\$)').hasMatch(label)) score += 80;
+    if (RegExp(r'(^|[^a-z])eng([^a-z]|$)').hasMatch(label)) score += 110;
+    if (RegExp(r'(^|[^a-z])en([^a-z]|$)').hasMatch(label)) score += 80;
     if (label.contains('.en.') ||
         label.contains('_en.') ||
         label.contains('-en.')) {
