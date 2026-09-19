@@ -39,11 +39,12 @@ void main() {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
-    expect(service, contains('int matchSourceCueIndex('));
+    expect(service, contains('({int index, int count})? matchSourceCueRange('));
     expect(service, contains('previousIndex + 180'));
     expect(service, contains('previousIndex - 3'));
+    expect(service, contains('count <= 3'));
     expect(service, contains('if (previousIndex >= 0)'));
-    expect(service, contains('_normalizeCue(cues[i].source) == target'));
+    expect(service, contains('combined == target'));
   });
 
   test('automatic native mode has no exact-hash or external-SRT fallback', () {
