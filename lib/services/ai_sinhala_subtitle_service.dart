@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
@@ -2342,7 +2343,7 @@ class AiSinhalaSubtitleService {
   static Future<String> _downloadSubtitle(String url) async {
     final response = await _httpGetWithRetry(
       Uri.parse(url),
-      timeout: const Duration(seconds: 15),
+      timeout: const Duration(seconds: 20),
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw const AiSubtitleException('Subtitle download failed.');
@@ -2351,6 +2352,61 @@ class AiSinhalaSubtitleService {
     if (bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
       bytes = gzip.decode(bytes);
     }
+
+    // SubDL serves many subtitles as ZIP archives. The provider is only used
+    // as a transcript fallback, so unpack the safest text subtitle member and
+    // let native video cues remain the runtime timing authority.
+    if (bytes.length >= 4 &&
+        bytes[0] == 0x50 &&
+        bytes[1] == 0x4b &&
+        (bytes[2] == 0x03 || bytes[2] == 0x05 || bytes[2] == 0x07) &&
+        (bytes[3] == 0x04 || bytes[3] == 0x06 || bytes[3] == 0x08)) {
+      try {
+        final archive = ZipDecoder().decodeBytes(bytes, verify: true);
+        final files = archive.files
+            .where((entry) {
+              if (!entry.isFile) return false;
+              final name = entry.name.toLowerCase();
+              if (name.startsWith('__macosx/') ||
+                  name.split('/').last.startsWith('._')) {
+                return false;
+              }
+              return name.endsWith('.srt') ||
+                  name.endsWith('.vtt') ||
+                  name.endsWith('.ass') ||
+                  name.endsWith('.ssa');
+            })
+            .toList(growable: false)
+          ..sort((a, b) {
+            int rank(String name) {
+              final lower = name.toLowerCase();
+              if (lower.endsWith('.srt')) return 0;
+              if (lower.endsWith('.vtt')) return 1;
+              if (lower.endsWith('.ass')) return 2;
+              return 3;
+            }
+
+            final ext = rank(a.name).compareTo(rank(b.name));
+            if (ext != 0) return ext;
+            return b.size.compareTo(a.size);
+          });
+        for (final file in files) {
+          final content = file.readBytes();
+          if (content == null || content.isEmpty) continue;
+          final text = utf8.decode(content, allowMalformed: true);
+          if (_parseSubtitle(text).length >= 8) return text;
+        }
+        throw const AiSubtitleException(
+          'Subtitle archive did not contain a usable text subtitle.',
+        );
+      } catch (error) {
+        if (error is AiSubtitleException) rethrow;
+        throw const AiSubtitleException(
+          'Could not unpack the subtitle archive safely.',
+        );
+      }
+    }
+
     return utf8.decode(bytes, allowMalformed: true);
   }
 
