@@ -26,6 +26,18 @@ void main() {
     expect(generated, contains('subtitle_cache'));
   });
 
+  test('embedded extraction is guarded against the wrong pack episode', () {
+    final service =
+        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+
+    expect(service, contains('_parseLocalP2pFileIdentity'));
+    expect(service, contains('_guessStreamServerPrimaryVideoIndex'));
+    expect(
+      service,
+      contains('extractorFileIndex != identity.fileIndex'),
+    );
+  });
+
   test('player startup loads Sinhala as a normal external subtitle track', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
