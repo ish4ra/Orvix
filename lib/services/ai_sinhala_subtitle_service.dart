@@ -275,6 +275,130 @@ class AiSinhalaSubtitleService {
 
   static const _nativeCalibrationCacheVersion = 'native-cal-v1';
 
+  static Future<AiPreparedSubtitle?> prepareTrustedTranscriptForNativeClock({
+    required String title,
+    required String videoUrl,
+    String? releaseHint,
+    int? expectedSizeBytes,
+    String? expectedVideoHash,
+    void Function(String message)? onStatus,
+  }) async {
+    Future<AiPreparedSubtitle> prepareComplete({
+      required String cacheKey,
+      required String sourceUrl,
+      required String sourceMatch,
+      required List<AiSubtitleCue> cues,
+      required String readyMessage,
+    }) async {
+      final cached = _preparedCache[cacheKey];
+      if (cached != null && cached.translatedCount == cached.cues.length) {
+        onStatus?.call('Cached exact transcript is ready.');
+        return cached;
+      }
+
+      final prepared = AiPreparedSubtitle(
+        key: cacheKey,
+        title: title,
+        sourceUrl: sourceUrl,
+        cues: cues,
+        sourceMatch: sourceMatch,
+      );
+      _preparedCache[cacheKey] = prepared;
+
+      await _translateEntireSubtitle(
+        prepared,
+        onProgress: (done, total) {
+          final percent =
+              total <= 0 ? 100 : ((done * 100) / total).round().clamp(0, 100);
+          onStatus?.call(
+            'Translating complete Sinhala transcript… $percent% ($done/$total)',
+          );
+        },
+      );
+      if (prepared.translatedCount != prepared.cues.length) {
+        throw const AiSubtitleException(
+          'The complete Sinhala transcript did not finish translating.',
+        );
+      }
+      onStatus?.call(readyMessage);
+      return prepared;
+    }
+
+    // Best source: the English subtitle file embedded in the exact P2P video.
+    // This avoids OpenSubtitles selection entirely when stream-server can
+    // expose the selected file's subtitle track.
+    try {
+      onStatus?.call(
+        'Checking the selected video for its own English subtitle transcript…',
+      );
+      final embedded = await _fetchEmbeddedEnglishSubtitle(videoUrl);
+      if (embedded != null) {
+        final cues = _parseSubtitle(embedded.content);
+        if (cues.length >= 8) {
+          return prepareComplete(
+            cacheKey: 'native-clock-v2|embedded|${embedded.identity}',
+            sourceUrl: embedded.identity,
+            sourceMatch: 'embedded-native-track',
+            cues: cues,
+            readyMessage:
+                'Video-embedded English transcript translated. Native cue timing remains authoritative.',
+          );
+        }
+      }
+    } catch (_) {
+      // Continue to exact-file OpenSubtitles lookup.
+    }
+
+    // Second best source: identify the actual video file by canonical
+    // OpenSubtitles hash + exact byte size. We use that only to choose the
+    // transcript text. Runtime timestamps still come exclusively from the
+    // selected video's native English subtitle cue events.
+    _VideoProbe? probe;
+    try {
+      onStatus?.call('Fingerprinting the actual selected video file…');
+      probe = await _probeVideo(
+        videoUrl,
+        fallbackFileName: releaseHint,
+        fallbackSize: expectedSizeBytes,
+        expectedVideoHash: expectedVideoHash,
+      );
+    } catch (_) {
+      probe = null;
+    }
+
+    final hash = probe?.hash;
+    final size = probe?.size;
+    if (hash != null && size != null && size > 0) {
+      try {
+        onStatus?.call(
+          'Checking OpenSubtitles REST for this exact video fingerprint…',
+        );
+        final exactText = await _fetchExactRestSubtitle(
+          movieHash: hash,
+          movieByteSize: size,
+        );
+        if (exactText != null) {
+          final cues = _parseSubtitle(exactText);
+          if (cues.length >= 8) {
+            return prepareComplete(
+              cacheKey: 'native-clock-v2|rest-exact|$hash|$size',
+              sourceUrl: 'opensubtitles-rest-v1://moviehash/$hash',
+              sourceMatch: 'rest-exact-transcript-native-clock',
+              cues: cues,
+              readyMessage:
+                  'Exact-file English transcript translated. Native cue timing remains authoritative.',
+            );
+          }
+        }
+      } catch (_) {
+        // Exact lookup is an optimization/identity source. The caller may
+        // still attempt a text-matched fallback without trusting online timing.
+      }
+    }
+
+    return null;
+  }
+
   static Future<AiPreparedSubtitle>
       prepareTranslatedTranscriptForNativeTiming({
     required String title,
