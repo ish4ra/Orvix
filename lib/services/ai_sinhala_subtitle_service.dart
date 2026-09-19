@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/media_item.dart';
+import 'online_subtitle_service.dart';
 
 class AiSubtitleCue {
   AiSubtitleCue({
@@ -114,6 +115,38 @@ class AiPreparedSubtitle {
   }
 }
 
+class AiNativeCueSample {
+  const AiNativeCueSample({
+    required this.start,
+    required this.end,
+    required this.text,
+  });
+
+  final Duration start;
+  final Duration end;
+  final String text;
+}
+
+class _SubtitleCalibration {
+  const _SubtitleCalibration({
+    required this.candidate,
+    required this.cues,
+    required this.scale,
+    required this.offsetMs,
+    required this.matches,
+    required this.medianResidualMs,
+    required this.score,
+  });
+
+  final OnlineSubtitleResult candidate;
+  final List<AiSubtitleCue> cues;
+  final double scale;
+  final double offsetMs;
+  final int matches;
+  final double medianResidualMs;
+  final double score;
+}
+
 class AiGeneratedSubtitleFile {
   const AiGeneratedSubtitleFile({
     required this.path,
@@ -194,6 +227,261 @@ class AiSinhalaSubtitleService {
     if (sourceWords.length < 3) return true;
     return RegExp(r'[\u0D80-\u0DFF]').hasMatch(translated);
   }
+
+  static const _nativeCalibrationCacheVersion = 'native-cal-v1';
+
+  static Future<AiGeneratedSubtitleFile>
+      prepareGeneratedSinhalaFromNativeCalibration({
+    required String title,
+    required String videoIdentity,
+    required List<AiNativeCueSample> nativeSamples,
+    required List<OnlineSubtitleResult> candidates,
+    void Function(String message)? onStatus,
+  }) async {
+    final usableSamples = nativeSamples
+        .where((sample) => _normalizeCue(sample.text).split(' ').length >= 3)
+        .toList(growable: false);
+    if (usableSamples.length < 3) {
+      throw const AiSubtitleException(
+        'Could not collect enough English subtitle cues from the selected video track.',
+      );
+    }
+
+    final englishCandidates = candidates
+        .where(
+          (entry) =>
+              OnlineSubtitleService.normalizeLanguage(entry.language) == 'eng',
+        )
+        .where((entry) {
+          final label = entry.label.toLowerCase();
+          return !label.contains('forced') &&
+              !label.contains('commentary') &&
+              !label.contains('foreign only') &&
+              !label.contains('signs');
+        })
+        .take(18)
+        .toList(growable: false);
+
+    if (englishCandidates.isEmpty) {
+      throw const AiSubtitleException(
+        'OpenSubtitles did not return any full English candidates to calibrate.',
+      );
+    }
+
+    _SubtitleCalibration? best;
+    for (var i = 0; i < englishCandidates.length; i++) {
+      final candidate = englishCandidates[i];
+      onStatus?.call(
+        'Matching the video’s real English timing against OpenSubtitles… ${i + 1}/${englishCandidates.length}',
+      );
+      try {
+        final text = await _downloadSubtitle(candidate.url);
+        final cues = _parseSubtitle(text);
+        if (cues.length < 8) continue;
+        final calibration = _calibrateAgainstNativeSamples(
+          candidate: candidate,
+          cues: cues,
+          samples: usableSamples,
+        );
+        if (calibration == null) continue;
+        if (best == null || calibration.score > best.score) {
+          best = calibration;
+        }
+        if (calibration.matches >= 6 &&
+            calibration.medianResidualMs <= 220) {
+          break;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+
+    final selected = best;
+    if (selected == null ||
+        selected.matches < 3 ||
+        selected.medianResidualMs > 850) {
+      throw const AiSubtitleException(
+        'No OpenSubtitles file matched the English subtitles actually playing in this video closely enough.',
+      );
+    }
+
+    final scaleKey = selected.scale.toStringAsFixed(7);
+    final offsetKey = selected.offsetMs.round();
+    final cacheKey =
+        'native-cal|$videoIdentity|${selected.candidate.id}|$scaleKey|$offsetKey|$_nativeCalibrationCacheVersion';
+    final cached = await _cachedGeneratedFile(cacheKey);
+    if (cached != null) {
+      onStatus?.call('Cached native-calibrated Sinhala subtitle is ready.');
+      return AiGeneratedSubtitleFile(
+        path: cached.path,
+        source: 'native-calibrated-opensubtitles',
+        label: selected.candidate.label,
+        cacheHit: true,
+      );
+    }
+
+    onStatus?.call(
+      'Matched ${selected.matches} real video cues (median error ${selected.medianResidualMs.round()} ms). Translating the complete aligned subtitle…',
+    );
+    final alignedCues = selected.cues.map((cue) {
+      final startMs =
+          (cue.start.inMilliseconds * selected.scale + selected.offsetMs)
+              .round()
+              .clamp(0, 1 << 53);
+      final endMs =
+          (cue.end.inMilliseconds * selected.scale + selected.offsetMs)
+              .round()
+              .clamp(startMs + 80, 1 << 53);
+      return AiSubtitleCue(
+        start: Duration(milliseconds: startMs),
+        end: Duration(milliseconds: endMs),
+        source: cue.source,
+      );
+    }).toList(growable: false);
+
+    final prepared = AiPreparedSubtitle(
+      key: cacheKey,
+      title: title,
+      sourceUrl: selected.candidate.url,
+      cues: alignedCues,
+      sourceMatch: 'native-track-calibrated',
+    );
+    await _translateEntireSubtitle(
+      prepared,
+      onProgress: (done, total) {
+        final percent =
+            total <= 0 ? 100 : ((done * 100) / total).round().clamp(0, 100);
+        onStatus?.call(
+          'Translating calibrated Sinhala subtitle… $percent% ($done/$total)',
+        );
+      },
+    );
+    if (prepared.translatedCount != prepared.cues.length) {
+      throw const AiSubtitleException(
+        'The calibrated Sinhala subtitle did not finish translating.',
+      );
+    }
+
+    final file = await _writeGeneratedSrt(cacheKey, prepared);
+    onStatus?.call('Native-timed Sinhala subtitle generated and cached.');
+    return AiGeneratedSubtitleFile(
+      path: file.path,
+      source: 'native-calibrated-opensubtitles',
+      label: selected.candidate.label,
+      cacheHit: false,
+    );
+  }
+
+  static _SubtitleCalibration? _calibrateAgainstNativeSamples({
+    required OnlineSubtitleResult candidate,
+    required List<AiSubtitleCue> cues,
+    required List<AiNativeCueSample> samples,
+  }) {
+    final pairs = <(double candidateMs, double nativeMs)>[];
+    var searchFrom = 0;
+
+    for (final sample in samples) {
+      final target = _normalizeCue(sample.text);
+      if (target.isEmpty) continue;
+
+      var bestIndex = -1;
+      var bestSimilarity = 0.0;
+      final upper = math.min(cues.length, searchFrom + 420);
+      for (var i = searchFrom; i < upper; i++) {
+        final similarity =
+            _cueTextSimilarity(target, _normalizeCue(cues[i].source));
+        if (similarity > bestSimilarity) {
+          bestSimilarity = similarity;
+          bestIndex = i;
+        }
+        if (similarity >= .985) break;
+      }
+      if (bestIndex < 0 || bestSimilarity < .72) continue;
+
+      pairs.add((
+        cues[bestIndex].start.inMilliseconds.toDouble(),
+        sample.start.inMilliseconds.toDouble(),
+      ));
+      searchFrom = bestIndex + 1;
+    }
+
+    if (pairs.length < 3) return null;
+
+    var scale = 1.0;
+    var offset = 0.0;
+    final sourceSpan = pairs.last.$1 - pairs.first.$1;
+    final nativeSpan = pairs.last.$2 - pairs.first.$2;
+
+    if (pairs.length >= 4 &&
+        sourceSpan.abs() >= 12000 &&
+        nativeSpan.abs() >= 12000) {
+      var sx = 0.0;
+      var sy = 0.0;
+      var sxx = 0.0;
+      var sxy = 0.0;
+      for (final pair in pairs) {
+        sx += pair.$1;
+        sy += pair.$2;
+        sxx += pair.$1 * pair.$1;
+        sxy += pair.$1 * pair.$2;
+      }
+      final n = pairs.length.toDouble();
+      final denominator = n * sxx - sx * sx;
+      if (denominator.abs() > 1) {
+        scale = (n * sxy - sx * sy) / denominator;
+      }
+      if (!scale.isFinite || scale < .94 || scale > 1.06) {
+        scale = 1.0;
+      }
+    }
+
+    final offsets = pairs
+        .map((pair) => pair.$2 - pair.$1 * scale)
+        .toList(growable: false)
+      ..sort();
+    offset = offsets[offsets.length ~/ 2];
+
+    final residuals = pairs
+        .map((pair) => (pair.$2 - (pair.$1 * scale + offset)).abs())
+        .toList(growable: false)
+      ..sort();
+    final medianResidual = residuals[residuals.length ~/ 2];
+
+    final score = pairs.length * 10000.0 -
+        medianResidual * 8 -
+        (scale - 1.0).abs() * 30000 +
+        candidate.score;
+
+    return _SubtitleCalibration(
+      candidate: candidate,
+      cues: cues,
+      scale: scale,
+      offsetMs: offset,
+      matches: pairs.length,
+      medianResidualMs: medianResidual,
+      score: score,
+    );
+  }
+
+  static double _cueTextSimilarity(String a, String b) {
+    if (a.isEmpty || b.isEmpty) return 0;
+    if (a == b) return 1;
+
+    final aw = a.split(' ').where((word) => word.isNotEmpty).toSet();
+    final bw = b.split(' ').where((word) => word.isNotEmpty).toSet();
+    if (aw.isEmpty || bw.isEmpty) return 0;
+
+    final intersection = aw.intersection(bw).length.toDouble();
+    final union = aw.union(bw).length.toDouble();
+    final jaccard = union == 0 ? 0.0 : intersection / union;
+
+    final shorter = a.length < b.length ? a : b;
+    final longer = a.length < b.length ? b : a;
+    final containment =
+        longer.contains(shorter) ? shorter.length / longer.length : 0.0;
+    return math.max(jaccard, containment);
+  }
+
 
   static const _generatedSubtitleCacheVersion = 'srt-v3-exact-video';
 
