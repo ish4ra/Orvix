@@ -144,9 +144,10 @@ def patch_android(tv: bool) -> None:
         "minSdk = flutter.minSdkVersion",
         "minSdk = 24",
     )
-    aar_dep = 'implementation(files("libs/rustls-platform-verifier-0.1.1.aar"))'
-    if aar_dep not in gradle_text:
-        gradle_text += f"\n\ndependencies {{\n    {aar_dep}\n}}\n"
+    if not tv:
+        aar_dep = 'implementation(files("libs/rustls-platform-verifier-0.1.1.aar"))'
+        if aar_dep not in gradle_text:
+            gradle_text += f"\n\ndependencies {{\n    {aar_dep}\n}}\n"
     gradle.write_text(gradle_text)
 
     raw_src = Image.open("assets/branding/orvix_icon.png").convert("RGBA")
