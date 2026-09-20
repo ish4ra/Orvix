@@ -277,9 +277,6 @@ jobs:
           grep -q 'android:extractNativeLibs="true"' android/app/src/main/AndroidManifest.xml
           grep -q 'useLegacyPackaging = true' android/app/build.gradle.kts
           grep -q 'orvix/torrent_engine' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
-          grep -q 'orvix/torrserver' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
-          test -s android/app/src/main/assets/licenses/torrserver/LICENSE.txt
-          test -s android/app/src/main/assets/licenses/torrserver/NOTICE.md
 
       - name: Configure release signing
         env:
@@ -310,9 +307,6 @@ jobs:
           unzip -l "$APK" > /tmp/orvix-apk-list.txt
           grep -q 'lib/arm64-v8a/libstream_server.so' /tmp/orvix-apk-list.txt
           grep -q 'lib/armeabi-v7a/libstream_server.so' /tmp/orvix-apk-list.txt
-          grep -q 'lib/arm64-v8a/libtorrserver.so' /tmp/orvix-apk-list.txt
-          grep -q 'lib/armeabi-v7a/libtorrserver.so' /tmp/orvix-apk-list.txt
-          grep -q 'assets/licenses/torrserver/LICENSE.txt' /tmp/orvix-apk-list.txt
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
           "$APKSIGNER" verify --verbose "$APK"
 
@@ -371,6 +365,9 @@ jobs:
           grep -q 'android:screenOrientation="landscape"' android/app/src/main/AndroidManifest.xml
           grep -q 'android:extractNativeLibs="true"' android/app/src/main/AndroidManifest.xml
           grep -q 'orvix/torrent_engine' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
+          grep -q 'orvix/torrserver' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
+          test -s android/app/src/main/assets/licenses/torrserver/LICENSE.txt
+          test -s android/app/src/main/assets/licenses/torrserver/NOTICE.md
 
       - name: Verify Android TV banner
         shell: bash
@@ -411,6 +408,9 @@ jobs:
           unzip -l "$APK" > /tmp/orvix-apk-list.txt
           grep -q 'lib/arm64-v8a/libstream_server.so' /tmp/orvix-apk-list.txt
           grep -q 'lib/armeabi-v7a/libstream_server.so' /tmp/orvix-apk-list.txt
+          grep -q 'lib/arm64-v8a/libtorrserver.so' /tmp/orvix-apk-list.txt
+          grep -q 'lib/armeabi-v7a/libtorrserver.so' /tmp/orvix-apk-list.txt
+          grep -q 'assets/licenses/torrserver/LICENSE.txt' /tmp/orvix-apk-list.txt
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
           "$APKSIGNER" verify --verbose "$APK"
 
