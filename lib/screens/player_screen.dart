@@ -1185,7 +1185,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.space ||
-        key == LogicalKeyboardKey.mediaPlayPause) {
+        key == LogicalKeyboardKey.mediaPlayPause ||
+        (PlatformProfile.isAndroidTv &&
+            (key == LogicalKeyboardKey.select ||
+                key == LogicalKeyboardKey.enter))) {
       widget.playback.player.playOrPause();
       _showControls();
       return KeyEventResult.handled;
