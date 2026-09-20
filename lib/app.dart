@@ -559,7 +559,7 @@ class _AboutScreen extends StatelessWidget {
               const _FeatureLine(Icons.hub_rounded,
                   'Built-in local BitTorrent/P2P streaming on Windows, Android mobile, Android TV and macOS when no debrid account is connected'),
               const _FeatureLine(Icons.play_circle_outline_rounded,
-                  'media_kit / libmpv playback with custom controls and resume'),
+                  'Dual-engine Android playback: Auto / ExoPlayer / MPV, with libmpv on desktop and shared custom controls'),
               const _FeatureLine(Icons.subtitles_rounded,
                   'OpenSubtitles v3 online subtitle addon with language filtering, sync and appearance controls'),
               const _FeatureLine(Icons.video_library_outlined,
