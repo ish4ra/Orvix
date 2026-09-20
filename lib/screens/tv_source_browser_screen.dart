@@ -14,12 +14,14 @@ class TvSourceBrowserScreen extends StatefulWidget {
     required this.item,
     required this.resultsFuture,
     this.episode,
+    this.onPlaySource,
   });
 
   final SourceProviderService sources;
   final MediaItem item;
   final EpisodeItem? episode;
   final Future<List<SourceResult>> resultsFuture;
+  final Future<void> Function(SourceResult source)? onPlaySource;
 
   @override
   State<TvSourceBrowserScreen> createState() => _TvSourceBrowserScreenState();
@@ -40,6 +42,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen>
   bool _compatibilityOnly = false;
   String? _providerFilter;
   _TvSourceSort _sort = _TvSourceSort.free;
+  String? _openingSourceIdentity;
 
   String get _pinKey =>
       widget.sources.sourceTargetKey(widget.item, episode: widget.episode);
@@ -144,6 +147,37 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen>
       return ordered.take(_resultLimit).toList(growable: false);
     }
     return ordered;
+  }
+
+  Future<void> _playSource(SourceResult source) async {
+    final callback = widget.onPlaySource;
+    if (callback == null) {
+      Navigator.of(context).pop(source);
+      return;
+    }
+
+    final identity = widget.sources.sourceIdentity(
+      source,
+      seriesWide: _seriesWidePin,
+    );
+    if (_openingSourceIdentity != null) return;
+    setState(() => _openingSourceIdentity = identity);
+
+    try {
+      await callback(source);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Could not play this source: $error'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } finally {
+      if (mounted) setState(() => _openingSourceIdentity = null);
+    }
   }
 
   Future<void> _togglePin(SourceResult source) async {
@@ -541,7 +575,12 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen>
             source: source,
             pinned: pinned,
             autofocus: index == 0,
-            onPlay: () => Navigator.of(context).pop(source),
+            busy: _openingSourceIdentity ==
+                widget.sources.sourceIdentity(
+                  source,
+                  seriesWide: _seriesWidePin,
+                ),
+            onPlay: () => unawaited(_playSource(source)),
             onPinRequest: () => _confirmPin(source),
           ),
         );
@@ -557,6 +596,7 @@ class _TvSourceTile extends StatefulWidget {
     required this.pinned,
     required this.onPlay,
     required this.onPinRequest,
+    required this.busy,
     this.autofocus = false,
   });
 
@@ -564,6 +604,7 @@ class _TvSourceTile extends StatefulWidget {
   final bool pinned;
   final VoidCallback onPlay;
   final VoidCallback onPinRequest;
+  final bool busy;
   final bool autofocus;
 
   @override
@@ -583,6 +624,7 @@ class _TvSourceTileState extends State<_TvSourceTile> {
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (!_isActivateKey(event.logicalKey)) return KeyEventResult.ignored;
+    if (widget.busy) return KeyEventResult.handled;
 
     if (event is KeyDownEvent) {
       if (_holdTimer == null && !_holdTriggered) {
@@ -719,8 +761,8 @@ class _TvSourceTileState extends State<_TvSourceTile> {
             canRequestFocus: false,
             borderRadius: BorderRadius.circular(16),
             focusColor: Colors.transparent,
-            onTap: widget.onPlay,
-            onLongPress: widget.onPinRequest,
+            onTap: widget.busy ? null : widget.onPlay,
+            onLongPress: widget.busy ? null : widget.onPinRequest,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(17, 13, 16, 13),
               child: Row(
@@ -784,11 +826,17 @@ class _TvSourceTileState extends State<_TvSourceTile> {
                   Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
-                        Icons.play_circle_fill_rounded,
-                        size: 39,
-                        color: _focused ? focus : const Color(0xFF89928B),
-                      ),
+                      widget.busy
+                          ? const SizedBox(
+                              width: 28,
+                              height: 28,
+                              child: CircularProgressIndicator(strokeWidth: 3),
+                            )
+                          : Icon(
+                              Icons.play_circle_fill_rounded,
+                              size: 39,
+                              color: _focused ? focus : const Color(0xFF89928B),
+                            ),
                       const SizedBox(height: 5),
                       Text(
                         widget.pinned ? 'Pinned' : 'Hold OK to pin',
