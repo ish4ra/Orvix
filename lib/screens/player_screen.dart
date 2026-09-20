@@ -128,7 +128,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   void initState() {
     super.initState();
-    _preparedAiSubtitle = widget.allowAiSinhala ? widget.aiSubtitle : null;
+    _preparedAiSubtitle =
+        widget.allowAiSinhala && !PlatformProfile.isAndroidTv
+            ? widget.aiSubtitle
+            : null;
     _aiState = _preparedAiSubtitle == null
         ? const AiSinhalaRuntimeState.native()
         : const AiSinhalaRuntimeState(AiSinhalaRuntimeMode.prepared);
@@ -194,6 +197,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
 
       final aiPreferred = widget.allowAiSinhala &&
+          !PlatformProfile.isAndroidTv &&
           (_preparedAiSubtitle != null ||
               await AiSinhalaPreferencesService.isEnabled());
       var aiReady = _preparedAiSubtitle != null;
