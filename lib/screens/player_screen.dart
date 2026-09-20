@@ -368,16 +368,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _hasPlaybackActivity()) {
       return;
     }
-    final state = widget.playback.player.state;
-    if (state.duration <= Duration.zero &&
-        state.position < const Duration(seconds: 1)) {
-      final detail = 'Playback engine: ${message.trim()}';
-      _reportStartupFailure(detail);
-      setState(() {
-        _startupFailureVisible = true;
-        _error = detail;
-      });
-    }
+    final detail = 'Playback engine: ${message.trim()}';
+    _reportStartupFailure(detail);
+    setState(() {
+      _startupFailureVisible = true;
+      _error = detail;
+    });
   }
 
   bool _hasTextSubtitleTrack() {
