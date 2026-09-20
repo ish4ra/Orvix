@@ -1047,7 +1047,7 @@ class SourceProviderService {
     // Free P2P is a reliability ranking, not a quality contest. Seeder health
     // deliberately beats the small 1080p-vs-720p preference, while extremely
     // large payloads can still lose to efficient encodes.
-    return direct * 100000000 +
+    return direct * 50000000 +
         history * 20000000 +
         compatibility * 10000000 +
         viableSwarm * 5000000 +
