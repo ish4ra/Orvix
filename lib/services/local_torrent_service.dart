@@ -141,9 +141,9 @@ class LocalTorrentService {
 
     final guessedFileIndex = _asInt(payload?['guessedFileIdx']);
     final explicitFileIndex = source.torrentFileIndex;
-    final hasFileHint = source.fileNameHint?.trim().isNotEmpty == true;
-    final fileIndex = (hasFileHint ? guessedFileIndex : null) ??
-        explicitFileIndex ??
+    // Match Stremio's resolved Tramvai stream: an addon-provided fileIdx is
+    // authoritative. Guess only when the stream did not provide one.
+    final fileIndex = explicitFileIndex ??
         guessedFileIndex ??
         _asInt(payload?['fileIdx']) ??
         -1;
