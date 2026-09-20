@@ -11,7 +11,8 @@ SourceResult torrent({
   return SourceResult(
     provider: 'Torrentio',
     title: name,
-    resource: 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567',
+    resource:
+        'magnet:?xt=urn:btih:${name.replaceAll(RegExp(r'[^A-Za-z0-9]'), '')}',
     isMagnet: true,
     sortMode: SourceSortMode.seeders,
     quality: quality,
