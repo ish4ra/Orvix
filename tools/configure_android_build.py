@@ -415,7 +415,6 @@ class MainActivity : FlutterActivity() {
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
-import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
@@ -504,44 +503,6 @@ class TvNativePlayerActivity : Activity() {
         }
     }
 
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_DPAD_CENTER,
-                KeyEvent.KEYCODE_ENTER,
-                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                    val player = exoPlayer
-                    if (player != null) {
-                        if (player.isPlaying) player.pause() else player.play()
-                        playerView?.showController()
-                        return true
-                    }
-                }
-                KeyEvent.KEYCODE_DPAD_LEFT -> {
-                    val player = exoPlayer
-                    if (player != null && !playerView.orNullControllerVisible()) {
-                        player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
-                        playerView?.showController()
-                        return true
-                    }
-                }
-                KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                    val player = exoPlayer
-                    if (player != null && !playerView.orNullControllerVisible()) {
-                        val duration = player.duration
-                        val target = player.currentPosition + 10_000L
-                        player.seekTo(
-                            if (duration > 0) target.coerceAtMost(duration) else target
-                        )
-                        playerView?.showController()
-                        return true
-                    }
-                }
-            }
-        }
-        return super.dispatchKeyEvent(event)
-    }
-
     @Deprecated("Deprecated in Android; TV remote back should finish playback")
     override fun onBackPressed() {
         finishWithResult(reportedError)
@@ -592,8 +553,6 @@ class TvNativePlayerActivity : Activity() {
     }
 }
 
-private fun PlayerView?.orNullControllerVisible(): Boolean =
-    this?.isControllerFullyVisible ?: false
 """
     )
 
