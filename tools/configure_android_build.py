@@ -1,4 +1,5 @@
 import argparse
+import shutil
 from collections import deque
 from pathlib import Path
 
@@ -278,6 +279,7 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "orvix/torrent_engine"
@@ -310,10 +312,158 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "orvix/torrserver"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "start" -> {
+                    try {
+                        result.success(TorrServerManager.start(applicationContext))
+                    } catch (error: Throwable) {
+                        result.error(
+                            "torrserver_start_failed",
+                            "${error::class.java.simpleName}: ${error.message ?: error.toString()}",
+                            null
+                        )
+                    }
+                }
+                "stop" -> {
+                    try {
+                        TorrServerManager.stop()
+                        result.success(null)
+                    } catch (error: Throwable) {
+                        result.error(
+                            "torrserver_stop_failed",
+                            error.message ?: error.toString(),
+                            null
+                        )
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 }
 """
     )
+
+    torrserver_manager = Path(
+        "android/app/src/main/kotlin/com/orvix/orvix/TorrServerManager.kt"
+    )
+    torrserver_manager.write_text(
+        """package com.orvix.orvix
+
+import android.content.Context
+import android.util.Log
+import java.io.File
+
+object TorrServerManager {
+    @Volatile
+    private var process: Process? = null
+
+    @Synchronized
+    fun start(context: Context): String {
+        val current = process
+        if (current != null && current.isAlive) return "running"
+
+        val binary = File(
+            context.applicationInfo.nativeLibraryDir,
+            "libtorrserver.so"
+        )
+        if (!binary.isFile) {
+            throw IllegalStateException(
+                "Bundled TorrServer binary is missing: ${binary.absolutePath}"
+            )
+        }
+        if (!binary.canExecute()) {
+            binary.setExecutable(true)
+        }
+
+        val workDir = File(context.filesDir, "torrserver")
+        if (!workDir.exists() && !workDir.mkdirs()) {
+            throw IllegalStateException(
+                "Could not create TorrServer data directory: ${workDir.absolutePath}"
+            )
+        }
+
+        val started = ProcessBuilder(
+            binary.absolutePath,
+            "--port",
+            "8091",
+            "--path",
+            workDir.absolutePath
+        )
+            .directory(workDir)
+            .redirectErrorStream(true)
+            .start()
+
+        process = started
+
+        Thread({
+            try {
+                started.inputStream.bufferedReader().useLines { lines ->
+                    lines.forEach { line ->
+                        Log.d("OrvixTorrServer", line.take(3000))
+                    }
+                }
+            } catch (_: Throwable) {
+            }
+        }, "orvix-torrserver-log").apply {
+            isDaemon = true
+            start()
+        }
+
+        Thread({
+            try {
+                val exit = started.waitFor()
+                Log.w("OrvixTorrServer", "TorrServer exited with code $exit")
+            } catch (_: Throwable) {
+            } finally {
+                synchronized(this@TorrServerManager) {
+                    if (process === started) process = null
+                }
+            }
+        }, "orvix-torrserver-watch").apply {
+            isDaemon = true
+            start()
+        }
+
+        return "starting"
+    }
+
+    @Synchronized
+    fun stop() {
+        val current = process ?: return
+        process = null
+        try {
+            current.destroy()
+            if (current.isAlive) {
+                Thread.sleep(120)
+            }
+            if (current.isAlive) current.destroyForcibly()
+        } catch (error: Throwable) {
+            Log.w("OrvixTorrServer", "TorrServer shutdown failed", error)
+        }
+    }
+}
+"""
+    )
+
+    if tv:
+        license_assets = Path(
+            "android/app/src/main/assets/licenses/torrserver"
+        )
+        license_assets.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(
+            "licenses/torrserver/LICENSE",
+            license_assets / "LICENSE.txt",
+        )
+        shutil.copyfile(
+            "licenses/torrserver/NOTICE.md",
+            license_assets / "NOTICE.md",
+        )
 
     torrent_service = Path(
         "android/app/src/main/kotlin/com/orvix/orvix/TorrentEngineService.kt"
