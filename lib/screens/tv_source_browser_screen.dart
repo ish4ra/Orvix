@@ -5,12 +5,16 @@ import 'package:flutter/services.dart';
 
 import '../models/media_item.dart';
 import '../services/source_provider_service.dart';
+import '../utils/tv_keys.dart';
 
 /// Android TV source picker.
 ///
-/// Keep this deliberately close to the normal Orvix/mobile source experience:
-/// one complete source list, no TV-only ranking modes, no compatibility
-/// filters, and no hidden long-press pin gesture.
+/// Remote-first Android TV source picker.
+///
+/// Source modes share the same provider data and priority settings as mobile.
+/// Free P2P adds reliability-oriented ordering and small, explicit hints; hold
+/// OK opens the pin confirmation through a keyboard state machine rather than
+/// relying on pointer long-press gestures.
 class TvSourceBrowserScreen extends StatefulWidget {
   const TvSourceBrowserScreen({
     super.key,
@@ -185,7 +189,8 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => TvHeldKeyGuard(
+        child: AlertDialog(
         backgroundColor: const Color(0xFF121613),
         title: Text(pinned ? 'Unpin this source?' : 'Pin this source?'),
         content: ConstrainedBox(
@@ -218,6 +223,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
             label: Text(pinned ? 'Unpin' : 'Pin source'),
           ),
         ],
+        ),
       ),
     );
 
@@ -396,6 +402,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
     setState(() => _openingResource = source.resource);
     try {
       await callback(source);
+      if (mounted) setState(() {});
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -638,6 +645,9 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
         );
         return _TvSourceRow(
           source: source,
+          assessment: _sort == _TvSourceSort.free
+              ? widget.sources.assessFreePlayback(source)
+              : null,
           pinned: pinned,
           autofocus: index == 0,
           busy: _openingResource == source.resource,
@@ -652,6 +662,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
 class _TvSourceRow extends StatefulWidget {
   const _TvSourceRow({
     required this.source,
+    required this.assessment,
     required this.pinned,
     required this.autofocus,
     required this.busy,
@@ -660,6 +671,7 @@ class _TvSourceRow extends StatefulWidget {
   });
 
   final SourceResult source;
+  final FreeSourceAssessment? assessment;
   final bool pinned;
   final bool autofocus;
   final bool busy;
@@ -672,47 +684,29 @@ class _TvSourceRow extends StatefulWidget {
 
 class _TvSourceRowState extends State<_TvSourceRow> {
   bool _focused = false;
-  Timer? _holdTimer;
-  bool _holdTriggered = false;
+  late final TvHoldOk _holdOk;
 
-  bool _isActivateKey(LogicalKeyboardKey key) =>
-      key == LogicalKeyboardKey.select ||
-      key == LogicalKeyboardKey.enter ||
-      key == LogicalKeyboardKey.space;
+  @override
+  void initState() {
+    super.initState();
+    _holdOk = TvHoldOk(
+      onTap: () {
+        if (!widget.busy) widget.onPressed();
+      },
+      onHold: () {
+        if (!widget.busy) widget.onPinRequest();
+      },
+    );
+  }
 
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
-    if (!_isActivateKey(event.logicalKey) || widget.busy) {
-      return KeyEventResult.ignored;
-    }
-
-    if (event is KeyDownEvent) {
-      // Android TV remotes may emit repeated KeyDown events while OK is held.
-      // Start one timer only; otherwise key-repeat would keep resetting the
-      // timer and the pin action would never fire.
-      if (_holdTimer == null && !_holdTriggered) {
-        _holdTimer = Timer(const Duration(milliseconds: 650), () {
-          _holdTimer = null;
-          if (!mounted) return;
-          _holdTriggered = true;
-          widget.onPinRequest();
-        });
-      }
-      return KeyEventResult.handled;
-    }
-
-    if (event is KeyUpEvent) {
-      _holdTimer?.cancel();
-      if (!_holdTriggered) widget.onPressed();
-      _holdTriggered = false;
-      return KeyEventResult.handled;
-    }
-
-    return KeyEventResult.handled;
+    if (widget.busy) return KeyEventResult.handled;
+    return _holdOk.handle(event);
   }
 
   @override
   void dispose() {
-    _holdTimer?.cancel();
+    _holdOk.reset();
     super.dispose();
   }
 
@@ -732,9 +726,7 @@ class _TvSourceRowState extends State<_TvSourceRow> {
       autofocus: widget.autofocus,
       onFocusChange: (value) {
         if (!value) {
-          _holdTimer?.cancel();
-          _holdTimer = null;
-          _holdTriggered = false;
+          _holdOk.reset();
         }
         setState(() => _focused = value);
       },
@@ -809,6 +801,59 @@ class _TvSourceRowState extends State<_TvSourceRow> {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
+                      if (widget.assessment != null) ...[
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: widget.assessment!.warning
+                                    ? const Color(0x332D1111)
+                                    : widget.assessment!.recommended
+                                        ? const Color(0x33223815)
+                                        : const Color(0x33191E1A),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: widget.assessment!.warning
+                                      ? const Color(0xFF9B5A5A)
+                                      : widget.assessment!.recommended
+                                          ? const Color(0xFF86B84B)
+                                          : const Color(0xFF4C554E),
+                                ),
+                              ),
+                              child: Text(
+                                widget.assessment!.label,
+                                style: TextStyle(
+                                  color: widget.assessment!.warning
+                                      ? const Color(0xFFE3AAAA)
+                                      : widget.assessment!.recommended
+                                          ? const Color(0xFFC9EAA5)
+                                          : const Color(0xFFB2BBB4),
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: .45,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                widget.assessment!.detail,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Color(0xFF8F9891),
+                                  fontSize: 10.5,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),
