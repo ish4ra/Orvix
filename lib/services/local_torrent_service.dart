@@ -5,7 +5,6 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
-import 'android_tv_torrserver_service.dart';
 import 'platform_profile.dart';
 import 'source_provider_service.dart';
 
@@ -68,17 +67,6 @@ class LocalTorrentService {
   }) async {
     if (!source.isMagnet) return source.resource;
 
-    if (PlatformProfile.isAndroidTv) {
-      try {
-        return await AndroidTvTorrServerService.instance.resolve(
-          source,
-          onProgress: onProgress,
-        );
-      } on AndroidTvTorrentException catch (error) {
-        throw LocalTorrentException(error.message);
-      }
-    }
-
     final infoHash = _extractInfoHash(source.resource);
     if (infoHash == null) {
       throw const LocalTorrentException(
@@ -86,6 +74,7 @@ class LocalTorrentService {
       );
     }
 
+    onProgress?.call('Preparing stream…');
     await ensureRunning();
 
     final body = <String, dynamic>{
@@ -140,18 +129,16 @@ class LocalTorrentService {
         _asInt(payload?['fileIdx']) ??
         -1;
 
-    if (fileIndex < 0) {
-      throw const LocalTorrentException(
-        'The local torrent engine could not select a playable video file. '
-        'Orvix will not open an invalid P2P stream URL.',
-      );
-    }
-
+    // Stremio's Android path deliberately permits -1 here: the local
+    // stream-server can auto-select the playable file when the addon/core does
+    // not expose an exact file index. Blocking -1 made Orvix reject sources
+    // that Stremio itself can open.
     final streamUrl = _buildStreamUrl(
       infoHash: infoHash,
       fileIndex: fileIndex,
     );
 
+    onProgress?.call('Opening player…');
     return streamUrl;
   }
 
@@ -164,19 +151,6 @@ class LocalTorrentService {
 
   Future<LocalTorrentHealth?> healthForStreamUrl(String streamUrl) async {
     final uri = Uri.tryParse(streamUrl);
-    if (uri != null &&
-        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
-        uri.port == 8091) {
-      final health =
-          await AndroidTvTorrServerService.instance.healthForStreamUrl(streamUrl);
-      if (health == null) return null;
-      return LocalTorrentHealth(
-        metadataReady: health.metadataReady,
-        peers: health.peers,
-        connections: health.peers + health.seeds,
-        downloadSpeedBytesPerSecond: health.downloadSpeedBytesPerSecond,
-      );
-    }
     if (uri == null ||
         (uri.host != '127.0.0.1' && uri.host != 'localhost') ||
         uri.port != 11470 ||
@@ -243,7 +217,9 @@ class LocalTorrentService {
 
   Future<void> ensureRunning() async {
     if (await _heartbeat()) {
-      if (Platform.isAndroid) await _configureAndroidSafeProfile();
+      if (Platform.isAndroid && !PlatformProfile.isAndroidTv) {
+        await _configureAndroidSafeProfile();
+      }
       return;
     }
 
@@ -269,7 +245,9 @@ class LocalTorrentService {
 
         for (var attempt = 0; attempt < 80; attempt++) {
           if (await _heartbeat()) {
-            await _configureAndroidSafeProfile();
+            if (!PlatformProfile.isAndroidTv) {
+              await _configureAndroidSafeProfile();
+            }
             completer.complete();
             return;
           }
@@ -408,11 +386,6 @@ class LocalTorrentService {
     return int.tryParse(value?.toString() ?? '');
   }
 
-  Future<void> stopCurrentTvStream() async {
-    if (!PlatformProfile.isAndroidTv) return;
-    await AndroidTvTorrServerService.instance.stopCurrentStream();
-  }
-
   Future<void> dispose() async {
     final process = _process;
     _process = null;
@@ -421,9 +394,6 @@ class LocalTorrentService {
     }
     _ownsProcess = false;
     if (Platform.isAndroid) {
-      if (PlatformProfile.isAndroidTv) {
-        await AndroidTvTorrServerService.instance.dispose();
-      }
       try {
         await _androidChannel.invokeMethod<void>('stop');
       } catch (_) {
