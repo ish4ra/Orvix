@@ -319,9 +319,12 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
           autofocus: true,
           focusNode: _surfaceFocus,
           onKeyEvent: _onSurfaceKey,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _showControls,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
               if (initialized)
                 Center(
                   child: AspectRatio(
@@ -342,7 +345,8 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
               if (_controlsVisible && _error == null)
                 _controls(value),
               if (_error != null) _errorView(),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -451,8 +455,11 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                     ],
                   ),
                   const SizedBox(height: 18),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 12,
+                    runSpacing: 10,
                     children: [
                       _ExoAction(
                         icon: Icons.replay_10_rounded,
@@ -462,7 +469,6 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                           _seekRelative(const Duration(seconds: -10)),
                         ),
                       ),
-                      const SizedBox(width: 14),
                       _ExoAction(
                         focusNode: _playFocus,
                         icon: value?.isPlaying == true
@@ -474,7 +480,6 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                         onFocusChange: _onControlFocus,
                         onPressed: () => unawaited(_togglePlay()),
                       ),
-                      const SizedBox(width: 14),
                       _ExoAction(
                         icon: Icons.forward_10_rounded,
                         semanticLabel: 'Forward 10 seconds',
@@ -483,7 +488,6 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                           _seekRelative(const Duration(seconds: 10)),
                         ),
                       ),
-                      const SizedBox(width: 24),
                       _ExoAction(
                         focusNode: _switchFocus,
                         icon: Icons.swap_horiz_rounded,
