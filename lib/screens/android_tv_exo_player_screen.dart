@@ -221,6 +221,9 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
     try {
       await _controller?.pause();
     } catch (_) {}
+    try {
+      await LocalTorrentService.instance.stopCurrentTvStream();
+    } catch (_) {}
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
