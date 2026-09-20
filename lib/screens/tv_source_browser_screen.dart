@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/media_item.dart';
 import '../services/source_provider_service.dart';
@@ -35,6 +36,18 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
   bool _loading = true;
   String? _error;
   String? _openingResource;
+  List<SourceSortCriterion> _priority = [
+    ...SourceProviderService.defaultPriority,
+  ];
+  String? _pinnedIdentity;
+  String? _providerFilter;
+  bool _compatibilityOnly = false;
+  _TvSourceSort _sort = _TvSourceSort.free;
+
+  String get _pinKey =>
+      widget.sources.sourceTargetKey(widget.item, episode: widget.episode);
+
+  bool get _seriesWidePin => widget.item.kind == MediaKind.series;
 
   @override
   void initState() {
@@ -55,17 +68,25 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
       // browser. This runs once and leaves normal mobile/desktop behavior alone.
       await widget.sources.clearLegacyTvPinsOnce();
 
-      final results = refresh
-          ? await widget.sources.resolve(
+      final resultsFuture = refresh
+          ? widget.sources.resolve(
               widget.item,
               episode: widget.episode,
               includeLowQuality: true,
             )
-          : await widget.resultsFuture;
+          : widget.resultsFuture;
+
+      final values = await Future.wait<dynamic>([
+        resultsFuture,
+        widget.sources.getPriorityOrder(),
+        widget.sources.getPinnedSourceIdentity(_pinKey),
+      ]);
 
       if (!mounted) return;
       setState(() {
-        _results = results;
+        _results = values[0] as List<SourceResult>;
+        _priority = values[1] as List<SourceSortCriterion>;
+        _pinnedIdentity = values[2] as String?;
         _loading = false;
         _error = null;
       });
@@ -76,6 +97,163 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
         _error = error.toString();
       });
     }
+  }
+
+  List<String> get _providers {
+    final providers = <String>[];
+    for (final source in _results) {
+      final name = source.provider.trim();
+      if (name.isNotEmpty && !providers.contains(name)) providers.add(name);
+    }
+    return providers;
+  }
+
+  List<SourceResult> get _visibleResults {
+    List<SourceResult> sorted;
+    switch (_sort) {
+      case _TvSourceSort.free:
+        sorted = widget.sources.sortForFreeStreaming(_results);
+      case _TvSourceSort.smooth:
+        sorted = widget.sources.sortForSmoothPlayback(_results);
+      case _TvSourceSort.best:
+        sorted = widget.sources.sortResults(_results, _priority);
+    }
+
+    if (_providerFilter != null) {
+      sorted = sorted
+          .where((source) => source.provider == _providerFilter)
+          .toList(growable: false);
+    }
+    if (_compatibilityOnly) {
+      sorted = sorted
+          .where((source) => source.compatibilityFriendly)
+          .toList(growable: false);
+    }
+
+    final ordered = [...sorted];
+    if (_pinnedIdentity != null) {
+      final pinnedIndex = ordered.indexWhere(
+        (source) => widget.sources.matchesPinned(
+          source,
+          _pinnedIdentity,
+          seriesWide: _seriesWidePin,
+        ),
+      );
+      if (pinnedIndex > 0) {
+        final pinned = ordered.removeAt(pinnedIndex);
+        ordered.insert(0, pinned);
+      }
+    }
+    return ordered;
+  }
+
+  Future<void> _togglePin(SourceResult source) async {
+    final pinned = widget.sources.matchesPinned(
+      source,
+      _pinnedIdentity,
+      seriesWide: _seriesWidePin,
+    );
+    if (pinned) {
+      await widget.sources.unpinSource(_pinKey);
+      if (mounted) setState(() => _pinnedIdentity = null);
+      return;
+    }
+
+    await widget.sources.pinSource(
+      _pinKey,
+      source,
+      seriesWide: _seriesWidePin,
+    );
+    if (!mounted) return;
+    setState(() {
+      _pinnedIdentity = widget.sources.sourceIdentity(
+        source,
+        seriesWide: _seriesWidePin,
+      );
+    });
+  }
+
+  Future<void> _confirmPin(SourceResult source) async {
+    final pinned = widget.sources.matchesPinned(
+      source,
+      _pinnedIdentity,
+      seriesWide: _seriesWidePin,
+    );
+    final release = source.fileNameHint?.trim().isNotEmpty == true
+        ? source.fileNameHint!.trim()
+        : source.title.split('\n').last.trim();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF121613),
+        title: Text(pinned ? 'Unpin this source?' : 'Pin this source?'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Text(
+            pinned
+                ? 'Stop keeping this release at the top for this title.'
+                : 'Keep this release at the top for this title'
+                    '${_seriesWidePin ? ' and matching episodes' : ''}?\n\n'
+                    '$release',
+            maxLines: 6,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFFC7CEC8),
+              height: 1.4,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            autofocus: true,
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            icon: Icon(
+              pinned ? Icons.push_pin_outlined : Icons.push_pin_rounded,
+            ),
+            label: Text(pinned ? 'Unpin' : 'Pin source'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      await _togglePin(source);
+    }
+  }
+
+  Future<void> _showSourceModeHelp() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF121613),
+        title: const Text('Source modes'),
+        content: const ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: 620),
+          child: Text(
+            'Free P2P: ranks sources for practical torrent startup without debrid — healthy swarm first, then good quality/resolution and efficient file size.\n\n'
+            'Smooth: favors TV-friendly formats, 1080p/720p, efficient codecs, healthy seeders and smaller files.\n\n'
+            'Best: uses your normal Orvix source-priority settings.\n\n'
+            'Compatible only: hides sources that look risky for a typical TV decoder, such as 8K, AV1, Hi10P/10-bit AVC, or Dolby Vision-only releases. It does not change the player or torrent engine.',
+            style: TextStyle(
+              color: Color(0xFFC7CEC8),
+              height: 1.45,
+            ),
+          ),
+        ),
+        actions: [
+          FilledButton(
+            autofocus: true,
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _play(SourceResult source) async {
@@ -170,12 +348,90 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 22),
+              const SizedBox(height: 18),
+              _sourceControls(),
+              const SizedBox(height: 14),
               Expanded(child: _body()),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _sourceControls() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          height: 42,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            children: [
+              _TvFilterChip(
+                selected: _providerFilter == null,
+                label: 'All',
+                icon: Icons.apps_rounded,
+                onPressed: () => setState(() => _providerFilter = null),
+              ),
+              for (final provider in _providers) ...[
+                const SizedBox(width: 8),
+                _TvFilterChip(
+                  selected: _providerFilter == provider,
+                  label: provider,
+                  icon: Icons.extension_rounded,
+                  onPressed: () => setState(() => _providerFilter = provider),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 42,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            children: [
+              _TvFilterChip(
+                selected: _sort == _TvSourceSort.free,
+                label: 'Free P2P',
+                icon: Icons.bolt_rounded,
+                onPressed: () => setState(() => _sort = _TvSourceSort.free),
+              ),
+              const SizedBox(width: 8),
+              _TvFilterChip(
+                selected: _sort == _TvSourceSort.smooth,
+                label: 'Smooth',
+                icon: Icons.speed_rounded,
+                onPressed: () => setState(() => _sort = _TvSourceSort.smooth),
+              ),
+              const SizedBox(width: 8),
+              _TvFilterChip(
+                selected: _sort == _TvSourceSort.best,
+                label: 'Best',
+                icon: Icons.auto_awesome_rounded,
+                onPressed: () => setState(() => _sort = _TvSourceSort.best),
+              ),
+              const SizedBox(width: 12),
+              _TvFilterChip(
+                selected: _compatibilityOnly,
+                label: 'Compatible only',
+                icon: Icons.tv_rounded,
+                onPressed: () => setState(
+                  () => _compatibilityOnly = !_compatibilityOnly,
+                ),
+              ),
+              const SizedBox(width: 8),
+              _TvFilterChip(
+                selected: false,
+                label: 'What are these?',
+                icon: Icons.info_outline_rounded,
+                onPressed: () => unawaited(_showSourceModeHelp()),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -220,10 +476,12 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
       );
     }
 
-    if (_results.isEmpty) {
+    final visible = _visibleResults;
+
+    if (visible.isEmpty) {
       return const Center(
         child: Text(
-          'No sources found.',
+          'No sources match the current filters.',
           style: TextStyle(
             color: Color(0xFFB7BDB8),
             fontWeight: FontWeight.w700,
@@ -234,15 +492,22 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
 
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(2, 2, 2, 30),
-      itemCount: _results.length,
+      itemCount: visible.length,
       separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (context, index) {
-        final source = _results[index];
+        final source = visible[index];
+        final pinned = widget.sources.matchesPinned(
+          source,
+          _pinnedIdentity,
+          seriesWide: _seriesWidePin,
+        );
         return _TvSourceRow(
           source: source,
+          pinned: pinned,
           autofocus: index == 0,
           busy: _openingResource == source.resource,
           onPressed: () => unawaited(_play(source)),
+          onPinRequest: () => unawaited(_confirmPin(source)),
         );
       },
     );
@@ -252,15 +517,19 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
 class _TvSourceRow extends StatefulWidget {
   const _TvSourceRow({
     required this.source,
+    required this.pinned,
     required this.autofocus,
     required this.busy,
     required this.onPressed,
+    required this.onPinRequest,
   });
 
   final SourceResult source;
+  final bool pinned;
   final bool autofocus;
   final bool busy;
   final VoidCallback onPressed;
+  final VoidCallback onPinRequest;
 
   @override
   State<_TvSourceRow> createState() => _TvSourceRowState();
@@ -268,6 +537,45 @@ class _TvSourceRow extends StatefulWidget {
 
 class _TvSourceRowState extends State<_TvSourceRow> {
   bool _focused = false;
+  Timer? _holdTimer;
+  bool _holdTriggered = false;
+
+  bool _isActivateKey(LogicalKeyboardKey key) =>
+      key == LogicalKeyboardKey.select ||
+      key == LogicalKeyboardKey.enter ||
+      key == LogicalKeyboardKey.space;
+
+  KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
+    if (!_isActivateKey(event.logicalKey) || widget.busy) {
+      return KeyEventResult.ignored;
+    }
+
+    if (event is KeyDownEvent) {
+      _holdTriggered = false;
+      _holdTimer?.cancel();
+      _holdTimer = Timer(const Duration(milliseconds: 650), () {
+        if (!mounted) return;
+        _holdTriggered = true;
+        widget.onPinRequest();
+      });
+      return KeyEventResult.handled;
+    }
+
+    if (event is KeyUpEvent) {
+      _holdTimer?.cancel();
+      if (!_holdTriggered) widget.onPressed();
+      _holdTriggered = false;
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.handled;
+  }
+
+  @override
+  void dispose() {
+    _holdTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -281,7 +589,11 @@ class _TvSourceRowState extends State<_TvSourceRow> {
       source.isMagnet ? 'P2P' : 'Direct',
     ].join('  •  ');
 
-    return AnimatedContainer(
+    return Focus(
+      autofocus: widget.autofocus,
+      onFocusChange: (value) => setState(() => _focused = value),
+      onKeyEvent: _handleKey,
+      child: AnimatedContainer(
       duration: const Duration(milliseconds: 100),
       decoration: BoxDecoration(
         color: _focused ? const Color(0xFF222723) : const Color(0xFF141815),
@@ -294,12 +606,12 @@ class _TvSourceRowState extends State<_TvSourceRow> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          autofocus: widget.autofocus,
+          canRequestFocus: false,
           focusColor: Colors.transparent,
           hoverColor: Colors.transparent,
           splashColor: Colors.transparent,
-          onFocusChange: (value) => setState(() => _focused = value),
           onTap: widget.busy ? null : widget.onPressed,
+          onLongPress: widget.busy ? null : widget.onPinRequest,
           borderRadius: BorderRadius.circular(14),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 13, 16, 13),
@@ -362,13 +674,125 @@ class _TvSourceRowState extends State<_TvSourceRow> {
                     child: CircularProgressIndicator(strokeWidth: 3),
                   )
                 else
-                  Icon(
-                    Icons.play_arrow_rounded,
-                    size: 34,
-                    color: _focused
-                        ? Colors.white
-                        : const Color(0xFF8F9891),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.play_arrow_rounded,
+                        size: 32,
+                        color: _focused
+                            ? Colors.white
+                            : const Color(0xFF8F9891),
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            widget.pinned
+                                ? Icons.push_pin_rounded
+                                : Icons.push_pin_outlined,
+                            size: 12,
+                            color: widget.pinned
+                                ? const Color(0xFFB9FF45)
+                                : const Color(0xFF8F9891),
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            widget.pinned ? 'Pinned' : 'Hold OK',
+                            style: TextStyle(
+                              color: widget.pinned
+                                  ? const Color(0xFFB9FF45)
+                                  : const Color(0xFF8F9891),
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      ),
+    );
+  }
+}
+
+enum _TvSourceSort { free, smooth, best }
+
+class _TvFilterChip extends StatefulWidget {
+  const _TvFilterChip({
+    required this.selected,
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final bool selected;
+  final String label;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  State<_TvFilterChip> createState() => _TvFilterChipState();
+}
+
+class _TvFilterChipState extends State<_TvFilterChip> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = widget.selected;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 90),
+      decoration: BoxDecoration(
+        color: selected ? const Color(0xFF263B18) : const Color(0xFF141815),
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(
+          color: _focused
+              ? Colors.white
+              : selected
+                  ? const Color(0xFFB9FF45)
+                  : const Color(0xFF303631),
+          width: _focused ? 2 : 1,
+        ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          focusColor: Colors.transparent,
+          hoverColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          onFocusChange: (value) => setState(() => _focused = value),
+          onTap: widget.onPressed,
+          borderRadius: BorderRadius.circular(11),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  selected ? Icons.check_rounded : widget.icon,
+                  size: 17,
+                  color: selected
+                      ? const Color(0xFFB9FF45)
+                      : const Color(0xFFCFD6D0),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  widget.label,
+                  style: TextStyle(
+                    color: selected
+                        ? const Color(0xFFE8FFD0)
+                        : const Color(0xFFE0E5E1),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
               ],
             ),
           ),
