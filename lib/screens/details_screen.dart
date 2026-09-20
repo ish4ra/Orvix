@@ -1246,9 +1246,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
         _resolveProgress = null;
         _status = 'Starting local P2P torrent stream…';
       });
-      final localUrl = await LocalTorrentService.instance.resolve(chosen);
+      final localUrl = await LocalTorrentService.instance.resolve(
+        chosen,
+        onProgress: (message) {
+          if (mounted) setState(() => _status = message);
+        },
+      );
       if (!mounted) return;
-      setState(() => _status = 'Torrent metadata ready — opening player…');
+      setState(() => _status = 'P2P stream ready — opening player…');
       await _openPlayerUrl(
         localUrl,
         item,
@@ -2379,7 +2384,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final uri = Uri.tryParse(url);
     final localP2p = uri != null &&
         (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
-        uri.port == 11470;
+        (uri.port == 11470 || uri.port == 8091);
 
     // Android TV P2P is intentionally routed through Media3/ExoPlayer first.
     // This isolates the local torrent transport from media_kit/libmpv and gives
