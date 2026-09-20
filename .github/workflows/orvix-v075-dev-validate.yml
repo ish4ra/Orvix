@@ -202,7 +202,7 @@ jobs:
 
       - name: Pack portable build
         shell: pwsh
-        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath 'Orvix-v0.7.4-alpha.23-Windows-x64.zip' -Force
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath 'Orvix-v0.7.5-dev-Windows-x64.zip' -Force
 
       - name: Install Inno Setup
         shell: pwsh
@@ -217,7 +217,7 @@ jobs:
           )
           $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
-          & $iscc '/DMyAppVersion=0.7.4-alpha.23' 'installer\orvix.iss'
+          & $iscc '/DMyAppVersion=0.7.5-dev' 'installer\orvix.iss'
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
 
       - uses: actions/upload-artifact@v4
@@ -225,8 +225,8 @@ jobs:
           name: windows
           if-no-files-found: error
           path: |
-            Orvix-v0.7.4-alpha.23-Windows-x64.zip
-            installer-output/Orvix-Setup-v0.7.4-alpha.23-Windows-x64.exe
+            Orvix-v0.7.5-dev-Windows-x64.zip
+            installer-output/Orvix-Setup-v0.7.5-dev-Windows-x64.exe
 
   android-mobile:
     runs-on: ubuntu-latest
@@ -300,19 +300,19 @@ jobs:
 
       - name: Rename APKs
         run: |
-          cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.4-alpha.23-Android-Mobile.apk
-          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk Orvix-v0.7.4-alpha.23-Android-Mobile-arm64-v8a.apk
-          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk Orvix-v0.7.4-alpha.23-Android-Mobile-armeabi-v7a.apk
-          cp build/app/outputs/flutter-apk/app-x86_64-release.apk Orvix-v0.7.4-alpha.23-Android-Mobile-x86_64.apk
+          cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.5-dev-Android-Mobile.apk
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk Orvix-v0.7.5-dev-Android-Mobile-arm64-v8a.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk Orvix-v0.7.5-dev-Android-Mobile-armeabi-v7a.apk
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk Orvix-v0.7.5-dev-Android-Mobile-x86_64.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: android-mobile
           path: |
-            Orvix-v0.7.4-alpha.23-Android-Mobile.apk
-            Orvix-v0.7.4-alpha.23-Android-Mobile-arm64-v8a.apk
-            Orvix-v0.7.4-alpha.23-Android-Mobile-armeabi-v7a.apk
-            Orvix-v0.7.4-alpha.23-Android-Mobile-x86_64.apk
+            Orvix-v0.7.5-dev-Android-Mobile.apk
+            Orvix-v0.7.5-dev-Android-Mobile-arm64-v8a.apk
+            Orvix-v0.7.5-dev-Android-Mobile-armeabi-v7a.apk
+            Orvix-v0.7.5-dev-Android-Mobile-x86_64.apk
 
   android-tv:
     runs-on: ubuntu-latest
@@ -351,10 +351,13 @@ jobs:
           grep -q 'android.intent.category.LEANBACK_LAUNCHER' android/app/src/main/AndroidManifest.xml
           grep -q 'android:screenOrientation="landscape"' android/app/src/main/AndroidManifest.xml
           grep -q 'android:extractNativeLibs="true"' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:foregroundServiceType="mediaPlayback"' android/app/src/main/AndroidManifest.xml
           grep -q 'orvix/torrent_engine' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
-          grep -q 'orvix/tv_native_player' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
-          grep -q 'DefaultHttpDataSource' android/app/src/main/kotlin/com/orvix/orvix/TvNativePlayerActivity.kt
-          grep -q 'media3-exoplayer:1.10.1' android/app/build.gradle.kts
+          if grep -q 'orvix/tv_native_player' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt; then
+            echo 'Experimental native TV player bridge is still present.' >&2
+            exit 1
+          fi
+          test ! -f android/app/src/main/kotlin/com/orvix/orvix/TvNativePlayerActivity.kt
 
       - name: Verify Android TV banner
         shell: bash
@@ -400,10 +403,10 @@ jobs:
           "$APKSIGNER" verify --verbose "$APK"
 
       - name: Rename APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.4-alpha.23-Android-TV.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.5-dev-Android-TV.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: android-tv
-          path: Orvix-v0.7.4-alpha.23-Android-TV.apk
+          path: Orvix-v0.7.5-dev-Android-TV.apk
 
