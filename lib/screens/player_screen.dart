@@ -28,6 +28,7 @@ class PlayerScreen extends StatefulWidget {
     this.item,
     this.episode,
     this.aiSubtitle,
+    this.allowAiSinhala = true,
     this.releaseHint,
     this.expectedSizeBytes,
     this.expectedVideoHash,
@@ -42,6 +43,7 @@ class PlayerScreen extends StatefulWidget {
   final MediaItem? item;
   final EpisodeItem? episode;
   final AiPreparedSubtitle? aiSubtitle;
+  final bool allowAiSinhala;
   final String? releaseHint;
   final int? expectedSizeBytes;
   final String? expectedVideoHash;
@@ -126,7 +128,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   void initState() {
     super.initState();
-    _preparedAiSubtitle = widget.aiSubtitle;
+    _preparedAiSubtitle = widget.allowAiSinhala ? widget.aiSubtitle : null;
     _aiState = _preparedAiSubtitle == null
         ? const AiSinhalaRuntimeState.native()
         : const AiSinhalaRuntimeState(AiSinhalaRuntimeMode.prepared);
@@ -191,8 +193,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
         setState(() => _error = null);
       }
 
-      final aiPreferred = _preparedAiSubtitle != null ||
-          await AiSinhalaPreferencesService.isEnabled();
+      final aiPreferred = widget.allowAiSinhala &&
+          (_preparedAiSubtitle != null ||
+              await AiSinhalaPreferencesService.isEnabled());
       var aiReady = _preparedAiSubtitle != null;
 
       if (mounted && !_subtitleChoiceOverridden) {
