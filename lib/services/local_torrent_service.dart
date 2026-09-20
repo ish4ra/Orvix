@@ -5,7 +5,6 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
-import 'platform_profile.dart';
 import 'source_provider_service.dart';
 
 class LocalTorrentException implements Exception {
