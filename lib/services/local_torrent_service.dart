@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import 'android_tv_torrserver_service.dart';
 import 'platform_profile.dart';
 import 'source_provider_service.dart';
 
@@ -61,8 +62,22 @@ class LocalTorrentService {
   Future<void>? _starting;
   bool _androidProfileConfigured = false;
 
-  Future<String> resolve(SourceResult source) async {
+  Future<String> resolve(
+    SourceResult source, {
+    void Function(String message)? onProgress,
+  }) async {
     if (!source.isMagnet) return source.resource;
+
+    if (PlatformProfile.isAndroidTv) {
+      try {
+        return await AndroidTvTorrServerService.instance.resolve(
+          source,
+          onProgress: onProgress,
+        );
+      } on AndroidTvTorrentException catch (error) {
+        throw LocalTorrentException(error.message);
+      }
+    }
 
     final infoHash = _extractInfoHash(source.resource);
     if (infoHash == null) {
@@ -149,6 +164,19 @@ class LocalTorrentService {
 
   Future<LocalTorrentHealth?> healthForStreamUrl(String streamUrl) async {
     final uri = Uri.tryParse(streamUrl);
+    if (uri != null &&
+        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
+        uri.port == 8091) {
+      final health =
+          await AndroidTvTorrServerService.instance.healthForStreamUrl(streamUrl);
+      if (health == null) return null;
+      return LocalTorrentHealth(
+        metadataReady: health.metadataReady,
+        peers: health.peers,
+        connections: health.peers + health.seeds,
+        downloadSpeedBytesPerSecond: health.downloadSpeedBytesPerSecond,
+      );
+    }
     if (uri == null ||
         (uri.host != '127.0.0.1' && uri.host != 'localhost') ||
         uri.port != 11470 ||
@@ -380,6 +408,11 @@ class LocalTorrentService {
     return int.tryParse(value?.toString() ?? '');
   }
 
+  Future<void> stopCurrentTvStream() async {
+    if (!PlatformProfile.isAndroidTv) return;
+    await AndroidTvTorrServerService.instance.stopCurrentStream();
+  }
+
   Future<void> dispose() async {
     final process = _process;
     _process = null;
@@ -388,6 +421,9 @@ class LocalTorrentService {
     }
     _ownsProcess = false;
     if (Platform.isAndroid) {
+      if (PlatformProfile.isAndroidTv) {
+        await AndroidTvTorrServerService.instance.dispose();
+      }
       try {
         await _androidChannel.invokeMethod<void>('stop');
       } catch (_) {
