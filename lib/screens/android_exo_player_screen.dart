@@ -409,15 +409,6 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                       ),
                     ),
                   ),
-                  const Text(
-                    'EXO',
-                    style: TextStyle(
-                      color: Color(0xFFAAB0AC),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
                 ],
               ),
             ),
