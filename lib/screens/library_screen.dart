@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -5,8 +7,55 @@ import '../services/cloud_preferences_service.dart';
 import '../services/pikpak_service.dart';
 import '../services/pikpak_transfer_service.dart';
 import '../services/playback_service.dart';
+import '../services/player_engine_preferences_service.dart';
 import '../services/torbox_service.dart';
+import 'android_exo_player_screen.dart';
 import 'player_screen.dart';
+
+Future<void> _openCloudPlayer(
+  BuildContext context, {
+  required PlaybackService playback,
+  required String url,
+  required String title,
+}) async {
+  final preference = await PlayerEnginePreferencesService.get();
+  final engine = PlayerEngineRouter.choose(
+    preference: preference,
+    isAndroid: Platform.isAndroid,
+    url: url,
+    releaseHint: title,
+  );
+
+  if (engine == PlayerEngineKind.exoPlayer && Platform.isAndroid) {
+    final result = await Navigator.of(context).push<AndroidExoPlayerResult>(
+      MaterialPageRoute(
+        builder: (_) => AndroidExoPlayerScreen(
+          url: url,
+          title: title,
+          autoFallbackToMpv:
+              preference == PlayerEnginePreference.auto,
+        ),
+      ),
+    );
+    if (!context.mounted) return;
+
+    final shouldFallback = result?.switchToMpv == true ||
+        (preference == PlayerEnginePreference.auto &&
+            result?.failed == true);
+    if (!shouldFallback) return;
+  }
+
+  if (!context.mounted) return;
+  await Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => PlayerScreen(
+        playback: playback,
+        url: url,
+        title: title,
+      ),
+    ),
+  );
+}
 
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({
@@ -169,7 +218,12 @@ class _PikPakPaneState extends State<_PikPakPane> {
       if (url == null || url.isEmpty) throw Exception('PikPak did not return a playable link.');
       if (!mounted) return;
       setState(() { _busy = false; _message = null; });
-      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => PlayerScreen(playback: widget.playback, url: url, title: file.name)));
+      await _openCloudPlayer(
+        context,
+        playback: widget.playback,
+        url: url,
+        title: file.name,
+      );
     } catch (e) { if (mounted) setState(() { _busy = false; _message = 'Could not play file: $e'; }); }
   }
 
@@ -352,7 +406,12 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
       final url = await widget.torbox.requestDownloadUrl(item, file);
       if (!mounted) return;
       setState(() { _busy = false; _message = null; });
-      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => PlayerScreen(playback: widget.playback, url: url, title: file.name)));
+      await _openCloudPlayer(
+        context,
+        playback: widget.playback,
+        url: url,
+        title: file.name,
+      );
     } catch (e) { if (mounted) setState(() { _busy = false; _message = '$e'; }); }
   }
 
