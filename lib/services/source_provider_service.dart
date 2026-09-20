@@ -234,6 +234,7 @@ class SourceProviderService {
   static const _preferredGroupsKey = 'orvix_preferred_release_groups_v1';
   static const _resultLimitKey = 'orvix_source_result_limit_v1';
   static const _pinnedSourcePrefix = 'orvix_pinned_source_v1_';
+  static const _tvLegacyPinsClearedKey = 'orvix_tv_legacy_pins_cleared_beta8';
   static const defaultResultLimit = 0; // 0 = show all
   static const _recommendedProvidersSeedKey =
       'orvix_recommended_source_pool_seeded_v1';
@@ -538,6 +539,25 @@ class SourceProviderService {
     await prefs.remove(_pinPreferenceKey(targetKey));
   }
 
+  /// The experimental TV source browser used a long-press pin gesture and
+  /// series-wide identities. That made accidental pins hard to remove with a
+  /// remote. Clear those legacy preferences once when the repaired TV source
+  /// browser is first opened. Mobile/desktop pin behavior is otherwise left
+  /// untouched.
+  Future<void> clearLegacyTvPinsOnce() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_tvLegacyPinsClearedKey) == true) return;
+
+    final keys = prefs
+        .getKeys()
+        .where((key) => key.startsWith(_pinnedSourcePrefix))
+        .toList(growable: false);
+    for (final key in keys) {
+      await prefs.remove(key);
+    }
+    await prefs.setBool(_tvLegacyPinsClearedKey, true);
+  }
+
   Future<void> setPriorityOrder(List<SourceSortCriterion> order) async {
     final normalized = <SourceSortCriterion>[];
     for (final criterion in order) {
@@ -831,6 +851,7 @@ class SourceProviderService {
   Future<List<SourceResult>> resolve(
     MediaItem item, {
     EpisodeItem? episode,
+    bool includeLowQuality = false,
   }) async {
     final addons = await getAddonUrls();
     if (addons.isEmpty) return const [];
@@ -874,7 +895,7 @@ class SourceProviderService {
     // filter, so cached CAM/DVD/sub-720p rows cannot jump ahead of good HD
     // sources merely because they are cached.
     var visible = out;
-    if (!showLowQuality) {
+    if (!includeLowQuality && !showLowQuality) {
       final hasHd = out.any(
         (r) => r.qualityRank >= 300 && r.releaseQuality?.toUpperCase() != 'CAM',
       );
