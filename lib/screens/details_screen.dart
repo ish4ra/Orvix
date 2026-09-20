@@ -87,7 +87,31 @@ class _DetailsScreenState extends State<DetailsScreen> {
   @override
   void initState() {
     super.initState();
+
+    // Use the warmed in-memory state before the first frame whenever possible.
+    // This prevents the TV details page from briefly showing "Library" and then
+    // changing to "In Library" only after remote metadata finishes loading.
+    _watchlisted =
+        widget.mediaState.peekWatchlisted(widget.item) ?? _watchlisted;
+    _inLibrary = widget.mediaState.peekInLibrary(widget.item) ?? _inLibrary;
+    unawaited(_loadMembership(widget.item));
+
     _detailsFuture = _loadDetails();
+  }
+
+  Future<void> _loadMembership(MediaItem item) async {
+    final values = await Future.wait<bool>([
+      widget.mediaState.isWatchlisted(item),
+      widget.mediaState.isInLibrary(item),
+    ]);
+    if (!mounted) return;
+    final watchlisted = values[0];
+    final inLibrary = values[1];
+    if (watchlisted == _watchlisted && inLibrary == _inLibrary) return;
+    setState(() {
+      _watchlisted = watchlisted;
+      _inLibrary = inLibrary;
+    });
   }
 
   Future<MediaItem> _loadDetails() async {
@@ -96,14 +120,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
       final seasons = item.episodes.map((e) => e.season).toList()..sort();
       _selectedSeason = seasons.first;
     }
-    final watchlisted = await widget.mediaState.isWatchlisted(item);
-    final inLibrary = await widget.mediaState.isInLibrary(item);
-    if (mounted) {
-      setState(() {
-        _watchlisted = watchlisted;
-        _inLibrary = inLibrary;
-      });
-    }
+
+    // Membership lookup is intentionally independent from network metadata.
+    // If the richer catalog item has a different object instance, refresh from
+    // the same local cache without blocking the screen.
+    unawaited(_loadMembership(item));
     return item;
   }
 
