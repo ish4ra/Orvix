@@ -221,18 +221,21 @@ class _SourcePlaybackHistory {
     required this.failures,
     this.lastSuccess,
     this.lastFailure,
+    this.lastFailureReason,
   });
 
   final int successes;
   final int failures;
   final DateTime? lastSuccess;
   final DateTime? lastFailure;
+  final String? lastFailureReason;
 
   Map<String, dynamic> toJson() => {
         'successes': successes,
         'failures': failures,
         if (lastSuccess != null) 'lastSuccess': lastSuccess!.toIso8601String(),
         if (lastFailure != null) 'lastFailure': lastFailure!.toIso8601String(),
+        if (lastFailureReason != null) 'lastFailureReason': lastFailureReason,
       };
 
   static _SourcePlaybackHistory fromJson(Object? raw) {
@@ -244,6 +247,7 @@ class _SourcePlaybackHistory {
       failures: int.tryParse(raw['failures']?.toString() ?? '') ?? 0,
       lastSuccess: DateTime.tryParse(raw['lastSuccess']?.toString() ?? ''),
       lastFailure: DateTime.tryParse(raw['lastFailure']?.toString() ?? ''),
+      lastFailureReason: raw['lastFailureReason']?.toString(),
     );
   }
 }
@@ -370,6 +374,7 @@ class SourceProviderService {
   Future<void> recordPlaybackOutcome(
     SourceResult source, {
     required bool success,
+    String? reason,
   }) async {
     await _ensurePlaybackHistoryLoaded();
     final key = _playbackHistoryIdentity(source);
@@ -381,6 +386,11 @@ class SourceProviderService {
       failures: previous.failures + (success ? 0 : 1),
       lastSuccess: success ? now : previous.lastSuccess,
       lastFailure: success ? previous.lastFailure : now,
+      lastFailureReason: success
+          ? previous.lastFailureReason
+          : reason?.trim().isNotEmpty == true
+              ? reason!.trim()
+              : previous.lastFailureReason,
     );
 
     if (_playbackHistory.length > 80) {
@@ -409,6 +419,54 @@ class SourceProviderService {
     );
   }
 
+  (String, String) _friendlyFailureReason(String? raw) {
+    final clean = raw?.replaceAll(RegExp(r'\s+'), ' ').trim() ?? '';
+    final lower = clean.toLowerCase();
+
+    final speedMatch = RegExp(
+      r'speed:\s*([0-9.]+\s*(?:kb/s|mb/s))',
+      caseSensitive: false,
+    ).firstMatch(clean);
+    if (lower.contains('timed out') ||
+        lower.contains('taking longer') ||
+        lower.contains('no data') ||
+        lower.contains('buffer')) {
+      final speed = speedMatch?.group(1);
+      return (
+        'SLOW / STALLED',
+        speed == null
+            ? 'This release recently failed to deliver playable data in time.'
+            : 'Recent attempt stalled while the torrent engine reported about $speed.',
+      );
+    }
+    if (lower.contains('decoder') ||
+        lower.contains('codec') ||
+        lower.contains('format') ||
+        lower.contains('avcodec')) {
+      return (
+        'FORMAT FAILED',
+        'This release recently reached the player but its codec/container path failed.',
+      );
+    }
+    if (lower.contains('file') ||
+        lower.contains('404') ||
+        lower.contains('invalid') ||
+        lower.contains('index')) {
+      return (
+        'FILE ROUTE FAILED',
+        'The recent attempt could not resolve/open the expected video file cleanly.',
+      );
+    }
+    return (
+      'FAILED RECENTLY',
+      clean.isEmpty
+          ? 'This exact release failed to start recently; try another source first.'
+          : clean.length > 150
+              ? '${clean.substring(0, 147)}…'
+              : clean,
+    );
+  }
+
   FreeSourceAssessment assessFreePlayback(SourceResult source) {
     final historyRank = _historyRank(source);
     final seeders = source.seeders ?? 0;
@@ -427,9 +485,10 @@ class SourceProviderService {
       );
     }
     if (historyRank <= -2) {
-      return const FreeSourceAssessment(
-        label: 'FAILED RECENTLY',
-        detail: 'This exact release failed to start recently; try another source first.',
+      final reason = _friendlyFailureReason(_historyFor(source)?.lastFailureReason);
+      return FreeSourceAssessment(
+        label: reason.$1,
+        detail: reason.$2,
         recommended: false,
         warning: true,
       );
