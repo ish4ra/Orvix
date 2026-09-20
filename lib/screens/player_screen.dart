@@ -34,6 +34,8 @@ class PlayerScreen extends StatefulWidget {
     this.expectedVideoHash,
     this.nextEpisodeLabel,
     this.onNext,
+    this.onPlaybackStarted,
+    this.onStartupFailed,
   });
 
   final PlaybackService playback;
@@ -49,6 +51,8 @@ class PlayerScreen extends StatefulWidget {
   final String? expectedVideoHash;
   final String? nextEpisodeLabel;
   final Future<void> Function()? onNext;
+  final VoidCallback? onPlaybackStarted;
+  final ValueChanged<String>? onStartupFailed;
 
   @override
   State<PlayerScreen> createState() => _PlayerScreenState();
@@ -75,6 +79,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   StreamSubscription<List<String>>? _subtitleTimingSubscription;
   StreamSubscription<String>? _playbackErrorSubscription;
   bool _playbackStarted = false;
+  bool _successReported = false;
+  bool _failureReported = false;
   bool _startupFailureVisible = false;
   bool _preflightWarmup = false;
   bool _exitPrepared = false;
@@ -178,14 +184,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _markPlaybackStarted() {
     if (_closing || _preflightWarmup) return;
+    final firstStart = !_playbackStarted;
     _playbackStarted = true;
     _startupTimer?.cancel();
+
+    if (firstStart && !_successReported) {
+      _successReported = true;
+      widget.onPlaybackStarted?.call();
+    }
+
     if (mounted && _startupFailureVisible) {
       setState(() {
         _startupFailureVisible = false;
         _error = null;
       });
     }
+  }
+
+  void _reportStartupFailure(String message) {
+    if (_closing || _playbackStarted || _failureReported) return;
+    _failureReported = true;
+    widget.onStartupFailed?.call(message);
   }
 
   Future<void> _open() async {
@@ -316,11 +335,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
             _markPlaybackStarted();
             return;
           }
+          const message =
+              'The stream is taking longer than expected to start. '
+              'Orvix will recover automatically if media begins playing.';
+          _reportStartupFailure(message);
           setState(() {
             _startupFailureVisible = true;
-            _error =
-                'The stream is taking longer than expected to start. '
-                'Orvix will recover automatically if media begins playing.';
+            _error = message;
           });
         });
       }
@@ -328,10 +349,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final currentVolume = widget.playback.player.state.volume;
       if (currentVolume > 0) _lastVolume = currentVolume;
     } catch (e) {
+      final message = e.toString();
+      _reportStartupFailure(message);
       if (mounted) {
         setState(() {
           _transitionAi(AiSinhalaRuntimeMode.native);
-          _error = e.toString();
+          _error = message;
         });
       }
     }
@@ -348,9 +371,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final state = widget.playback.player.state;
     if (state.duration <= Duration.zero &&
         state.position < const Duration(seconds: 1)) {
+      final detail = 'Playback engine: ${message.trim()}';
+      _reportStartupFailure(detail);
       setState(() {
         _startupFailureVisible = true;
-        _error = 'Playback engine: ${message.trim()}';
+        _error = detail;
       });
     }
   }
@@ -3031,10 +3056,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Widget _controls(BuildContext context) {
-    if (PlatformProfile.isAndroidTv) {
-      return _tvControls(context);
-    }
-
     final player = widget.playback.player;
     final compact = !_desktop && MediaQuery.sizeOf(context).shortestSide < 600;
     return Container(
