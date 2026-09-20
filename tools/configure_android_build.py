@@ -1,5 +1,4 @@
 import argparse
-import shutil
 from collections import deque
 from pathlib import Path
 
@@ -73,7 +72,9 @@ def patch_android(tv: bool) -> None:
             '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n'
             '    <uses-permission android:name="android.permission.INTERNET" />\n'
             '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n'
-            '    <uses-permission android:name="android.permission.WAKE_LOCK" />',
+            '    <uses-permission android:name="android.permission.WAKE_LOCK" />\n'
+            '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n'
+            '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />',
         )
 
     text = text.replace(
@@ -131,7 +132,12 @@ def patch_android(tv: bool) -> None:
             '            android:name=".TorrentEngineService"\n'
             '            android:exported="false"\n'
             '            android:stopWithTask="true"\n'
-            '            android:process=":torrent_engine" />\n'
+            '            android:foregroundServiceType="mediaPlayback" />\n'
+            '        <activity\n'
+            '            android:name=".TvNativePlayerActivity"\n'
+            '            android:exported="false"\n'
+            '            android:screenOrientation="landscape"\n'
+            '            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />\n'
             "    </application>",
             1,
         )
@@ -144,10 +150,17 @@ def patch_android(tv: bool) -> None:
         "minSdk = flutter.minSdkVersion",
         "minSdk = 24",
     )
-    if not tv:
-        aar_dep = 'implementation(files("libs/rustls-platform-verifier-0.1.1.aar"))'
-        if aar_dep not in gradle_text:
-            gradle_text += f"\n\ndependencies {{\n    {aar_dep}\n}}\n"
+    aar_dep = 'implementation(files("libs/rustls-platform-verifier-0.1.1.aar"))'
+    media3_exo = 'implementation("androidx.media3:media3-exoplayer:1.10.1")'
+    media3_ui = 'implementation("androidx.media3:media3-ui:1.10.1")'
+    deps = [aar_dep]
+    if tv:
+        deps.extend([media3_exo, media3_ui])
+    missing = [dep for dep in deps if dep not in gradle_text]
+    if missing:
+        gradle_text += "\n\ndependencies {\n" + "".join(
+            f"    {dep}\n" for dep in missing
+        ) + "}\n"
     gradle.write_text(gradle_text)
 
     raw_src = Image.open("assets/branding/orvix_icon.png").convert("RGBA")
@@ -272,12 +285,16 @@ def patch_android(tv: bool) -> None:
     main_activity.write_text(
         """package com.orvix.orvix
 
+import android.app.Activity
 import android.content.Intent
+import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    private var pendingTvPlayerResult: MethodChannel.Result? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
@@ -288,7 +305,12 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "start" -> {
                     try {
-                        startService(Intent(this, TorrentEngineService::class.java))
+                        val intent = Intent(this, TorrentEngineService::class.java)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(intent)
+                        } else {
+                            startService(intent)
+                        }
                         result.success("starting")
                     } catch (error: Throwable) {
                         result.error(
@@ -316,155 +338,264 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
-            "orvix/torrserver"
+            "orvix/tv_native_player"
         ).setMethodCallHandler { call, result ->
             when (call.method) {
-                "start" -> {
-                    try {
-                        result.success(TorrServerManager.start(applicationContext))
-                    } catch (error: Throwable) {
+                "play" -> {
+                    if (pendingTvPlayerResult != null) {
                         result.error(
-                            "torrserver_start_failed",
-                            "${error::class.java.simpleName}: ${error.message ?: error.toString()}",
+                            "player_busy",
+                            "The Android TV player is already open.",
                             null
                         )
+                        return@setMethodCallHandler
                     }
-                }
-                "stop" -> {
-                    try {
-                        TorrServerManager.stop()
-                        result.success(null)
-                    } catch (error: Throwable) {
-                        result.error(
-                            "torrserver_stop_failed",
-                            error.message ?: error.toString(),
-                            null
+
+                    val url = call.argument<String>("url")
+                    if (url.isNullOrBlank()) {
+                        result.error("missing_url", "No playable URL was supplied.", null)
+                        return@setMethodCallHandler
+                    }
+
+                    pendingTvPlayerResult = result
+                    val intent = Intent(this, TvNativePlayerActivity::class.java).apply {
+                        putExtra(TvNativePlayerActivity.EXTRA_URL, url)
+                        putExtra(
+                            TvNativePlayerActivity.EXTRA_TITLE,
+                            call.argument<String>("title") ?: "Orvix"
+                        )
+                        putExtra(
+                            TvNativePlayerActivity.EXTRA_START_POSITION_MS,
+                            (call.argument<Number>("startPositionMs")?.toLong() ?: 0L)
                         )
                     }
+                    startActivityForResult(intent, TV_PLAYER_REQUEST)
                 }
                 else -> result.notImplemented()
             }
         }
     }
+
+    @Deprecated("Deprecated in Android; retained for FlutterActivity compatibility")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == TV_PLAYER_REQUEST) {
+            val pending = pendingTvPlayerResult
+            pendingTvPlayerResult = null
+            pending?.success(
+                mapOf(
+                    "error" to data?.getStringExtra(TvNativePlayerActivity.RESULT_ERROR),
+                    "positionMs" to (data?.getLongExtra(
+                        TvNativePlayerActivity.RESULT_POSITION_MS,
+                        0L
+                    ) ?: 0L),
+                    "durationMs" to (data?.getLongExtra(
+                        TvNativePlayerActivity.RESULT_DURATION_MS,
+                        0L
+                    ) ?: 0L)
+                )
+            )
+            return
+        }
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
+    companion object {
+        private const val TV_PLAYER_REQUEST = 7407
+    }
 }
 """
     )
 
-    torrserver_manager = Path(
-        "android/app/src/main/kotlin/com/orvix/orvix/TorrServerManager.kt"
+    tv_player = Path(
+        "android/app/src/main/kotlin/com/orvix/orvix/TvNativePlayerActivity.kt"
     )
-    torrserver_manager.write_text(
+    tv_player.write_text(
         """package com.orvix.orvix
 
-import android.content.Context
-import android.util.Log
-import java.io.File
+import android.app.Activity
+import android.content.Intent
+import android.os.Bundle
+import android.view.KeyEvent
+import android.view.View
+import android.view.WindowManager
+import android.widget.Toast
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.PlayerView
 
-object TorrServerManager {
-    @Volatile
-    private var process: Process? = null
+class TvNativePlayerActivity : Activity() {
+    private var exoPlayer: ExoPlayer? = null
+    private var playerView: PlayerView? = null
+    private var reportedError: String? = null
 
-    @Synchronized
-    fun start(context: Context): String {
-        val current = process
-        if (current != null && current.isAlive) return "running"
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
 
-        val binary = File(
-            context.applicationInfo.nativeLibraryDir,
-            "libtorrserver.so"
-        )
-        if (!binary.isFile) {
-            throw IllegalStateException(
-                "Bundled TorrServer binary is missing: ${binary.absolutePath}"
-            )
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+
+        val url = intent.getStringExtra(EXTRA_URL)
+        if (url.isNullOrBlank()) {
+            finishWithError("No playable URL was supplied.")
+            return
         }
-        if (!binary.canExecute()) {
-            binary.setExecutable(true)
+
+        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(30_000)
+            .setReadTimeoutMs(30_000)
+            .setAllowCrossProtocolRedirects(true)
+        val dataSourceFactory =
+            DefaultDataSource.Factory(applicationContext, httpDataSourceFactory)
+        val mediaSourceFactory = DefaultMediaSourceFactory(applicationContext)
+            .setDataSourceFactory(dataSourceFactory)
+        val renderersFactory = DefaultRenderersFactory(applicationContext)
+            .setEnableDecoderFallback(true)
+
+        val player = ExoPlayer.Builder(applicationContext)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .setRenderersFactory(renderersFactory)
+            .build()
+        exoPlayer = player
+
+        val view = PlayerView(this).apply {
+            useController = true
+            controllerAutoShow = true
+            controllerHideOnTouch = true
+            keepScreenOn = true
+            setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+            this.player = player
+            isFocusable = true
+            isFocusableInTouchMode = true
         }
+        playerView = view
+        setContentView(view)
 
-        val workDir = File(context.filesDir, "torrserver")
-        if (!workDir.exists() && !workDir.mkdirs()) {
-            throw IllegalStateException(
-                "Could not create TorrServer data directory: ${workDir.absolutePath}"
-            )
+        player.addListener(object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                if (isFinishing || isDestroyed) return
+                reportedError = error.message ?: error.errorCodeName
+                Toast.makeText(
+                    this@TvNativePlayerActivity,
+                    "This source could not be played. Returning to sources.",
+                    Toast.LENGTH_LONG
+                ).show()
+                finishWithResult(reportedError)
+            }
+        })
+
+        val startPosition =
+            intent.getLongExtra(EXTRA_START_POSITION_MS, 0L).coerceAtLeast(0L)
+        player.setMediaItem(MediaItem.fromUri(url), startPosition)
+        player.prepare()
+        player.play()
+
+        view.post {
+            view.requestFocus()
+            view.showController()
         }
+    }
 
-        val started = ProcessBuilder(
-            binary.absolutePath,
-            "--port",
-            "8091",
-            "--path",
-            workDir.absolutePath
-        )
-            .directory(workDir)
-            .redirectErrorStream(true)
-            .start()
-
-        process = started
-
-        Thread({
-            try {
-                started.inputStream.bufferedReader().useLines { lines ->
-                    lines.forEach { line ->
-                        Log.d("OrvixTorrServer", line.take(3000))
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_CENTER,
+                KeyEvent.KEYCODE_ENTER,
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+                    val player = exoPlayer
+                    if (player != null) {
+                        if (player.isPlaying) player.pause() else player.play()
+                        playerView?.showController()
+                        return true
                     }
                 }
-            } catch (_: Throwable) {
-            }
-        }, "orvix-torrserver-log").apply {
-            isDaemon = true
-            start()
-        }
-
-        Thread({
-            try {
-                val exit = started.waitFor()
-                Log.w("OrvixTorrServer", "TorrServer exited with code $exit")
-            } catch (_: Throwable) {
-            } finally {
-                synchronized(this@TorrServerManager) {
-                    if (process === started) process = null
+                KeyEvent.KEYCODE_DPAD_LEFT -> {
+                    val player = exoPlayer
+                    if (player != null && !playerView.orNullControllerVisible()) {
+                        player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                        playerView?.showController()
+                        return true
+                    }
+                }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    val player = exoPlayer
+                    if (player != null && !playerView.orNullControllerVisible()) {
+                        val duration = player.duration
+                        val target = player.currentPosition + 10_000L
+                        player.seekTo(
+                            if (duration > 0) target.coerceAtMost(duration) else target
+                        )
+                        playerView?.showController()
+                        return true
+                    }
                 }
             }
-        }, "orvix-torrserver-watch").apply {
-            isDaemon = true
-            start()
         }
-
-        return "starting"
+        return super.dispatchKeyEvent(event)
     }
 
-    @Synchronized
-    fun stop() {
-        val current = process ?: return
-        process = null
-        try {
-            current.destroy()
-            if (current.isAlive) {
-                Thread.sleep(120)
-            }
-            if (current.isAlive) current.destroyForcibly()
-        } catch (error: Throwable) {
-            Log.w("OrvixTorrServer", "TorrServer shutdown failed", error)
+    @Deprecated("Deprecated in Android; TV remote back should finish playback")
+    override fun onBackPressed() {
+        finishWithResult(reportedError)
+    }
+
+    override fun onStop() {
+        exoPlayer?.pause()
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        playerView?.player = null
+        playerView = null
+        exoPlayer?.release()
+        exoPlayer = null
+        super.onDestroy()
+    }
+
+    private fun finishWithError(message: String) {
+        reportedError = message
+        finishWithResult(message)
+    }
+
+    private fun finishWithResult(error: String?) {
+        val player = exoPlayer
+        val data = Intent().apply {
+            putExtra(RESULT_ERROR, error)
+            putExtra(
+                RESULT_POSITION_MS,
+                player?.currentPosition?.coerceAtLeast(0L) ?: 0L
+            )
+            putExtra(
+                RESULT_DURATION_MS,
+                player?.duration?.takeIf { it > 0L } ?: 0L
+            )
         }
+        setResult(if (error == null) Activity.RESULT_OK else Activity.RESULT_CANCELED, data)
+        finish()
+    }
+
+    companion object {
+        const val EXTRA_URL = "orvix.player.url"
+        const val EXTRA_TITLE = "orvix.player.title"
+        const val EXTRA_START_POSITION_MS = "orvix.player.start_ms"
+        const val RESULT_ERROR = "orvix.player.error"
+        const val RESULT_POSITION_MS = "orvix.player.position_ms"
+        const val RESULT_DURATION_MS = "orvix.player.duration_ms"
     }
 }
+
+private fun PlayerView?.orNullControllerVisible(): Boolean =
+    this?.isControllerFullyVisible ?: false
 """
     )
-
-    if tv:
-        license_assets = Path(
-            "android/app/src/main/assets/licenses/torrserver"
-        )
-        license_assets.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(
-            "licenses/torrserver/LICENSE",
-            license_assets / "LICENSE.txt",
-        )
-        shutil.copyfile(
-            "licenses/torrserver/NOTICE.md",
-            license_assets / "NOTICE.md",
-        )
 
     torrent_service = Path(
         "android/app/src/main/kotlin/com/orvix/orvix/TorrentEngineService.kt"
@@ -472,42 +603,85 @@ object TorrServerManager {
     torrent_service.write_text(
         """package com.orvix.orvix
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import com.stremio.mobile.server.JniStreamingServerController
 import java.util.concurrent.Executors
 
 class TorrentEngineService : Service() {
     private val executor = Executors.newSingleThreadExecutor()
+    @Volatile
+    private var nativeStarted = false
 
     override fun onCreate() {
         super.onCreate()
-        executor.execute {
-            try {
-                JniStreamingServerController.start(applicationContext)
-            } catch (error: Throwable) {
-                Log.e("OrvixTorrentEngine", "Native torrent engine failed to start", error)
-                stopSelf()
-            }
-        }
+        ensureNotificationChannel()
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int =
-        START_NOT_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Orvix P2P")
+            .setContentText("Local streaming server is active")
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setOngoing(true)
+            .build()
+        startForeground(NOTIFICATION_ID, notification)
+
+        if (!nativeStarted) {
+            nativeStarted = true
+            executor.execute {
+                try {
+                    JniStreamingServerController.start(applicationContext)
+                } catch (error: Throwable) {
+                    nativeStarted = false
+                    Log.e(
+                        "OrvixTorrentEngine",
+                        "Native stream-server failed to start",
+                        error
+                    )
+                    stopSelf()
+                }
+            }
+        }
+        return START_STICKY
+    }
 
     override fun onDestroy() {
         try {
             JniStreamingServerController.stop()
         } catch (error: Throwable) {
-            Log.w("OrvixTorrentEngine", "Torrent engine shutdown failed", error)
+            Log.w("OrvixTorrentEngine", "stream-server shutdown failed", error)
         }
+        nativeStarted = false
         executor.shutdownNow()
+        stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun ensureNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_ID,
+                "Orvix local streaming",
+                NotificationManager.IMPORTANCE_LOW
+            )
+        )
+    }
+
+    companion object {
+        private const val CHANNEL_ID = "orvix_streaming_server"
+        private const val NOTIFICATION_ID = 11470
+    }
 }
 """
     )
