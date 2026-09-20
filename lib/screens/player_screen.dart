@@ -112,6 +112,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _subtitleChoiceOverridden = false;
   bool _androidMobilePlayerMode = false;
   bool _mobilePortraitPlayer = false;
+  bool _tvControlFocused = false;
 
   bool get _desktop =>
       Platform.isWindows || Platform.isLinux || Platform.isMacOS;
@@ -1022,7 +1023,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _scheduleHide() {
     _hideTimer?.cancel();
     _hideTimer = Timer(const Duration(seconds: 4), () {
-      if (mounted && !_seeking && _nextCountdown == 0) {
+      if (mounted &&
+          !_seeking &&
+          !_tvControlFocused &&
+          _nextCountdown == 0) {
         setState(() => _controlsVisible = false);
       }
     });
@@ -1031,6 +1035,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _showControls() {
     if (!_controlsVisible) setState(() => _controlsVisible = true);
     _scheduleHide();
+  }
+
+  void _handleTvControlFocus(bool focused) {
+    _tvControlFocused = focused;
+    if (focused) {
+      _hideTimer?.cancel();
+      if (!_controlsVisible && mounted) {
+        setState(() => _controlsVisible = true);
+      }
+    } else {
+      _scheduleHide();
+    }
   }
 
   Future<void> _seekRelative(Duration offset) async {
@@ -1187,6 +1203,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
+
+    // Once a real TV control has focus, let Flutter's normal focus traversal
+    // and ActivateIntent handle DPAD/OK. The root player shortcut layer should
+    // only own keys while the video surface itself has focus.
+    if (PlatformProfile.isAndroidTv && !node.hasPrimaryFocus) {
+      return KeyEventResult.ignored;
+    }
+
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.space ||
         key == LogicalKeyboardKey.mediaPlayPause ||
@@ -1204,6 +1228,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (key == LogicalKeyboardKey.arrowRight) {
       _seekRelative(const Duration(seconds: 10));
       return KeyEventResult.handled;
+    }
+    if (PlatformProfile.isAndroidTv &&
+        (key == LogicalKeyboardKey.arrowUp ||
+            key == LogicalKeyboardKey.arrowDown)) {
+      _showControls();
+      return KeyEventResult.ignored;
     }
     if (key == LogicalKeyboardKey.keyM) {
       _toggleMute();
@@ -2636,7 +2666,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     stream: player.stream.buffering,
                     initialData: player.state.buffering,
                     builder: (context, snapshot) => snapshot.data == true
-                        ? const Center(child: CircularProgressIndicator())
+                        ? Center(
+                            child: CircularProgressIndicator(
+                              color: PlatformProfile.isAndroidTv
+                                  ? Colors.white
+                                  : null,
+                            ),
+                          )
                         : const SizedBox.shrink(),
                   ),
                 if (_error == null && _aiSubtitleLoading)
@@ -2757,6 +2793,53 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Widget _errorView(BuildContext context) {
+    if (PlatformProfile.isAndroidTv) {
+      return ColoredBox(
+        color: Colors.black,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 680),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.error_outline_rounded,
+                  size: 52,
+                  color: Colors.white,
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Could not start playback',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  _error!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFFB8BDBA),
+                    fontSize: 14,
+                    height: 1.45,
+                  ),
+                ),
+                const SizedBox(height: 22),
+                _TvPlayerAction(
+                  icon: Icons.arrow_back_rounded,
+                  label: 'Back to sources',
+                  onPressed: _handleEscape,
+                  onFocusChange: _handleTvControlFocus,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
@@ -2781,7 +2864,177 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
+  Widget _tvControls(BuildContext context) {
+    final player = widget.playback.player;
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0xB8000000),
+            Color(0x00000000),
+            Color(0x00000000),
+            Color(0xE8000000),
+          ],
+          stops: [0, .24, .58, 1],
+        ),
+      ),
+      child: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(28, 18, 28, 0),
+              child: Row(
+                children: [
+                  _TvPlayerAction(
+                    icon: Icons.arrow_back_rounded,
+                    semanticLabel: 'Back',
+                    onPressed: _handleEscape,
+                    onFocusChange: _handleTvControlFocus,
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Text(
+                      widget.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Spacer(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(38, 0, 38, 28),
+              child: StreamBuilder<Duration>(
+                stream: player.stream.duration,
+                initialData: player.state.duration,
+                builder: (context, durationSnapshot) {
+                  final duration = durationSnapshot.data ?? Duration.zero;
+                  return StreamBuilder<Duration>(
+                    stream: player.stream.position,
+                    initialData: player.state.position,
+                    builder: (context, positionSnapshot) {
+                      final position = positionSnapshot.data ?? Duration.zero;
+                      return StreamBuilder<Duration>(
+                        stream: player.stream.buffer,
+                        initialData: player.state.buffer,
+                        builder: (context, bufferSnapshot) {
+                          final buffered = bufferSnapshot.data ?? Duration.zero;
+                          final durationMs =
+                              duration.inMilliseconds.clamp(1, 1 << 31);
+                          final playedFraction =
+                              (position.inMilliseconds / durationMs)
+                                  .clamp(0.0, 1.0)
+                                  .toDouble();
+                          final bufferedFraction =
+                              (buffered.inMilliseconds / durationMs)
+                                  .clamp(playedFraction, 1.0)
+                                  .toDouble();
+
+                          return Column(
+                            children: [
+                              Row(
+                                children: [
+                                  Text(
+                                    _format(position),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: _TvProgressBar(
+                                      played: playedFraction,
+                                      buffered: bufferedFraction,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Text(
+                                    _format(duration),
+                                    style: const TextStyle(
+                                      color: Color(0xFFC0C4C1),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 18),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  _TvPlayerAction(
+                                    icon: Icons.replay_10_rounded,
+                                    semanticLabel: 'Back 10 seconds',
+                                    onPressed: () => _seekRelative(
+                                      const Duration(seconds: -10),
+                                    ),
+                                    onFocusChange: _handleTvControlFocus,
+                                  ),
+                                  const SizedBox(width: 14),
+                                  StreamBuilder<bool>(
+                                    stream: player.stream.playing,
+                                    initialData: player.state.playing,
+                                    builder: (context, snapshot) =>
+                                        _TvPlayerAction(
+                                      icon: snapshot.data == true
+                                          ? Icons.pause_rounded
+                                          : Icons.play_arrow_rounded,
+                                      semanticLabel: snapshot.data == true
+                                          ? 'Pause'
+                                          : 'Play',
+                                      prominent: true,
+                                      onPressed: player.playOrPause,
+                                      onFocusChange: _handleTvControlFocus,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 14),
+                                  _TvPlayerAction(
+                                    icon: Icons.forward_10_rounded,
+                                    semanticLabel: 'Forward 10 seconds',
+                                    onPressed: () => _seekRelative(
+                                      const Duration(seconds: 10),
+                                    ),
+                                    onFocusChange: _handleTvControlFocus,
+                                  ),
+                                  const SizedBox(width: 24),
+                                  _TvPlayerAction(
+                                    icon: Icons.subtitles_rounded,
+                                    label: 'Audio & Subtitles',
+                                    onPressed: _showTracks,
+                                    onFocusChange: _handleTvControlFocus,
+                                  ),
+                                ],
+                              ),
+                            ],
+                          );
+                        },
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _controls(BuildContext context) {
+    if (PlatformProfile.isAndroidTv) {
+      return _tvControls(context);
+    }
+
     final player = widget.playback.player;
     final compact = !_desktop && MediaQuery.sizeOf(context).shortestSide < 600;
     return Container(
@@ -3127,6 +3380,144 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return hours > 0
         ? '$hours:$minutes:$seconds'
         : '${value.inMinutes}:$seconds';
+  }
+}
+
+class _TvPlayerAction extends StatefulWidget {
+  const _TvPlayerAction({
+    required this.icon,
+    required this.onPressed,
+    required this.onFocusChange,
+    this.label,
+    this.semanticLabel,
+    this.prominent = false,
+  });
+
+  final IconData icon;
+  final VoidCallback onPressed;
+  final ValueChanged<bool> onFocusChange;
+  final String? label;
+  final String? semanticLabel;
+  final bool prominent;
+
+  @override
+  State<_TvPlayerAction> createState() => _TvPlayerActionState();
+}
+
+class _TvPlayerActionState extends State<_TvPlayerAction> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = widget.prominent ? 64.0 : 48.0;
+    return Semantics(
+      button: true,
+      label: widget.semanticLabel ?? widget.label,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 90),
+        decoration: BoxDecoration(
+          color: _focused
+              ? const Color(0xE62A2E2B)
+              : const Color(0xA8151816),
+          borderRadius: BorderRadius.circular(widget.prominent ? 32 : 14),
+          border: Border.all(
+            color: _focused ? Colors.white : const Color(0x664F5551),
+            width: _focused ? 2.2 : 1,
+          ),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            focusColor: Colors.transparent,
+            hoverColor: Colors.transparent,
+            splashColor: Colors.transparent,
+            borderRadius: BorderRadius.circular(widget.prominent ? 32 : 14),
+            onFocusChange: (value) {
+              setState(() => _focused = value);
+              widget.onFocusChange(value);
+            },
+            onTap: widget.onPressed,
+            child: SizedBox(
+              height: size,
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: widget.label == null ? 0 : 16,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: widget.label == null ? size - 2 : 30,
+                      child: Icon(
+                        widget.icon,
+                        color: Colors.white,
+                        size: widget.prominent ? 34 : 26,
+                      ),
+                    ),
+                    if (widget.label != null) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        widget.label!,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TvProgressBar extends StatelessWidget {
+  const _TvProgressBar({
+    required this.played,
+    required this.buffered,
+  });
+
+  final double played;
+  final double buffered;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 5,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(99),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                const ColoredBox(color: Color(0xFF4A4E4B)),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: SizedBox(
+                    width: constraints.maxWidth * buffered,
+                    child: const ColoredBox(color: Color(0xFF747A76)),
+                  ),
+                ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: SizedBox(
+                    width: constraints.maxWidth * played,
+                    child: const ColoredBox(color: Colors.white),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
   }
 }
 
