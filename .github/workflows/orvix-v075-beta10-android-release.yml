@@ -1,0 +1,282 @@
+name: Release Orvix v0.7.5-beta.10 — Dual Engine Android
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.5-dev
+    paths:
+      - '.github/workflows/orvix-v075-beta10-android-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: orvix-v075-beta10-android-release
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate dual-engine code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Run tests
+        run: flutter test
+
+  android-native:
+    name: Prepare Android P2P engine
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download pinned Stremio native stream-server
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p native/jniLibs/{armeabi-v7a,arm64-v8a,x86,x86_64} native/libs tmp
+
+          extract_native() {
+            abi="$1"
+            file="$2"
+            sha="$3"
+            curl --fail --location --retry 4 --retry-delay 2 \
+              "https://github.com/stremio-native/stremio-android/releases/download/v1.2.4/$file" \
+              -o "tmp/$file"
+            echo "$sha  tmp/$file" | sha256sum -c -
+            unzip -p "tmp/$file" "lib/$abi/libstream_server.so" > "native/jniLibs/$abi/libstream_server.so"
+            unzip -p "tmp/$file" "lib/$abi/libc++_shared.so" > "native/jniLibs/$abi/libc++_shared.so"
+            test -s "native/jniLibs/$abi/libstream_server.so"
+            test -s "native/jniLibs/$abi/libc++_shared.so"
+          }
+
+          extract_native arm64-v8a StremioMobile-v1.2.4-arm64-v8a-release.apk 3ffd96e6c6f0b23845f7ee6ab721d52ba1534055304959ed84c9589aac8bc97e
+          extract_native armeabi-v7a StremioMobile-v1.2.4-armeabi-v7a-release.apk 519ab54a8a57e93c5a2f2a70cced18673063cffcb88cfdcd0ec6c9a7e5f5570e
+          extract_native x86 StremioMobile-v1.2.4-x86-release.apk 201012b229914b533665f4c477140f174d7b933fdc27c1fae6a2fb3a1f232058
+          extract_native x86_64 StremioMobile-v1.2.4-x86_64-release.apk bee94497864d46a3b7c1905848e161da03179ca4ff85c6808710cdd435cafc94
+
+          curl --fail --location --retry 4 \
+            "https://raw.githubusercontent.com/stremio-native/stremio-android/4bdef3b6be1186d9aa22acd8b3ec391c22f0e083/app/libs/rustls-platform-verifier-0.1.1.aar" \
+            -o native/libs/rustls-platform-verifier-0.1.1.aar
+          test -s native/libs/rustls-platform-verifier-0.1.1.aar
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beta10-android-native
+          path: native/
+          if-no-files-found: error
+
+  android-mobile:
+    name: Build Android Mobile beta.10
+    needs: [validate, android-native]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform
+        run: flutter create --platforms=android --org com.orvix --project-name orvix .
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: beta10-android-native
+          path: android-native
+
+      - name: Configure Android mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check pillow
+          mkdir -p android/app/src/main/jniLibs android/app/libs
+          cp -R android-native/jniLibs/. android/app/src/main/jniLibs/
+          cp android-native/libs/rustls-platform-verifier-0.1.1.aar android/app/libs/
+          python3 tools/configure_android_build.py
+          python3 tools/configure_android_mobile_compat.py
+          grep -q 'android:extractNativeLibs="true"' android/app/src/main/AndroidManifest.xml
+          grep -q 'orvix/torrent_engine' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
+
+      - name: Configure release signing
+        env:
+          ORVIX_ANDROID_KEYSTORE_B64: ${{ secrets.ORVIX_ANDROID_KEYSTORE_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ORVIX_ANDROID_KEYSTORE_B64:-}"
+          printf '%s' "$ORVIX_ANDROID_KEYSTORE_B64" | base64 --decode > android/app/orvix-release.jks
+          python3 tools/configure_android_signing.py
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Android mobile APK
+        run: flutter build apk --release
+
+      - name: Verify Android mobile APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          unzip -l "$APK" > /tmp/mobile-list.txt
+          grep -q 'lib/arm64-v8a/libstream_server.so' /tmp/mobile-list.txt
+          grep -q 'lib/armeabi-v7a/libstream_server.so' /tmp/mobile-list.txt
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          "$APKSIGNER" verify --verbose "$APK"
+
+      - name: Rename APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.5-beta.10-Android-Mobile.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beta10-android-mobile
+          path: Orvix-v0.7.5-beta.10-Android-Mobile.apk
+          if-no-files-found: error
+
+  android-tv:
+    name: Build Android TV beta.10
+    needs: [validate, android-native]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform
+        run: flutter create --platforms=android --org com.orvix --project-name orvix .
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: beta10-android-native
+          path: android-native
+
+      - name: Configure Android TV
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check pillow
+          mkdir -p android/app/src/main/jniLibs android/app/libs
+          cp -R android-native/jniLibs/. android/app/src/main/jniLibs/
+          cp android-native/libs/rustls-platform-verifier-0.1.1.aar android/app/libs/
+          python3 tools/configure_android_build.py --tv
+          python3 tools/configure_android_mobile_compat.py
+          grep -q 'android.intent.category.LEANBACK_LAUNCHER' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:screenOrientation="landscape"' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:extractNativeLibs="true"' android/app/src/main/AndroidManifest.xml
+          grep -q 'orvix/torrent_engine' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
+
+      - name: Configure release signing
+        env:
+          ORVIX_ANDROID_KEYSTORE_B64: ${{ secrets.ORVIX_ANDROID_KEYSTORE_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ORVIX_ANDROID_KEYSTORE_B64:-}"
+          printf '%s' "$ORVIX_ANDROID_KEYSTORE_B64" | base64 --decode > android/app/orvix-release.jks
+          python3 tools/configure_android_signing.py
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Android TV APK
+        run: flutter build apk --release --dart-define=ORVIX_TV=true
+
+      - name: Verify Android TV APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          unzip -l "$APK" > /tmp/tv-list.txt
+          grep -q 'lib/arm64-v8a/libstream_server.so' /tmp/tv-list.txt
+          grep -q 'lib/armeabi-v7a/libstream_server.so' /tmp/tv-list.txt
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          "$APKSIGNER" verify --verbose "$APK"
+
+      - name: Rename APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.5-beta.10-Android-TV.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beta10-android-tv
+          path: Orvix-v0.7.5-beta.10-Android-TV.apk
+          if-no-files-found: error
+
+  release:
+    name: Publish beta.10
+    needs: [android-mobile, android-tv]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: beta10-android-mobile
+          path: release
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: beta10-android-tv
+          path: release
+
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/notes.md <<'EOF'
+          Orvix v0.7.5-beta.10 adds the requested Android dual-player architecture.
+
+          Player engines:
+          - Settings now exposes Auto / ExoPlayer / MPV on Android mobile and Android TV.
+          - Auto uses ExoPlayer for ordinary HTTP/HLS/cloud streams.
+          - Auto keeps localhost P2P, MKV/complex containers, AI Sinhala and advanced codec/track cases on MPV.
+          - If ExoPlayer fails in Auto, Orvix automatically hands the same stream to MPV.
+          - Manual ExoPlayer can also be used for P2P/testing; its clean player has a visible Use MPV / Try MPV action.
+          - Windows/macOS remain MPV for this beta.
+
+          ExoPlayer UI:
+          - Uses Flutter video_player/Android ExoPlayer with Orvix-owned controls rather than Android's default player chrome.
+          - Black video surface, black gradients, white progress, neutral dark buttons and white focus outlines.
+          - No yellow/default focus boxes.
+          - Remote/touch play-pause, +/-10 second seek, Back and manual MPV switch.
+          - Resume/progress persistence is retained for catalog playback.
+
+          MPV:
+          - Existing media_kit/libmpv player remains intact for P2P, subtitles/audio tracks and difficult containers.
+          - The clean TV control overlay from beta.9 is retained.
+
+          Scope:
+          - Dual-engine routing is applied to normal title/episode playback and PikPak/TorBox cloud-library playback.
+          - Player-engine routing has regression tests including P2P, normal HTTP, complex codecs, MKV and manual overrides.
+          EOF
+
+          gh release create v0.7.5-beta.10             --target "${{ github.sha }}"             --title 'Orvix v0.7.5-beta.10 — Dual Engine Android'             --prerelease             --notes-file /tmp/notes.md             release/Orvix-v0.7.5-beta.10-Android-Mobile.apk             release/Orvix-v0.7.5-beta.10-Android-TV.apk
