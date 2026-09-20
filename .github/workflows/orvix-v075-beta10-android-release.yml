@@ -129,7 +129,19 @@ jobs:
         run: flutter pub get
 
       - name: Build Android mobile APK
-        run: flutter build apk --release
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if flutter build apk --release; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            echo "Transient Android dependency/network failure. Retrying mobile build in $((attempt * 30))s..."
+            sleep $((attempt * 30))
+          done
 
       - name: Verify Android mobile APK
         shell: bash
@@ -207,7 +219,19 @@ jobs:
         run: flutter pub get
 
       - name: Build Android TV APK
-        run: flutter build apk --release --dart-define=ORVIX_TV=true
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if flutter build apk --release --dart-define=ORVIX_TV=true; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            echo "Transient Android dependency/network failure. Retrying TV build in $((attempt * 30))s..."
+            sleep $((attempt * 30))
+          done
 
       - name: Verify Android TV APK
         shell: bash
@@ -279,4 +303,20 @@ jobs:
           - Player-engine routing has regression tests including P2P, normal HTTP, complex codecs, MKV and manual overrides.
           EOF
 
-          gh release create v0.7.5-beta.10             --target "${{ github.sha }}"             --title 'Orvix v0.7.5-beta.10 — Dual Engine Android'             --prerelease             --notes-file /tmp/notes.md             release/Orvix-v0.7.5-beta.10-Android-Mobile.apk             release/Orvix-v0.7.5-beta.10-Android-TV.apk
+          if gh release view v0.7.5-beta.10 >/dev/null 2>&1; then
+            gh release upload v0.7.5-beta.10 --clobber \
+              release/Orvix-v0.7.5-beta.10-Android-Mobile.apk \
+              release/Orvix-v0.7.5-beta.10-Android-TV.apk
+            gh release edit v0.7.5-beta.10 \
+              --title 'Orvix v0.7.5-beta.10 — Dual Engine Android' \
+              --prerelease \
+              --notes-file /tmp/notes.md
+          else
+            gh release create v0.7.5-beta.10 \
+              --target "${{ github.sha }}" \
+              --title 'Orvix v0.7.5-beta.10 — Dual Engine Android' \
+              --prerelease \
+              --notes-file /tmp/notes.md \
+              release/Orvix-v0.7.5-beta.10-Android-Mobile.apk \
+              release/Orvix-v0.7.5-beta.10-Android-TV.apk
+          fi
