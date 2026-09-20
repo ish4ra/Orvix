@@ -1,0 +1,183 @@
+name: Release Orvix v0.7.5-beta.8 — Android TV Stability
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.5-dev
+    paths:
+      - '.github/workflows/orvix-v075-beta8-tv-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: orvix-v075-beta8-tv-release
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate TV stability build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Run tests
+        run: flutter test
+
+  android-tv:
+    name: Build Android TV beta.8
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform
+        run: flutter create --platforms=android --org com.orvix --project-name orvix .
+
+      - name: Download pinned Stremio Android stream-server
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p android/app/src/main/jniLibs/{arm64-v8a,armeabi-v7a,x86,x86_64} android/app/libs tmp
+
+          extract_native() {
+            abi="$1"
+            file="$2"
+            sha="$3"
+            curl --fail --location --retry 4 --retry-delay 2               "https://github.com/stremio-native/stremio-android/releases/download/v1.2.4/$file"               -o "tmp/$file"
+            echo "$sha  tmp/$file" | sha256sum -c -
+            unzip -p "tmp/$file" "lib/$abi/libstream_server.so" > "android/app/src/main/jniLibs/$abi/libstream_server.so"
+            unzip -p "tmp/$file" "lib/$abi/libc++_shared.so" > "android/app/src/main/jniLibs/$abi/libc++_shared.so"
+            test -s "android/app/src/main/jniLibs/$abi/libstream_server.so"
+            test -s "android/app/src/main/jniLibs/$abi/libc++_shared.so"
+          }
+
+          extract_native arm64-v8a StremioMobile-v1.2.4-arm64-v8a-release.apk 3ffd96e6c6f0b23845f7ee6ab721d52ba1534055304959ed84c9589aac8bc97e
+          extract_native armeabi-v7a StremioMobile-v1.2.4-armeabi-v7a-release.apk 519ab54a8a57e93c5a2f2a70cced18673063cffcb88cfdcd0ec6c9a7e5f5570e
+          extract_native x86 StremioMobile-v1.2.4-x86-release.apk 201012b229914b533665f4c477140f174d7b933fdc27c1fae6a2fb3a1f232058
+          extract_native x86_64 StremioMobile-v1.2.4-x86_64-release.apk bee94497864d46a3b7c1905848e161da03179ca4ff85c6808710cdd435cafc94
+
+          curl --fail --location --retry 4             "https://raw.githubusercontent.com/stremio-native/stremio-android/4bdef3b6be1186d9aa22acd8b3ec391c22f0e083/app/libs/rustls-platform-verifier-0.1.1.aar"             -o android/app/libs/rustls-platform-verifier-0.1.1.aar
+          test -s android/app/libs/rustls-platform-verifier-0.1.1.aar
+
+      - name: Configure Android TV
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check pillow
+          python3 tools/configure_android_build.py --tv
+          python3 tools/configure_android_mobile_compat.py
+
+          grep -q 'android.intent.category.LEANBACK_LAUNCHER' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:screenOrientation="landscape"' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:extractNativeLibs="true"' android/app/src/main/AndroidManifest.xml
+          grep -q 'orvix/torrent_engine' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
+          grep -q 'JniStreamingServerController.start' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
+          ! grep -R -q 'tv_native_player' android/app/src/main/kotlin || false
+          ! grep -R -q 'libtorrserver.so' android/app/src/main || false
+
+      - name: Configure release signing
+        env:
+          ORVIX_ANDROID_KEYSTORE_B64: ${{ secrets.ORVIX_ANDROID_KEYSTORE_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ORVIX_ANDROID_KEYSTORE_B64:-}"
+          printf '%s' "$ORVIX_ANDROID_KEYSTORE_B64" | base64 --decode > android/app/orvix-release.jks
+          test -s android/app/orvix-release.jks
+          python3 tools/configure_android_signing.py
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Android TV APK
+        run: flutter build apk --release --dart-define=ORVIX_TV=true
+
+      - name: Verify Android TV APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          unzip -l "$APK" > /tmp/orvix-tv-apk-list.txt
+          grep -q 'lib/arm64-v8a/libstream_server.so' /tmp/orvix-tv-apk-list.txt
+          grep -q 'lib/arm64-v8a/libc++_shared.so' /tmp/orvix-tv-apk-list.txt
+          grep -q 'lib/armeabi-v7a/libstream_server.so' /tmp/orvix-tv-apk-list.txt
+          if grep -q 'libtorrserver.so' /tmp/orvix-tv-apk-list.txt; then
+            echo 'Obsolete TorrServer transport found in beta.8.' >&2
+            exit 1
+          fi
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          "$APKSIGNER" verify --verbose "$APK"
+
+      - name: Rename APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.5-beta.8-Android-TV.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Orvix-v0.7.5-beta.8-Android-TV
+          path: Orvix-v0.7.5-beta.8-Android-TV.apk
+          if-no-files-found: error
+
+      - name: Publish beta.8 prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/beta8-notes.md <<'EOF'
+          Android TV stabilization build.
+
+          UI:
+          - Removes the experimental TV Safe / Free / Smooth filter bar.
+          - Removes the hidden long-press pin interaction from the TV source browser.
+          - Clears legacy TV-created source pins once, so accidental Silence/release pins do not stay stuck.
+          - Shows the complete provider result set on TV, including smaller/low-bitrate sources that were being hidden by the HD quality floor.
+          - Restores a simple mobile-like source list with neutral dark focus and a white outline.
+          - Back from playback returns to the source list.
+
+          Playback:
+          - Removes the experimental native Media3 TV-player bridge and TorrServer path from beta.7.
+          - Android TV now reuses the same Orvix Android playback path as mobile: Stremio stream-server -> media_kit/libmpv.
+          - Restores the proven direct JNI stream-server startup bridge used by the older working Android builds.
+          - Cleans the previous torrent session before switching to a different P2P source.
+          - Uses the same Android player buffer profile on TV and mobile.
+          - AI Sinhala preflight is disabled on TV while base playback is being stabilized.
+          - TV remote OK/Select is mapped to normal play/pause controls.
+
+          Reference review:
+          - Stremio Android was used for the pinned stream-server/native JNI transport behavior and server readiness model.
+          - Nuvio P2P lifecycle was used as a reference for detaching the previous torrent session before opening another.
+
+          CI verifies analysis, tests, Android TV packaging/signing, and the bundled stream-server. Real-device playback still requires physical TV verification.
+          EOF
+
+          if gh release view v0.7.5-beta.8 >/dev/null 2>&1; then
+            gh release upload v0.7.5-beta.8 --clobber Orvix-v0.7.5-beta.8-Android-TV.apk
+            gh release edit v0.7.5-beta.8               --title 'Orvix v0.7.5-beta.8 — Android TV Stability'               --prerelease               --notes-file /tmp/beta8-notes.md
+          else
+            gh release create v0.7.5-beta.8               --target "${{ github.sha }}"               --title 'Orvix v0.7.5-beta.8 — Android TV Stability'               --prerelease               --notes-file /tmp/beta8-notes.md               Orvix-v0.7.5-beta.8-Android-TV.apk
+          fi
