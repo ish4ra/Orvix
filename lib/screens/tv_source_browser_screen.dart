@@ -226,13 +226,141 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
     }
   }
 
+  Future<void> _showPriorityEditor() async {
+    final working = [..._priority];
+    final saved = await showDialog<List<SourceSortCriterion>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF121613),
+          title: const Text('Source priority'),
+          content: SizedBox(
+            width: 620,
+            height: 420,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'This is the same priority used by Android/mobile. #1 wins first when Best mode is selected.',
+                  style: TextStyle(
+                    color: Color(0xFFB8C0BA),
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: working.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final criterion = working[index];
+                      return Container(
+                        key: ValueKey(criterion.name),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 9,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF181D19),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: const Color(0xFF303832),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 34,
+                              height: 34,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF232A24),
+                                borderRadius: BorderRadius.circular(9),
+                              ),
+                              child: Text(
+                                '${index + 1}',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                criterion.label,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Move up',
+                              onPressed: index == 0
+                                  ? null
+                                  : () {
+                                      setDialogState(() {
+                                        final item = working.removeAt(index);
+                                        working.insert(index - 1, item);
+                                      });
+                                    },
+                              icon: const Icon(Icons.keyboard_arrow_up_rounded),
+                            ),
+                            IconButton(
+                              tooltip: 'Move down',
+                              onPressed: index == working.length - 1
+                                  ? null
+                                  : () {
+                                      setDialogState(() {
+                                        final item = working.removeAt(index);
+                                        working.insert(index + 1, item);
+                                      });
+                                    },
+                              icon:
+                                  const Icon(Icons.keyboard_arrow_down_rounded),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop([
+                ...SourceProviderService.defaultPriority,
+              ]),
+              child: const Text('Reset'),
+            ),
+            FilledButton(
+              autofocus: true,
+              onPressed: () => Navigator.of(dialogContext).pop(working),
+              child: const Text('Save order'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (saved == null || !mounted) return;
+    await widget.sources.setPriorityOrder(saved);
+    if (!mounted) return;
+    setState(() => _priority = saved);
+  }
+
   Future<void> _showSourceModeHelp() async {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: const Color(0xFF121613),
         title: const Text('Source modes'),
-        content: const ConstrainedBox(
+        content: ConstrainedBox(
           constraints: BoxConstraints(maxWidth: 620),
           child: Text(
             'Free P2P: ranks sources for practical torrent startup without debrid — healthy swarm first, then good quality/resolution and efficient file size.\n\n'
@@ -411,6 +539,13 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
                 label: 'Best',
                 icon: Icons.auto_awesome_rounded,
                 onPressed: () => setState(() => _sort = _TvSourceSort.best),
+              ),
+              const SizedBox(width: 8),
+              _TvFilterChip(
+                selected: false,
+                label: 'Order',
+                icon: Icons.swap_vert_rounded,
+                onPressed: () => unawaited(_showPriorityEditor()),
               ),
               const SizedBox(width: 12),
               _TvFilterChip(
