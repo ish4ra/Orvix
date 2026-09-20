@@ -376,7 +376,9 @@ class SourceProviderService {
     required bool success,
     String? reason,
   }) async {
-    await _ensurePlaybackHistoryLoaded();
+    if (!_playbackHistoryLoaded) {
+      await _ensurePlaybackHistoryLoaded();
+    }
     final key = _playbackHistoryIdentity(source);
     final previous = _playbackHistory[key] ??
         const _SourcePlaybackHistory(successes: 0, failures: 0);
