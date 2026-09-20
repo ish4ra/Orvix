@@ -356,9 +356,7 @@ jobs:
           set -euo pipefail
           python3 -m pip install --disable-pip-version-check pillow
           mkdir -p android/app/src/main/jniLibs android/app/libs
-          cp -R android-native/jniLibs/. android/app/src/main/jniLibs/
           cp -R android-native/torrserver/. android/app/src/main/jniLibs/
-          cp android-native/libs/rustls-platform-verifier-0.1.1.aar android/app/libs/
           python3 tools/configure_android_build.py --tv
           python3 tools/configure_android_mobile_compat.py
           grep -q 'android.intent.category.LEANBACK_LAUNCHER' android/app/src/main/AndroidManifest.xml
@@ -406,11 +404,13 @@ jobs:
           test -s "$APK"
           unzip -t "$APK" >/dev/null
           unzip -l "$APK" > /tmp/orvix-apk-list.txt
-          grep -q 'lib/arm64-v8a/libstream_server.so' /tmp/orvix-apk-list.txt
-          grep -q 'lib/armeabi-v7a/libstream_server.so' /tmp/orvix-apk-list.txt
           grep -q 'lib/arm64-v8a/libtorrserver.so' /tmp/orvix-apk-list.txt
           grep -q 'lib/armeabi-v7a/libtorrserver.so' /tmp/orvix-apk-list.txt
           grep -q 'assets/licenses/torrserver/LICENSE.txt' /tmp/orvix-apk-list.txt
+          if grep -q 'lib/arm64-v8a/libstream_server.so' /tmp/orvix-apk-list.txt; then
+            echo 'Android TV APK unexpectedly contains the legacy Stremio stream-server.' >&2
+            exit 1
+          fi
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
           "$APKSIGNER" verify --verbose "$APK"
 
