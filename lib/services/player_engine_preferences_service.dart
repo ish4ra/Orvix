@@ -69,7 +69,11 @@ class PlayerEngineRouter {
       r'\b(?:hi10p|10bit|10-bit|av1|av01|dovi|dolby[ ._-]?vision|'
       r'truehd|dts-hd|dts:x|flac)\b',
     ).hasMatch(hint);
-    if (complex) return PlayerEngineKind.mpv;
+    final containerPrefersMpv = RegExp(
+      r'\.(?:mkv|avi|m2ts|ts|wmv)(?:\?|$)',
+    ).hasMatch(uri?.path.toLowerCase() ?? '') ||
+        RegExp(r'\b(?:mkv|matroska)\b').hasMatch(hint);
+    if (complex || containerPrefersMpv) return PlayerEngineKind.mpv;
 
     final scheme = uri?.scheme.toLowerCase();
     if (scheme == 'http' || scheme == 'https') {
