@@ -35,6 +35,17 @@ void main() {
     expect(engine, PlayerEngineKind.mpv);
   });
 
+  test('Auto keeps MKV on MPV for advanced tracks and subtitles', () {
+    final engine = PlayerEngineRouter.choose(
+      preference: PlayerEnginePreference.auto,
+      isAndroid: true,
+      url: 'https://cdn.example.com/movie.mkv',
+      releaseHint: 'Movie.1080p.WEB-DL.x264.mkv',
+    );
+
+    expect(engine, PlayerEngineKind.mpv);
+  });
+
   test('Manual engine preference overrides Auto rules on Android', () {
     final forcedExo = PlayerEngineRouter.choose(
       preference: PlayerEnginePreference.exoPlayer,
