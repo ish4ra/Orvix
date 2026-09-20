@@ -24,8 +24,8 @@ class AndroidExoPlayerScreen extends StatefulWidget {
     super.key,
     required this.url,
     required this.title,
-    required this.mediaState,
-    required this.item,
+    this.mediaState,
+    this.item,
     this.episode,
     this.httpHeaders,
     this.autoFallbackToMpv = false,
@@ -33,8 +33,8 @@ class AndroidExoPlayerScreen extends StatefulWidget {
 
   final String url;
   final String title;
-  final MediaStateService mediaState;
-  final MediaItem item;
+  final MediaStateService? mediaState;
+  final MediaItem? item;
   final EpisodeItem? episode;
   final Map<String, String>? httpHeaders;
   final bool autoFallbackToMpv;
@@ -76,14 +76,18 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       await controller.initialize().timeout(const Duration(seconds: 35));
       if (!mounted || _closing) return;
 
-      final resume = await widget.mediaState.resumePosition(
-        widget.item,
-        episode: widget.episode,
-      );
-      if (resume != null &&
-          resume > const Duration(seconds: 5) &&
-          resume < controller.value.duration - const Duration(seconds: 10)) {
-        await controller.seekTo(resume);
+      final mediaState = widget.mediaState;
+      final item = widget.item;
+      if (mediaState != null && item != null) {
+        final resume = await mediaState.resumePosition(
+          item,
+          episode: widget.episode,
+        );
+        if (resume != null &&
+            resume > const Duration(seconds: 5) &&
+            resume < controller.value.duration - const Duration(seconds: 10)) {
+          await controller.seekTo(resume);
+        }
       }
 
       if (!mounted || _closing) return;
@@ -229,10 +233,17 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
 
   Future<void> _persistProgress() async {
     final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) return;
+    final mediaState = widget.mediaState;
+    final item = widget.item;
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        mediaState == null ||
+        item == null) {
+      return;
+    }
     final value = controller.value;
-    await widget.mediaState.saveProgress(
-      widget.item,
+    await mediaState.saveProgress(
+      item,
       episode: widget.episode,
       position: value.position,
       duration: value.duration,
