@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import 'platform_profile.dart';
 import 'source_provider_service.dart';
 
 class LocalTorrentException implements Exception {
@@ -55,6 +56,80 @@ class LocalTorrentService {
   static const MethodChannel _androidChannel =
       MethodChannel('orvix/torrent_engine');
 
+  // Nuvio keeps a small public tracker fallback set in addition to provider
+  // trackers. Stremio's server also accepts explicit peer-search sources.
+  // Keeping these here makes startup less dependent on one stale addon tracker
+  // while DHT/PeX remain enabled in the native engine.
+  static const List<String> fallbackTrackers = <String>[
+    'udp://tracker.opentrackr.org:1337/announce',
+    'udp://open.stealth.si:80/announce',
+    'udp://tracker.openbittorrent.com:6969/announce',
+    'udp://exodus.desync.com:6969/announce',
+    'udp://tracker.torrent.eu.org:451/announce',
+  ];
+
+  static String normalizeMagnetForEngine(String magnet) {
+    final trimmed = magnet.trim();
+    final queryIndex = trimmed.indexOf('?');
+    if (queryIndex < 0) return trimmed;
+
+    final prefix = trimmed.substring(0, queryIndex + 1);
+    final parts = trimmed.substring(queryIndex + 1).split('&');
+    final kept = <String>[];
+    for (final part in parts) {
+      if (part.isEmpty) continue;
+      final rawKey = part.split('=').first;
+      String key;
+      try {
+        key = Uri.decodeQueryComponent(rawKey).toLowerCase();
+      } catch (_) {
+        key = rawKey.toLowerCase();
+      }
+      if (key.startsWith('x-orvix-')) continue;
+      kept.add(part);
+    }
+    return '$prefix${kept.join('&')}';
+  }
+
+  static List<String> trackerUrlsForMagnet(String magnet) {
+    final out = <String>[];
+    final seen = <String>{};
+
+    void addTracker(String value) {
+      final tracker = value.trim();
+      if (tracker.isEmpty) return;
+      final key = tracker.toLowerCase();
+      if (seen.add(key)) out.add(tracker);
+    }
+
+    final queryIndex = magnet.indexOf('?');
+    if (queryIndex >= 0) {
+      for (final part in magnet.substring(queryIndex + 1).split('&')) {
+        if (part.isEmpty) continue;
+        final equals = part.indexOf('=');
+        final rawKey = equals < 0 ? part : part.substring(0, equals);
+        String key;
+        try {
+          key = Uri.decodeQueryComponent(rawKey).toLowerCase();
+        } catch (_) {
+          key = rawKey.toLowerCase();
+        }
+        if (key != 'tr') continue;
+        final rawValue = equals < 0 ? '' : part.substring(equals + 1);
+        try {
+          addTracker(Uri.decodeQueryComponent(rawValue));
+        } catch (_) {
+          addTracker(rawValue);
+        }
+      }
+    }
+
+    for (final tracker in fallbackTrackers) {
+      addTracker(tracker);
+    }
+    return out;
+  }
+
   Process? _process;
   bool _ownsProcess = false;
   Future<void>? _starting;
@@ -78,14 +153,21 @@ class LocalTorrentService {
     await ensureRunning();
 
     final fileHint = source.fileNameHint?.trim();
+    final engineMagnet = normalizeMagnetForEngine(source.resource);
+    final trackerUrls = trackerUrlsForMagnet(engineMagnet);
 
-    // Android TV now uses the exact same Orvix transport path that is already
-    // stable on Android mobile: send the complete magnet to /create and let the
-    // local stream-server resolve metadata/file selection. Avoid maintaining a
-    // second TV-only create protocol.
+    // Match Stremio's peer-discovery shape more closely. The magnet itself
+    // keeps provider trackers, while peerSearch adds DHT plus a small fallback
+    // tracker set. The local stream-server de-duplicates/normalizes these.
     final body = <String, dynamic>{
-      'from': source.resource,
+      'from': engineMagnet,
       'guessFileIdx': true,
+      'peerSearch': <String, dynamic>{
+        'sources': <String>[
+          'dht:$infoHash',
+          for (final tracker in trackerUrls) 'tracker:$tracker',
+        ],
+      },
       if (fileHint != null && fileHint.isNotEmpty)
         'fileMustInclude': <String>[fileHint],
     };
@@ -148,6 +230,16 @@ class LocalTorrentService {
     );
 
     _currentInfoHash = infoHash;
+
+    // Android TV players tend to fail faster than the torrent swarm can warm
+    // up on marginal sources. Prime a small HTTP range into the stream-server
+    // cache before handing the URL to the player. This mirrors TorrServer's
+    // preload idea without changing the player or downloading the whole file.
+    if (Platform.isAndroid && PlatformProfile.isAndroidTv) {
+      onProgress?.call('Connecting peers and pre-buffering…');
+      await _primeAndroidTvStream(streamUrl);
+    }
+
     onProgress?.call('Opening player…');
     return streamUrl;
   }
@@ -185,6 +277,29 @@ class LocalTorrentService {
     }
   }
 
+  Future<void> _primeAndroidTvStream(String streamUrl) async {
+    final client = http.Client();
+    try {
+      await (() async {
+        final request = http.Request('GET', Uri.parse(streamUrl));
+        const targetBytes = 1024 * 1024;
+        request.headers['Range'] = 'bytes=0-${targetBytes - 1}';
+        final response = await client.send(request);
+        if (response.statusCode != 200 && response.statusCode != 206) return;
+
+        var received = 0;
+        await for (final chunk in response.stream) {
+          received += chunk.length;
+          if (received >= targetBytes) break;
+        }
+      })().timeout(const Duration(seconds: 10));
+    } catch (_) {
+      // Warm-up is best effort. A slow swarm still gets a chance in the real
+      // player, while healthy swarms usually seed the first megabyte quickly.
+    } finally {
+      client.close();
+    }
+  }
   Future<void> _removeEngine(String infoHash) async {
     try {
       await http
@@ -387,7 +502,19 @@ class LocalTorrentService {
             headers: const {'Content-Type': 'application/json'},
             body: jsonEncode({
               'cacheSize': 2 * 1024 * 1024 * 1024,
-              'btMaxConnections': 200,
+              // Stremio exposes 500 as its official Fast profile. Keep mobile
+              // on the balanced 200-peer profile and give powered TV devices
+              // the larger swarm window.
+              'btMaxConnections': PlatformProfile.isAndroidTv ? 500 : 200,
+              'btHandshakeTimeout': 20000,
+              'btRequestTimeout': 10000,
+              'btDownloadSpeedSoftLimit': 0,
+              'btDownloadSpeedHardLimit': 0,
+              'btMinPeersForStable': 5,
+              'btEnableDht': true,
+              'btEnablePex': true,
+              'btEnableLsd': true,
+              'btEncryptionMode': 'allow',
               'seedingEnabled': false,
             }),
           )
