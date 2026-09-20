@@ -700,21 +700,25 @@ class SourceProviderService {
   int _freeStreamingScore(SourceResult result) {
     final direct = result.isMagnet ? 0 : 1;
     final seedHealth = _freeSeederHealthRank(result.seeders);
+    final viableSwarm = (result.seeders ?? 0) >= 3 ? 1 : 0;
     final release = _freeReleaseRank(result);
     final resolution = _freeResolutionRank(result);
     final size = _freeSizeEfficiencyRank(result);
     final compatibility = result.compatibilityFriendly ? 1 : 0;
 
-    // A real HTTP stream is already playable and should beat a torrent that
-    // still has to build a swarm. For torrents, swarm health remains the
-    // strongest signal, but huge remux/4K payloads are deliberately pushed
-    // down because "many seeders" does not mean enough real-time throughput.
-    return direct * 10000000 +
-        seedHealth * 100000 +
-        release * 1000 +
-        resolution * 100 +
-        size * 10 +
-        compatibility;
+    // "Free" means fast practical startup, not biggest file / biggest swarm.
+    // Once a torrent has a viable swarm, prefer an efficient TV/mobile-sized
+    // encode (roughly sub-1.5 GB for an episode/movie encode) before rewarding
+    // extra seeders. This matches the behavior users expect from the quick
+    // ~600 MB sources that start almost immediately on mobile.
+    return direct * 100000000 +
+        viableSwarm * 10000000 +
+        compatibility * 1000000 +
+        size * 100000 +
+        resolution * 10000 +
+        seedHealth * 1000 +
+        release * 10 +
+        (result.preferredGroup ? 1 : 0);
   }
 
   int _freeSeederHealthRank(int? seeders) {
@@ -765,14 +769,19 @@ class SourceProviderService {
 
   int _freeSizeEfficiencyRank(SourceResult result) {
     final bytes = result.sizeBytes;
-    if (bytes == null || bytes <= 0) return 3;
-    const gb = 1024 * 1024 * 1024;
-    if (bytes < 150 * 1024 * 1024) return 1;
-    if (bytes <= 1500 * 1024 * 1024) return 8;
-    if (bytes <= 3 * gb) return 9;
-    if (bytes <= 5 * gb) return 7;
-    if (bytes <= 8 * gb) return 4;
-    if (bytes <= 15 * gb) return 2;
+    if (bytes == null || bytes <= 0) return 4;
+    const mb = 1024 * 1024;
+    const gb = 1024 * mb;
+
+    // Sweet spot for free playback: enough bitrate for HD, small enough to
+    // begin quickly on an ordinary home connection.
+    if (bytes >= 350 * mb && bytes <= 1500 * mb) return 10;
+    if (bytes > 1500 * mb && bytes <= 2500 * mb) return 8;
+    if (bytes >= 200 * mb && bytes < 350 * mb) return 7;
+    if (bytes > 2500 * mb && bytes <= 4 * gb) return 6;
+    if (bytes >= 120 * mb && bytes < 200 * mb) return 5;
+    if (bytes > 4 * gb && bytes <= 6 * gb) return 3;
+    if (bytes > 6 * gb && bytes <= 10 * gb) return 1;
     return 0;
   }
 
