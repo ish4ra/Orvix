@@ -4,7 +4,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
-import '../services/android_tv_native_player_service.dart';
 import '../services/catalog_service.dart';
 import '../services/cloud_preferences_service.dart';
 import '../services/local_torrent_service.dart';
@@ -1075,7 +1074,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
       await _findSourcesAndPlay(
         item,
         episode: episode,
-        autoUsePinned: true,
+        // Android TV stays manual while the playback path is being stabilized.
+        // This also prevents legacy series-wide pins from silently choosing a
+        // source the user did not select.
+        autoUsePinned: !PlatformProfile.isAndroidTv,
       );
     } catch (e) {
       _showPlayError(e);
@@ -1096,7 +1098,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
         _status = '';
       });
 
-      final resultsFuture = widget.sources.resolve(item, episode: episode);
+      final resultsFuture = widget.sources.resolve(
+        item,
+        episode: episode,
+        // TV should expose the complete provider response. Do not silently
+        // remove a smaller 480p/low-bitrate source just because an HD source
+        // also exists.
+        includeLowQuality: true,
+      );
       await Navigator.of(context).push<void>(
         PageRouteBuilder<void>(
           transitionDuration: const Duration(milliseconds: 180),
@@ -1174,16 +1183,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
       // fully manual.
       if (autoUsePinned && !hasCloudConnection && chosen == null) {
         final freeResults = widget.sources.sortForFreeStreaming(results);
-        if (PlatformProfile.isAndroidTv) {
-          // Do not auto-pick a known risky TV encode merely because it has
-          // more seeders. The full list is still available in Find Sources.
-          for (final candidate in freeResults) {
-            if (candidate.compatibilityFriendly) {
-              chosen = candidate;
-              break;
-            }
-          }
-        }
         if (chosen == null && freeResults.isNotEmpty) {
           chosen = freeResults.first;
         }
@@ -2378,40 +2377,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
         : '${item.title} • ${episode.label} ${episode.title}';
     final next = _nextEpisode(item, episode);
 
-    final uri = Uri.tryParse(url);
-    final localP2p = uri != null &&
-        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
-        (uri.port == 11470 || uri.port == 8091);
-
-    // Android TV local P2P follows Stremio's Android shape:
-    // stream-server localhost URL -> native Media3 ExoPlayer. No Flutter
-    // video_player wrapper and no extra Orvix pre-buffer gate in between.
-    if (PlatformProfile.isAndroidTv && localP2p) {
-      final resume =
-          await widget.mediaState.resumePosition(item, episode: episode);
-      final result = await AndroidTvNativePlayerService.play(
-        url: url,
-        title: title,
-        startPositionMs: resume?.inMilliseconds ?? 0,
-      );
-
-      if (result.durationMs != null &&
-          result.durationMs! > 0 &&
-          result.positionMs != null) {
-        await widget.mediaState.saveProgress(
-          item,
-          episode: episode,
-          position: Duration(milliseconds: result.positionMs!),
-          duration: Duration(milliseconds: result.durationMs!),
-        );
-      }
-
-      if (result.failed) {
-        throw Exception(result.error);
-      }
-      return;
-    }
-
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => PlayerScreen(
@@ -2422,6 +2387,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
           item: item,
           episode: episode,
           aiSubtitle: null,
+          // Playback stability comes first on TV. AI Sinhala preflight can
+          // play/pause/seek before normal playback and is intentionally kept
+          // out of the TV path until base playback is proven stable.
+          allowAiSinhala: !PlatformProfile.isAndroidTv,
           releaseHint: releaseHint,
           expectedSizeBytes: expectedSizeBytes,
           expectedVideoHash: expectedVideoHash,
