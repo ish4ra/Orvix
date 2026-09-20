@@ -378,21 +378,17 @@ class LocalTorrentService {
   Future<void> _configureAndroidSafeProfile() async {
     if (!Platform.isAndroid || _androidProfileConfigured) return;
 
-    // stream-server desktop defaults are intentionally generous (10 GB cache,
-    // hundreds of peer connections and seeding enabled). Those defaults are
-    // inappropriate for many TV boxes. Keep the transport conservative so the
-    // torrent engine cannot pressure the TV while the decoder is starting.
-    final tv = PlatformProfile.isAndroidTv;
+    // Use one Android torrent profile for phone and TV. The phone path is the
+    // known-good baseline, so TV should not silently run with fewer peers or a
+    // much smaller cache and then appear less reliable on the same source.
     try {
       final response = await http
           .post(
             Uri.parse('$baseUrl/settings'),
             headers: const {'Content-Type': 'application/json'},
             body: jsonEncode({
-              'cacheSize': tv
-                  ? 512 * 1024 * 1024
-                  : 2 * 1024 * 1024 * 1024,
-              'btMaxConnections': tv ? 120 : 200,
+              'cacheSize': 2 * 1024 * 1024 * 1024,
+              'btMaxConnections': 200,
               'seedingEnabled': false,
             }),
           )
