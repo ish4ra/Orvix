@@ -60,6 +60,7 @@ class LocalTorrentService {
   bool _ownsProcess = false;
   Future<void>? _starting;
   bool _androidProfileConfigured = false;
+  String? _currentInfoHash;
 
   Future<String> resolve(
     SourceResult source, {
@@ -78,40 +79,30 @@ class LocalTorrentService {
     await ensureRunning();
 
     final fileHint = source.fileNameHint?.trim();
-    final isStremioTvPath = PlatformProfile.isAndroidTv;
-    final trackers =
-        isStremioTvPath ? _extractTrackers(source.resource) : const <String>[];
-    final body = isStremioTvPath
-        ? <String, dynamic>{
-            // This is the same compatibility endpoint used by stremio-core for
-            // Tramvai/torrent streams.
-            'stream': <String, dynamic>{'infoHash': infoHash},
-            'guessFileIdx': true,
-            if (fileHint != null && fileHint.isNotEmpty)
-              'fileMustInclude': <String>[fileHint],
-            if (trackers.isNotEmpty)
-              'peerSearch': <String, dynamic>{'sources': trackers},
-          }
-        : <String, dynamic>{
-            'from': source.resource,
-            'guessFileIdx': true,
-            if (fileHint != null && fileHint.isNotEmpty)
-              'fileMustInclude': <String>[fileHint],
-          };
+
+    // Android TV now uses the exact same Orvix transport path that is already
+    // stable on Android mobile: send the complete magnet to /create and let the
+    // local stream-server resolve metadata/file selection. Avoid maintaining a
+    // second TV-only create protocol.
+    final body = <String, dynamic>{
+      'from': source.resource,
+      'guessFileIdx': true,
+      if (fileHint != null && fileHint.isNotEmpty)
+        'fileMustInclude': <String>[fileHint],
+    };
+
+    // Nuvio's P2P lifecycle explicitly detaches the old stream before starting
+    // another. Apply the same principle here so repeated source attempts do not
+    // accumulate stale torrent sessions in the native server.
+    final previousInfoHash = _currentInfoHash;
+    if (previousInfoHash != null && previousInfoHash != infoHash) {
+      await _removeEngine(previousInfoHash);
+      _currentInfoHash = null;
+    }
 
     http.Response response;
     try {
-      response = await http
-          .post(
-            Uri.parse(
-              isStremioTvPath
-                  ? '$baseUrl/$infoHash/create'
-                  : '$baseUrl/create',
-            ),
-            headers: const {'Content-Type': 'application/json'},
-            body: jsonEncode(body),
-          )
-          .timeout(const Duration(seconds: 45));
+      response = await _createTorrent(body);
     } on TimeoutException {
       throw const LocalTorrentException(
         'The local torrent engine timed out while resolving magnet metadata.',
@@ -157,6 +148,7 @@ class LocalTorrentService {
       fileIndex: fileIndex,
     );
 
+    _currentInfoHash = infoHash;
     onProgress?.call('Opening player…');
     return streamUrl;
   }
@@ -166,6 +158,42 @@ class LocalTorrentService {
     required int fileIndex,
   }) {
     return '$baseUrl/$infoHash/$fileIndex';
+  }
+
+  Future<http.Response> _createTorrent(Map<String, dynamic> body) async {
+    Future<http.Response> send() => http
+        .post(
+          Uri.parse('$baseUrl/create'),
+          headers: const {'Content-Type': 'application/json'},
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 45));
+
+    try {
+      return await send();
+    } on TimeoutException {
+      rethrow;
+    } catch (_) {
+      // One recovery attempt only. A dead/restarted Android service should not
+      // make the user re-select the same source just to recreate the localhost
+      // server.
+      if (Platform.isAndroid && !await _heartbeat()) {
+        _androidProfileConfigured = false;
+        await ensureRunning();
+        return send();
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _removeEngine(String infoHash) async {
+    try {
+      await http
+          .get(Uri.parse('$baseUrl/$infoHash/remove'))
+          .timeout(const Duration(seconds: 3));
+    } catch (_) {
+      // Cleanup is best effort; a dead engine is already effectively removed.
+    }
   }
 
   Future<LocalTorrentHealth?> healthForStreamUrl(String streamUrl) async {
@@ -236,7 +264,7 @@ class LocalTorrentService {
 
   Future<void> ensureRunning() async {
     if (await _heartbeat()) {
-      if (Platform.isAndroid && !PlatformProfile.isAndroidTv) {
+      if (Platform.isAndroid) {
         await _configureAndroidSafeProfile();
       }
       return;
@@ -250,6 +278,7 @@ class LocalTorrentService {
 
     try {
       if (Platform.isAndroid) {
+        _androidProfileConfigured = false;
         try {
           await _androidChannel.invokeMethod<String>('start');
         } on PlatformException catch (error) {
@@ -264,9 +293,7 @@ class LocalTorrentService {
 
         for (var attempt = 0; attempt < 80; attempt++) {
           if (await _heartbeat()) {
-            if (!PlatformProfile.isAndroidTv) {
-              await _configureAndroidSafeProfile();
-            }
+            await _configureAndroidSafeProfile();
             completer.complete();
             return;
           }
@@ -420,6 +447,12 @@ class LocalTorrentService {
   }
 
   Future<void> dispose() async {
+    final activeInfoHash = _currentInfoHash;
+    _currentInfoHash = null;
+    if (activeInfoHash != null) {
+      await _removeEngine(activeInfoHash);
+    }
+
     final process = _process;
     _process = null;
     if (_ownsProcess && process != null) {
