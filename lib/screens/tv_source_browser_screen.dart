@@ -122,7 +122,6 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
               Row(
                 children: [
                   _TvHeaderButton(
-                    autofocus: true,
                     tooltip: 'Back',
                     icon: Icons.arrow_back_rounded,
                     onPressed: () => Navigator.of(context).maybePop(),
