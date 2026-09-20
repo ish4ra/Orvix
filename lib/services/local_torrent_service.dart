@@ -180,7 +180,7 @@ class LocalTorrentService {
       if (Platform.isAndroid && !await _heartbeat()) {
         _androidProfileConfigured = false;
         await ensureRunning();
-        return send();
+        return await send();
       }
       rethrow;
     }
@@ -415,20 +415,6 @@ class LocalTorrentService {
     } catch (_) {
       return false;
     }
-  }
-
-  List<String> _extractTrackers(String magnet) {
-    final uri = Uri.tryParse(magnet);
-    if (uri == null || uri.scheme.toLowerCase() != 'magnet') {
-      return const [];
-    }
-    final out = <String>[];
-    final seen = <String>{};
-    for (final tracker in uri.queryParametersAll['tr'] ?? const <String>[]) {
-      final value = tracker.trim();
-      if (value.isNotEmpty && seen.add(value)) out.add(value);
-    }
-    return out;
   }
 
   String? _extractInfoHash(String magnet) {
