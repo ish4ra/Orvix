@@ -351,8 +351,9 @@ jobs:
           grep -q 'android.intent.category.LEANBACK_LAUNCHER' android/app/src/main/AndroidManifest.xml
           grep -q 'android:screenOrientation="landscape"' android/app/src/main/AndroidManifest.xml
           grep -q 'android:extractNativeLibs="true"' android/app/src/main/AndroidManifest.xml
-          grep -q 'android:foregroundServiceType="mediaPlayback"' android/app/src/main/AndroidManifest.xml
           grep -q 'orvix/torrent_engine' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
+          grep -q 'JniStreamingServerController.start' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
+          test ! -f android/app/src/main/kotlin/com/orvix/orvix/TorrentEngineService.kt
           if grep -q 'orvix/tv_native_player' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt; then
             echo 'Experimental native TV player bridge is still present.' >&2
             exit 1
