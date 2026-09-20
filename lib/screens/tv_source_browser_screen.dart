@@ -686,13 +686,17 @@ class _TvSourceRowState extends State<_TvSourceRow> {
     }
 
     if (event is KeyDownEvent) {
-      _holdTriggered = false;
-      _holdTimer?.cancel();
-      _holdTimer = Timer(const Duration(milliseconds: 650), () {
-        if (!mounted) return;
-        _holdTriggered = true;
-        widget.onPinRequest();
-      });
+      // Android TV remotes may emit repeated KeyDown events while OK is held.
+      // Start one timer only; otherwise key-repeat would keep resetting the
+      // timer and the pin action would never fire.
+      if (_holdTimer == null && !_holdTriggered) {
+        _holdTimer = Timer(const Duration(milliseconds: 650), () {
+          _holdTimer = null;
+          if (!mounted) return;
+          _holdTriggered = true;
+          widget.onPinRequest();
+        });
+      }
       return KeyEventResult.handled;
     }
 
@@ -726,7 +730,14 @@ class _TvSourceRowState extends State<_TvSourceRow> {
 
     return Focus(
       autofocus: widget.autofocus,
-      onFocusChange: (value) => setState(() => _focused = value),
+      onFocusChange: (value) {
+        if (!value) {
+          _holdTimer?.cancel();
+          _holdTimer = null;
+          _holdTriggered = false;
+        }
+        setState(() => _focused = value);
+      },
       onKeyEvent: _handleKey,
       child: AnimatedContainer(
       duration: const Duration(milliseconds: 100),
