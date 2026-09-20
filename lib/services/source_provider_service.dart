@@ -459,13 +459,9 @@ class SourceProviderService {
         'The recent attempt could not resolve/open the expected video file cleanly.',
       );
     }
-    return (
+    return const (
       'FAILED RECENTLY',
-      clean.isEmpty
-          ? 'This exact release failed to start recently; try another source first.'
-          : clean.length > 150
-              ? '${clean.substring(0, 147)}…'
-              : clean,
+      'This exact release failed to start recently; try another source first.',
     );
   }
 
