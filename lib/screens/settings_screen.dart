@@ -1,8 +1,11 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../services/ai_sinhala_preferences_service.dart';
 import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/online_subtitle_service.dart';
+import '../services/player_engine_preferences_service.dart';
 import '../services/subtitle_preferences_service.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -15,6 +18,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool? _aiSinhala;
   String? _preferredSubtitleLanguage;
+  PlayerEnginePreference? _playerEngine;
 
   @override
   void initState() {
@@ -25,12 +29,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _load() async {
     final enabled = await AiSinhalaPreferencesService.isEnabled();
     final language = await SubtitlePreferencesService.preferredLanguage();
+    final playerEngine = await PlayerEnginePreferencesService.get();
     if (!mounted) return;
     setState(() {
       _aiSinhala = enabled;
       _preferredSubtitleLanguage =
           OnlineSubtitleService.normalizeLanguage(language);
+      _playerEngine = playerEngine;
     });
+  }
+
+  Future<void> _setPlayerEngine(PlayerEnginePreference value) async {
+    setState(() => _playerEngine = value);
+    await PlayerEnginePreferencesService.set(value);
   }
 
   Future<void> _setPreferredSubtitleLanguage(String language) async {
@@ -79,6 +90,90 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               const SizedBox(height: 26),
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0D120E),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFF263827)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.play_circle_outline_rounded),
+                        SizedBox(width: 10),
+                        Text(
+                          'Player engine',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      Platform.isAndroid
+                          ? 'Choose how Orvix plays video on Android mobile and Android TV.'
+                          : 'MPV is used on this platform. ExoPlayer is available on Android mobile and Android TV.',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        height: 1.45,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        _EngineChoice(
+                          selected:
+                              _playerEngine == PlayerEnginePreference.auto,
+                          icon: Icons.auto_awesome_rounded,
+                          label: 'Auto',
+                          enabled: Platform.isAndroid,
+                          onPressed: () => _setPlayerEngine(
+                            PlayerEnginePreference.auto,
+                          ),
+                        ),
+                        _EngineChoice(
+                          selected:
+                              _playerEngine == PlayerEnginePreference.exoPlayer,
+                          icon: Icons.android_rounded,
+                          label: 'ExoPlayer',
+                          enabled: Platform.isAndroid,
+                          onPressed: () => _setPlayerEngine(
+                            PlayerEnginePreference.exoPlayer,
+                          ),
+                        ),
+                        _EngineChoice(
+                          selected:
+                              _playerEngine == PlayerEnginePreference.mpv ||
+                              !Platform.isAndroid,
+                          icon: Icons.movie_filter_rounded,
+                          label: 'MPV',
+                          enabled: true,
+                          onPressed: () => _setPlayerEngine(
+                            PlayerEnginePreference.mpv,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Auto: ExoPlayer for normal Android HTTP/HLS/cloud streams; MPV for local P2P and complex/subtitle-heavy releases. If ExoPlayer fails in Auto, Orvix falls back to MPV. Manual ExoPlayer playback also offers a clean “Use MPV” action.',
+                      style: TextStyle(
+                        color: Color(0xFF9CA99E),
+                        fontSize: 12.5,
+                        height: 1.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 22),
               Container(
                 decoration: BoxDecoration(
                   color: const Color(0xFF0D120E),
@@ -276,6 +371,90 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _EngineChoice extends StatefulWidget {
+  const _EngineChoice({
+    required this.selected,
+    required this.icon,
+    required this.label,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final bool selected;
+  final IconData icon;
+  final String label;
+  final bool enabled;
+  final VoidCallback onPressed;
+
+  @override
+  State<_EngineChoice> createState() => _EngineChoiceState();
+}
+
+class _EngineChoiceState extends State<_EngineChoice> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 90),
+      decoration: BoxDecoration(
+        color: widget.selected
+            ? primary.withValues(alpha: .13)
+            : const Color(0xFF151A16),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _focused
+              ? Colors.white
+              : widget.selected
+                  ? primary.withValues(alpha: .7)
+                  : const Color(0xFF303832),
+          width: _focused ? 2 : 1,
+        ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          canRequestFocus: widget.enabled,
+          focusColor: Colors.transparent,
+          hoverColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          onFocusChange: (value) => setState(() => _focused = value),
+          onTap: widget.enabled ? widget.onPressed : null,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  widget.selected ? Icons.check_rounded : widget.icon,
+                  size: 18,
+                  color: widget.enabled
+                      ? widget.selected
+                          ? primary
+                          : const Color(0xFFD2D8D3)
+                      : const Color(0xFF646C66),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  widget.label,
+                  style: TextStyle(
+                    color: widget.enabled
+                        ? const Color(0xFFE8ECE9)
+                        : const Color(0xFF646C66),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
