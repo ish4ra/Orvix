@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'models/media_item.dart';
@@ -49,6 +51,7 @@ class _OrvixAppState extends State<OrvixApp> {
     _cloudPreferences = CloudPreferencesService();
     _playback = PlaybackService();
     _mediaState = MediaStateService();
+    unawaited(_mediaState.warm());
   }
 
   @override
