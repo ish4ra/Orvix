@@ -34,26 +34,71 @@ class MediaStateService {
   static const _libraryKey = 'pikora_media_library_v1';
   static const _progressKey = 'pikora_continue_watching_v1';
 
-  static String progressKey(MediaItem item, {EpisodeItem? episode}) {
-    final suffix = episode == null ? 'movie' : 's${episode.season}e${episode.episode}';
-    return '${item.kind.name}:${item.id}:$suffix';
+  List<MediaItem>? _watchlistCache;
+  List<MediaItem>? _libraryCache;
+  Future<void>? _warmFuture;
+
+  Future<void> warm() async {
+    if (_watchlistCache != null && _libraryCache != null) return;
+    final existing = _warmFuture;
+    if (existing != null) return existing;
+
+    final future = _warmFromPrefs();
+    _warmFuture = future;
+    try {
+      await future;
+    } finally {
+      _warmFuture = null;
+    }
   }
 
-  Future<List<MediaItem>> watchlist() async {
+  Future<void> _warmFromPrefs() async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_watchlistKey);
-    if (raw == null || raw.isEmpty) return const [];
+    _watchlistCache = _decodeMediaList(prefs.getString(_watchlistKey));
+    _libraryCache = _decodeMediaList(prefs.getString(_libraryKey));
+  }
+
+  bool? peekWatchlisted(MediaItem item) {
+    final cache = _watchlistCache;
+    if (cache == null) return null;
+    return cache.any(
+      (entry) => entry.id == item.id && entry.kind == item.kind,
+    );
+  }
+
+  bool? peekInLibrary(MediaItem item) {
+    final cache = _libraryCache;
+    if (cache == null) return null;
+    return cache.any(
+      (entry) => entry.id == item.id && entry.kind == item.kind,
+    );
+  }
+
+  List<MediaItem> _decodeMediaList(String? raw) {
+    if (raw == null || raw.isEmpty) return const <MediaItem>[];
     try {
       final decoded = jsonDecode(raw);
-      if (decoded is! List) return const [];
+      if (decoded is! List) return const <MediaItem>[];
       return decoded
           .whereType<Map<String, dynamic>>()
           .map(_mediaFromJson)
           .where((item) => item.id.isNotEmpty)
           .toList(growable: false);
     } catch (_) {
-      return const [];
+      return const <MediaItem>[];
     }
+  }
+
+  static String progressKey(MediaItem item, {EpisodeItem? episode}) {
+    final suffix = episode == null ? 'movie' : 's${episode.season}e${episode.episode}';
+    return '${item.kind.name}:${item.id}:$suffix';
+  }
+
+  Future<List<MediaItem>> watchlist() async {
+    await warm();
+    return List<MediaItem>.unmodifiable(
+      _watchlistCache ?? const <MediaItem>[],
+    );
   }
 
   Future<bool> isWatchlisted(MediaItem item) async {
@@ -62,47 +107,9 @@ class MediaStateService {
   }
 
   Future<bool> toggleWatchlist(MediaItem item) async {
+    await warm();
     final prefs = await SharedPreferences.getInstance();
-    final current = [...await watchlist()];
-    final index = current.indexWhere((entry) => entry.id == item.id && entry.kind == item.kind);
-    final added = index < 0;
-    if (added) {
-      current.insert(0, item);
-    } else {
-      current.removeAt(index);
-    }
-    await prefs.setString(
-      _watchlistKey,
-      jsonEncode(current.map(_mediaToJson).toList(growable: false)),
-    );
-    return added;
-  }
-
-  Future<List<MediaItem>> library() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_libraryKey);
-    if (raw == null || raw.isEmpty) return const [];
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! List) return const [];
-      return decoded
-          .whereType<Map<String, dynamic>>()
-          .map(_mediaFromJson)
-          .where((item) => item.id.isNotEmpty)
-          .toList(growable: false);
-    } catch (_) {
-      return const [];
-    }
-  }
-
-  Future<bool> isInLibrary(MediaItem item) async {
-    final list = await library();
-    return list.any((entry) => entry.id == item.id && entry.kind == item.kind);
-  }
-
-  Future<bool> toggleLibrary(MediaItem item) async {
-    final prefs = await SharedPreferences.getInstance();
-    final current = [...await library()];
+    final current = [...(_watchlistCache ?? const <MediaItem>[])];
     final index = current.indexWhere(
       (entry) => entry.id == item.id && entry.kind == item.kind,
     );
@@ -112,6 +119,40 @@ class MediaStateService {
     } else {
       current.removeAt(index);
     }
+    _watchlistCache = List<MediaItem>.unmodifiable(current);
+    await prefs.setString(
+      _watchlistKey,
+      jsonEncode(current.map(_mediaToJson).toList(growable: false)),
+    );
+    return added;
+  }
+
+  Future<List<MediaItem>> library() async {
+    await warm();
+    return List<MediaItem>.unmodifiable(
+      _libraryCache ?? const <MediaItem>[],
+    );
+  }
+
+  Future<bool> isInLibrary(MediaItem item) async {
+    final list = await library();
+    return list.any((entry) => entry.id == item.id && entry.kind == item.kind);
+  }
+
+  Future<bool> toggleLibrary(MediaItem item) async {
+    await warm();
+    final prefs = await SharedPreferences.getInstance();
+    final current = [...(_libraryCache ?? const <MediaItem>[])];
+    final index = current.indexWhere(
+      (entry) => entry.id == item.id && entry.kind == item.kind,
+    );
+    final added = index < 0;
+    if (added) {
+      current.insert(0, item);
+    } else {
+      current.removeAt(index);
+    }
+    _libraryCache = List<MediaItem>.unmodifiable(current);
     await prefs.setString(
       _libraryKey,
       jsonEncode(current.map(_mediaToJson).toList(growable: false)),
