@@ -28,6 +28,7 @@ class AndroidExoPlayerScreen extends StatefulWidget {
     required this.item,
     this.episode,
     this.httpHeaders,
+    this.autoFallbackToMpv = false,
   });
 
   final String url;
@@ -36,6 +37,7 @@ class AndroidExoPlayerScreen extends StatefulWidget {
   final MediaItem item;
   final EpisodeItem? episode;
   final Map<String, String>? httpHeaders;
+  final bool autoFallbackToMpv;
 
   @override
   State<AndroidExoPlayerScreen> createState() => _AndroidExoPlayerScreenState();
@@ -131,6 +133,18 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     if (!mounted || _closing) return;
     setState(() => _error = message);
     _hideTimer?.cancel();
+
+    if (widget.autoFallbackToMpv) {
+      await Future<void>.delayed(const Duration(milliseconds: 650));
+      if (!mounted || _closing) return;
+      await _close(
+        failed: true,
+        switchToMpv: true,
+        error: message,
+      );
+      return;
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _switchFocus.requestFocus();
     });
