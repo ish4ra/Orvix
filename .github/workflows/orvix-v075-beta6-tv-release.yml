@@ -1,0 +1,167 @@
+name: Release Orvix v0.7.5-beta.6 — Android TV Recovery
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.5-dev
+    paths:
+      - '.github/workflows/orvix-v075-beta6-tv-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: orvix-v075-beta6-tv-release
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate TV recovery code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Run Flutter tests
+        run: flutter test
+
+  android-tv:
+    name: Build Android TV beta.6
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform
+        run: flutter create --platforms=android --org com.orvix --project-name orvix .
+
+      - name: Download pinned TorrServer MatriX.145
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p android/app/src/main/jniLibs/{arm64-v8a,armeabi-v7a} android/app/libs
+
+          curl --fail --location --retry 4 --retry-delay 2 \
+            "https://github.com/YouROK/TorrServer/releases/download/MatriX.145/TorrServer-android-arm64" \
+            -o android/app/src/main/jniLibs/arm64-v8a/libtorrserver.so
+          echo "dea0ca8aafa760bf719411d1980f85101f5be8b60d40d3a83aa53860bbb18dfc  android/app/src/main/jniLibs/arm64-v8a/libtorrserver.so" | sha256sum -c -
+
+          curl --fail --location --retry 4 --retry-delay 2 \
+            "https://github.com/YouROK/TorrServer/releases/download/MatriX.145/TorrServer-android-arm7" \
+            -o android/app/src/main/jniLibs/armeabi-v7a/libtorrserver.so
+          echo "361a281e9c7bf12c7c8ec97b6793e9e3cd05a123aa062ce5a263ba514408a809  android/app/src/main/jniLibs/armeabi-v7a/libtorrserver.so" | sha256sum -c -
+
+      - name: Configure Android TV
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check pillow
+          python3 tools/configure_android_build.py --tv
+          python3 tools/configure_android_mobile_compat.py
+          grep -q 'android.intent.category.LEANBACK_LAUNCHER' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:screenOrientation="landscape"' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:extractNativeLibs="true"' android/app/src/main/AndroidManifest.xml
+          grep -q 'orvix/torrserver' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
+          test -s android/app/src/main/assets/licenses/torrserver/LICENSE.txt
+          test -s android/app/src/main/assets/licenses/torrserver/NOTICE.md
+
+      - name: Configure release signing
+        env:
+          ORVIX_ANDROID_KEYSTORE_B64: ${{ secrets.ORVIX_ANDROID_KEYSTORE_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ORVIX_ANDROID_KEYSTORE_B64:-}"
+          printf '%s' "$ORVIX_ANDROID_KEYSTORE_B64" | base64 --decode > android/app/orvix-release.jks
+          test -s android/app/orvix-release.jks
+          python3 tools/configure_android_signing.py
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Android TV APK
+        run: flutter build apk --release --dart-define=ORVIX_TV=true
+
+      - name: Verify Android TV APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          unzip -l "$APK" > /tmp/orvix-tv-apk-list.txt
+          grep -q 'lib/arm64-v8a/libtorrserver.so' /tmp/orvix-tv-apk-list.txt
+          grep -q 'lib/armeabi-v7a/libtorrserver.so' /tmp/orvix-tv-apk-list.txt
+          grep -q 'assets/licenses/torrserver/LICENSE.txt' /tmp/orvix-tv-apk-list.txt
+          if grep -q 'lib/arm64-v8a/libstream_server.so' /tmp/orvix-tv-apk-list.txt; then
+            echo 'TV APK unexpectedly contains legacy Stremio stream-server' >&2
+            exit 1
+          fi
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          "$APKSIGNER" verify --verbose "$APK"
+
+      - name: Rename APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.5-beta.6-Android-TV.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Orvix-v0.7.5-beta.6-Android-TV
+          path: Orvix-v0.7.5-beta.6-Android-TV.apk
+          if-no-files-found: error
+
+      - name: Publish beta.6 prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/beta6-notes.md <<'EOF'
+          Orvix v0.7.5-beta.6 is an Android-TV-only recovery build.
+
+          - Replaces the failing Android TV Stremio stream-server transport with a separate bundled TorrServer MatriX.145 process on localhost.
+          - Buffers real torrent media bytes before handing the stream to the TV player.
+          - Keeps Android mobile and desktop P2P paths unchanged.
+          - Fixes DPAD focus on the P2P error actions.
+          - Reworks the TV source browser into one compact globally sorted list.
+          - Short OK plays a source; hold OK asks to pin/unpin it. The separate star control is removed.
+          - Splits provider filters from Free / Smooth / Best ordering controls and gives the active ordering a single clear selected state.
+          - Bundles TorrServer's GPLv3 license and exact upstream source/version notice.
+
+          This prerelease is intentionally TV-only so the physical-TV P2P path can be verified before changing other platforms.
+          EOF
+
+          if gh release view v0.7.5-beta.6 >/dev/null 2>&1; then
+            gh release upload v0.7.5-beta.6 --clobber Orvix-v0.7.5-beta.6-Android-TV.apk
+            gh release edit v0.7.5-beta.6 \
+              --title 'Orvix v0.7.5-beta.6 — Android TV Recovery' \
+              --prerelease \
+              --notes-file /tmp/beta6-notes.md
+          else
+            gh release create v0.7.5-beta.6 \
+              --target "${{ github.sha }}" \
+              --title 'Orvix v0.7.5-beta.6 — Android TV Recovery' \
+              --prerelease \
+              --notes-file /tmp/beta6-notes.md \
+              Orvix-v0.7.5-beta.6-Android-TV.apk
+          fi
