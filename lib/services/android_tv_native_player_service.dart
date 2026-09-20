@@ -23,6 +23,7 @@ class AndroidTvNativePlayerService {
   static Future<AndroidTvNativePlayerResult> play({
     required String url,
     required String title,
+    int startPositionMs = 0,
   }) async {
     try {
       final raw = await _channel.invokeMapMethod<String, dynamic>(
@@ -30,6 +31,7 @@ class AndroidTvNativePlayerService {
         <String, dynamic>{
           'url': url,
           'title': title,
+          'startPositionMs': startPositionMs,
         },
       );
       return AndroidTvNativePlayerResult(
