@@ -2419,6 +2419,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
             mediaState: widget.mediaState,
             item: item,
             episode: episode,
+            autoFallbackToMpv:
+                preference == PlayerEnginePreference.auto,
           ),
         ),
       );
