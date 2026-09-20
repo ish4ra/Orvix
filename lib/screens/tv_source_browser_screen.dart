@@ -644,6 +644,9 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
           seriesWide: _seriesWidePin,
         );
         return _TvSourceRow(
+          key: ValueKey(
+            'tv-source-${widget.sources.sourceIdentity(source, seriesWide: false)}',
+          ),
           source: source,
           assessment: _sort == _TvSourceSort.free
               ? widget.sources.assessFreePlayback(source)
@@ -661,6 +664,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
 
 class _TvSourceRow extends StatefulWidget {
   const _TvSourceRow({
+    super.key,
     required this.source,
     required this.assessment,
     required this.pinned,
