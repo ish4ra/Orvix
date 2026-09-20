@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
+import '../services/ai_sinhala_preferences_service.dart';
 import '../services/catalog_service.dart';
 import '../services/cloud_preferences_service.dart';
 import '../services/local_torrent_service.dart';
@@ -12,8 +14,10 @@ import '../services/pikpak_service.dart';
 import '../services/pikpak_transfer_service.dart';
 import '../services/playback_service.dart';
 import '../services/platform_profile.dart';
+import '../services/player_engine_preferences_service.dart';
 import '../services/source_provider_service.dart';
 import '../services/torbox_service.dart';
+import 'android_exo_player_screen.dart';
 import 'player_screen.dart';
 import 'sources_screen.dart';
 import 'tv_source_browser_screen.dart';
@@ -2383,10 +2387,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
   }) async {
     if (!mounted) return;
 
-    // PlayerScreen performs the AI Sinhala exact-file fingerprint and
-    // translation before libmpv opens this URL. The resolved local P2P URL
-    // already identifies the exact torrent file index, so the hash can be
-    // computed with byte-range reads without attaching the player first.
     setState(() {
       _resolving = false;
       _resolveProgress = null;
@@ -2398,6 +2398,70 @@ class _DetailsScreenState extends State<DetailsScreen> {
         : '${item.title} • ${episode.label} ${episode.title}';
     final next = _nextEpisode(item, episode);
 
+    final preference = await PlayerEnginePreferencesService.get();
+    final aiEnabled = Platform.isAndroid &&
+        !PlatformProfile.isAndroidTv &&
+        await AiSinhalaPreferencesService.isEnabled();
+    final engine = PlayerEngineRouter.choose(
+      preference: preference,
+      isAndroid: Platform.isAndroid,
+      url: url,
+      releaseHint: releaseHint,
+      aiSinhalaEnabled: aiEnabled,
+    );
+
+    if (engine == PlayerEngineKind.exoPlayer && Platform.isAndroid) {
+      final result = await Navigator.of(context).push<AndroidExoPlayerResult>(
+        MaterialPageRoute(
+          builder: (_) => AndroidExoPlayerScreen(
+            url: url,
+            title: title,
+            mediaState: widget.mediaState,
+            item: item,
+            episode: episode,
+          ),
+        ),
+      );
+      if (!mounted) return;
+
+      final shouldFallback = result?.switchToMpv == true ||
+          (preference == PlayerEnginePreference.auto &&
+              result?.failed == true);
+      if (!shouldFallback) return;
+
+      if (result?.failed == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('ExoPlayer failed — trying MPV…'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+
+    await _openMpvPlayer(
+      url,
+      title,
+      item,
+      episode,
+      next,
+      releaseHint: releaseHint,
+      expectedSizeBytes: expectedSizeBytes,
+      expectedVideoHash: expectedVideoHash,
+    );
+  }
+
+  Future<void> _openMpvPlayer(
+    String url,
+    String title,
+    MediaItem item,
+    EpisodeItem? episode,
+    EpisodeItem? next, {
+    String? releaseHint,
+    int? expectedSizeBytes,
+    String? expectedVideoHash,
+  }) async {
+    if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => PlayerScreen(
@@ -2408,9 +2472,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
           item: item,
           episode: episode,
           aiSubtitle: null,
-          // Playback stability comes first on TV. AI Sinhala preflight can
-          // play/pause/seek before normal playback and is intentionally kept
-          // out of the TV path until base playback is proven stable.
           allowAiSinhala: !PlatformProfile.isAndroidTv,
           releaseHint: releaseHint,
           expectedSizeBytes: expectedSizeBytes,
