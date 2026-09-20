@@ -79,6 +79,8 @@ class LocalTorrentService {
 
     final fileHint = source.fileNameHint?.trim();
     final isStremioTvPath = PlatformProfile.isAndroidTv;
+    final trackers =
+        isStremioTvPath ? _extractTrackers(source.resource) : const <String>[];
     final body = isStremioTvPath
         ? <String, dynamic>{
             // This is the same compatibility endpoint used by stremio-core for
@@ -87,7 +89,6 @@ class LocalTorrentService {
             'guessFileIdx': true,
             if (fileHint != null && fileHint.isNotEmpty)
               'fileMustInclude': <String>[fileHint],
-            final trackers = _extractTrackers(source.resource)
             if (trackers.isNotEmpty)
               'peerSearch': <String, dynamic>{'sources': trackers},
           }
