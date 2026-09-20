@@ -72,9 +72,7 @@ def patch_android(tv: bool) -> None:
             '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n'
             '    <uses-permission android:name="android.permission.INTERNET" />\n'
             '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n'
-            '    <uses-permission android:name="android.permission.WAKE_LOCK" />\n'
-            '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n'
-            '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />',
+            '    <uses-permission android:name="android.permission.WAKE_LOCK" />',
         )
 
     text = text.replace(
@@ -124,18 +122,6 @@ def patch_android(tv: bool) -> None:
                 '<category android:name="android.intent.category.LAUNCHER"/>\n'
                 '                <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>',
             )
-
-    if 'android:name=".TorrentEngineService"' not in text:
-        text = text.replace(
-            "</application>",
-            '        <service\n'
-            '            android:name=".TorrentEngineService"\n'
-            '            android:exported="false"\n'
-            '            android:stopWithTask="true"\n'
-            '            android:foregroundServiceType="mediaPlayback" />\n'
-            "    </application>",
-            1,
-        )
 
     manifest.write_text(text)
 
@@ -276,13 +262,15 @@ def patch_android(tv: bool) -> None:
     main_activity.write_text(
         """package com.orvix.orvix
 
-import android.content.Intent
-import android.os.Build
+import com.stremio.mobile.server.JniStreamingServerController
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
+    private val executor = Executors.newSingleThreadExecutor()
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(
@@ -290,127 +278,38 @@ class MainActivity : FlutterActivity() {
             "orvix/torrent_engine"
         ).setMethodCallHandler { call, result ->
             when (call.method) {
-                "start" -> {
+                "start" -> executor.execute {
                     try {
-                        val intent = Intent(this, TorrentEngineService::class.java)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            startForegroundService(intent)
-                        } else {
-                            startService(intent)
-                        }
-                        result.success("starting")
+                        val url =
+                            JniStreamingServerController.start(applicationContext)
+                        runOnUiThread { result.success(url) }
                     } catch (error: Throwable) {
-                        result.error(
-                            "torrent_engine_start_failed",
-                            "${error::class.java.simpleName}: ${error.message ?: error.toString()}",
-                            null
-                        )
+                        runOnUiThread {
+                            result.error(
+                                "torrent_engine_start_failed",
+                                "${error::class.java.simpleName}: ${error.message ?: error.toString()}",
+                                null
+                            )
+                        }
                     }
                 }
-                "stop" -> {
+                "stop" -> executor.execute {
                     try {
-                        stopService(Intent(this, TorrentEngineService::class.java))
-                        result.success(null)
+                        JniStreamingServerController.stop()
+                        runOnUiThread { result.success(null) }
                     } catch (error: Throwable) {
-                        result.error(
-                            "torrent_engine_stop_failed",
-                            error.message ?: error.toString(),
-                            null
-                        )
+                        runOnUiThread {
+                            result.error(
+                                "torrent_engine_stop_failed",
+                                error.message ?: error.toString(),
+                                null
+                            )
+                        }
                     }
                 }
                 else -> result.notImplemented()
             }
         }
-    }
-}
-"""
-    )
-
-    torrent_service = Path(
-        "android/app/src/main/kotlin/com/orvix/orvix/TorrentEngineService.kt"
-    )
-    torrent_service.write_text(
-        """package com.orvix.orvix
-
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.Service
-import android.content.Intent
-import android.os.Build
-import android.os.IBinder
-import android.util.Log
-import androidx.core.app.NotificationCompat
-import com.stremio.mobile.server.JniStreamingServerController
-import java.util.concurrent.Executors
-
-class TorrentEngineService : Service() {
-    private val executor = Executors.newSingleThreadExecutor()
-    @Volatile
-    private var nativeStarted = false
-
-    override fun onCreate() {
-        super.onCreate()
-        ensureNotificationChannel()
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Orvix P2P")
-            .setContentText("Local streaming server is active")
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setOngoing(true)
-            .build()
-        startForeground(NOTIFICATION_ID, notification)
-
-        if (!nativeStarted) {
-            nativeStarted = true
-            executor.execute {
-                try {
-                    JniStreamingServerController.start(applicationContext)
-                } catch (error: Throwable) {
-                    nativeStarted = false
-                    Log.e(
-                        "OrvixTorrentEngine",
-                        "Native stream-server failed to start",
-                        error
-                    )
-                    stopSelf()
-                }
-            }
-        }
-        return START_STICKY
-    }
-
-    override fun onDestroy() {
-        try {
-            JniStreamingServerController.stop()
-        } catch (error: Throwable) {
-            Log.w("OrvixTorrentEngine", "stream-server shutdown failed", error)
-        }
-        nativeStarted = false
-        executor.shutdownNow()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        super.onDestroy()
-    }
-
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    private fun ensureNotificationChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_ID,
-                "Orvix local streaming",
-                NotificationManager.IMPORTANCE_LOW
-            )
-        )
-    }
-
-    companion object {
-        private const val CHANNEL_ID = "orvix_streaming_server"
-        private const val NOTIFICATION_ID = 11470
     }
 }
 """
