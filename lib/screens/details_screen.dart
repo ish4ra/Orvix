@@ -1253,6 +1253,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         chosen.resource,
         item,
         episode,
+        source: chosen,
         releaseHint: releaseHint,
         expectedSizeBytes: chosen.sizeBytes,
         expectedVideoHash: chosen.videoHash,
@@ -1267,18 +1268,27 @@ class _DetailsScreenState extends State<DetailsScreen> {
         _resolveProgress = null;
         _status = 'Starting local P2P torrent stream…';
       });
-      final localUrl = await LocalTorrentService.instance.resolve(
-        chosen,
-        onProgress: (message) {
-          if (mounted) setState(() => _status = message);
-        },
-      );
+      late final String localUrl;
+      try {
+        localUrl = await LocalTorrentService.instance.resolve(
+          chosen,
+          onProgress: (message) {
+            if (mounted) setState(() => _status = message);
+          },
+        );
+      } catch (_) {
+        unawaited(
+          widget.sources.recordPlaybackOutcome(chosen, success: false),
+        );
+        rethrow;
+      }
       if (!mounted) return;
       setState(() => _status = 'P2P stream ready — opening player…');
       await _openPlayerUrl(
         localUrl,
         item,
         episode,
+        source: chosen,
         releaseHint: releaseHint,
         expectedSizeBytes: chosen.sizeBytes,
         expectedVideoHash: chosen.videoHash,
@@ -2381,6 +2391,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     String url,
     MediaItem item,
     EpisodeItem? episode, {
+    SourceResult? source,
     String? releaseHint,
     int? expectedSizeBytes,
     String? expectedVideoHash,
@@ -2426,6 +2437,16 @@ class _DetailsScreenState extends State<DetailsScreen> {
       );
       if (!mounted) return;
 
+      if (source != null && result?.started == true) {
+        unawaited(
+          widget.sources.recordPlaybackOutcome(source, success: true),
+        );
+      } else if (source != null && result?.failed == true) {
+        unawaited(
+          widget.sources.recordPlaybackOutcome(source, success: false),
+        );
+      }
+
       final shouldFallback = result?.switchToMpv == true ||
           (preference == PlayerEnginePreference.auto &&
               result?.failed == true);
@@ -2447,6 +2468,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
       item,
       episode,
       next,
+      source: source,
       releaseHint: releaseHint,
       expectedSizeBytes: expectedSizeBytes,
       expectedVideoHash: expectedVideoHash,
@@ -2459,6 +2481,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     MediaItem item,
     EpisodeItem? episode,
     EpisodeItem? next, {
+    SourceResult? source,
     String? releaseHint,
     int? expectedSizeBytes,
     String? expectedVideoHash,
@@ -2479,6 +2502,26 @@ class _DetailsScreenState extends State<DetailsScreen> {
           expectedSizeBytes: expectedSizeBytes,
           expectedVideoHash: expectedVideoHash,
           nextEpisodeLabel: next == null ? null : '${next.label} ${next.title}',
+          onPlaybackStarted: source == null
+              ? null
+              : () {
+                  unawaited(
+                    widget.sources.recordPlaybackOutcome(
+                      source,
+                      success: true,
+                    ),
+                  );
+                },
+          onStartupFailed: source == null
+              ? null
+              : (message) {
+                  unawaited(
+                    widget.sources.recordPlaybackOutcome(
+                      source,
+                      success: false,
+                    ),
+                  );
+                },
           onNext: next == null
               ? null
               : () async {
