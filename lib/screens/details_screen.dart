@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
+import '../services/android_tv_native_player_service.dart';
 import '../services/catalog_service.dart';
 import '../services/cloud_preferences_service.dart';
 import '../services/local_torrent_service.dart';
@@ -14,7 +15,6 @@ import '../services/playback_service.dart';
 import '../services/platform_profile.dart';
 import '../services/source_provider_service.dart';
 import '../services/torbox_service.dart';
-import 'android_tv_exo_player_screen.dart';
 import 'player_screen.dart';
 import 'sources_screen.dart';
 import 'tv_source_browser_screen.dart';
@@ -1097,8 +1097,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
       });
 
       final resultsFuture = widget.sources.resolve(item, episode: episode);
-      final chosen = await Navigator.of(context).push<SourceResult>(
-        PageRouteBuilder<SourceResult>(
+      await Navigator.of(context).push<void>(
+        PageRouteBuilder<void>(
           transitionDuration: const Duration(milliseconds: 180),
           reverseTransitionDuration: const Duration(milliseconds: 140),
           pageBuilder: (_, animation, __) => FadeTransition(
@@ -1111,24 +1111,21 @@ class _DetailsScreenState extends State<DetailsScreen> {
               item: item,
               episode: episode,
               resultsFuture: resultsFuture,
+              onPlaySource: (chosen) async {
+                final hasCloudConnection =
+                    (await widget.pikpak.isSignedIn) ||
+                    (await widget.torbox.isConnected);
+                await _playSourceResult(
+                  chosen,
+                  item,
+                  episode,
+                  hasCloudConnection: hasCloudConnection,
+                );
+              },
             ),
           ),
         ),
       );
-      if (chosen == null || !mounted) return;
-
-      try {
-        final hasCloudConnection =
-            (await widget.pikpak.isSignedIn) || (await widget.torbox.isConnected);
-        await _playSourceResult(
-          chosen,
-          item,
-          episode,
-          hasCloudConnection: hasCloudConnection,
-        );
-      } catch (error) {
-        _showPlayError(error);
-      }
       return;
     }
 
@@ -2386,29 +2383,32 @@ class _DetailsScreenState extends State<DetailsScreen> {
         (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
         (uri.port == 11470 || uri.port == 8091);
 
-    // Android TV P2P is intentionally routed through Media3/ExoPlayer first.
-    // This isolates the local torrent transport from media_kit/libmpv and gives
-    // us a safe, native Android A/B path for the TV crash.
+    // Android TV local P2P follows Stremio's Android shape:
+    // stream-server localhost URL -> native Media3 ExoPlayer. No Flutter
+    // video_player wrapper and no extra Orvix pre-buffer gate in between.
     if (PlatformProfile.isAndroidTv && localP2p) {
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => AndroidTvExoPlayerScreen(
-            url: url,
-            title: title,
-            mediaState: widget.mediaState,
-            item: item,
-            episode: episode,
-            nextEpisodeLabel:
-                next == null ? null : '${next.label} ${next.title}',
-            onNext: next == null
-                ? null
-                : () async {
-                    if (!mounted) return;
-                    await _play(item, episode: next);
-                  },
-          ),
-        ),
+      final resume =
+          await widget.mediaState.resumePosition(item, episode: episode);
+      final result = await AndroidTvNativePlayerService.play(
+        url: url,
+        title: title,
+        startPositionMs: resume?.inMilliseconds ?? 0,
       );
+
+      if (result.durationMs != null &&
+          result.durationMs! > 0 &&
+          result.positionMs != null) {
+        await widget.mediaState.saveProgress(
+          item,
+          episode: episode,
+          position: Duration(milliseconds: result.positionMs!),
+          duration: Duration(milliseconds: result.durationMs!),
+        );
+      }
+
+      if (result.failed) {
+        throw Exception(result.error);
+      }
       return;
     }
 
