@@ -11,11 +11,13 @@ class AndroidExoPlayerResult {
   const AndroidExoPlayerResult({
     this.failed = false,
     this.switchToMpv = false,
+    this.started = false,
     this.error,
   });
 
   final bool failed;
   final bool switchToMpv;
+  final bool started;
   final String? error;
 }
 
@@ -269,6 +271,10 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       AndroidExoPlayerResult(
         failed: failed,
         switchToMpv: switchToMpv,
+        started: _initialized &&
+            ((_controller?.value.isPlaying ?? false) ||
+                (_controller?.value.position ?? Duration.zero) >
+                    Duration.zero),
         error: error,
       ),
     );
