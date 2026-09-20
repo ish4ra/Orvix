@@ -190,7 +190,7 @@ class AndroidTvTorrServerService {
     }
 
     final magnet = uri.queryParameters['link'] ?? _activeMagnet;
-    final hash = magnet == null ? _activeHash : _extractInfoHash(magnet);
+    final hash = magnet == null ? _activeHash : (_extractInfoHash(magnet) ?? _activeHash);
     if (hash == null) return null;
 
     final stats = await _stats(hash);
@@ -463,7 +463,7 @@ class AndroidTvTorrServerService {
       return 'magnet:?xt=urn:btih:$infoHash';
     }
 
-    final parts = <String>['xt=${Uri.encodeQueryComponent('urn:btih:$infoHash')}'];
+    final parts = <String>['xt=urn:btih:$infoHash'];
     final seenTrackers = <String>{};
     for (final entry in uri.queryParametersAll.entries) {
       final key = entry.key.toLowerCase();
