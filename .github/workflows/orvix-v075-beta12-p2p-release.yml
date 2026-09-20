@@ -5,7 +5,7 @@ on:
     branches:
       - orvix-v0.7.5-dev
     paths:
-      - '.github/workflows/orvix-v075-beta12-android-release.yml'
+      - '.github/workflows/orvix-v075-beta12-p2p-release.yml'
   workflow_dispatch:
 
 permissions:
@@ -316,7 +316,7 @@ jobs:
           else
             gh release create v0.7.5-beta.12 \
               --target "${{ github.sha }}" \
-              --title 'Orvix v0.7.5-beta.12 — TV Source Reliability' \
+              --title 'Orvix v0.7.5-beta.12 — P2P Engine Parity' \
               --prerelease \
               --notes-file /tmp/notes.md \
               release/Orvix-v0.7.5-beta.12-Android-Mobile.apk \
