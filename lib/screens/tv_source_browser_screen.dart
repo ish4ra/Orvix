@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/media_item.dart';
 import '../services/source_provider_service.dart';
@@ -171,6 +172,55 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen>
     });
   }
 
+  Future<void> _confirmPin(SourceResult source) async {
+    final pinned = widget.sources.matchesPinned(
+      source,
+      _pinnedIdentity,
+      seriesWide: _seriesWidePin,
+    );
+    final release = source.fileNameHint?.trim().isNotEmpty == true
+        ? source.fileNameHint!.trim()
+        : source.title.split('\n').last.trim();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF121613),
+        title: Text(pinned ? 'Unpin this source?' : 'Pin this source?'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Text(
+            pinned
+                ? 'Orvix will stop keeping this release at the top for this title.'
+                : 'Keep this release at the top for this title' +
+                    (_seriesWidePin ? ' and matching episodes' : '') +
+                    '?\n\n' + release,
+            maxLines: 5,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Color(0xFFC7CEC8), height: 1.4),
+          ),
+        ),
+        actions: [
+          TextButton(
+            autofocus: true,
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            icon: Icon(
+              pinned ? Icons.push_pin_outlined : Icons.push_pin_rounded,
+            ),
+            label: Text(pinned ? 'Unpin' : 'Pin source'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      await _togglePin(source);
+    }
+  }
   @override
   void dispose() {
     _pulse.dispose();
@@ -284,67 +334,101 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen>
   }
 
   Widget _buildFilterBar() {
-    return SizedBox(
-      height: 46,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        children: [
-          _TvFilterPill(
-            selected: false,
-            icon: Icons.refresh_rounded,
-            label: 'Refresh',
-            onPressed: _loading ? null : () => _load(refresh: true),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          height: 44,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            children: [
+              _TvFilterPill(
+                selected: false,
+                icon: Icons.refresh_rounded,
+                label: 'Refresh',
+                onPressed: _loading ? null : () => _load(refresh: true),
+              ),
+              const SizedBox(width: 8),
+              _TvFilterPill(
+                selected: _providerFilter == null,
+                icon: Icons.apps_rounded,
+                label: 'All sources',
+                onPressed: () => setState(() => _providerFilter = null),
+              ),
+              for (final provider in _providers) ...[
+                const SizedBox(width: 8),
+                _TvFilterPill(
+                  selected: _providerFilter == provider,
+                  icon: Icons.extension_rounded,
+                  label: provider,
+                  onPressed: () => setState(() => _providerFilter = provider),
+                ),
+              ],
+            ],
           ),
-          const SizedBox(width: 8),
-          _TvFilterPill(
-            selected: _providerFilter == null,
-            icon: Icons.apps_rounded,
-            label: 'All',
-            onPressed: () => setState(() => _providerFilter = null),
-          ),
-          for (final provider in _providers) ...[
-            const SizedBox(width: 8),
-            _TvFilterPill(
-              selected: _providerFilter == provider,
-              icon: Icons.extension_rounded,
-              label: provider,
-              onPressed: () => setState(() => _providerFilter = provider),
+        ),
+        const SizedBox(height: 9),
+        Row(
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(left: 4, right: 10),
+              child: Text(
+                'ORDER',
+                style: TextStyle(
+                  color: Color(0xFF8F9991),
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ),
+            Expanded(
+              child: SizedBox(
+                height: 44,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    _TvFilterPill(
+                      selected: _sort == _TvSourceSort.free,
+                      icon: Icons.bolt_rounded,
+                      label: 'Free',
+                      onPressed: () =>
+                          setState(() => _sort = _TvSourceSort.free),
+                    ),
+                    const SizedBox(width: 8),
+                    _TvFilterPill(
+                      selected: _sort == _TvSourceSort.smooth,
+                      icon: Icons.speed_rounded,
+                      label: 'Smooth',
+                      onPressed: () =>
+                          setState(() => _sort = _TvSourceSort.smooth),
+                    ),
+                    const SizedBox(width: 8),
+                    _TvFilterPill(
+                      selected: _sort == _TvSourceSort.best,
+                      icon: Icons.auto_awesome_rounded,
+                      label: 'Best',
+                      onPressed: () =>
+                          setState(() => _sort = _TvSourceSort.best),
+                    ),
+                    const SizedBox(width: 16),
+                    _TvFilterPill(
+                      selected: _compatibilityOnly,
+                      icon: Icons.tv_rounded,
+                      label: 'TV safe only',
+                      onPressed: () => setState(
+                        () => _compatibilityOnly = !_compatibilityOnly,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ],
-          const SizedBox(width: 18),
-          _TvFilterPill(
-            selected: _sort == _TvSourceSort.free,
-            icon: Icons.bolt_rounded,
-            label: 'Free',
-            onPressed: () => setState(() => _sort = _TvSourceSort.free),
-          ),
-          const SizedBox(width: 8),
-          _TvFilterPill(
-            selected: _sort == _TvSourceSort.smooth,
-            icon: Icons.speed_rounded,
-            label: 'Smooth',
-            onPressed: () => setState(() => _sort = _TvSourceSort.smooth),
-          ),
-          const SizedBox(width: 8),
-          _TvFilterPill(
-            selected: _sort == _TvSourceSort.best,
-            icon: Icons.auto_awesome_rounded,
-            label: 'Best',
-            onPressed: () => setState(() => _sort = _TvSourceSort.best),
-          ),
-          const SizedBox(width: 8),
-          _TvFilterPill(
-            selected: _compatibilityOnly,
-            icon: Icons.verified_rounded,
-            label: 'TV safe',
-            onPressed: () =>
-                setState(() => _compatibilityOnly = !_compatibilityOnly),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
-
   Widget _buildSkeleton() {
     return FadeTransition(
       opacity: _pulse,
@@ -741,7 +825,7 @@ class _TvSourceTileState extends State<_TvSourceTile> {
 
 }
 
-class _TvFilterPill extends StatelessWidget {
+class _TvFilterPill extends StatefulWidget {
   const _TvFilterPill({
     required this.selected,
     required this.icon,
@@ -755,36 +839,70 @@ class _TvFilterPill extends StatelessWidget {
   final VoidCallback? onPressed;
 
   @override
+  State<_TvFilterPill> createState() => _TvFilterPillState();
+}
+
+class _TvFilterPillState extends State<_TvFilterPill> {
+  bool _focused = false;
+
+  @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
-    return FilledButton.tonalIcon(
-      onPressed: onPressed,
-      style: ButtonStyle(
-        backgroundColor: WidgetStatePropertyAll(
-          selected ? primary.withValues(alpha: .16) : const Color(0xFF0D130E),
-        ),
-        foregroundColor:
-            WidgetStatePropertyAll(selected ? primary : const Color(0xFFD9E0DA)),
-        side: WidgetStateProperty.resolveWith(
-          (states) => BorderSide(
-            color: states.contains(WidgetState.focused)
-                ? Colors.white
-                : selected
-                    ? primary.withValues(alpha: .55)
-                    : const Color(0xFF253027),
-            width: states.contains(WidgetState.focused) ? 2 : 1,
-          ),
-        ),
-        padding: const WidgetStatePropertyAll(
-          EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    final selected = widget.selected;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 100),
+      decoration: BoxDecoration(
+        color: selected ? primary : const Color(0xFF111512),
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(
+          color: _focused
+              ? Colors.white
+              : selected
+                  ? primary
+                  : const Color(0xFF36413A),
+          width: _focused ? 2.5 : 1,
         ),
       ),
-      icon: Icon(icon, size: 19),
-      label: Text(label),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          canRequestFocus: widget.onPressed != null,
+          focusColor: Colors.transparent,
+          hoverColor: Colors.transparent,
+          onFocusChange: (value) => setState(() => _focused = value),
+          onTap: widget.onPressed,
+          borderRadius: BorderRadius.circular(11),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  selected ? Icons.check_circle_rounded : widget.icon,
+                  size: 18,
+                  color: selected
+                      ? const Color(0xFF11160F)
+                      : const Color(0xFFD2D9D3),
+                ),
+                const SizedBox(width: 7),
+                Text(
+                  widget.label,
+                  style: TextStyle(
+                    color: selected
+                        ? const Color(0xFF11160F)
+                        : const Color(0xFFE2E7E3),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
-
 class _TvRoundButton extends StatelessWidget {
   const _TvRoundButton({
     required this.tooltip,
