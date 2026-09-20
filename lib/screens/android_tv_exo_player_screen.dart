@@ -40,6 +40,8 @@ class AndroidTvExoPlayerScreen extends StatefulWidget {
 
 class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
   final FocusNode _focusNode = FocusNode();
+  final FocusNode _chooseSourceFocus = FocusNode();
+  final FocusNode _retryFocus = FocusNode();
 
   VideoPlayerController? _controller;
   Timer? _uiTimer;
@@ -105,13 +107,17 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
       } catch (_) {}
       if (identical(_controller, controller)) _controller = null;
       if (mounted && !_closing) {
-        setState(
-          () => _error = _timeoutMessage(),
-        );
+        setState(() => _error = _timeoutMessage());
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && !_closing) _chooseSourceFocus.requestFocus();
+        });
       }
     } catch (error) {
       if (mounted && !_closing) {
         setState(() => _error = 'ExoPlayer could not open this stream.\n$error');
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && !_closing) _chooseSourceFocus.requestFocus();
+        });
       }
     }
   }
@@ -218,6 +224,11 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    // When the error actions are visible, do not steal DPAD/OK from the
+    // focused buttons. The old root handler consumed arrows and Select before
+    // Flutter's focus traversal/buttons could see them, which made both
+    // "Choose another source" and "Retry" look completely dead on a TV.
+    if (_error != null) return KeyEventResult.ignored;
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final key = event.logicalKey;
 
@@ -259,6 +270,8 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
     _saveTimer?.cancel();
     _torrentHealthTimer?.cancel();
     _focusNode.dispose();
+    _chooseSourceFocus.dispose();
+    _retryFocus.dispose();
     unawaited(_persistProgress());
     unawaited(_controller?.dispose() ?? Future<void>.value());
     super.dispose();
@@ -360,6 +373,7 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
                 alignment: WrapAlignment.center,
                 children: [
                   OutlinedButton.icon(
+                    focusNode: _chooseSourceFocus,
                     autofocus: true,
                     onPressed: () async {
                       await _close();
@@ -369,6 +383,7 @@ class _AndroidTvExoPlayerScreenState extends State<AndroidTvExoPlayerScreen> {
                     label: const Text('Choose another source'),
                   ),
                   FilledButton.icon(
+                    focusNode: _retryFocus,
                     onPressed: () async {
                       await _controller?.dispose();
                       _controller = null;
