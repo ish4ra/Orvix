@@ -1276,9 +1276,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
             if (mounted) setState(() => _status = message);
           },
         );
-      } catch (_) {
+      } catch (error) {
         unawaited(
-          widget.sources.recordPlaybackOutcome(chosen, success: false),
+          widget.sources.recordPlaybackOutcome(
+            chosen,
+            success: false,
+            reason: error.toString(),
+          ),
         );
         rethrow;
       }
@@ -2443,7 +2447,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
         );
       } else if (source != null && result?.failed == true) {
         unawaited(
-          widget.sources.recordPlaybackOutcome(source, success: false),
+          widget.sources.recordPlaybackOutcome(
+            source,
+            success: false,
+            reason: result?.error,
+          ),
         );
       }
 
@@ -2472,6 +2480,25 @@ class _DetailsScreenState extends State<DetailsScreen> {
       releaseHint: releaseHint,
       expectedSizeBytes: expectedSizeBytes,
       expectedVideoHash: expectedVideoHash,
+    );
+  }
+
+  Future<void> _recordSourceStartupFailure(
+    SourceResult source,
+    String url,
+    String message,
+  ) async {
+    var reason = message.trim();
+    if (source.isMagnet) {
+      final health = await LocalTorrentService.instance.healthForStreamUrl(url);
+      if (health != null) {
+        reason = '$reason • ${health.summary}';
+      }
+    }
+    await widget.sources.recordPlaybackOutcome(
+      source,
+      success: false,
+      reason: reason,
     );
   }
 
@@ -2516,10 +2543,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               ? null
               : (message) {
                   unawaited(
-                    widget.sources.recordPlaybackOutcome(
-                      source,
-                      success: false,
-                    ),
+                    _recordSourceStartupFailure(source, url, message),
                   );
                 },
           onNext: next == null
