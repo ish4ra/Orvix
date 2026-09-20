@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:orvix/services/source_provider_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 SourceResult torrent({
   required String name,
@@ -21,6 +22,12 @@ SourceResult torrent({
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+  });
+
   test('Free prefers efficient viable source over huge highly seeded source', () {
     final service = SourceProviderService();
     final efficient = torrent(
@@ -57,6 +64,52 @@ void main() {
     final ranked = service.sortForFreeStreaming([weaker1080, healthy720]);
 
     expect(ranked.first, same(healthy720));
+  });
+
+  test('Free learns from a recent successful release on this device', () async {
+    final service = SourceProviderService();
+    final knownGood = torrent(
+      name: 'Known.Good.720p',
+      seeders: 12,
+      sizeBytes: 700 * 1024 * 1024,
+      quality: '720P',
+    );
+    final unknown = torrent(
+      name: 'Unknown.1080p',
+      seeders: 55,
+      sizeBytes: 700 * 1024 * 1024,
+    );
+
+    await service.recordPlaybackOutcome(knownGood, success: true);
+    final ranked = service.sortForFreeStreaming([unknown, knownGood]);
+
+    expect(ranked.first, same(knownGood));
+    expect(service.assessFreePlayback(knownGood).label, 'WORKED BEFORE');
+  });
+
+  test('Free demotes an exact release that failed recently', () async {
+    final service = SourceProviderService();
+    final failed = torrent(
+      name: 'Failed.1080p',
+      seeders: 80,
+      sizeBytes: 650 * 1024 * 1024,
+    );
+    final alternative = torrent(
+      name: 'Alternative.720p',
+      seeders: 25,
+      sizeBytes: 700 * 1024 * 1024,
+      quality: '720P',
+    );
+
+    await service.recordPlaybackOutcome(
+      failed,
+      success: false,
+      reason: 'stream timed out • speed: 90 KB/s',
+    );
+    final ranked = service.sortForFreeStreaming([failed, alternative]);
+
+    expect(ranked.first, same(alternative));
+    expect(service.assessFreePlayback(failed).label, 'SLOW / STALLED');
   });
 
   test('Free does not put a zero-seed small file above a viable swarm', () {
