@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:orvix/services/player_engine_preferences_service.dart';
 
 void main() {
-  test('Auto uses MPV for local P2P stream-server URLs', () {
+  test('Auto uses ExoPlayer first for local P2P stream-server URLs', () {
     final engine = PlayerEngineRouter.choose(
       preference: PlayerEnginePreference.auto,
       isAndroid: true,
@@ -10,7 +10,7 @@ void main() {
       releaseHint: 'Prison.Break.S01E01.1080p.WEB-DL.x264.mkv',
     );
 
-    expect(engine, PlayerEngineKind.mpv);
+    expect(engine, PlayerEngineKind.exoPlayer);
   });
 
   test('Auto uses ExoPlayer for ordinary Android HTTP streams', () {
