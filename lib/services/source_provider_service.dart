@@ -201,6 +201,52 @@ class SourceResult {
   }
 }
 
+class FreeSourceAssessment {
+  const FreeSourceAssessment({
+    required this.label,
+    required this.detail,
+    required this.recommended,
+    required this.warning,
+  });
+
+  final String label;
+  final String detail;
+  final bool recommended;
+  final bool warning;
+}
+
+class _SourcePlaybackHistory {
+  const _SourcePlaybackHistory({
+    required this.successes,
+    required this.failures,
+    this.lastSuccess,
+    this.lastFailure,
+  });
+
+  final int successes;
+  final int failures;
+  final DateTime? lastSuccess;
+  final DateTime? lastFailure;
+
+  Map<String, dynamic> toJson() => {
+        'successes': successes,
+        'failures': failures,
+        if (lastSuccess != null) 'lastSuccess': lastSuccess!.toIso8601String(),
+        if (lastFailure != null) 'lastFailure': lastFailure!.toIso8601String(),
+      };
+
+  static _SourcePlaybackHistory fromJson(Object? raw) {
+    if (raw is! Map<String, dynamic>) {
+      return const _SourcePlaybackHistory(successes: 0, failures: 0);
+    }
+    return _SourcePlaybackHistory(
+      successes: int.tryParse(raw['successes']?.toString() ?? '') ?? 0,
+      failures: int.tryParse(raw['failures']?.toString() ?? '') ?? 0,
+      lastSuccess: DateTime.tryParse(raw['lastSuccess']?.toString() ?? ''),
+      lastFailure: DateTime.tryParse(raw['lastFailure']?.toString() ?? ''),
+    );
+  }
+}
 class PinnedSourcePreference {
   const PinnedSourcePreference({
     required this.identity,
@@ -235,6 +281,7 @@ class SourceProviderService {
   static const _resultLimitKey = 'orvix_source_result_limit_v1';
   static const _pinnedSourcePrefix = 'orvix_pinned_source_v1_';
   static const _tvLegacyPinsClearedKey = 'orvix_tv_legacy_pins_cleared_beta8';
+  static const _playbackHistoryKey = 'orvix_source_playback_history_v1';
   static const defaultResultLimit = 0; // 0 = show all
   static const _recommendedProvidersSeedKey =
       'orvix_recommended_source_pool_seeded_v1';
@@ -253,7 +300,214 @@ class SourceProviderService {
   );
 
   final http.Client _client;
+  final Map<String, _SourcePlaybackHistory> _playbackHistory =
+      <String, _SourcePlaybackHistory>{};
+  bool _playbackHistoryLoaded = false;
 
+  Future<void> _ensurePlaybackHistoryLoaded() async {
+    if (_playbackHistoryLoaded) return;
+    _playbackHistoryLoaded = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_playbackHistoryKey);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return;
+      for (final entry in decoded.entries) {
+        _playbackHistory[entry.key] =
+            _SourcePlaybackHistory.fromJson(entry.value);
+      }
+    } catch (_) {
+      _playbackHistory.clear();
+    }
+  }
+
+  String _playbackHistoryIdentity(SourceResult source) {
+    if (source.isMagnet) {
+      final match = RegExp(
+        r'xt=urn:btih:([a-zA-Z0-9]+)',
+        caseSensitive: false,
+      ).firstMatch(source.resource);
+      final hash = match?.group(1)?.toLowerCase() ?? source.resource;
+      final file = source.torrentFileIndex?.toString() ??
+          source.fileNameHint?.trim().toLowerCase() ??
+          'auto';
+      return 'bt:$hash:$file';
+    }
+    return 'url:${source.resource}';
+  }
+
+  _SourcePlaybackHistory? _historyFor(SourceResult source) =>
+      _playbackHistory[_playbackHistoryIdentity(source)];
+
+  int _historyRank(SourceResult source) {
+    final history = _historyFor(source);
+    if (history == null) return 0;
+
+    final now = DateTime.now();
+    final lastSuccess = history.lastSuccess;
+    final lastFailure = history.lastFailure;
+    final successFresh = lastSuccess != null &&
+        now.difference(lastSuccess).abs() < const Duration(days: 14);
+    final failureFresh = lastFailure != null &&
+        now.difference(lastFailure).abs() < const Duration(days: 7);
+
+    if (successFresh &&
+        (!failureFresh ||
+            lastFailure == null ||
+            lastSuccess!.isAfter(lastFailure))) {
+      return 2;
+    }
+    if (failureFresh &&
+        (lastSuccess == null || lastFailure!.isAfter(lastSuccess))) {
+      return -2;
+    }
+    if (history.successes > history.failures) return 1;
+    if (history.failures > history.successes) return -1;
+    return 0;
+  }
+
+  Future<void> recordPlaybackOutcome(
+    SourceResult source, {
+    required bool success,
+  }) async {
+    await _ensurePlaybackHistoryLoaded();
+    final key = _playbackHistoryIdentity(source);
+    final previous = _playbackHistory[key] ??
+        const _SourcePlaybackHistory(successes: 0, failures: 0);
+    final now = DateTime.now();
+    _playbackHistory[key] = _SourcePlaybackHistory(
+      successes: previous.successes + (success ? 1 : 0),
+      failures: previous.failures + (success ? 0 : 1),
+      lastSuccess: success ? now : previous.lastSuccess,
+      lastFailure: success ? previous.lastFailure : now,
+    );
+
+    if (_playbackHistory.length > 80) {
+      final entries = _playbackHistory.entries.toList()
+        ..sort((a, b) {
+          final aTime = a.value.lastSuccess ??
+              a.value.lastFailure ??
+              DateTime.fromMillisecondsSinceEpoch(0);
+          final bTime = b.value.lastSuccess ??
+              b.value.lastFailure ??
+              DateTime.fromMillisecondsSinceEpoch(0);
+          return bTime.compareTo(aTime);
+        });
+      final keep = entries.take(80).map((entry) => entry.key).toSet();
+      _playbackHistory.removeWhere((key, value) => !keep.contains(key));
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _playbackHistoryKey,
+      jsonEncode(
+        _playbackHistory.map(
+          (key, value) => MapEntry(key, value.toJson()),
+        ),
+      ),
+    );
+  }
+
+  FreeSourceAssessment assessFreePlayback(SourceResult source) {
+    final historyRank = _historyRank(source);
+    final seeders = source.seeders ?? 0;
+    final size = source.sizeBytes ?? 0;
+    const mb = 1024 * 1024;
+    const gb = 1024 * mb;
+    final exactFile = source.torrentFileIndex != null ||
+        source.fileNameHint?.trim().isNotEmpty == true;
+
+    if (historyRank >= 2) {
+      return const FreeSourceAssessment(
+        label: 'WORKED BEFORE',
+        detail: 'This exact release played successfully on this device recently.',
+        recommended: true,
+        warning: false,
+      );
+    }
+    if (historyRank <= -2) {
+      return const FreeSourceAssessment(
+        label: 'FAILED RECENTLY',
+        detail: 'This exact release failed to start recently; try another source first.',
+        recommended: false,
+        warning: true,
+      );
+    }
+    if (!source.isMagnet) {
+      return const FreeSourceAssessment(
+        label: 'DIRECT',
+        detail: 'Direct HTTP stream; no torrent swarm startup is required.',
+        recommended: true,
+        warning: false,
+      );
+    }
+    if (source.compatibilityRisk > 0) {
+      return const FreeSourceAssessment(
+        label: 'FORMAT RISK',
+        detail: 'The release name suggests a codec/HDR profile that can be less reliable on TV hardware.',
+        recommended: false,
+        warning: true,
+      );
+    }
+    if (seeders <= 0) {
+      return const FreeSourceAssessment(
+        label: 'NO SEEDS',
+        detail: 'The provider reports no seeders, so P2P startup is unlikely.',
+        recommended: false,
+        warning: true,
+      );
+    }
+    if (seeders < 3) {
+      return const FreeSourceAssessment(
+        label: 'WEAK SWARM',
+        detail: 'Only a very small reported swarm is available.',
+        recommended: false,
+        warning: true,
+      );
+    }
+
+    final practicalSize =
+        size == 0 || (size >= 200 * mb && size <= 4 * gb);
+    if (seeders >= 25 && practicalSize && exactFile) {
+      return FreeSourceAssessment(
+        label: 'RECOMMENDED',
+        detail: 'Strong reported swarm${size > 0 ? ', practical ${source.sizeLabel}' : ''}, and an exact file hint/index.',
+        recommended: true,
+        warning: false,
+      );
+    }
+    if (seeders >= 10 && practicalSize) {
+      return FreeSourceAssessment(
+        label: 'STRONG SWARM',
+        detail: 'Healthy reported seeder count${size > 0 ? ' with a practical ${source.sizeLabel} payload' : ''}.',
+        recommended: true,
+        warning: false,
+      );
+    }
+    if (size > 6 * gb) {
+      return const FreeSourceAssessment(
+        label: 'HEAVY',
+        detail: 'Large payload; it may need substantially more real torrent throughput before playback is stable.',
+        recommended: false,
+        warning: true,
+      );
+    }
+    if (!exactFile) {
+      return const FreeSourceAssessment(
+        label: 'AUTO FILE',
+        detail: 'The torrent engine must auto-select the video file because the provider did not supply an exact index/name.',
+        recommended: false,
+        warning: false,
+      );
+    }
+    return const FreeSourceAssessment(
+      label: 'P2P',
+      detail: 'Normal torrent source. Reported seeders are only a snapshot, not a guarantee of real download speed.',
+      recommended: false,
+      warning: false,
+    );
+  }
   Future<List<String>> getAddonUrls() async {
     final prefs = await SharedPreferences.getInstance();
     await _migrateTorrentio(prefs);
@@ -719,34 +973,40 @@ class SourceProviderService {
 
   int _freeStreamingScore(SourceResult result) {
     final direct = result.isMagnet ? 0 : 1;
+    final history = _historyRank(result);
+    final compatibility = result.compatibilityFriendly ? 1 : 0;
     final seedHealth = _freeSeederHealthRank(result.seeders);
     final viableSwarm = (result.seeders ?? 0) >= 3 ? 1 : 0;
-    final release = _freeReleaseRank(result);
-    final resolution = _freeResolutionRank(result);
+    final exactFile = result.torrentFileIndex != null ||
+            result.fileNameHint?.trim().isNotEmpty == true
+        ? 1
+        : 0;
     final size = _freeSizeEfficiencyRank(result);
-    final compatibility = result.compatibilityFriendly ? 1 : 0;
+    final resolution = _freeResolutionRank(result);
+    final release = _freeReleaseRank(result);
 
-    // "Free" means fast practical startup, not biggest file / biggest swarm.
-    // Once a torrent has a viable swarm, prefer an efficient TV/mobile-sized
-    // encode (roughly sub-1.5 GB for an episode/movie encode) before rewarding
-    // extra seeders. This matches the behavior users expect from the quick
-    // ~600 MB sources that start almost immediately on mobile.
+    // Free P2P is a reliability ranking, not a quality contest. Seeder health
+    // deliberately beats the small 1080p-vs-720p preference, while extremely
+    // large payloads can still lose to efficient encodes.
     return direct * 100000000 +
-        viableSwarm * 10000000 +
-        compatibility * 1000000 +
-        size * 100000 +
-        resolution * 10000 +
-        seedHealth * 1000 +
-        release * 10 +
+        history * 20000000 +
+        compatibility * 10000000 +
+        viableSwarm * 5000000 +
+        seedHealth * 2000000 +
+        exactFile * 1200000 +
+        size * 1000000 +
+        resolution * 100000 +
+        release * 10000 +
         (result.preferredGroup ? 1 : 0);
   }
-
   int _freeSeederHealthRank(int? seeders) {
     final value = seeders ?? 0;
-    if (value >= 100) return 6;
-    if (value >= 50) return 5;
-    if (value >= 25) return 4;
-    if (value >= 10) return 3;
+    if (value >= 200) return 8;
+    if (value >= 100) return 7;
+    if (value >= 50) return 6;
+    if (value >= 25) return 5;
+    if (value >= 15) return 4;
+    if (value >= 8) return 3;
     if (value >= 3) return 2;
     if (value >= 1) return 1;
     return 0;
@@ -853,6 +1113,7 @@ class SourceProviderService {
     EpisodeItem? episode,
     bool includeLowQuality = false,
   }) async {
+    await _ensurePlaybackHistoryLoaded();
     final addons = await getAddonUrls();
     if (addons.isEmpty) return const [];
     final sortMode = await getSortMode();
