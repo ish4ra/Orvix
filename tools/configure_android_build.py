@@ -133,6 +133,13 @@ def patch_android(tv: bool) -> None:
             '            android:exported="false"\n'
             '            android:stopWithTask="true"\n'
             '            android:foregroundServiceType="mediaPlayback" />\n'
+            "    </application>",
+            1,
+        )
+
+    if tv and 'android:name=".TvNativePlayerActivity"' not in text:
+        text = text.replace(
+            "</application>",
             '        <activity\n'
             '            android:name=".TvNativePlayerActivity"\n'
             '            android:exported="false"\n'
@@ -282,10 +289,11 @@ def patch_android(tv: bool) -> None:
         "android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt"
     )
     main_activity.parent.mkdir(parents=True, exist_ok=True)
-    main_activity.write_text(
-        """package com.orvix.orvix
 
-import android.app.Activity
+    if tv:
+        main_activity.write_text(
+            """package com.orvix.orvix
+
 import android.content.Intent
 import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
@@ -357,19 +365,28 @@ class MainActivity : FlutterActivity() {
                         return@setMethodCallHandler
                     }
 
-                    pendingTvPlayerResult = result
-                    val intent = Intent(this, TvNativePlayerActivity::class.java).apply {
-                        putExtra(TvNativePlayerActivity.EXTRA_URL, url)
-                        putExtra(
-                            TvNativePlayerActivity.EXTRA_TITLE,
-                            call.argument<String>("title") ?: "Orvix"
-                        )
-                        putExtra(
-                            TvNativePlayerActivity.EXTRA_START_POSITION_MS,
-                            (call.argument<Number>("startPositionMs")?.toLong() ?: 0L)
+                    try {
+                        pendingTvPlayerResult = result
+                        val intent = Intent(this, TvNativePlayerActivity::class.java).apply {
+                            putExtra(TvNativePlayerActivity.EXTRA_URL, url)
+                            putExtra(
+                                TvNativePlayerActivity.EXTRA_TITLE,
+                                call.argument<String>("title") ?: "Orvix"
+                            )
+                            putExtra(
+                                TvNativePlayerActivity.EXTRA_START_POSITION_MS,
+                                (call.argument<Number>("startPositionMs")?.toLong() ?: 0L)
+                            )
+                        }
+                        startActivityForResult(intent, TV_PLAYER_REQUEST)
+                    } catch (error: Throwable) {
+                        pendingTvPlayerResult = null
+                        result.error(
+                            "tv_player_launch_failed",
+                            error.message ?: error.toString(),
+                            null
                         )
                     }
-                    startActivityForResult(intent, TV_PLAYER_REQUEST)
                 }
                 else -> result.notImplemented()
             }
@@ -404,13 +421,68 @@ class MainActivity : FlutterActivity() {
     }
 }
 """
-    )
+        )
+    else:
+        main_activity.write_text(
+            """package com.orvix.orvix
+
+import android.content.Intent
+import android.os.Build
+import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+
+class MainActivity : FlutterActivity() {
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "orvix/torrent_engine"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "start" -> {
+                    try {
+                        val intent = Intent(this, TorrentEngineService::class.java)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(intent)
+                        } else {
+                            startService(intent)
+                        }
+                        result.success("starting")
+                    } catch (error: Throwable) {
+                        result.error(
+                            "torrent_engine_start_failed",
+                            "${error::class.java.simpleName}: ${error.message ?: error.toString()}",
+                            null
+                        )
+                    }
+                }
+                "stop" -> {
+                    try {
+                        stopService(Intent(this, TorrentEngineService::class.java))
+                        result.success(null)
+                    } catch (error: Throwable) {
+                        result.error(
+                            "torrent_engine_stop_failed",
+                            error.message ?: error.toString(),
+                            null
+                        )
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+}
+"""
+        )
 
     tv_player = Path(
         "android/app/src/main/kotlin/com/orvix/orvix/TvNativePlayerActivity.kt"
     )
-    tv_player.write_text(
-        """package com.orvix.orvix
+    if tv:
+        tv_player.write_text(
+            """package com.orvix.orvix
 
 import android.app.Activity
 import android.content.Intent
@@ -552,9 +624,10 @@ class TvNativePlayerActivity : Activity() {
         const val RESULT_DURATION_MS = "orvix.player.duration_ms"
     }
 }
-
 """
-    )
+        )
+    elif tv_player.exists():
+        tv_player.unlink()
 
     torrent_service = Path(
         "android/app/src/main/kotlin/com/orvix/orvix/TorrentEngineService.kt"
