@@ -77,18 +77,36 @@ class LocalTorrentService {
     onProgress?.call('Preparing stream…');
     await ensureRunning();
 
-    final body = <String, dynamic>{
-      'from': source.resource,
-      'guessFileIdx': true,
-      if (source.fileNameHint?.trim().isNotEmpty == true)
-        'fileMustInclude': <String>[source.fileNameHint!.trim()],
-    };
+    final fileHint = source.fileNameHint?.trim();
+    final isStremioTvPath = PlatformProfile.isAndroidTv;
+    final body = isStremioTvPath
+        ? <String, dynamic>{
+            // This is the same compatibility endpoint used by stremio-core for
+            // Tramvai/torrent streams.
+            'stream': <String, dynamic>{'infoHash': infoHash},
+            'guessFileIdx': true,
+            if (fileHint != null && fileHint.isNotEmpty)
+              'fileMustInclude': <String>[fileHint],
+            final trackers = _extractTrackers(source.resource)
+            if (trackers.isNotEmpty)
+              'peerSearch': <String, dynamic>{'sources': trackers},
+          }
+        : <String, dynamic>{
+            'from': source.resource,
+            'guessFileIdx': true,
+            if (fileHint != null && fileHint.isNotEmpty)
+              'fileMustInclude': <String>[fileHint],
+          };
 
     http.Response response;
     try {
       response = await http
           .post(
-            Uri.parse('$baseUrl/create'),
+            Uri.parse(
+              isStremioTvPath
+                  ? '$baseUrl/$infoHash/create'
+                  : '$baseUrl/create',
+            ),
             headers: const {'Content-Type': 'application/json'},
             body: jsonEncode(body),
           )
@@ -369,6 +387,20 @@ class LocalTorrentService {
     } catch (_) {
       return false;
     }
+  }
+
+  List<String> _extractTrackers(String magnet) {
+    final uri = Uri.tryParse(magnet);
+    if (uri == null || uri.scheme.toLowerCase() != 'magnet') {
+      return const [];
+    }
+    final out = <String>[];
+    final seen = <String>{};
+    for (final tracker in uri.queryParametersAll['tr'] ?? const <String>[]) {
+      final value = tracker.trim();
+      if (value.isNotEmpty && seen.add(value)) out.add(value);
+    }
+    return out;
   }
 
   String? _extractInfoHash(String magnet) {
