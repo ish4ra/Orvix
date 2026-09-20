@@ -40,6 +40,25 @@ void main() {
     expect(ranked.first, same(efficient));
   });
 
+  test('Free prefers a much healthier 720p swarm over a weaker 1080p swarm', () {
+    final service = SourceProviderService();
+    final weaker1080 = torrent(
+      name: 'Prison.Break.S01E01.1080p.WEB-DL.x264',
+      seeders: 9,
+      sizeBytes: 650 * 1024 * 1024,
+    );
+    final healthy720 = torrent(
+      name: 'Prison.Break.S01E01.720p.WEB-DL.x264',
+      seeders: 55,
+      sizeBytes: 720 * 1024 * 1024,
+      quality: '720P',
+    );
+
+    final ranked = service.sortForFreeStreaming([weaker1080, healthy720]);
+
+    expect(ranked.first, same(healthy720));
+  });
+
   test('Free does not put a zero-seed small file above a viable swarm', () {
     final service = SourceProviderService();
     final dead = torrent(
