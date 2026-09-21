@@ -415,7 +415,7 @@ class MainActivity : FlutterActivity() {
     }
 }
 """
-    ) )
+    )
 
     controller = Path(
         "android/app/src/main/kotlin/com/stremio/mobile/server/"
