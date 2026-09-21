@@ -60,14 +60,16 @@ void main() {
       contains('if (!_surfaceFocus.hasPrimaryFocus) return KeyEventResult.ignored;'),
     );
 
-    // Windows localhost P2P must not run the automatic AI-Sinhala
-    // play/pause/seek probe before stable playback.
+    // Windows localhost P2P must not run the old play/pause/seek
+    // sampler before stable playback, but AI Sinhala must still attach to the
+    // video's native English cue stream after normal startup.
     expect(player, contains('deferAiForLocalP2p'));
     expect(player, contains('Platform.isWindows && _localP2pStream'));
     expect(
       player,
-      contains('AI Sinhala auto-preparation is deferred for local P2P stability.'),
+      contains('Starting local P2P normally; AI Sinhala will follow'),
     );
+    expect(player, contains('? await _tryPrepareEmbeddedAiTiming()'));
 
     // The native torrent endpoint should be warmed with real bytes before MPV
     // opens it on Windows.
