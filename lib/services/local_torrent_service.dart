@@ -455,7 +455,6 @@ class LocalTorrentService {
         peers: peers,
         connections: connections,
         downloadSpeedBytesPerSecond: speed,
-        sampleWindowsPassed: sampleWindowsPassed,
       );
     } catch (_) {
       return null;
@@ -524,6 +523,7 @@ class LocalTorrentService {
           peers: 0,
           connections: 0,
           downloadSpeedBytesPerSecond: 0,
+          sampleWindowsPassed: 0,
         );
       }
 
@@ -611,6 +611,7 @@ class LocalTorrentService {
         peers: health?.peers ?? 0,
         connections: health?.connections ?? 0,
         downloadSpeedBytesPerSecond: speed,
+        sampleWindowsPassed: sampleWindowsPassed,
       );
     } finally {
       // Never detach a torrent that is currently being used by the player.
