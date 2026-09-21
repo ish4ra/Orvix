@@ -62,4 +62,18 @@ void main() {
     expect(live, contains('await _setNativeSubtitleVisibility(false);'));
   });
 
+
+  test('re-enabling prepared AI restores native timing with English fallback', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    final start = player.indexOf('Future<void> _enablePreparedAiSubtitle()');
+    final end = player.indexOf('Future<void> _setSubtitleFontSize', start);
+    final method = player.substring(start, end);
+
+    expect(method, contains('await _ensureEnglishTimingTrack();'));
+    expect(method, contains('await _setNativeSubtitleVisibility(true);'));
+    expect(method, contains('unawaited(_ensureAiTranslationNear(position'));
+    expect(method, contains('unawaited(_refreshNativeCueAfterSeek());'));
+  });
+
 }
