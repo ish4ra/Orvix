@@ -12,16 +12,20 @@ class CatalogService {
   static const _baseUrl = 'https://v3-cinemeta.strem.io';
   static const _imdbGraphqlUrl = 'https://caching.graphql.imdb.com/';
   static const _aioMetadataBaseUrl = 'https://aiometadata.elfhosted.com';
-  static const _aioUuidPreference = 'orvix_aiometadata_default_uuid_v1';
+  static const _aioUuidPreference = 'orvix_aiometadata_tmdb_rich_uuid_v2';
   final http.Client _client;
   Future<String?>? _aioUuidFuture;
+  final Map<String, ({DateTime at, MediaItem item})> _detailsCache =
+      <String, ({DateTime at, MediaItem item})>{};
+  final Map<String, Future<MediaItem?>> _detailsInFlight =
+      <String, Future<MediaItem?>>{};
 
   Future<List<MediaItem>> popularMovies({int limit = 40}) {
-    return _catalog(MediaKind.movie, 'top', limit: limit);
+    return _imdbPopular(MediaKind.movie, limit: limit);
   }
 
   Future<List<MediaItem>> popularSeries({int limit = 40}) {
-    return _catalog(MediaKind.series, 'top', limit: limit);
+    return _imdbPopular(MediaKind.series, limit: limit);
   }
 
   Future<List<MediaItem>> topRatedMovies({int limit = 40}) {
@@ -82,6 +86,38 @@ class CatalogService {
   }
 
   Future<MediaItem?> details(MediaItem item) async {
+    final key = '${item.kind.name}:${item.id}';
+    final cached = _detailsCache[key];
+    if (cached != null &&
+        DateTime.now().difference(cached.at) < const Duration(minutes: 30)) {
+      return cached.item;
+    }
+
+    final existing = _detailsInFlight[key];
+    if (existing != null) return existing;
+
+    final future = _loadDetails(item);
+    _detailsInFlight[key] = future;
+    try {
+      final resolved = await future;
+      if (resolved != null) {
+        _detailsCache[key] = (at: DateTime.now(), item: resolved);
+      }
+      return resolved;
+    } finally {
+      _detailsInFlight.remove(key);
+    }
+  }
+
+  Future<void> prefetchDetails(MediaItem item) async {
+    try {
+      await details(item);
+    } catch (_) {
+      // Prefetching must never affect navigation.
+    }
+  }
+
+  Future<MediaItem?> _loadDetails(MediaItem item) async {
     MediaItem? aio;
     try {
       aio = await _aioMetadataDetails(item);
@@ -112,12 +148,15 @@ class CatalogService {
       year: item.year ?? resolved.year,
       poster: resolved.poster ?? item.poster,
       background: resolved.background ?? item.background,
+      logo: resolved.logo ?? item.logo,
       description: richDescription ?? item.description,
       rating: item.rating ?? resolved.rating,
       runtime: resolved.runtime ?? item.runtime,
       genres: resolved.genres.isNotEmpty ? resolved.genres : item.genres,
       episodes: episodes.isNotEmpty ? episodes : item.episodes,
       cast: resolved.cast,
+      castMembers: resolved.castMembers,
+      seasonPosters: resolved.seasonPosters,
       directors: resolved.directors,
       country: resolved.country,
       certification: resolved.certification,
@@ -209,7 +248,7 @@ class CatalogService {
       'hideWatchedSimkl': false,
       'providers': <String, dynamic>{
         'movie': 'tmdb',
-        'series': 'tvdb',
+        'series': 'tmdb',
         'anime': 'mal',
         'anime_id_provider': 'imdb',
         'forceAnimeForDetectedImdb': false,
@@ -289,6 +328,7 @@ class CatalogService {
       year: primary.year ?? fallback.year,
       poster: primary.poster ?? fallback.poster,
       background: primary.background ?? fallback.background,
+      logo: primary.logo ?? fallback.logo,
       description: primary.description ?? fallback.description,
       rating: primary.rating ?? fallback.rating,
       runtime: primary.runtime ?? fallback.runtime,
@@ -297,6 +337,12 @@ class CatalogService {
           ? primary.episodes
           : fallback.episodes,
       cast: primary.cast.isNotEmpty ? primary.cast : fallback.cast,
+      castMembers: primary.castMembers.isNotEmpty
+          ? primary.castMembers
+          : fallback.castMembers,
+      seasonPosters: primary.seasonPosters.isNotEmpty
+          ? primary.seasonPosters
+          : fallback.seasonPosters,
       directors: primary.directors.isNotEmpty
           ? primary.directors
           : fallback.directors,
@@ -437,11 +483,46 @@ class CatalogService {
     return ratings;
   }
 
-  Future<List<MediaItem>> _imdbTop(MediaKind kind, {required int limit}) async {
+  Future<List<MediaItem>> _imdbTop(
+    MediaKind kind, {
+    required int limit,
+  }) {
+    return _imdbChart(
+      kind,
+      limit: limit,
+      chartType: kind == MediaKind.movie
+          ? 'TOP_RATED_MOVIES'
+          : 'TOP_RATED_TV_SHOWS',
+      fallbackCatalog: 'imdbRating',
+      enrichMetadata: true,
+    );
+  }
+
+  Future<List<MediaItem>> _imdbPopular(
+    MediaKind kind, {
+    required int limit,
+  }) {
+    return _imdbChart(
+      kind,
+      limit: limit,
+      chartType: kind == MediaKind.movie
+          ? 'MOST_POPULAR_MOVIES'
+          : 'MOST_POPULAR_TV_SHOWS',
+      fallbackCatalog: 'top',
+      // Keep the home shelf quick. Full rich metadata is prefetched on focus
+      // and loaded from the in-memory details cache when the title opens.
+      enrichMetadata: false,
+    );
+  }
+
+  Future<List<MediaItem>> _imdbChart(
+    MediaKind kind, {
+    required int limit,
+    required String chartType,
+    required String fallbackCatalog,
+    required bool enrichMetadata,
+  }) async {
     final first = limit.clamp(1, 250).toInt();
-    final chartType = kind == MediaKind.movie
-        ? 'TOP_RATED_MOVIES'
-        : 'TOP_RATED_TV_SHOWS';
 
     final query =
         '''
@@ -482,24 +563,24 @@ class CatalogService {
           .timeout(const Duration(seconds: 20));
 
       if (response.statusCode != 200) {
-        return _catalog(kind, 'imdbRating', limit: limit);
+        return _catalog(kind, fallbackCatalog, limit: limit);
       }
 
       final body = jsonDecode(response.body);
       if (body is! Map<String, dynamic>) {
-        return _catalog(kind, 'imdbRating', limit: limit);
+        return _catalog(kind, fallbackCatalog, limit: limit);
       }
       final data = body['data'];
       if (data is! Map<String, dynamic>) {
-        return _catalog(kind, 'imdbRating', limit: limit);
+        return _catalog(kind, fallbackCatalog, limit: limit);
       }
       final chart = data['chartTitles'];
       if (chart is! Map<String, dynamic>) {
-        return _catalog(kind, 'imdbRating', limit: limit);
+        return _catalog(kind, fallbackCatalog, limit: limit);
       }
       final edges = chart['edges'];
       if (edges is! List || edges.isEmpty) {
-        return _catalog(kind, 'imdbRating', limit: limit);
+        return _catalog(kind, fallbackCatalog, limit: limit);
       }
 
       final chartRows = <_ImdbChartRow>[];
@@ -550,12 +631,14 @@ class CatalogService {
       }
 
       if (chartRows.isEmpty) {
-        return _catalog(kind, 'imdbRating', limit: limit);
+        return _catalog(kind, fallbackCatalog, limit: limit);
       }
 
-      final metadata = await Future.wait(
-        chartRows.map((row) => _metaByImdbId(row.id, kind)),
-      );
+      final metadata = enrichMetadata
+          ? await Future.wait(
+              chartRows.map((row) => _metaByImdbId(row.id, kind)),
+            )
+          : List<MediaItem?>.filled(chartRows.length, null);
 
       final out = <MediaItem>[];
       for (var i = 0; i < chartRows.length; i++) {
@@ -569,12 +652,15 @@ class CatalogService {
             year: row.year ?? meta?.year,
             poster: row.poster ?? meta?.poster,
             background: meta?.background ?? row.poster,
+            logo: meta?.logo,
             description: meta?.description,
             rating: row.rating ?? meta?.rating,
             runtime: meta?.runtime ?? row.runtime,
             genres: meta?.genres ?? const [],
             episodes: meta?.episodes ?? const [],
             cast: meta?.cast ?? const [],
+            castMembers: meta?.castMembers ?? const [],
+            seasonPosters: meta?.seasonPosters ?? const [],
             directors: meta?.directors ?? const [],
             country: meta?.country,
             certification: meta?.certification,
@@ -584,7 +670,7 @@ class CatalogService {
       return out.take(limit).toList(growable: false);
     } catch (_) {
       try {
-        return await _catalog(kind, 'imdbRating', limit: limit);
+        return await _catalog(kind, fallbackCatalog, limit: limit);
       } catch (_) {
         return const [];
       }
@@ -733,12 +819,15 @@ class CatalogService {
           ? betterPoster
           : item.poster,
       background: item.background,
+      logo: item.logo,
       description: item.description,
       rating: signal.rating ?? item.rating,
       runtime: item.runtime,
       genres: item.genres,
       episodes: item.episodes,
       cast: item.cast,
+      castMembers: item.castMembers,
+      seasonPosters: item.seasonPosters,
       directors: item.directors,
       country: item.country,
       certification: item.certification,
