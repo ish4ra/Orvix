@@ -120,10 +120,19 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   Future<MediaItem> _loadDetails() async {
     final item = await widget.catalog.details(widget.item) ?? widget.item;
+    EpisodeItem? firstEpisode;
     if (item.episodes.isNotEmpty) {
       final seasons = item.episodes.map((e) => e.season).toList()..sort();
       _selectedSeason = seasons.first;
+      final ordered = item.episodes
+          .where((episode) => episode.season == seasons.first)
+          .toList()
+        ..sort((a, b) => a.episode.compareTo(b.episode));
+      firstEpisode = ordered.isEmpty ? null : ordered.first;
     }
+
+    // Warm the source cache while metadata is already on screen.
+    unawaited(widget.sources.prefetch(item, episode: firstEpisode));
 
     // Membership lookup is intentionally independent from network metadata.
     // If the richer catalog item has a different object instance, refresh from
@@ -198,7 +207,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                   ),
                 ),
               ),
-              if (_resolving) _busyOverlay(),
+              if (_resolving) _busyOverlay(item),
             ],
           );
         },
@@ -380,7 +389,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
             ),
           ),
         ),
-        if (_resolving) _busyOverlay(),
+        if (_resolving) _busyOverlay(item),
       ],
     );
   }
@@ -410,31 +419,24 @@ class _DetailsScreenState extends State<DetailsScreen> {
           ),
           const SizedBox(height: 12),
           SizedBox(
-            height: 48,
+            height: 86,
             child: ListView.separated(
-              padding: const EdgeInsets.symmetric(horizontal: 42),
+              padding: const EdgeInsets.symmetric(horizontal: 42, vertical: 3),
               scrollDirection: Axis.horizontal,
               itemCount: seasons.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
               itemBuilder: (context, index) {
                 final season = seasons[index];
-                final active = season == selected;
-                return ChoiceChip(
-                  label: Text('Season $season'),
-                  selected: active,
-                  showCheckmark: false,
-                  labelStyle: TextStyle(
-                    fontSize: 14,
-                    fontWeight: active ? FontWeight.w900 : FontWeight.w700,
-                  ),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-                  onSelected: (_) => setState(() => _selectedSeason = season),
+                return _TvSeasonTile(
+                  season: season,
+                  poster: item.seasonPoster(season),
+                  selected: season == selected,
+                  onTap: () => setState(() => _selectedSeason = season),
                 );
               },
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 18),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 42),
             child: Text(
@@ -484,59 +486,59 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(42, 26, 42, 0),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 980),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'About',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w900,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Show Details',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 10),
+          if (item.directors.isNotEmpty)
+            Text(
+              'Director${item.directors.length > 1 ? 's' : ''}: '
+              '${item.directors.join(', ')}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFFB7C1B9),
+                height: 1.45,
               ),
             ),
-            const SizedBox(height: 10),
-            if (item.directors.isNotEmpty)
-              Text(
-                'Director${item.directors.length > 1 ? 's' : ''}: '
-                '${item.directors.join(', ')}',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFFB7C1B9),
-                  height: 1.45,
-                ),
+          if (hasFacts) ...[
+            const SizedBox(height: 5),
+            Text(
+              [
+                if (item.country?.trim().isNotEmpty == true)
+                  item.country!.trim(),
+                if (item.certification?.trim().isNotEmpty == true)
+                  'Rated ${item.certification!.trim()}',
+              ].join('  •  '),
+              style: const TextStyle(
+                color: Color(0xFF8F9A91),
+                fontWeight: FontWeight.w600,
               ),
-            if (hasFacts) ...[
-              const SizedBox(height: 5),
-              Text(
-                [
-                  if (item.country?.trim().isNotEmpty == true)
-                    item.country!.trim(),
-                  if (item.certification?.trim().isNotEmpty == true)
-                    'Rated ${item.certification!.trim()}',
-                ].join('  •  '),
-                style: const TextStyle(
-                  color: Color(0xFF8F9A91),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-            if (item.cast.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text(
-                'Cast: ${item.cast.take(12).join(', ')}',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFFAAB4AC),
-                  height: 1.45,
-                ),
-              ),
-            ],
+            ),
           ],
-        ),
+          if (item.castMembers.isNotEmpty) ...[
+            const SizedBox(height: 22),
+            _CastRail(
+              members: item.castMembers.take(14).toList(growable: false),
+              tv: true,
+            ),
+          ] else if (item.cast.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Cast: ${item.cast.take(12).join(', ')}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFFAAB4AC),
+                height: 1.45,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -593,13 +595,38 @@ class _DetailsScreenState extends State<DetailsScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      item.title,
-                      style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: -.9,
+                    if (item.logo?.trim().isNotEmpty == true)
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: 360,
+                          maxHeight: 115,
+                        ),
+                        child: CachedNetworkImage(
+                          imageUrl: item.logo!,
+                          fit: BoxFit.contain,
+                          alignment: Alignment.centerLeft,
+                          fadeInDuration: Duration.zero,
+                          errorWidget: (_, __, ___) => Text(
+                            item.title,
+                            style: Theme.of(context)
+                                .textTheme
+                                .displaySmall
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: -.9,
+                                ),
                           ),
-                    ),
+                        ),
+                      )
+                    else
+                      Text(
+                        item.title,
+                        style:
+                            Theme.of(context).textTheme.displaySmall?.copyWith(
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: -.9,
+                                ),
+                      ),
                     const SizedBox(height: 14),
                     Wrap(
                       spacing: 9,
@@ -807,7 +834,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
                       ),
                     ),
                   ],
-                  if (item.cast.isNotEmpty) ...[
+                  if (item.castMembers.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    _CastRail(
+                      members:
+                          item.castMembers.take(16).toList(growable: false),
+                      tv: false,
+                    ),
+                  ] else if (item.cast.isNotEmpty) ...[
                     const SizedBox(height: 18),
                     const Text(
                       'Cast',
@@ -819,15 +853,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                       runSpacing: 8,
                       children: item.cast
                           .take(24)
-                          .map(
-                            (name) => Chip(
-                              avatar: const Icon(
-                                Icons.person_outline_rounded,
-                                size: 17,
-                              ),
-                              label: Text(name),
-                            ),
-                          )
+                          .map((name) => Chip(label: Text(name)))
                           .toList(growable: false),
                     ),
                   ],
@@ -858,31 +884,38 @@ class _DetailsScreenState extends State<DetailsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Episodes',
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.w900),
-                ),
-              ),
-              const SizedBox(width: 12),
-              DropdownButton<int>(
-                value: selected,
-                borderRadius: BorderRadius.circular(14),
-                items: [
-                  for (final season in seasons)
-                    DropdownMenuItem(
-                      value: season,
-                      child: Text('Season $season'),
-                    ),
-                ],
-                onChanged: (value) => setState(() => _selectedSeason = value),
-              ),
-            ],
+          Text(
+            'Seasons',
+            style: Theme.of(context)
+                .textTheme
+                .headlineSmall
+                ?.copyWith(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: compact ? 72 : 84,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: seasons.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final season = seasons[index];
+                return _MobileSeasonTile(
+                  season: season,
+                  poster: item.seasonPoster(season),
+                  selected: season == selected,
+                  onTap: () => setState(() => _selectedSeason = season),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            'Season $selected',
+            style: Theme.of(context)
+                .textTheme
+                .titleLarge
+                ?.copyWith(fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 14),
           ...episodes.map((episode) => _episodeTile(item, episode)),
@@ -1003,63 +1036,135 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  Widget _busyOverlay() {
+  Widget _busyOverlay(MediaItem item) {
+    final backdrop = item.background ?? item.poster;
     return Positioned.fill(
-      child: Container(
-        color: Colors.black.withValues(alpha: .66),
-        child: Center(
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 470),
-            margin: const EdgeInsets.all(24),
-            padding: const EdgeInsets.all(28),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0D120E),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: const Color(0xFF263827)),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x55000000),
-                  blurRadius: 30,
-                  spreadRadius: 5,
+      child: ColoredBox(
+        color: const Color(0xFF050806),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (backdrop?.trim().isNotEmpty == true)
+              CachedNetworkImage(
+                imageUrl: backdrop!,
+                fit: BoxFit.cover,
+                memCacheWidth: PlatformProfile.isAndroidTv ? 1280 : 900,
+                fadeInDuration: Duration.zero,
+                errorWidget: (_, __, ___) =>
+                    const ColoredBox(color: Color(0xFF050806)),
+              ),
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0x99000000),
+                    Color(0xCC050806),
+                    Color(0xFF050806),
+                  ],
+                  stops: [0, .55, 1],
                 ),
-              ],
+              ),
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_resolveProgress == null)
-                  const CircularProgressIndicator()
-                else
-                  SizedBox(
-                    width: 68,
-                    height: 68,
-                    child: CircularProgressIndicator(value: _resolveProgress),
-                  ),
-                const SizedBox(height: 20),
-                Text(
-                  _status.isEmpty ? 'Finding the best path to play…' : _status,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    height: 1.4,
-                  ),
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [Color(0xD9050806), Color(0x33050806)],
                 ),
-                if (_resolveProgress != null) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    '${(_resolveProgress! * 100).round()}%',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ],
-                const SizedBox(height: 18),
-                OutlinedButton.icon(
+              ),
+            ),
+            SafeArea(
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: PlatformProfile.isAndroidTv ? 64 : 28,
+                  vertical: PlatformProfile.isAndroidTv ? 44 : 30,
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (item.logo?.trim().isNotEmpty == true)
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: PlatformProfile.isAndroidTv ? 380 : 270,
+                          maxHeight: PlatformProfile.isAndroidTv ? 140 : 100,
+                        ),
+                        child: CachedNetworkImage(
+                          imageUrl: item.logo!,
+                          fit: BoxFit.contain,
+                          fadeInDuration: Duration.zero,
+                          errorWidget: (_, __, ___) => Text(
+                            item.title,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize:
+                                  PlatformProfile.isAndroidTv ? 34 : 27,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      Text(
+                        item.title,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: PlatformProfile.isAndroidTv ? 34 : 27,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -.5,
+                        ),
+                      ),
+                    const SizedBox(height: 30),
+                    SizedBox(
+                      width: PlatformProfile.isAndroidTv ? 320 : 250,
+                      child: _resolveProgress == null
+                          ? const LinearProgressIndicator(minHeight: 3)
+                          : LinearProgressIndicator(
+                              value: _resolveProgress,
+                              minHeight: 3,
+                            ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      _status.isEmpty ? 'Preparing playback…' : _status,
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFFD7DDD8),
+                        fontWeight: FontWeight.w700,
+                        height: 1.35,
+                      ),
+                    ),
+                    if (_resolveProgress != null) ...[
+                      const SizedBox(height: 7),
+                      Text(
+                        '${(_resolveProgress! * 100).round()}%',
+                        style: const TextStyle(
+                          color: Color(0xFFA9B2AB),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              top: 18,
+              left: 18,
+              child: SafeArea(
+                child: IconButton.filledTonal(
+                  tooltip: 'Back',
                   onPressed: () => Navigator.of(context).maybePop(),
                   icon: const Icon(Icons.arrow_back_rounded),
-                  label: const Text('Back'),
                 ),
-              ],
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -1172,7 +1277,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
     });
 
     try {
-      final results = await widget.sources.resolve(item, episode: episode);
+      final results = await widget.sources.resolve(
+        item,
+        episode: episode,
+        // Lower-resolution releases stay visible because they may be the most
+        // portable source on real Android/TV hardware.
+        includeLowQuality: true,
+      );
       if (!mounted) return;
       setState(() => _resolving = false);
 
@@ -1841,7 +1952,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
           final priorityText =
               priority.map((e) => e.label.toLowerCase()).join(' → ');
           final rankingText = freeStreamingRanking
-              ? 'Free Streaming: seed health → quality → resolution → efficient size → compatibility'
+              ? 'Free P2P: availability → device compatibility → exact file → seed health → practical size'
               : smoothRanking
                   ? 'Smooth: compatibility → 1080/720 → efficient codec → seeders → smaller files → cache'
                   : 'Priority: $priorityText';
@@ -2591,6 +2702,260 @@ class _DetailsScreenState extends State<DetailsScreen> {
     });
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text('Could not play: $error')));
+  }
+}
+
+class _CastRail extends StatelessWidget {
+  const _CastRail({
+    required this.members,
+    required this.tv,
+  });
+
+  final List<CastMember> members;
+  final bool tv;
+
+  @override
+  Widget build(BuildContext context) {
+    if (members.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Cast',
+          style: TextStyle(
+            fontSize: tv ? 19 : 17,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: tv ? 164 : 150,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: members.length,
+            separatorBuilder: (_, __) => SizedBox(width: tv ? 16 : 12),
+            itemBuilder: (context, index) {
+              final member = members[index];
+              return SizedBox(
+                width: tv ? 92 : 82,
+                child: Column(
+                  children: [
+                    ClipOval(
+                      child: SizedBox(
+                        width: tv ? 82 : 72,
+                        height: tv ? 82 : 72,
+                        child: member.photo?.trim().isNotEmpty == true
+                            ? CachedNetworkImage(
+                                imageUrl: member.photo!,
+                                fit: BoxFit.cover,
+                                memCacheWidth: 220,
+                                fadeInDuration: Duration.zero,
+                                placeholder: (_, __) => const ColoredBox(
+                                  color: Color(0xFF171C18),
+                                ),
+                                errorWidget: (_, __, ___) => const ColoredBox(
+                                  color: Color(0xFF171C18),
+                                  child: Icon(Icons.person_outline_rounded),
+                                ),
+                              )
+                            : const ColoredBox(
+                                color: Color(0xFF171C18),
+                                child: Icon(Icons.person_outline_rounded),
+                              ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      member.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: tv ? 12.5 : 11.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (member.character?.trim().isNotEmpty == true) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        member.character!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xFF8E9990),
+                          fontSize: 10,
+                          height: 1.15,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TvSeasonTile extends StatefulWidget {
+  const _TvSeasonTile({
+    required this.season,
+    required this.poster,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final int season;
+  final String? poster;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  State<_TvSeasonTile> createState() => _TvSeasonTileState();
+}
+
+class _TvSeasonTileState extends State<_TvSeasonTile> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final highlighted = widget.selected || _focused;
+    return AnimatedScale(
+      scale: _focused ? 1.035 : 1,
+      duration: const Duration(milliseconds: 100),
+      child: SizedBox(
+        width: 150,
+        child: Material(
+          color: highlighted
+              ? const Color(0xFF243221)
+              : const Color(0xFF151916),
+          borderRadius: BorderRadius.circular(13),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(13),
+            focusColor: Colors.transparent,
+            onFocusChange: (value) => setState(() => _focused = value),
+            onTap: widget.onTap,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 100),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(13),
+                border: Border.all(
+                  color: _focused
+                      ? Colors.white
+                      : widget.selected
+                          ? Theme.of(context).colorScheme.primary
+                          : const Color(0xFF343B35),
+                  width: _focused ? 2.2 : 1.2,
+                ),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Row(
+                children: [
+                  if (widget.poster?.trim().isNotEmpty == true)
+                    SizedBox(
+                      width: 45,
+                      height: double.infinity,
+                      child: CachedNetworkImage(
+                        imageUrl: widget.poster!,
+                        fit: BoxFit.cover,
+                        memCacheWidth: 140,
+                        fadeInDuration: Duration.zero,
+                      ),
+                    ),
+                  Expanded(
+                    child: Center(
+                      child: Text(
+                        'Season ${widget.season}',
+                        style: TextStyle(
+                          fontWeight: widget.selected || _focused
+                              ? FontWeight.w900
+                              : FontWeight.w700,
+                          fontSize: 13.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MobileSeasonTile extends StatelessWidget {
+  const _MobileSeasonTile({
+    required this.season,
+    required this.poster,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final int season;
+  final String? poster;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected
+          ? Theme.of(context)
+              .colorScheme
+              .primaryContainer
+              .withValues(alpha: .45)
+          : const Color(0xFF111612),
+      borderRadius: BorderRadius.circular(13),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(13),
+        onTap: onTap,
+        child: Container(
+          width: 138,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(
+              color: selected
+                  ? Theme.of(context).colorScheme.primary
+                  : const Color(0xFF2A332C),
+              width: selected ? 1.8 : 1,
+            ),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Row(
+            children: [
+              if (poster?.trim().isNotEmpty == true)
+                SizedBox(
+                  width: 42,
+                  height: double.infinity,
+                  child: CachedNetworkImage(
+                    imageUrl: poster!,
+                    fit: BoxFit.cover,
+                    memCacheWidth: 130,
+                    fadeInDuration: Duration.zero,
+                  ),
+                ),
+              Expanded(
+                child: Center(
+                  child: Text(
+                    'Season $season',
+                    style: TextStyle(
+                      fontWeight:
+                          selected ? FontWeight.w900 : FontWeight.w700,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
