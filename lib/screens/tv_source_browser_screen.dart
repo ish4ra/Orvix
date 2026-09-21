@@ -369,7 +369,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
         content: ConstrainedBox(
           constraints: BoxConstraints(maxWidth: 620),
           child: Text(
-            'Free P2P: ranks sources for practical torrent startup without debrid — healthy swarm first, then good quality/resolution and efficient file size.\n\n'
+            'Free P2P: ranks sources for the best chance of playing across phones and TVs — viable swarm first, then broad codec/device compatibility, exact file routing, seed health and practical size. Resolution/quality is not a priority.\n\n'
             'Smooth: favors TV-friendly formats, 1080p/720p, efficient codecs, healthy seeders and smaller files.\n\n'
             'Best: uses your normal Orvix source-priority settings.\n\n'
             'Compatible only: hides sources that look risky for a typical TV decoder, such as 8K, AV1, Hi10P/10-bit AVC, or Dolby Vision-only releases. It does not change the player or torrent engine.',
