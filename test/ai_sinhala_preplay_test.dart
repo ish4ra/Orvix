@@ -43,6 +43,10 @@ void main() {
     expect(player, contains('_timingTrackIsText = true;'));
     expect(player, contains('player.stream.subtitle.listen(_onEmbeddedSubtitleCue)'));
     expect(player, contains('await _setNativeSubtitleVisibility(true);'));
+    expect(
+      player,
+      contains('visible as a safety fallback while the small Sinhala buffer fills'),
+    );
     expect(player, contains('unawaited(_setNativeSubtitleVisibility(false));'));
   });
 }
