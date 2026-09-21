@@ -327,8 +327,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       } else {
         final currentSubtitle = widget.playback.player.state.track.subtitle;
         await _setNativeSubtitleVisibility(
-          currentSubtitle.id.toLowerCase() != 'no' &&
-              _isImageSubtitleTrack(currentSubtitle),
+          currentSubtitle.id.toLowerCase() != 'no',
         );
       }
 
@@ -779,7 +778,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final current = player.state.track.subtitle;
     if (current.id.toLowerCase() != 'no' &&
         (_isEnglishTrack(current) || _isUnlabeledTextTrack(current))) {
-      await _setNativeSubtitleVisibility(_isImageSubtitleTrack(current));
+      await _setNativeSubtitleVisibility(true);
       await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
       return;
     }
@@ -804,7 +803,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   : null;
       if (chosen != null) {
         await player.setSubtitleTrack(chosen);
-        await _setNativeSubtitleVisibility(_isImageSubtitleTrack(chosen));
+        await _setNativeSubtitleVisibility(true);
         await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
         return;
       }
@@ -815,7 +814,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // current native choice as a last-resort fallback instead of leaving
     // subtitles blank.
     if (current.id.toLowerCase() != 'no') {
-      await _setNativeSubtitleVisibility(_isImageSubtitleTrack(current));
+      await _setNativeSubtitleVisibility(true);
       await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
     }
   }
@@ -836,7 +835,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _subtitleTimingSubscription ??=
         widget.playback.player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
     await _setNativeSubtitleDelayProperty(0);
-    await _hideNativeTimingSubtitle();
+    await _setNativeSubtitleVisibility(true);
     _startNativeSubtitleClock();
     return true;
   }
@@ -932,8 +931,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
           _subtitleTimingSubscription ??=
               player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
           await _setNativeSubtitleDelayProperty(0);
-          await _hideNativeTimingSubtitle();
+          await _setNativeSubtitleVisibility(true);
           _startNativeSubtitleClock();
+
+          final position = player.state.position;
+          final bucket = position.inSeconds ~/ 30;
+          _lastAiPrefetchBucket = bucket;
+          unawaited(_ensureAiTranslationNear(position, bucket: bucket));
           return true;
         } catch (_) {
           return _enableEmbeddedLiveAiFallback(
@@ -968,6 +972,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final platform = widget.playback.player.platform;
     if (platform is! mk.NativePlayer) return;
     try {
+      if (visible && !_aiSinhalaRequested) {
+        // Preserve authored ASS/SSA styling when AI Sinhala is off.
+        await platform.setProperty(
+          'sub-ass-override',
+          'no',
+          waitForInitialization: false,
+        );
+      }
       await platform.setProperty(
         'sub-visibility',
         visible ? 'yes' : 'no',
@@ -1010,7 +1022,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       });
     }
     await widget.playback.player.setSubtitleTrack(track);
-    await _setNativeSubtitleVisibility(_isImageSubtitleTrack(track));
+    await _setNativeSubtitleVisibility(true);
     await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
   }
 
@@ -1452,10 +1464,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (!_aiSinhalaEnabled ||
         _liveAiFallback ||
         prepared == null ||
-        !mounted ||
-        (_timingTrackSelected && _timingTrackIsText)) {
+        !mounted) {
       return;
     }
+
+    // Native text cues remain the timing authority. Position is used only to
+    // maintain a small translation buffer ahead of playback.
+    if (_timingTrackSelected && _timingTrackIsText) {
+      final bucket = position.inSeconds ~/ 30;
+      if (bucket != _lastAiPrefetchBucket) {
+        _lastAiPrefetchBucket = bucket;
+        unawaited(_ensureAiTranslationNear(position, bucket: bucket));
+      }
+      return;
+    }
+
     var adjustedMs = position.inMilliseconds - _effectiveSyncOffsetMs;
     if (adjustedMs < 0) adjustedMs = 0;
     final adjusted = Duration(milliseconds: adjustedMs);
@@ -1464,9 +1487,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       setState(() => _aiDisplaySubtitle = next);
     }
 
-    // Exact-file alpha.16 translates every cue before playback, so position
-    // updates are pure in-memory lookups. No background translation or subtitle
-    // track switching is allowed during playback.
+    final bucket = adjusted.inSeconds ~/ 30;
+    if (bucket != _lastAiPrefetchBucket) {
+      _lastAiPrefetchBucket = bucket;
+      unawaited(_ensureAiTranslationNear(adjusted, bucket: bucket));
+    }
   }
 
   Future<void> _ensureAiTranslationNear(
@@ -1484,8 +1509,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       await AiSinhalaSubtitleService.ensureTranslatedAround(
         prepared,
         position,
-        lookBehind: 4,
-        lookAhead: 120,
+        lookBehind: 3,
+        lookAhead: 24,
       );
       if (!mounted ||
           !_aiSinhalaEnabled ||
@@ -1735,8 +1760,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
       previousIndex: _nativeAiMatchIndex,
     );
     if (match == null) {
-      // Do not guess a line and do not launch a per-cue network request.
-      // The next native cue gets another sequence-aware match attempt.
+      // Never leave the viewer with blank subtitles while Sinhala is not
+      // available. The native source subtitle remains visible as the fallback.
+      unawaited(_setNativeSubtitleVisibility(true));
       if (_aiDisplaySubtitle.isNotEmpty && mounted) {
         setState(() => _aiDisplaySubtitle = '');
       }
@@ -1744,19 +1770,29 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
 
     _nativeAiMatchIndex = match.index + match.count - 1;
-    final translated = prepared.cues
-        .sublist(match.index, match.index + match.count)
+    final matchedCues =
+        prepared.cues.sublist(match.index, match.index + match.count);
+    final translated = matchedCues
         .map((cue) => cue.translation?.trim() ?? '')
         .where((line) => line.isNotEmpty)
         .join('\n');
+
     if (translated.isEmpty) {
+      // Buffer around the transcript cue we just matched. English remains
+      // visible until that Sinhala buffer is ready, instead of disappearing.
+      unawaited(_setNativeSubtitleVisibility(true));
       if (_aiDisplaySubtitle.isNotEmpty && mounted) {
         setState(() => _aiDisplaySubtitle = '');
       }
+      final cuePosition = matchedCues.first.start;
+      final bucket = cuePosition.inSeconds ~/ 30;
+      _lastAiPrefetchBucket = bucket;
+      unawaited(_ensureAiTranslationNear(cuePosition, bucket: bucket));
       return;
     }
 
     _liveCueGeneration++;
+    unawaited(_setNativeSubtitleVisibility(false));
     if (translated != _aiDisplaySubtitle && mounted) {
       setState(() => _aiDisplaySubtitle = translated);
     }
@@ -1795,6 +1831,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _liveCueClearTimer?.cancel();
     _liveCueClearTimer = null;
 
+    // Live translation is best-effort. Keep the video's own English subtitle
+    // visible while the network request is in flight so AI failure/latency can
+    // never produce a blank subtitle screen.
+    await _setNativeSubtitleVisibility(true);
+
     final cueEndMs = await _nativeSubtitleEndMs();
     if (!mounted || generation != _liveCueGeneration) return;
 
@@ -1832,6 +1873,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
 
       _liveTranslationFailures = 0;
+      await _setNativeSubtitleVisibility(false);
+      if (!mounted || generation != _liveCueGeneration) return;
       setState(() => _aiDisplaySubtitle = translation);
       _liveDialogueContext.add(source);
       if (_liveDialogueContext.length > 6) {
@@ -2752,7 +2795,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     fit: BoxFit.contain,
                     controls: NoVideoControls,
                     subtitleViewConfiguration: SubtitleViewConfiguration(
-                      visible: !_aiSinhalaRequested,
+                      // NativePlayer/libmpv renders source subtitles itself so
+                      // ASS/SSA/bitmap styling is preserved. Flutter styling is
+                      // only a fallback for non-native player platforms.
+                      visible: !_aiSinhalaRequested &&
+                          widget.playback.player.platform is! mk.NativePlayer,
                       style: TextStyle(
                         height: 1.35,
                         fontSize: _effectiveSubtitleFontSize(context),
@@ -2804,7 +2851,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       );
                     },
                   ),
-                if (_error == null && _aiSubtitleLoading)
+                if (_error == null &&
+                    _aiSubtitleLoading &&
+                    !_playbackStarted)
                   PlayerLoadingOverlay(
                     item: widget.item,
                     title: widget.title,
