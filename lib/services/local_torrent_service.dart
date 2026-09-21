@@ -54,6 +54,7 @@ class LocalTorrentProbeResult {
     required this.peers,
     required this.connections,
     required this.downloadSpeedBytesPerSecond,
+    required this.sampleWindowsPassed,
   });
 
   final bool playableNow;
@@ -63,6 +64,7 @@ class LocalTorrentProbeResult {
   final int peers;
   final int connections;
   final double downloadSpeedBytesPerSecond;
+  final int sampleWindowsPassed;
 
   String get speedLabel {
     final speed = downloadSpeedBytesPerSecond;
@@ -75,8 +77,16 @@ class LocalTorrentProbeResult {
 
   String get label {
     if (!playableNow) return 'No live data';
-    if (downloadSpeedBytesPerSecond >= 2 * 1024 * 1024) return 'Ready now';
-    if (downloadSpeedBytesPerSecond >= 512 * 1024) return 'Fast swarm';
+    final latencyMs = firstByteLatency?.inMilliseconds ?? 99999;
+    if (sampleWindowsPassed >= 2 &&
+        latencyMs <= 1800 &&
+        downloadSpeedBytesPerSecond >= 1500 * 1024) {
+      return 'Ready now';
+    }
+    if (sampleWindowsPassed >= 2 &&
+        downloadSpeedBytesPerSecond >= 512 * 1024) {
+      return 'Fast swarm';
+    }
     if (bytesReceived > 0) return 'Live swarm';
     return 'Slow';
   }
@@ -97,7 +107,8 @@ class LocalTorrentProbeResult {
     value +=
         (downloadSpeedBytesPerSecond.clamp(0, 12 * 1024 * 1024) ~/ 1024) *
             5000;
-    value += bytesReceived.clamp(0, 512 * 1024) * 100;
+    value += sampleWindowsPassed * 180000000;
+    value += bytesReceived.clamp(0, 1536 * 1024) * 100;
     return value;
   }
 }
@@ -444,6 +455,7 @@ class LocalTorrentService {
         peers: peers,
         connections: connections,
         downloadSpeedBytesPerSecond: speed,
+        sampleWindowsPassed: sampleWindowsPassed,
       );
     } catch (_) {
       return null;
@@ -452,8 +464,8 @@ class LocalTorrentService {
 
   Future<LocalTorrentProbeResult> probe(
     SourceResult source, {
-    Duration timeout = const Duration(milliseconds: 2600),
-    int targetBytes = 384 * 1024,
+    Duration timeout = const Duration(milliseconds: 4800),
+    int windowBytes = 512 * 1024,
   }) async {
     if (!source.isMagnet) {
       return const LocalTorrentProbeResult(
@@ -464,6 +476,7 @@ class LocalTorrentService {
         peers: 0,
         connections: 0,
         downloadSpeedBytesPerSecond: 0,
+        sampleWindowsPassed: 2,
       );
     }
 
@@ -477,6 +490,7 @@ class LocalTorrentService {
         peers: 0,
         connections: 0,
         downloadSpeedBytesPerSecond: 0,
+        sampleWindowsPassed: 0,
       );
     }
 
@@ -529,24 +543,56 @@ class LocalTorrentService {
       final watch = Stopwatch()..start();
       Duration? firstByte;
       var bytes = 0;
-      final client = http.Client();
-      try {
-        await (() async {
+      var sampleWindowsPassed = 0;
+
+      Future<int> readWindow(int start, int length) async {
+        final client = http.Client();
+        var received = 0;
+        try {
           final request = http.Request('GET', Uri.parse(streamUrl));
-          request.headers['Range'] = 'bytes=0-${targetBytes - 1}';
+          request.headers['Range'] = 'bytes=$start-${start + length - 1}';
           final streamed = await client.send(request);
-          if (streamed.statusCode != 200 && streamed.statusCode != 206) return;
+          if (streamed.statusCode != 200 && streamed.statusCode != 206) {
+            return 0;
+          }
           await for (final chunk in streamed.stream) {
             if (chunk.isEmpty) continue;
             firstByte ??= watch.elapsed;
-            bytes += chunk.length;
-            if (bytes >= targetBytes) break;
+            received += chunk.length;
+            if (received >= length) break;
+          }
+        } finally {
+          client.close();
+        }
+        return received;
+      }
+
+      try {
+        await (() async {
+          final first = await readWindow(0, windowBytes);
+          bytes += first;
+          if (first >= 256 * 1024) sampleWindowsPassed++;
+
+          // A tiny burst at byte zero can be cached while the rest of the
+          // swarm is unusable. Sample a second early-playback region as well
+          // so "Ready now" means the torrent can serve more than its header.
+          final size = source.sizeBytes ?? 0;
+          if (first >= 256 * 1024 && size > 16 * 1024 * 1024) {
+            const preferredOffset = 8 * 1024 * 1024;
+            final maxSafeOffset = size - windowBytes;
+            final secondOffset = maxSafeOffset > preferredOffset
+                ? preferredOffset
+                : maxSafeOffset.clamp(windowBytes, preferredOffset);
+            final second = await readWindow(secondOffset, windowBytes);
+            bytes += second;
+            if (second >= 256 * 1024) sampleWindowsPassed++;
+          } else if (first >= 256 * 1024) {
+            sampleWindowsPassed = 2;
           }
         })().timeout(timeout);
       } catch (_) {
-        // A timeout is itself useful live-health evidence.
+        // Timeout/stall is live health evidence and lowers this source.
       } finally {
-        client.close();
         watch.stop();
       }
 
@@ -558,7 +604,7 @@ class LocalTorrentService {
       final speed = measuredSpeed > engineSpeed ? measuredSpeed : engineSpeed;
 
       return LocalTorrentProbeResult(
-        playableNow: bytes >= 64 * 1024,
+        playableNow: sampleWindowsPassed >= 2 && bytes >= 512 * 1024,
         bytesReceived: bytes,
         elapsed: watch.elapsed,
         firstByteLatency: firstByte,
