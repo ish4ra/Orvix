@@ -313,6 +313,7 @@ class _OrvixShellState extends State<_OrvixShell> {
       ),
       SearchScreen(
         catalog: widget.catalog,
+        sources: widget.sources,
         onOpen: _openMedia,
         active: _index == 1,
       ),
