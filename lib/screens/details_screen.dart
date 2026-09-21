@@ -3209,6 +3209,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
     bool fallbackToExo = false,
   }) async {
     if (!mounted) return;
+    final uri = Uri.tryParse(url);
+    final localP2p = uri != null &&
+        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
+        uri.port == 11470;
+
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => PlayerScreen(
@@ -3269,6 +3274,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
         ),
       ),
     );
+
+    // Only detach after the MPV route and native video surface are fully gone.
+    // Android TV may still need the same P2P URL for its Exo fallback, so that
+    // handoff path deliberately keeps the torrent attached.
+    if (localP2p && !fallbackToExo) {
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      await LocalTorrentService.instance.releaseCurrentStream();
+    }
   }
 
   EpisodeItem? _nextEpisode(MediaItem item, EpisodeItem? current) {
