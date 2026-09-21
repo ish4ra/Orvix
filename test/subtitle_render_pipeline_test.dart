@@ -40,5 +40,13 @@ void main() {
       player,
       contains('embedded subtitle can then appear with its own authored styling'),
     );
+    expect(
+      player,
+      contains('Source subtitle appearance is preserved by the native player.'),
+    );
+    expect(
+      player,
+      contains('Orvix font/background/position styling is only used for AI Sinhala.'),
+    );
   });
 }
