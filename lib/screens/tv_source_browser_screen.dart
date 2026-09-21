@@ -77,6 +77,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
               widget.item,
               episode: widget.episode,
               includeLowQuality: true,
+              forceRefresh: true,
             )
           : widget.resultsFuture;
 
