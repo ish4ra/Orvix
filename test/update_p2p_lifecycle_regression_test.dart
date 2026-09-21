@@ -35,11 +35,11 @@ void main() {
     expect(app, contains('OrvixUpdateGate'));
 
     final packageVersion = RegExp(
-      r'^version:\\s*([^+\\s]+)',
+      r'^version:\s*([^+\s]+)',
       multiLine: true,
     ).firstMatch(pubspec)?.group(1);
     final updaterVersion = RegExp(
-      r"currentVersion\\s*=\\s*'([^']+)'",
+      r"currentVersion\s*=\s*'([^']+)'",
     ).firstMatch(update)?.group(1);
     expect(packageVersion, isNotNull);
     expect(updaterVersion, packageVersion);
