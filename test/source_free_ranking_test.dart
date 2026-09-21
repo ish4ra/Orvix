@@ -67,25 +67,47 @@ void main() {
     expect(ranked.first, same(healthy720));
   });
 
-  test('Free learns from a recent successful release on this device', () async {
+  test('Free success history is invisible and does not override live health', () async {
     final service = SourceProviderService();
     final knownGood = torrent(
-      name: 'Known.Good.720p',
+      name: 'Known.Good.720p.x264',
       seeders: 12,
       sizeBytes: 700 * 1024 * 1024,
       quality: '720P',
     );
-    final unknown = torrent(
-      name: 'Unknown.1080p',
+    final healthier = torrent(
+      name: 'Healthier.1080p.x264',
       seeders: 55,
       sizeBytes: 700 * 1024 * 1024,
     );
 
     await service.recordPlaybackOutcome(knownGood, success: true);
-    final ranked = service.sortForFreeStreaming([unknown, knownGood]);
+    final ranked = service.sortForFreeStreaming([healthier, knownGood]);
 
-    expect(ranked.first, same(knownGood));
-    expect(service.assessFreePlayback(knownGood).label, 'WORKED BEFORE');
+    expect(ranked.first, same(healthier));
+    expect(service.assessFreePlayback(knownGood).label, isNot('WORKED BEFORE'));
+  });
+
+  test('Free ignores resolution when playability signals are otherwise equal', () {
+    final service = SourceProviderService();
+    final low = torrent(
+      name: 'Portable.480p.x264.AAC',
+      seeders: 25,
+      sizeBytes: 700 * 1024 * 1024,
+      quality: '480P',
+    );
+    final high = torrent(
+      name: 'Portable.1080p.x264.AAC',
+      seeders: 25,
+      sizeBytes: 700 * 1024 * 1024,
+      quality: '1080P',
+    );
+
+    final ranked = service.sortForFreeStreaming([high, low]);
+
+    // Resolution contributes no Free-P2P score. The deterministic title
+    // tie-break decides this pair, proving 1080p gets no priority bonus.
+    expect(ranked.first, same(low));
   });
 
   test('Free demotes an exact release that failed recently', () async {
