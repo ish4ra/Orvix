@@ -1765,8 +1765,32 @@ class _DetailsScreenState extends State<DetailsScreen> {
         }
       }
 
-      chosen ??= await _chooseSource(results, item, episode);
-      if (chosen == null || !mounted) return;
+      if (chosen == null) {
+        // Manual source browsing is a route in the user's navigation history.
+        // Do not dismiss it before opening the player: Back from playback must
+        // reveal the same cached source list, and Back from that list must
+        // reveal this title page. No provider resolve/refresh is repeated.
+        await _chooseSource(
+          results,
+          item,
+          episode,
+          onPlaySource: (selected) async {
+            try {
+              await _playSourceResult(
+                selected,
+                item,
+                episode,
+                hasCloudConnection: hasCloudConnection,
+              );
+            } catch (error) {
+              _showPlayError(error);
+            }
+          },
+        );
+        return;
+      }
+
+      if (!mounted) return;
       await _playSourceResult(
         chosen,
         item,
@@ -2238,8 +2262,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Future<SourceResult?> _chooseSource(
     List<SourceResult> results,
     MediaItem item,
-    EpisodeItem? episode,
-  ) async {
+    EpisodeItem? episode, {
+    Future<void> Function(SourceResult source)? onPlaySource,
+  }) async {
     final hasDebridConnection = await widget.torbox.isConnected;
 
     if (PlatformProfile.isAndroidTv) {
@@ -2441,6 +2466,24 @@ class _DetailsScreenState extends State<DetailsScreen> {
             if (limitHiddenCount > 0) '$limitHiddenCount beyond limit',
           ];
 
+          Future<void> playOrSelect(SourceResult source) async {
+            final play = onPlaySource;
+            if (play == null) {
+              Navigator.pop(sheetContext, source);
+              return;
+            }
+
+            // Keep the picker route alive underneath the player. This gives
+            // navigation a real one-step stack:
+            // player -> source picker -> title details -> home.
+            // The already-resolved result list and live-probe cache stay in
+            // memory, so returning from playback does not refetch/refresh.
+            if (freeStreamingRanking) {
+              await liveProbe.prepareForPlayback(source);
+            }
+            await play(source);
+          }
+
           return SafeArea(
             child: SizedBox(
               height: MediaQuery.sizeOf(context).height *
@@ -2558,7 +2601,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                     best.isMagnet &&
                                     !liveProbe.hasPlayableResult
                                 ? null
-                                : () => Navigator.pop(sheetContext, best),
+                                : () => unawaited(playOrSelect(best)),
                             icon: Icon(
                               freeStreamingRanking &&
                                       !liveProbe.hasPlayableResult
@@ -2641,7 +2684,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                           if (compactSheet) {
                             return InkWell(
                               borderRadius: BorderRadius.circular(14),
-                              onTap: () => Navigator.pop(sheetContext, result),
+                              onTap: () => unawaited(playOrSelect(result)),
                               child: Padding(
                                 padding:
                                     const EdgeInsets.symmetric(vertical: 10),
@@ -2745,8 +2788,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             borderRadius: BorderRadius.circular(15),
                             child: InkWell(
                               borderRadius: BorderRadius.circular(15),
-                              onTap: () =>
-                                  Navigator.pop(sheetContext, result),
+                              onTap: () => unawaited(playOrSelect(result)),
                               child: Container(
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(15),
