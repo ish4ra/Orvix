@@ -29,7 +29,20 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate> {
   @override
   void initState() {
     super.initState();
+    unawaited(_reportPreviousWindowsUpdate());
     unawaited(_checkSoon());
+  }
+
+  Future<void> _reportPreviousWindowsUpdate() async {
+    final status = await _updates.consumeLastWindowsUpdateStatus();
+    if (!mounted || status == null) return;
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    if (!mounted) return;
+    _showMessage(
+      status.success
+          ? 'Orvix ${status.version} installed successfully.'
+          : 'Update to ${status.version} failed (${status.detail}). The previous Orvix build was reopened.',
+    );
   }
 
   Future<void> _checkSoon() async {
