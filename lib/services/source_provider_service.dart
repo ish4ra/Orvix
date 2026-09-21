@@ -1053,7 +1053,11 @@ class SourceProviderService {
         universal * 30000000 +
         exactFile * 120000000 +
         seedHealth * 10000000 +
-        size * 1000000 -
+        // Once a swarm is viable, a practical payload matters to real startup
+        // more than chasing another raw-seeder bucket. This lets a healthy
+        // compact 720p encode outrank a very heavy 1080p/4K torrent without
+        // giving resolution itself any bonus.
+        size * 2000000 -
         recentFailurePenalty;
   }
 
