@@ -1,8 +1,36 @@
 #include "flutter_window.h"
 
 #include <optional>
+#include <tlhelp32.h>
 
 #include "flutter/generated_plugin_registrant.h"
+
+namespace {
+
+void TerminateOwnedTorrentServers() {
+  const DWORD current_pid = GetCurrentProcessId();
+  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snapshot == INVALID_HANDLE_VALUE) return;
+
+  PROCESSENTRY32W entry{};
+  entry.dwSize = sizeof(entry);
+  if (Process32FirstW(snapshot, &entry)) {
+    do {
+      if (entry.th32ParentProcessID != current_pid) continue;
+      if (_wcsicmp(entry.szExeFile, L"orvix-stream-server.exe") != 0) continue;
+
+      HANDLE child = OpenProcess(
+          PROCESS_TERMINATE | SYNCHRONIZE, FALSE, entry.th32ProcessID);
+      if (child == nullptr) continue;
+      TerminateProcess(child, 0);
+      WaitForSingleObject(child, 1200);
+      CloseHandle(child);
+    } while (Process32NextW(snapshot, &entry));
+  }
+  CloseHandle(snapshot);
+}
+
+}  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -40,6 +68,11 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  // Flutter lifecycle cleanup normally stops the local torrent engine. Keep a
+  // native last-resort cleanup as well so closing the Windows window can never
+  // leave an owned stream-server process behind in Task Manager.
+  TerminateOwnedTorrentServers();
+
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
