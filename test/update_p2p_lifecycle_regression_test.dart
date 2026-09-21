@@ -21,6 +21,7 @@ void main() {
         File('tools/configure_android_build.py').readAsStringSync();
     final windows =
         File('windows/runner/flutter_window.cpp').readAsStringSync();
+    final installer = File('installer/orvix.iss').readAsStringSync();
 
     expect(app, contains('WidgetsBindingObserver'));
     expect(app, contains('AppLifecycleState.detached'));
@@ -31,11 +32,18 @@ void main() {
     expect(update, contains('Android-TV.apk'));
     expect(update, contains('Android-Mobile.apk'));
     expect(update, contains('sha256.bind(file.openRead())'));
+    expect(update, contains('orvix-update-handoff.ps1'));
+    expect(update, contains('Waiting for Orvix PID'));
+    expect(update, contains("Start-Process -FilePath \$Installer -ArgumentList \$installerArgs -Wait -PassThru"));
+    expect(update, isNot(contains("'/CLOSEAPPLICATIONS'")));
+    expect(installer, isNot(contains('Check: WizardSilent')));
     expect(gate, contains('View what changed'));
     expect(gate, contains("label: const Text('Update')"));
 
     expect(torrent, contains('Future<LocalTorrentProbeResult> probe('));
     expect(torrent, contains('firstByteLatency'));
+    expect(torrent, contains('sampleWindowsPassed'));
+    expect(torrent, contains('preferredOffset = 8 * 1024 * 1024'));
     expect(live, contains('probeTopCandidates'));
     expect(live, contains('.take(6)'));
     expect(details, contains('liveProbe.rank(results, widget.sources)'));
