@@ -315,10 +315,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
         }
       } else if (aiReady && _preparedAiSubtitle != null) {
         // Native-cue mode: keep the video's synced English text track selected
-        // but invisible. Every real cue event drives the already-translated
-        // Sinhala text, so online subtitle timestamps are never used.
+        // and visible as a safety fallback while the small Sinhala buffer fills.
+        // As soon as a translated cue is available, the cue handler hides the
+        // English renderer and draws the Sinhala overlay for that cue.
         await _setNativeSubtitleDelayProperty(0);
-        await _setNativeSubtitleVisibility(false);
+        await _setNativeSubtitleVisibility(true);
         _timingTrackSelected = true;
         _timingTrackIsText = true;
         _nativeAiMatchIndex = -1;
