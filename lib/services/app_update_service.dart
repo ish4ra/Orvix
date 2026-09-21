@@ -75,7 +75,7 @@ class AppUpdateService {
         if (raw is! Map<String, dynamic>) continue;
         if (raw['draft'] == true) continue;
         final tag = raw['tag_name']?.toString().trim() ?? '';
-        if (tag.isEmpty || !_isNewer(tag, currentVersion)) continue;
+        if (tag.isEmpty || !isVersionNewer(tag, currentVersion)) continue;
 
         final asset = _selectAsset(raw['assets']);
         if (asset == null) continue;
@@ -94,7 +94,7 @@ class AppUpdateService {
           assetSize: _asInt(asset['size']),
         );
         if (candidate.assetUrl.isEmpty) continue;
-        if (best == null || _isNewer(candidate.version, best.version)) {
+        if (best == null || isVersionNewer(candidate.version, best.version)) {
           best = candidate;
         }
       }
@@ -286,7 +286,7 @@ class AppUpdateService {
     return AppUpdateInstallResult.unsupported;
   }
 
-  bool _isNewer(String candidate, String current) {
+  static bool isVersionNewer(String candidate, String current) {
     final a = _parseVersion(candidate);
     final b = _parseVersion(current);
     if (a == null || b == null) return false;
@@ -299,7 +299,7 @@ class AppUpdateService {
     return a.$3 > b.$3;
   }
 
-  (List<int>, int, int)? _parseVersion(String raw) {
+  static (List<int>, int, int)? _parseVersion(String raw) {
     final match = RegExp(
       r'^v?(\d+)\.(\d+)\.(\d+)(?:-([A-Za-z]+)[.-]?(\d+)?)?',
     ).firstMatch(raw.trim());
