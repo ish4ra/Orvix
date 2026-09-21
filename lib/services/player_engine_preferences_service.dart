@@ -41,6 +41,7 @@ class PlayerEngineRouter {
     required PlayerEnginePreference preference,
     required bool isAndroid,
     required String url,
+    bool isAndroidTv = false,
     String? releaseHint,
     bool aiSinhalaEnabled = false,
   }) {
@@ -63,11 +64,11 @@ class PlayerEngineRouter {
         (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
         uri.port == 11470;
 
-    // Stremio Android uses ExoPlayer/Media3 as its default Android-native
-    // playback backend, and Nuvio hands its local torrent HTTP URL to
-    // ExoPlayer as well. Orvix already has automatic Exo -> MPV recovery, so
-    // prefer Exo for the local P2P transport in Auto mode instead of forcing
-    // MPV before the first attempt. Manual MPV still overrides this rule.
+    // Free/local P2P is intentionally MPV-first on Android TV. In real TV
+    // testing MPV has been the more tolerant path for the local torrent HTTP
+    // stream, while ordinary remote/debrid HTTP streams remain Exo-first.
+    // Android mobile keeps Exo-first local P2P behavior.
+    if (localP2p && isAndroidTv) return PlayerEngineKind.mpv;
     if (localP2p) return PlayerEngineKind.exoPlayer;
 
     final hint = '${releaseHint ?? ''} ${uri?.path ?? ''}'.toLowerCase();
