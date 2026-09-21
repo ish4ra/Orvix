@@ -14,6 +14,7 @@ class MediaCard extends StatefulWidget {
     this.compact = false,
     this.focusScale = 1.035,
     this.onFocusChanged,
+    this.onPreview,
   });
 
   final MediaItem item;
@@ -24,6 +25,7 @@ class MediaCard extends StatefulWidget {
   final bool compact;
   final double focusScale;
   final ValueChanged<bool>? onFocusChanged;
+  final VoidCallback? onPreview;
 
   @override
   State<MediaCard> createState() => _MediaCardState();
@@ -38,6 +40,7 @@ class _MediaCardState extends State<MediaCard> {
     }
     widget.onFocusChanged?.call(focused);
     if (focused) {
+      widget.onPreview?.call();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         Scrollable.ensureVisible(
@@ -55,7 +58,9 @@ class _MediaCardState extends State<MediaCard> {
     final poster = widget.item.poster;
     final focusColor = Theme.of(context).colorScheme.primary;
 
-    return AnimatedScale(
+    return MouseRegion(
+      onEnter: (_) => widget.onPreview?.call(),
+      child: AnimatedScale(
       scale: _focused ? widget.focusScale : 1,
       duration: const Duration(milliseconds: 120),
       curve: Curves.easeOut,
@@ -200,6 +205,7 @@ class _MediaCardState extends State<MediaCard> {
             );
           },
         ),
+      ),
       ),
     );
   }
