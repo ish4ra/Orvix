@@ -353,6 +353,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                 children: [
                                   if (item.kind == MediaKind.movie)
                                     FilledButton.icon(
+                                      style: _tvGlowButtonStyle(prominent: true),
                                       onPressed: _resolving
                                           ? null
                                           : () => _findSourcesAndPlay(item),
@@ -362,6 +363,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                       label: const Text('Choose source'),
                                     ),
                                   FilledButton.tonalIcon(
+                                    style: _tvGlowButtonStyle(),
                                     onPressed: () => _toggleLibrary(item),
                                     icon: Icon(
                                       _inLibrary
@@ -373,6 +375,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                     ),
                                   ),
                                   OutlinedButton.icon(
+                                    style: _tvGlowButtonStyle(),
                                     onPressed: () => _toggleWatchlist(item),
                                     icon: Icon(
                                       _watchlisted
@@ -425,6 +428,50 @@ class _DetailsScreenState extends State<DetailsScreen> {
         ),
         if (_resolving) _busyOverlay(item),
       ],
+    );
+  }
+
+  ButtonStyle _tvGlowButtonStyle({bool prominent = false}) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return ButtonStyle(
+      foregroundColor: const WidgetStatePropertyAll(Colors.white),
+      backgroundColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.disabled)) {
+          return const Color(0xFF111318);
+        }
+        if (states.contains(WidgetState.focused)) {
+          return primary.withValues(alpha: prominent ? .56 : .32);
+        }
+        return prominent
+            ? primary.withValues(alpha: .30)
+            : const Color(0xFF14161D);
+      }),
+      side: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.focused)) {
+          return BorderSide(
+            color: primary.withValues(alpha: .95),
+            width: 2,
+          );
+        }
+        return BorderSide(
+          color: prominent
+              ? primary.withValues(alpha: .42)
+              : Colors.white.withValues(alpha: .12),
+        );
+      }),
+      elevation: WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.focused) ? 8 : 0,
+      ),
+      shadowColor: WidgetStatePropertyAll(primary.withValues(alpha: .45)),
+      padding: const WidgetStatePropertyAll(
+        EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      ),
+      shape: const WidgetStatePropertyAll(
+        StadiumBorder(),
+      ),
+      textStyle: const WidgetStatePropertyAll(
+        TextStyle(fontWeight: FontWeight.w800),
+      ),
     );
   }
 
