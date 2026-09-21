@@ -752,12 +752,16 @@ class LocalTorrentService {
     return int.tryParse(value?.toString() ?? '');
   }
 
-  Future<void> dispose() async {
+  Future<void> releaseCurrentStream() async {
     final activeInfoHash = _currentInfoHash;
     _currentInfoHash = null;
     if (activeInfoHash != null) {
       await _removeEngine(activeInfoHash);
     }
+  }
+
+  Future<void> dispose() async {
+    await releaseCurrentStream();
 
     final process = _process;
     _process = null;
