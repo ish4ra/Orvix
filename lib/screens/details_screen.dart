@@ -1766,15 +1766,22 @@ class _DetailsScreenState extends State<DetailsScreen> {
       }
 
       if (chosen == null) {
-        // Manual source browsing is a route in the user's navigation history.
-        // Do not dismiss it before opening the player: Back from playback must
-        // reveal the same cached source list, and Back from that list must
-        // reveal this title page. No provider resolve/refresh is repeated.
-        await _chooseSource(
-          results,
-          item,
-          episode,
-          onPlaySource: (selected) async {
+        // A modal sheet cannot safely stay above/below a player route across
+        // nested Navigators. Close it before playback, then reopen it from the
+        // same in-memory result/probe session when the player returns. To the
+        // user this is still one-step navigation:
+        // player -> source list -> title, with no provider re-fetch.
+        final probeSession = FreeP2pLiveProbeService();
+        try {
+          while (mounted) {
+            final selected = await _chooseSource(
+              results,
+              item,
+              episode,
+              probeSession: probeSession,
+            );
+            if (selected == null || !mounted) return;
+
             try {
               await _playSourceResult(
                 selected,
@@ -1785,8 +1792,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
             } catch (error) {
               _showPlayError(error);
             }
-          },
-        );
+            if (!mounted) return;
+            // Player returned: loop reopens the source picker using the same
+            // already-resolved results and cached live-probe ranking.
+          }
+        } finally {
+          await probeSession.release();
+        }
         return;
       }
 
@@ -2263,7 +2275,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     List<SourceResult> results,
     MediaItem item,
     EpisodeItem? episode, {
-    Future<void> Function(SourceResult source)? onPlaySource,
+    FreeP2pLiveProbeService? probeSession,
   }) async {
     final hasDebridConnection = await widget.torbox.isConnected;
 
@@ -2299,9 +2311,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
     var pinnedIdentity = await widget.sources.getPinnedSourceIdentity(pinKey);
     if (!mounted) return null;
 
-    final liveProbe = FreeP2pLiveProbeService();
-    var liveProbeStarted = false;
-    var sourcePlaybackInProgress = false;
+    final liveProbe = probeSession ?? FreeP2pLiveProbeService();
+    final ownsProbeSession = probeSession == null;
+    var liveProbeStarted = liveProbe.hasAnyResult;
 
     Future<void> customizePriority(
       BuildContext dialogContext,
@@ -2467,30 +2479,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
             if (limitHiddenCount > 0) '$limitHiddenCount beyond limit',
           ];
 
-          Future<void> playOrSelect(SourceResult source) async {
-            final play = onPlaySource;
-            if (play == null) {
-              Navigator.pop(sheetContext, source);
-              return;
-            }
-            if (sourcePlaybackInProgress) return;
-
-            // Keep the picker route alive underneath the player. This gives
-            // navigation a real one-step stack:
-            // player -> source picker -> title details -> home.
-            // The already-resolved result list and live-probe cache stay in
-            // memory, so returning from playback does not refetch/refresh.
-            sourcePlaybackInProgress = true;
-            try {
-              if (freeStreamingRanking) {
-                await liveProbe.prepareForPlayback(source);
-              }
-              await play(source);
-            } finally {
-              sourcePlaybackInProgress = false;
-            }
-          }
-
           return SafeArea(
             child: SizedBox(
               height: MediaQuery.sizeOf(context).height *
@@ -2608,7 +2596,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                     best.isMagnet &&
                                     !liveProbe.hasPlayableResult
                                 ? null
-                                : () => unawaited(playOrSelect(best)),
+                                : () => Navigator.pop(sheetContext, best),
                             icon: Icon(
                               freeStreamingRanking &&
                                       !liveProbe.hasPlayableResult
@@ -2691,7 +2679,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                           if (compactSheet) {
                             return InkWell(
                               borderRadius: BorderRadius.circular(14),
-                              onTap: () => unawaited(playOrSelect(result)),
+                              onTap: () => Navigator.pop(sheetContext, result),
                               child: Padding(
                                 padding:
                                     const EdgeInsets.symmetric(vertical: 10),
@@ -2795,7 +2783,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             borderRadius: BorderRadius.circular(15),
                             child: InkWell(
                               borderRadius: BorderRadius.circular(15),
-                              onTap: () => unawaited(playOrSelect(result)),
+                              onTap: () => Navigator.pop(sheetContext, result),
                               child: Container(
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(15),
@@ -2908,7 +2896,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
     if (selected != null && freeStreamingRanking) {
       await liveProbe.prepareForPlayback(selected);
-    } else {
+    } else if (ownsProbeSession) {
       await liveProbe.release();
     }
     return selected;
