@@ -871,6 +871,15 @@ class LocalTorrentService {
     _process = null;
     if (_ownsProcess && process != null) {
       process.kill();
+      if (Platform.isWindows) {
+        try {
+          // Updating Orvix replaces the bundled stream-server executable.
+          // Do not return until Windows has actually released that file.
+          await process.exitCode.timeout(const Duration(seconds: 3));
+        } catch (_) {
+          // Native window teardown has a second process-cleanup guard.
+        }
+      }
     }
     _ownsProcess = false;
     if (Platform.isAndroid) {
