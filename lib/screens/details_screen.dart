@@ -3082,150 +3082,199 @@ class _TvEpisodeCardState extends State<_TvEpisodeCard> {
     final date = _dateLabel(episode);
 
     return AnimatedScale(
-      scale: _focused ? 1.025 : 1,
-      duration: const Duration(milliseconds: 110),
+      scale: _focused ? 1.035 : 1,
+      duration: const Duration(milliseconds: 115),
       curve: Curves.easeOutCubic,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 110),
-        width: 340,
+        duration: const Duration(milliseconds: 115),
+        curve: Curves.easeOutCubic,
+        width: 292,
+        height: 174,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: _focused
-                ? Colors.white.withValues(alpha: .95)
-                : const Color(0xFF2A302C),
-            width: _focused ? 2.5 : 1,
+                ? primary.withValues(alpha: .95)
+                : Colors.white.withValues(alpha: .11),
+            width: _focused ? 2.2 : 1,
           ),
           boxShadow: _focused
               ? [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: .44),
+                    color: primary.withValues(alpha: .24),
                     blurRadius: 24,
-                    offset: const Offset(0, 9),
+                    spreadRadius: 1,
                   ),
                   BoxShadow(
-                    color: primary.withValues(alpha: .12),
-                    blurRadius: 18,
+                    color: Colors.black.withValues(alpha: .46),
+                    blurRadius: 22,
+                    offset: const Offset(0, 8),
                   ),
                 ]
               : const [],
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(17),
+          borderRadius: BorderRadius.circular(15),
           child: Material(
-            color: const Color(0xFF111412),
+            color: const Color(0xFF0D0F12),
             child: InkWell(
               focusColor: Colors.transparent,
+              splashColor: Colors.transparent,
               onFocusChange: (value) => setState(() => _focused = value),
               onTap: widget.onPlay,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (episode.thumbnail != null &&
-                      episode.thumbnail!.trim().isNotEmpty)
+                  if (episode.thumbnail?.trim().isNotEmpty == true)
                     CachedNetworkImage(
                       imageUrl: episode.thumbnail!,
                       fit: BoxFit.cover,
-                      memCacheWidth: 720,
+                      memCacheWidth: 620,
                       fadeInDuration: Duration.zero,
                       placeholder: (_, __) =>
-                          const ColoredBox(color: Color(0xFF171B18)),
+                          const ColoredBox(color: Color(0xFF15171B)),
                       errorWidget: (_, __, ___) =>
-                          const ColoredBox(color: Color(0xFF171B18)),
+                          const ColoredBox(color: Color(0xFF15171B)),
                     )
                   else
-                    const ColoredBox(color: Color(0xFF171B18)),
+                    const ColoredBox(color: Color(0xFF15171B)),
                   const DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
                         colors: [
-                          Color(0x00000000),
-                          Color(0x22000000),
-                          Color(0xE6070908),
+                          Color(0x08000000),
+                          Color(0x26000000),
+                          Color(0xA8000000),
+                          Color(0xF207090B),
                         ],
-                        stops: [0, .44, 1],
+                        stops: [0, .36, .68, 1],
                       ),
                     ),
                   ),
                   Positioned(
-                    left: 15,
-                    right: 15,
-                    bottom: 13,
+                    left: 13,
+                    right: 13,
+                    bottom: 10,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 8,
-                            vertical: 4,
+                            vertical: 3,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(0x99000000),
-                            borderRadius: BorderRadius.circular(7),
+                            color: Colors.black.withValues(alpha: .64),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: .10),
+                            ),
                           ),
                           child: Text(
-                            'S${episode.season}E${episode.episode}',
+                            'EPISODE ${episode.episode}',
                             style: const TextStyle(
-                              fontSize: 11,
+                              fontSize: 9.8,
                               fontWeight: FontWeight.w900,
+                              letterSpacing: .35,
                             ),
                           ),
                         ),
-                        const SizedBox(height: 7),
+                        const SizedBox(height: 6),
                         Text(
                           episode.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                            fontSize: 16,
+                            fontSize: 14.7,
                             fontWeight: FontWeight.w900,
+                            letterSpacing: -.15,
                           ),
                         ),
                         if (overview != null && overview.trim().isNotEmpty) ...[
-                          const SizedBox(height: 5),
+                          const SizedBox(height: 3),
                           Text(
                             overview,
-                            maxLines: 2,
+                            maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              color: Color(0xFFE0E4E1),
-                              fontSize: 12.2,
-                              height: 1.35,
+                              color: Color(0xFFD0D5D1),
+                              fontSize: 11.1,
+                              height: 1.3,
                               fontWeight: FontWeight.w500,
                             ),
                           ),
                         ],
-                        if (date != null) ...[
-                          const SizedBox(height: 6),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: Text(
-                              date,
-                              style: const TextStyle(
-                                color: Color(0xFFB5BBB6),
-                                fontSize: 10.8,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
+                        if (episode.rating != null || date != null) ...[
+                          const SizedBox(height: 5),
+                          Row(
+                            children: [
+                              if (episode.rating != null) ...[
+                                const Icon(
+                                  Icons.star_rounded,
+                                  color: Color(0xFFFFD65A),
+                                  size: 13,
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  episode.rating!.toStringAsFixed(1),
+                                  style: const TextStyle(
+                                    color: Color(0xFFE9ECEA),
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
+                              if (episode.rating != null && date != null)
+                                const SizedBox(width: 9),
+                              if (date != null)
+                                Flexible(
+                                  child: Text(
+                                    date,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Color(0xFFAEB5B0),
+                                      fontSize: 10.2,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
                         ],
                       ],
                     ),
                   ),
                   Positioned(
-                    top: 10,
-                    right: 10,
-                    child: AnimatedOpacity(
-                      opacity: _focused ? 1 : .72,
-                      duration: const Duration(milliseconds: 100),
-                      child: Icon(
-                        Icons.play_circle_fill_rounded,
-                        size: 32,
+                    top: 9,
+                    right: 9,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 110),
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
                         color: _focused
-                            ? primary
-                            : Colors.white.withValues(alpha: .84),
+                            ? primary.withValues(alpha: .92)
+                            : Colors.black.withValues(alpha: .55),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: .18),
+                        ),
+                        boxShadow: _focused
+                            ? [
+                                BoxShadow(
+                                  color: primary.withValues(alpha: .42),
+                                  blurRadius: 16,
+                                ),
+                              ]
+                            : const [],
+                      ),
+                      child: const Icon(
+                        Icons.play_arrow_rounded,
+                        color: Colors.white,
+                        size: 21,
                       ),
                     ),
                   ),
