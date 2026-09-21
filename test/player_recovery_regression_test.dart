@@ -103,6 +103,8 @@ void main() {
     expect(details, contains('await _chooseSource('));
     expect(details, contains('onPlaySource: (selected) async'));
     expect(details, contains('await play(source);'));
+    expect(details, contains('var sourcePlaybackInProgress = false;'));
+    expect(details, contains('if (sourcePlaybackInProgress) return;'));
     expect(
       details,
       contains('returning from playback does not refetch/refresh'),
