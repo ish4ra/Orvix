@@ -23,6 +23,7 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate> {
   AppUpdateInfo? _update;
   bool _dismissed = false;
   bool _installing = false;
+  bool _applying = false;
   double _progress = 0;
   File? _downloadedFile;
 
@@ -64,6 +65,7 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate> {
     if (update == null || _installing) return;
     setState(() {
       _installing = true;
+      _applying = false;
       _progress = 0;
     });
 
@@ -82,11 +84,18 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate> {
         setState(() => _progress = 1);
       }
       if (!mounted) return;
+      if (Platform.isWindows) {
+        setState(() => _applying = true);
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
 
       final result = await _updates.install(update, file);
       if (!mounted) return;
       if (result == AppUpdateInstallResult.permissionRequired) {
-        setState(() => _installing = false);
+        setState(() {
+          _installing = false;
+          _applying = false;
+        });
         await showDialog<void>(
           context: context,
           builder: (dialogContext) => AlertDialog(
@@ -104,12 +113,18 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate> {
           ),
         );
       } else if (result == AppUpdateInstallResult.unsupported) {
-        setState(() => _installing = false);
+        setState(() {
+          _installing = false;
+          _applying = false;
+        });
         _showMessage('Could not open the installer for this platform.');
       }
     } catch (error) {
       if (!mounted) return;
-      setState(() => _installing = false);
+      setState(() {
+        _installing = false;
+        _applying = false;
+      });
       _showMessage('Update failed: $error');
     }
   }
@@ -189,9 +204,11 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                _installing
-                                    ? 'Downloading Orvix ${update.version}…'
-                                    : 'Orvix ${update.version} is available',
+                                _applying
+                                    ? 'Installing Orvix ${update.version}…'
+                                    : _installing
+                                        ? 'Downloading Orvix ${update.version}…'
+                                        : 'Orvix ${update.version} is available',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
@@ -201,9 +218,11 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate> {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                _installing
-                                    ? '${(_progress * 100).round()}% downloaded'
-                                    : 'Installed: ${AppUpdateService.currentVersion} • View what changed',
+                                _applying
+                                    ? 'Orvix will close and restart automatically'
+                                    : _installing
+                                        ? '${(_progress * 100).round()}% downloaded'
+                                        : 'Installed: ${AppUpdateService.currentVersion} • View what changed',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
@@ -222,7 +241,9 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate> {
                       SizedBox(
                         width: 120,
                         child: LinearProgressIndicator(
-                          value: _progress > 0 ? _progress : null,
+                          value: _applying
+                              ? null
+                              : (_progress > 0 ? _progress : null),
                           minHeight: 5,
                           backgroundColor: const Color(0xFF293029),
                           valueColor: const AlwaysStoppedAnimation<Color>(
