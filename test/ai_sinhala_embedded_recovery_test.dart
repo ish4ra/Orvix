@@ -19,7 +19,9 @@ void main() {
       open.indexOf('await widget.playback.open('),
       lessThan(open.indexOf('await _prepareAiSinhalaBeforePlayback()')),
     );
-    expect(open, contains('play: !aiPreferred'));
+    expect(open, contains('play: deferAiForLocalP2p ? true : !aiPreferred'));
+    expect(open, contains('await _tryPrepareEmbeddedAiTiming()'));
+    expect(open, contains('deferAiForLocalP2p'));
     expect(prepare, contains('prepareTrustedTranscriptForNativeClock('));
     expect(prepare, contains('_captureNativeEnglishSamples()'));
     expect(prepare, contains('OnlineSubtitleService.search('));
