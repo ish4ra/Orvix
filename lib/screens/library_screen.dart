@@ -490,7 +490,6 @@ Widget _cloudCard(BuildContext context, {required IconData icon, required String
     color: const Color(0xFF0C110D),
     borderRadius: BorderRadius.circular(24),
     border: Border.all(color: const Color(0xFF223125)),
-    boxShadow: const [BoxShadow(color: Color(0x3316FF50), blurRadius: 28, spreadRadius: -12)],
   ),
   child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
     CircleAvatar(radius: 29, backgroundColor: Theme.of(context).colorScheme.primaryContainer, child: Icon(icon, size: 31)),
