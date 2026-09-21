@@ -453,9 +453,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
           ),
           const SizedBox(height: 12),
           SizedBox(
-            height: 86,
+            height: 62,
             child: ListView.separated(
-              padding: const EdgeInsets.symmetric(horizontal: 42, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 42, vertical: 4),
               scrollDirection: Axis.horizontal,
               itemCount: seasons.length,
               separatorBuilder: (_, __) => const SizedBox(width: 12),
@@ -463,7 +463,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 final season = seasons[index];
                 return _TvSeasonTile(
                   season: season,
-                  poster: item.seasonPoster(season),
                   selected: season == selected,
                   onTap: () => _selectSeason(item, season),
                 );
@@ -484,13 +483,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
           ),
           const SizedBox(height: 13),
           SizedBox(
-            height: 238,
+            height: 188,
             child: ListView.separated(
-              padding: const EdgeInsets.symmetric(horizontal: 42, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 42, vertical: 6),
               scrollDirection: Axis.horizontal,
               cacheExtent: 1400,
               itemCount: episodes.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 15),
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
               itemBuilder: (context, index) {
                 final episode = episodes[index];
                 return RepaintBoundary(
@@ -2837,13 +2836,11 @@ class _CastRail extends StatelessWidget {
 class _TvSeasonTile extends StatefulWidget {
   const _TvSeasonTile({
     required this.season,
-    required this.poster,
     required this.selected,
     required this.onTap,
   });
 
   final int season;
-  final String? poster;
   final bool selected;
   final VoidCallback onTap;
 
@@ -2856,64 +2853,101 @@ class _TvSeasonTileState extends State<_TvSeasonTile> {
 
   @override
   Widget build(BuildContext context) {
-    final highlighted = widget.selected || _focused;
+    final primary = Theme.of(context).colorScheme.primary;
+    final active = widget.selected || _focused;
+    final label = widget.season == 0 ? 'Specials' : 'Season ${widget.season}';
+
     return AnimatedScale(
-      scale: _focused ? 1.035 : 1,
-      duration: const Duration(milliseconds: 100),
-      child: SizedBox(
-        width: 150,
-        child: Material(
-          color: highlighted
-              ? const Color(0xFF243221)
-              : const Color(0xFF151916),
-          borderRadius: BorderRadius.circular(13),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(13),
-            focusColor: Colors.transparent,
-            onFocusChange: (value) => setState(() => _focused = value),
-            onTap: widget.onTap,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 100),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(13),
-                border: Border.all(
-                  color: _focused
-                      ? Colors.white
-                      : widget.selected
-                          ? Theme.of(context).colorScheme.primary
-                          : const Color(0xFF343B35),
-                  width: _focused ? 2.2 : 1.2,
-                ),
+      scale: _focused ? 1.045 : 1,
+      duration: const Duration(milliseconds: 110),
+      curve: Curves.easeOutCubic,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(999),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          focusColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          onFocusChange: (value) => setState(() => _focused = value),
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOutCubic,
+            height: 48,
+            constraints: const BoxConstraints(minWidth: 118),
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: active
+                    ? [
+                        primary.withValues(alpha: .34),
+                        const Color(0xFF171627),
+                      ]
+                    : const [
+                        Color(0xFF101116),
+                        Color(0xFF171920),
+                      ],
               ),
-              clipBehavior: Clip.antiAlias,
-              child: Row(
-                children: [
-                  if (widget.poster?.trim().isNotEmpty == true)
-                    SizedBox(
-                      width: 45,
-                      height: double.infinity,
-                      child: CachedNetworkImage(
-                        imageUrl: widget.poster!,
-                        fit: BoxFit.cover,
-                        memCacheWidth: 140,
-                        fadeInDuration: Duration.zero,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: _focused
+                    ? primary.withValues(alpha: .95)
+                    : widget.selected
+                        ? primary.withValues(alpha: .58)
+                        : Colors.white.withValues(alpha: .10),
+                width: _focused ? 2 : 1,
+              ),
+              boxShadow: active
+                  ? [
+                      BoxShadow(
+                        color: primary.withValues(alpha: _focused ? .28 : .16),
+                        blurRadius: _focused ? 22 : 14,
+                        spreadRadius: _focused ? 1 : 0,
                       ),
-                    ),
-                  Expanded(
-                    child: Center(
-                      child: Text(
-                        'Season ${widget.season}',
-                        style: TextStyle(
-                          fontWeight: widget.selected || _focused
-                              ? FontWeight.w900
-                              : FontWeight.w700,
-                          fontSize: 13.5,
-                        ),
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: .34),
+                        blurRadius: 12,
+                        offset: const Offset(0, 5),
                       ),
-                    ),
+                    ]
+                  : const [],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 120),
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: active
+                        ? primary
+                        : Colors.white.withValues(alpha: .26),
+                    boxShadow: active
+                        ? [
+                            BoxShadow(
+                              color: primary.withValues(alpha: .55),
+                              blurRadius: 9,
+                            ),
+                          ]
+                        : const [],
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: active
+                        ? Colors.white
+                        : Colors.white.withValues(alpha: .72),
+                    fontSize: 14,
+                    fontWeight: active ? FontWeight.w900 : FontWeight.w700,
+                    letterSpacing: -.1,
+                  ),
+                ),
+              ],
             ),
           ),
         ),
