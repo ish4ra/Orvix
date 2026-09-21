@@ -42,7 +42,7 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate> {
     _showMessage(
       status.success
           ? 'Orvix ${status.version} installed successfully.'
-          : 'Update to ${status.version} failed (${status.detail}). The previous Orvix build was reopened.',
+          : 'Update to ${status.version} did not complete (${status.detail}).',
     );
   }
 
@@ -205,7 +205,7 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate> {
                             children: [
                               Text(
                                 _applying
-                                    ? 'Installing Orvix ${update.version}…'
+                                    ? 'Opening Orvix ${update.version} installer…'
                                     : _installing
                                         ? 'Downloading Orvix ${update.version}…'
                                         : 'Orvix ${update.version} is available',
@@ -219,7 +219,7 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate> {
                               const SizedBox(height: 2),
                               Text(
                                 _applying
-                                    ? 'Orvix will close and restart automatically'
+                                    ? 'Orvix will close; finish setup in the Windows installer'
                                     : _installing
                                         ? '${(_progress * 100).round()}% downloaded'
                                         : 'Installed: ${AppUpdateService.currentVersion} • View what changed',
