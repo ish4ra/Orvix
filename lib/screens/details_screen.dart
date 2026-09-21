@@ -2558,6 +2558,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                         if (best != null)
                           FilledButton.icon(
                             onPressed: freeStreamingRanking &&
+                                    best.isMagnet &&
                                     !liveProbe.hasPlayableResult
                                 ? null
                                 : () => Navigator.pop(sheetContext, best),
