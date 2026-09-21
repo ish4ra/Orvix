@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -82,7 +83,13 @@ class CatalogService {
       return a.title.toLowerCase().compareTo(b.title.toLowerCase());
     });
 
-    return enriched.take(limit).toList(growable: false);
+    final selected = enriched.take(limit).toList(growable: false);
+    // Search taps on phones do not have a focus/hover phase. Warm a handful of
+    // likely choices after results are ready without delaying the search UI.
+    for (final item in selected.take(6)) {
+      unawaited(prefetchDetails(item));
+    }
+    return selected;
   }
 
   Future<MediaItem?> details(MediaItem item) async {
