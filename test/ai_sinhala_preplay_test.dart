@@ -16,10 +16,15 @@ void main() {
         player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
     final open = player.substring(openStart, prepareStart);
 
-    expect(open, contains('play: !aiPreferred'));
+    expect(open, contains('play: deferAiForLocalP2p ? true : !aiPreferred'));
     expect(
       open.indexOf('await widget.playback.open('),
       lessThan(open.indexOf('await _prepareAiSinhalaBeforePlayback()')),
+    );
+    expect(open, contains('await _tryPrepareEmbeddedAiTiming()'));
+    expect(
+      open,
+      contains('Starting local P2P normally; AI Sinhala will follow'),
     );
     expect(open, contains('await widget.playback.player.play();'));
     expect(player, contains('if (_error == null && _aiSubtitleLoading)'));
