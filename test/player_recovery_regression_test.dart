@@ -104,10 +104,8 @@ void main() {
     expect(details, contains('final probeSession = FreeP2pLiveProbeService();'));
     expect(details, contains('while (mounted)'));
     expect(details, contains('probeSession: probeSession'));
-    expect(
-      details,
-      contains('same already-resolved results and cached live-probe ranking'),
-    );
+    expect(details, contains('Player returned: loop reopens the source picker'));
+    expect(details, contains('already-resolved results and cached live-probe ranking'));
     expect(details, isNot(contains('onPlaySource: (selected) async')));
     expect(player, contains('bool _backNavigationInProgress = false;'));
     expect(
