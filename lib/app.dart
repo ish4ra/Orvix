@@ -122,8 +122,7 @@ class _OrvixAppState extends State<OrvixApp>
                 fontWeight: FontWeight.w900, letterSpacing: .15),
             backgroundColor: const Color(0xFFB9FF45),
             foregroundColor: const Color(0xFF081006),
-            shadowColor: const Color(0x993CFF00),
-            elevation: 2,
+            elevation: 0,
           ).copyWith(
             side: WidgetStateProperty.resolveWith<BorderSide?>((states) {
               if (states.contains(WidgetState.focused)) {
@@ -131,9 +130,7 @@ class _OrvixAppState extends State<OrvixApp>
               }
               return BorderSide.none;
             }),
-            elevation: WidgetStateProperty.resolveWith<double?>((states) {
-              return states.contains(WidgetState.focused) ? 9 : 2;
-            }),
+            elevation: const WidgetStatePropertyAll(0),
           ),
         ),
         outlinedButtonTheme: OutlinedButtonThemeData(
