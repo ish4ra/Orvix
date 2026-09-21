@@ -235,10 +235,26 @@ class _OrvixShellState extends State<_OrvixShell> {
   }
 
   Future<void> _openMedia(MediaItem item) async {
+    final warmItem = widget.catalog.peekDetails(item) ?? item;
+    unawaited(widget.catalog.prefetchDetails(item));
+
+    EpisodeItem? warmEpisode;
+    if (warmItem.kind == MediaKind.series && warmItem.episodes.isNotEmpty) {
+      final ordered = [...warmItem.episodes]
+        ..sort((a, b) {
+          final bySeason = a.season.compareTo(b.season);
+          return bySeason != 0 ? bySeason : a.episode.compareTo(b.episode);
+        });
+      warmEpisode = ordered.first;
+    }
+    if (warmItem.kind == MediaKind.movie || warmEpisode != null) {
+      unawaited(widget.sources.prefetch(warmItem, episode: warmEpisode));
+    }
+
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => DetailsScreen(
-          item: item,
+          item: warmItem,
           catalog: widget.catalog,
           pikpak: widget.pikpak,
           transfer: widget.transfer,
