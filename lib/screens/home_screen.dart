@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -309,6 +310,15 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         }
 
+        if (Platform.isWindows && MediaQuery.sizeOf(context).width >= 900) {
+          return _DesktopHomeView(
+            data: data,
+            onOpen: _openItem,
+            onPrefetch: _prefetchItem,
+            onCustomize: _customizeHome,
+          );
+        }
+
         return RefreshIndicator(
           onRefresh: () async {
             setState(_load);
@@ -353,6 +363,545 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       },
+    );
+  }
+}
+
+class _DesktopHomeView extends StatelessWidget {
+  const _DesktopHomeView({
+    required this.data,
+    required this.onOpen,
+    required this.onPrefetch,
+    required this.onCustomize,
+  });
+
+  final _HomeData data;
+  final ValueChanged<MediaItem> onOpen;
+  final ValueChanged<MediaItem> onPrefetch;
+  final VoidCallback onCustomize;
+
+  @override
+  Widget build(BuildContext context) {
+    final hero = data.hero;
+    return ColoredBox(
+      color: const Color(0xFF060807),
+      child: ListView(
+        key: const PageStorageKey('orvix-windows-home-v1'),
+        cacheExtent: 1900,
+        padding: const EdgeInsets.only(bottom: 72),
+        children: [
+          if (hero != null)
+            _DesktopFeaturedHero(
+              item: hero,
+              onOpen: () => onOpen(hero),
+              onPreview: () => onPrefetch(hero),
+              onCustomize: onCustomize,
+            ),
+          if (data.continueWatching.isNotEmpty)
+            _DesktopContinueRail(
+              items: data.continueWatching,
+              onOpen: (entry) => onOpen(entry.item),
+              onPrefetch: (entry) => onPrefetch(entry.item),
+            ),
+          for (final section in data.sections)
+            if (section != HomeSectionId.continueWatching)
+              _DesktopPosterShelf(
+                title: section.label,
+                items: data.items(section),
+                onOpen: onOpen,
+                onPrefetch: onPrefetch,
+              ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DesktopFeaturedHero extends StatelessWidget {
+  const _DesktopFeaturedHero({
+    required this.item,
+    required this.onOpen,
+    required this.onPreview,
+    required this.onCustomize,
+  });
+
+  final MediaItem item;
+  final VoidCallback onOpen;
+  final VoidCallback onPreview;
+  final VoidCallback onCustomize;
+
+  @override
+  Widget build(BuildContext context) {
+    const lime = Color(0xFFB9FF45);
+    final backdrop = item.background ?? item.poster;
+    return MouseRegion(
+      onEnter: (_) => onPreview(),
+      child: SizedBox(
+        height: 520,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (backdrop?.trim().isNotEmpty == true)
+              CachedNetworkImage(
+                imageUrl: backdrop!,
+                fit: BoxFit.cover,
+                alignment: Alignment.centerRight,
+                memCacheWidth: 1800,
+                fadeInDuration: Duration.zero,
+                placeholder: (_, __) =>
+                    const ColoredBox(color: Color(0xFF0A0D0B)),
+                errorWidget: (_, __, ___) =>
+                    const ColoredBox(color: Color(0xFF0A0D0B)),
+              )
+            else
+              const ColoredBox(color: Color(0xFF0A0D0B)),
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    Color(0xFF060807),
+                    Color(0xF5060807),
+                    Color(0xB0060807),
+                    Color(0x30060807),
+                    Color(0x00060807),
+                  ],
+                  stops: [0, .23, .48, .76, 1],
+                ),
+              ),
+            ),
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0x20000000),
+                    Color(0x00000000),
+                    Color(0x18000000),
+                    Color(0xFF060807),
+                  ],
+                  stops: [0, .35, .72, 1],
+                ),
+              ),
+            ),
+            Positioned(
+              top: 26,
+              right: 34,
+              child: IconButton.filledTonal(
+                tooltip: 'Customize Home',
+                onPressed: onCustomize,
+                style: IconButton.styleFrom(
+                  backgroundColor: const Color(0xB5141816),
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(Icons.tune_rounded),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(54, 66, 54, 48),
+              child: Align(
+                alignment: Alignment.bottomLeft,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 680),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (item.logo?.trim().isNotEmpty == true)
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            maxWidth: 430,
+                            maxHeight: 130,
+                          ),
+                          child: CachedNetworkImage(
+                            imageUrl: item.logo!,
+                            fit: BoxFit.contain,
+                            alignment: Alignment.centerLeft,
+                            fadeInDuration: Duration.zero,
+                            errorWidget: (_, __, ___) => Text(
+                              item.title,
+                              style: const TextStyle(
+                                fontSize: 46,
+                                height: 1.02,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: -1.1,
+                              ),
+                            ),
+                          ),
+                        )
+                      else
+                        Text(
+                          item.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 46,
+                            height: 1.02,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -1.1,
+                          ),
+                        ),
+                      const SizedBox(height: 15),
+                      Wrap(
+                        spacing: 9,
+                        runSpacing: 8,
+                        children: [
+                          _DesktopHeroPill(item.typeLabel),
+                          if (item.year != null) _DesktopHeroPill(item.year!),
+                          if (item.runtime != null)
+                            _DesktopHeroPill(item.runtime!),
+                          if (item.rating != null)
+                            _DesktopHeroPill(
+                              '★ ${item.rating!.toStringAsFixed(1)}',
+                            ),
+                          ...item.genres.take(3).map(_DesktopHeroPill.new),
+                        ],
+                      ),
+                      if (item.description?.trim().isNotEmpty == true) ...[
+                        const SizedBox(height: 17),
+                        Text(
+                          item.description!,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFFE3E8E4),
+                            fontSize: 15,
+                            height: 1.5,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 23),
+                      FilledButton.icon(
+                        onPressed: onOpen,
+                        icon: const Icon(Icons.play_arrow_rounded),
+                        label: const Text('Open title'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: lime,
+                          foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 25,
+                            vertical: 16,
+                          ),
+                          textStyle: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopHeroPill extends StatelessWidget {
+  const _DesktopHeroPill(this.label);
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xA6121614),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withValues(alpha: .14)),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Color(0xFFE9ECEA),
+          fontSize: 11.5,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopPosterShelf extends StatelessWidget {
+  const _DesktopPosterShelf({
+    required this.title,
+    required this.items,
+    required this.onOpen,
+    required this.onPrefetch,
+  });
+
+  final String title;
+  final List<MediaItem> items;
+  final ValueChanged<MediaItem> onOpen;
+  final ValueChanged<MediaItem> onPrefetch;
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 22, bottom: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 46),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -.35,
+                    ),
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFF8F9891),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 13),
+          SizedBox(
+            height: 315,
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 46,
+                vertical: 7,
+              ),
+              scrollDirection: Axis.horizontal,
+              cacheExtent: 1800,
+              itemCount: items.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 15),
+              itemBuilder: (context, index) {
+                final item = items[index];
+                return RepaintBoundary(
+                  child: MediaCard(
+                    item: item,
+                    width: 158,
+                    focusScale: 1.045,
+                    onFocusChanged: (focused) {
+                      if (focused) onPrefetch(item);
+                    },
+                    onPreview: () => onPrefetch(item),
+                    onTap: () => onOpen(item),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DesktopContinueRail extends StatelessWidget {
+  const _DesktopContinueRail({
+    required this.items,
+    required this.onOpen,
+    required this.onPrefetch,
+  });
+
+  final List<ContinueWatchingEntry> items;
+  final ValueChanged<ContinueWatchingEntry> onOpen;
+  final ValueChanged<ContinueWatchingEntry> onPrefetch;
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 16, bottom: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 46),
+            child: Text(
+              'Continue Watching',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -.35,
+              ),
+            ),
+          ),
+          const SizedBox(height: 13),
+          SizedBox(
+            height: 212,
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 46, vertical: 6),
+              scrollDirection: Axis.horizontal,
+              itemCount: items.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 14),
+              itemBuilder: (context, index) {
+                final entry = items[index];
+                return _DesktopContinueCard(
+                  entry: entry,
+                  onTap: () => onOpen(entry),
+                  onPreview: () => onPrefetch(entry),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DesktopContinueCard extends StatefulWidget {
+  const _DesktopContinueCard({
+    required this.entry,
+    required this.onTap,
+    required this.onPreview,
+  });
+
+  final ContinueWatchingEntry entry;
+  final VoidCallback onTap;
+  final VoidCallback onPreview;
+
+  @override
+  State<_DesktopContinueCard> createState() => _DesktopContinueCardState();
+}
+
+class _DesktopContinueCardState extends State<_DesktopContinueCard> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const lime = Color(0xFFB9FF45);
+    final active = _hovered || _focused;
+    final item = widget.entry.item;
+    final art = item.background ?? item.poster;
+
+    return MouseRegion(
+      onEnter: (_) {
+        setState(() => _hovered = true);
+        widget.onPreview();
+      },
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedScale(
+        scale: active ? 1.025 : 1,
+        duration: const Duration(milliseconds: 120),
+        child: SizedBox(
+          width: 300,
+          child: Material(
+            color: const Color(0xFF0C100E),
+            borderRadius: BorderRadius.circular(16),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(16),
+              focusColor: Colors.transparent,
+              hoverColor: Colors.transparent,
+              onFocusChange: (value) {
+                setState(() => _focused = value);
+                if (value) widget.onPreview();
+              },
+              onTap: widget.onTap,
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: active
+                        ? lime.withValues(alpha: .78)
+                        : Colors.white.withValues(alpha: .10),
+                    width: active ? 1.6 : 1,
+                  ),
+                  boxShadow: active
+                      ? [
+                          BoxShadow(
+                            color: lime.withValues(alpha: .12),
+                            blurRadius: 20,
+                          ),
+                        ]
+                      : const [],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (art?.trim().isNotEmpty == true)
+                      CachedNetworkImage(
+                        imageUrl: art!,
+                        fit: BoxFit.cover,
+                        memCacheWidth: 700,
+                        fadeInDuration: Duration.zero,
+                      )
+                    else
+                      const ColoredBox(color: Color(0xFF141815)),
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Color(0x10000000),
+                            Color(0x7A000000),
+                            Color(0xF20A0C0B),
+                          ],
+                          stops: [0, .56, 1],
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 14,
+                      right: 14,
+                      bottom: 12,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            item.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 7),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(999),
+                            child: LinearProgressIndicator(
+                              minHeight: 4,
+                              value: widget.entry.progress,
+                              backgroundColor: Colors.white.withValues(alpha: .14),
+                              valueColor:
+                                  const AlwaysStoppedAnimation<Color>(lime),
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            [
+                              if (widget.entry.episode != null)
+                                widget.entry.episode!.label,
+                              '${(widget.entry.progress * 100).round()}% watched',
+                            ].join(' • '),
+                            style: const TextStyle(
+                              color: Color(0xFFBDC5BF),
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
