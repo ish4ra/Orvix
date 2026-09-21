@@ -92,4 +92,49 @@ void main() {
     );
   });
 
+
+  test('trusted transcript discovery never blocks on full-episode translation', () {
+    final service =
+        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+
+    final start = service.indexOf(
+      'static Future<AiPreparedSubtitle?> prepareTrustedTranscriptForNativeClock',
+    );
+    final end = service.indexOf(
+      'static Future<AiPreparedSubtitle>\n      prepareTranslatedTranscriptForNativeTiming',
+      start,
+    );
+    final trusted = service.substring(start, end);
+
+    expect(trusted, isNot(contains('_translateEntireSubtitle(')));
+    expect(trusted, contains('Sinhala will buffer during playback'));
+    expect(trusted, contains('translation of the whole episode is not'));
+  });
+
+  test('AI preparation cannot cover already-playing video with a full-screen overlay', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(
+      player,
+      contains(
+        '_aiSubtitleLoading &&\n'
+        '                    !_playbackStarted',
+      ),
+    );
+  });
+
+  test('prepared AI keeps English visible until a Sinhala cue is buffered', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    final start =
+        player.indexOf('Future<void> _handleEmbeddedSubtitleCue(List<String> lines)');
+    final end =
+        player.indexOf('Future<void> _registerLiveTranslationFailure(', start);
+    final handler = player.substring(start, end);
+
+    expect(handler, contains('unawaited(_setNativeSubtitleVisibility(true));'));
+    expect(handler, contains('unawaited(_ensureAiTranslationNear('));
+    expect(handler, contains('unawaited(_setNativeSubtitleVisibility(false));'));
+  });
+
 }
