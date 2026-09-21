@@ -13,6 +13,30 @@ void main() {
     expect(engine, PlayerEngineKind.exoPlayer);
   });
 
+  test('Auto uses MPV first for Android TV local P2P', () {
+    final engine = PlayerEngineRouter.choose(
+      preference: PlayerEnginePreference.auto,
+      isAndroid: true,
+      isAndroidTv: true,
+      url: 'http://127.0.0.1:11470/abc/-1',
+      releaseHint: 'Prison.Break.S01E01.1080p.WEB-DL.x264.mkv',
+    );
+
+    expect(engine, PlayerEngineKind.mpv);
+  });
+
+  test('Android TV debrid/remote HTTP still uses ExoPlayer first', () {
+    final engine = PlayerEngineRouter.choose(
+      preference: PlayerEnginePreference.auto,
+      isAndroid: true,
+      isAndroidTv: true,
+      url: 'https://cdn.example.com/video/master.m3u8',
+      releaseHint: 'Episode 1',
+    );
+
+    expect(engine, PlayerEngineKind.exoPlayer);
+  });
+
   test('Auto uses ExoPlayer for ordinary Android HTTP streams', () {
     final engine = PlayerEngineRouter.choose(
       preference: PlayerEnginePreference.auto,
