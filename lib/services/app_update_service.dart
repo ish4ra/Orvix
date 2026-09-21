@@ -53,6 +53,30 @@ class AppUpdateService {
 
   final http.Client _client;
 
+  Future<({bool success, String detail, String version})?>
+      consumeLastWindowsUpdateStatus() async {
+    if (!Platform.isWindows) return null;
+    try {
+      final support = await getApplicationSupportDirectory();
+      final statusFile = File(
+        '${support.path}${Platform.pathSeparator}update-handoff'
+        '${Platform.pathSeparator}last-update-status.txt',
+      );
+      if (!await statusFile.exists()) return null;
+      final raw = (await statusFile.readAsString()).trim();
+      await statusFile.delete();
+      final parts = raw.split('|');
+      if (parts.length < 3) return null;
+      return (
+        success: parts[0] == 'success',
+        detail: parts[1],
+        version: parts.sublist(2).join('|'),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<AppUpdateInfo?> checkForUpdate() async {
     try {
       final response = await _client
