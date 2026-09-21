@@ -2260,7 +2260,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               item: item,
               episode: episode,
               resultsFuture: Future.value(results),
-              preferFreeP2p: !hasCloudConnection,
+              preferFreeP2p: !hasDebridConnection,
             ),
           ),
         ),
