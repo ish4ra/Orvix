@@ -88,6 +88,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _preflightWarmup = false;
   bool _exitPrepared = false;
   Future<void>? _exitPreparation;
+  bool _backNavigationInProgress = false;
   bool _closing = false;
   final FocusNode _focusNode = FocusNode();
   AiPreparedSubtitle? _preparedAiSubtitle;
@@ -1295,12 +1296,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _handleEscape() async {
+    // A Windows key/button event can be delivered more than once while the
+    // native player teardown is still completing. Guard the route transition
+    // itself (not only the teardown future) so one user Back action can pop
+    // exactly one route.
+    if (_backNavigationInProgress || _closing) return;
     if (_desktop && await windowManager.isFullScreen()) {
       await windowManager.setFullScreen(false);
       return;
     }
+    _backNavigationInProgress = true;
     await _preparePlayerExit();
-    if (mounted) Navigator.of(context).maybePop();
+    if (mounted) Navigator.of(context).pop();
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
@@ -2711,6 +2718,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final player = widget.playback.player;
     return WillPopScope(
       onWillPop: () async {
+        if (_backNavigationInProgress || _closing) return false;
+        _backNavigationInProgress = true;
         await _preparePlayerExit();
         return true;
       },
