@@ -27,7 +27,7 @@ void main() {
     expect(app, contains('OrvixUpdateGate'));
 
     expect(update, contains("currentVersion = '0.7.5-beta.17'"));
-    expect(update, contains('Orvix-Setup'));
+    expect(update, contains("name.contains('Windows-x64')"));
     expect(update, contains('Android-TV.apk'));
     expect(update, contains('Android-Mobile.apk'));
     expect(update, contains('sha256.bind(file.openRead())'));
