@@ -889,10 +889,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
               _aiDisplaySubtitle = '';
             });
           }
+          // Sync-first V2 rule: never use a title/episode-only downloaded
+          // subtitle as the timing source. The selected video's native English
+          // text track remains the clock. We may use an embedded transcript or
+          // an exact file-hash OpenSubtitles match only as the TEXT oracle.
           final prepared =
-              await AiSinhalaSubtitleService.prepareForEmbeddedTiming(
-            item: widget.item!,
-            episode: widget.episode,
+              await AiSinhalaSubtitleService.prepareTrustedTranscriptForNativeClock(
+            title: widget.title,
+            videoUrl: widget.url,
+            releaseHint: widget.releaseHint,
+            expectedSizeBytes: widget.expectedSizeBytes,
+            expectedVideoHash: widget.expectedVideoHash,
             onStatus: (message) {
               if (!mounted || _closing) return;
               setState(() => _aiPreflightMessage = message);
@@ -903,7 +910,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
           }
           if (prepared == null) {
             return _enableEmbeddedLiveAiFallback(
-              'No downloadable transcript was available for prebuffering.',
+              'No embedded or exact-file transcript could be verified. '
+              'Using the video’s own English cues keeps Sinhala locked to native timing.',
             );
           }
 
@@ -912,7 +920,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
             _transitionAi(AiSinhalaRuntimeMode.prepared);
             _preparedTranslationFailures = 0;
             _aiSubtitleUnavailable = false;
-            _aiPreflightMessage = 'Embedded-timed AI Sinhala ready.';
+            _aiPreflightMessage =
+                'AI Sinhala V2 ready • native English cues control timing.';
             _lastAiPrefetchBucket = -1;
           });
           _positionSubscription ??=
