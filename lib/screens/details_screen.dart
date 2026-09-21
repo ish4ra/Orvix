@@ -101,6 +101,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
     unawaited(_loadMembership(widget.item));
 
     _detailsFuture = _loadDetails();
+    if (widget.item.kind == MediaKind.movie) {
+      unawaited(widget.sources.prefetch(widget.item));
+    }
   }
 
   Future<void> _loadMembership(MediaItem item) async {
@@ -139,6 +142,15 @@ class _DetailsScreenState extends State<DetailsScreen> {
     // the same local cache without blocking the screen.
     unawaited(_loadMembership(item));
     return item;
+  }
+
+  void _selectSeason(MediaItem item, int season) {
+    setState(() => _selectedSeason = season);
+    final episodes = item.episodes.where((e) => e.season == season).toList()
+      ..sort((a, b) => a.episode.compareTo(b.episode));
+    if (episodes.isNotEmpty) {
+      unawaited(widget.sources.prefetch(item, episode: episodes.first));
+    }
   }
 
   Future<void> _toggleLibrary(MediaItem item) async {
@@ -228,18 +240,40 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 padding: const EdgeInsets.fromLTRB(42, 28, 42, 18),
                 child: Column(
                   children: [
-                    Text(
-                      item.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 30,
-                        height: 1.05,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: -.65,
+                    if (item.logo?.trim().isNotEmpty == true)
+                      SizedBox(
+                        height: 74,
+                        child: CachedNetworkImage(
+                          imageUrl: item.logo!,
+                          fit: BoxFit.contain,
+                          fadeInDuration: Duration.zero,
+                          errorWidget: (_, __, ___) => Text(
+                            item.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 30,
+                              height: 1.05,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -.65,
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      Text(
+                        item.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 30,
+                          height: 1.05,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -.65,
+                        ),
                       ),
-                    ),
                     const SizedBox(height: 10),
                     Wrap(
                       alignment: WrapAlignment.center,
@@ -431,7 +465,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                   season: season,
                   poster: item.seasonPoster(season),
                   selected: season == selected,
-                  onTap: () => setState(() => _selectedSeason = season),
+                  onTap: () => _selectSeason(item, season),
                 );
               },
             ),
@@ -904,7 +938,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                   season: season,
                   poster: item.seasonPoster(season),
                   selected: season == selected,
-                  onTap: () => setState(() => _selectedSeason = season),
+                  onTap: () => _selectSeason(item, season),
                 );
               },
             ),
