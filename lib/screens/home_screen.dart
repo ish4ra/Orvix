@@ -8,17 +8,20 @@ import '../services/catalog_service.dart';
 import '../services/home_preferences_service.dart';
 import '../services/media_state_service.dart';
 import '../services/platform_profile.dart';
+import '../services/source_provider_service.dart';
 import '../widgets/media_card.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     required this.catalog,
+    required this.sources,
     required this.mediaState,
     required this.onOpen,
   });
 
   final CatalogService catalog;
+  final SourceProviderService sources;
   final MediaStateService mediaState;
   final ValueChanged<MediaItem> onOpen;
 
@@ -28,6 +31,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _preferences = HomePreferencesService();
+  final Set<String> _warmingTitles = <String>{};
   late Future<_HomeData> _homeFuture;
 
   @override
@@ -38,13 +42,43 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _load() => _homeFuture = _loadHome();
 
-  void _prefetchItem(MediaItem item) {
+  String _warmKey(MediaItem item) => '${item.kind.name}:${item.id}';
+
+  void _prefetchMetadata(MediaItem item) {
     unawaited(widget.catalog.prefetchDetails(item));
+  }
+
+  void _prefetchItem(MediaItem item) {
+    final key = _warmKey(item);
+    if (!_warmingTitles.add(key)) return;
+    unawaited(() async {
+      try {
+        final rich = await widget.catalog.details(item) ?? item;
+        EpisodeItem? episode;
+        if (rich.kind == MediaKind.series && rich.episodes.isNotEmpty) {
+          final ordered = [...rich.episodes]
+            ..sort((a, b) {
+              final bySeason = a.season.compareTo(b.season);
+              return bySeason != 0
+                  ? bySeason
+                  : a.episode.compareTo(b.episode);
+            });
+          episode = ordered.first;
+        }
+        await widget.sources.prefetch(rich, episode: episode);
+      } catch (_) {
+        // Hover/focus prefetch must never block navigation.
+      } finally {
+        _warmingTitles.remove(key);
+      }
+    }());
   }
 
   void _openItem(MediaItem item) {
     _prefetchItem(item);
-    widget.onOpen(item);
+    // If hover/focus or Home warm-up already completed, navigate with the rich
+    // object itself so Details does not render a sparse placeholder first.
+    widget.onOpen(widget.catalog.peekDetails(item) ?? item);
   }
 
   Future<_HomeData> _loadHome() async {
@@ -85,18 +119,24 @@ class _HomeScreenState extends State<HomeScreen> {
     media[HomeSectionId.myLibrary] = library;
     media[HomeSectionId.myWatchlist] = watchlist;
 
+    // Warm a useful part of every visible rail instead of only the first two
+    // titles globally. Metadata is cheap enough to fan out modestly; source
+    // prefetch is limited to the first six likely interactions.
     final warm = <MediaItem>[];
     final seenWarm = <String>{};
     for (final section in sections) {
-      for (final item in (media[section] ?? const <MediaItem>[]).take(2)) {
+      for (final item in (media[section] ?? const <MediaItem>[]).take(3)) {
         final key = '${item.kind.name}:${item.id}';
         if (seenWarm.add(key)) warm.add(item);
-        if (warm.length >= 10) break;
+        if (warm.length >= 18) break;
       }
-      if (warm.length >= 10) break;
+      if (warm.length >= 18) break;
     }
-    for (final item in warm) {
-      unawaited(widget.catalog.prefetchDetails(item));
+    for (final item in warm.skip(6)) {
+      _prefetchMetadata(item);
+    }
+    for (final item in warm.take(6)) {
+      _prefetchItem(item);
     }
 
     return _HomeData(
@@ -552,6 +592,7 @@ class _MediaRail extends StatelessWidget {
                   onFocusChanged: (focused) {
                     if (focused) onPrefetch(item);
                   },
+                  onPreview: () => onPrefetch(item),
                   onTap: () => onOpen(item),
                 );
               },
