@@ -45,6 +45,54 @@ class LocalTorrentHealth {
       'peers: $peers, connections: $connections, speed: $speedLabel';
 }
 
+class LocalTorrentProbeResult {
+  const LocalTorrentProbeResult({
+    required this.playableNow,
+    required this.bytesReceived,
+    required this.elapsed,
+    required this.firstByteLatency,
+    required this.peers,
+    required this.connections,
+    required this.downloadSpeedBytesPerSecond,
+  });
+
+  final bool playableNow;
+  final int bytesReceived;
+  final Duration elapsed;
+  final Duration? firstByteLatency;
+  final int peers;
+  final int connections;
+  final double downloadSpeedBytesPerSecond;
+
+  String get label {
+    if (!playableNow) return 'No live data';
+    if (downloadSpeedBytesPerSecond >= 2 * 1024 * 1024) return 'Ready now';
+    if (downloadSpeedBytesPerSecond >= 512 * 1024) return 'Fast swarm';
+    if (bytesReceived > 0) return 'Live swarm';
+    return 'Slow';
+  }
+
+  int get score {
+    if (!playableNow) return -1000000000;
+    final latencyMs = firstByteLatency?.inMilliseconds ?? 99999;
+    var value = 1000000000;
+    if (latencyMs <= 500) {
+      value += 300000000;
+    } else if (latencyMs <= 1200) {
+      value += 220000000;
+    } else if (latencyMs <= 2500) {
+      value += 120000000;
+    }
+    value += (connections.clamp(0, 100) * 2000000);
+    value += (peers.clamp(0, 200) * 500000);
+    value +=
+        (downloadSpeedBytesPerSecond.clamp(0, 12 * 1024 * 1024) ~/ 1024) *
+            5000;
+    value += bytesReceived.clamp(0, 512 * 1024) * 100;
+    return value;
+  }
+}
+
 class LocalTorrentService {
   LocalTorrentService._();
 
@@ -390,6 +438,128 @@ class LocalTorrentService {
       );
     } catch (_) {
       return null;
+    }
+  }
+
+  Future<LocalTorrentProbeResult> probe(
+    SourceResult source, {
+    Duration timeout = const Duration(milliseconds: 2600),
+    int targetBytes = 384 * 1024,
+  }) async {
+    if (!source.isMagnet) {
+      return const LocalTorrentProbeResult(
+        playableNow: true,
+        bytesReceived: 1,
+        elapsed: Duration.zero,
+        firstByteLatency: Duration.zero,
+        peers: 0,
+        connections: 0,
+        downloadSpeedBytesPerSecond: 0,
+      );
+    }
+
+    final infoHash = _extractInfoHash(source.resource);
+    if (infoHash == null) {
+      return LocalTorrentProbeResult(
+        playableNow: false,
+        bytesReceived: 0,
+        elapsed: timeout,
+        firstByteLatency: null,
+        peers: 0,
+        connections: 0,
+        downloadSpeedBytesPerSecond: 0,
+      );
+    }
+
+    await ensureRunning();
+    final engineMagnet = normalizeMagnetForEngine(source.resource);
+    final trackerUrls = trackerUrlsForMagnet(engineMagnet);
+    final fileHint = source.fileNameHint?.trim();
+    final body = <String, dynamic>{
+      'from': engineMagnet,
+      'guessFileIdx': true,
+      'peerSearch': <String, dynamic>{
+        'sources': <String>[
+          'dht:$infoHash',
+          for (final tracker in trackerUrls) 'tracker:$tracker',
+        ],
+      },
+      if (fileHint != null && fileHint.isNotEmpty)
+        'fileMustInclude': <String>[fileHint],
+    };
+
+    try {
+      final response = await _createTorrent(body);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return LocalTorrentProbeResult(
+          playableNow: false,
+          bytesReceived: 0,
+          elapsed: timeout,
+          firstByteLatency: null,
+          peers: 0,
+          connections: 0,
+          downloadSpeedBytesPerSecond: 0,
+        );
+      }
+
+      Map<String, dynamic>? payload;
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) payload = decoded;
+      } catch (_) {}
+
+      final fileIndex = source.torrentFileIndex ??
+          _asInt(payload?['guessedFileIdx']) ??
+          _asInt(payload?['fileIdx']) ??
+          -1;
+      final streamUrl =
+          _buildStreamUrl(infoHash: infoHash, fileIndex: fileIndex);
+
+      final watch = Stopwatch()..start();
+      Duration? firstByte;
+      var bytes = 0;
+      final client = http.Client();
+      try {
+        await (() async {
+          final request = http.Request('GET', Uri.parse(streamUrl));
+          request.headers['Range'] = 'bytes=0-${targetBytes - 1}';
+          final streamed = await client.send(request);
+          if (streamed.statusCode != 200 && streamed.statusCode != 206) return;
+          await for (final chunk in streamed.stream) {
+            if (chunk.isEmpty) continue;
+            firstByte ??= watch.elapsed;
+            bytes += chunk.length;
+            if (bytes >= targetBytes) break;
+          }
+        })().timeout(timeout);
+      } catch (_) {
+        // A timeout is itself useful live-health evidence.
+      } finally {
+        client.close();
+        watch.stop();
+      }
+
+      final health = await healthForStreamUrl(streamUrl);
+      final elapsedSeconds =
+          watch.elapsedMicroseconds <= 0 ? 0.001 : watch.elapsedMicroseconds / 1e6;
+      final measuredSpeed = bytes / elapsedSeconds;
+      final engineSpeed = health?.downloadSpeedBytesPerSecond ?? 0;
+      final speed = measuredSpeed > engineSpeed ? measuredSpeed : engineSpeed;
+
+      return LocalTorrentProbeResult(
+        playableNow: bytes >= 64 * 1024,
+        bytesReceived: bytes,
+        elapsed: watch.elapsed,
+        firstByteLatency: firstByte,
+        peers: health?.peers ?? 0,
+        connections: health?.connections ?? 0,
+        downloadSpeedBytesPerSecond: speed,
+      );
+    } finally {
+      // Never detach a torrent that is currently being used by the player.
+      if (_currentInfoHash != infoHash) {
+        await _removeEngine(infoHash);
+      }
     }
   }
 
