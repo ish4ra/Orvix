@@ -40,4 +40,25 @@ void main() {
     expect(player, contains('_nativeAiMatchIndex = -1;'));
     expect(player, contains('unawaited(_refreshNativeCueAfterSeek());'));
   });
+
+  test('incremental Sinhala buffering stays small and follows playback position', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(player, contains('lookBehind: 3'));
+    expect(player, contains('lookAhead: 24'));
+    expect(player, contains('final bucket = position.inSeconds ~/ 30;'));
+    expect(player, contains('unawaited(_ensureAiTranslationNear(position'));
+  });
+
+  test('live AI fallback shows English while translation is in flight', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    final start = player.indexOf('Future<void> _translateLiveSubtitleCue');
+    final end = player.indexOf('double _effectiveSubtitleFontSize', start);
+    final live = player.substring(start, end);
+
+    expect(live, contains('await _setNativeSubtitleVisibility(true);'));
+    expect(live, contains('await _setNativeSubtitleVisibility(false);'));
+  });
+
 }
