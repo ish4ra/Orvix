@@ -97,7 +97,10 @@ class FreeP2pLiveProbeService {
           final batch = candidates.sublist(start, end);
           await Future.wait(
             batch.map((source) async {
-              final result = await LocalTorrentService.instance.probe(source);
+              final result = await LocalTorrentService.instance.probe(
+                source,
+                retainSession: true,
+              );
               _cache[_key(source)] = (at: DateTime.now(), result: result);
             }),
           );
@@ -119,7 +122,16 @@ class FreeP2pLiveProbeService {
     return completer.future;
   }
 
+  Future<void> prepareForPlayback(SourceResult source) async {
+    await LocalTorrentService.instance.prepareRetainedProbeForPlayback(source);
+  }
+
+  Future<void> release() async {
+    await LocalTorrentService.instance.releaseRetainedProbeSessions();
+  }
+
   void clear() {
+    unawaited(release());
     _cache.clear();
     _rankingReady = false;
   }
