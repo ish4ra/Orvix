@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/media_item.dart';
+import '../services/free_p2p_live_probe_service.dart';
+import '../services/local_torrent_service.dart';
 import '../services/source_provider_service.dart';
 import '../utils/tv_keys.dart';
 
@@ -49,6 +51,8 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
   String? _providerFilter;
   bool _compatibilityOnly = false;
   late _TvSourceSort _sort;
+  final FreeP2pLiveProbeService _liveProbe = FreeP2pLiveProbeService();
+  bool _liveProbeStarted = false;
 
   String get _pinKey =>
       widget.sources.sourceTargetKey(widget.item, episode: widget.episode);
@@ -98,7 +102,14 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
         _pinnedIdentity = values[2] as String?;
         _loading = false;
         _error = null;
+        if (refresh) {
+          _liveProbe.clear();
+          _liveProbeStarted = false;
+        }
       });
+      if (_sort == _TvSourceSort.free) {
+        _startLiveProbe();
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -106,6 +117,22 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
         _error = error.toString();
       });
     }
+  }
+
+  void _startLiveProbe() {
+    if (_liveProbeStarted || _results.isEmpty) return;
+    _liveProbeStarted = true;
+    unawaited(
+      _liveProbe
+          .probeTopCandidates(
+            _results,
+            widget.sources,
+            onUpdate: () {
+              if (mounted) setState(() {});
+            },
+          )
+          .catchError((_) {}),
+    );
   }
 
   List<String> get _providers {
@@ -121,7 +148,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
     List<SourceResult> sorted;
     switch (_sort) {
       case _TvSourceSort.free:
-        sorted = widget.sources.sortForFreeStreaming(_results);
+        sorted = _liveProbe.rank(_results, widget.sources);
       case _TvSourceSort.smooth:
         sorted = widget.sources.sortForSmoothPlayback(_results);
       case _TvSourceSort.best:
@@ -536,7 +563,10 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
                 selected: _sort == _TvSourceSort.free,
                 label: 'Free P2P',
                 icon: Icons.bolt_rounded,
-                onPressed: () => setState(() => _sort = _TvSourceSort.free),
+                onPressed: () {
+                  setState(() => _sort = _TvSourceSort.free);
+                  _startLiveProbe();
+                },
               ),
               const SizedBox(width: 8),
               _TvFilterChip(
@@ -656,6 +686,9 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
           assessment: _sort == _TvSourceSort.free
               ? widget.sources.assessFreePlayback(source)
               : null,
+          liveProbe: _sort == _TvSourceSort.free
+              ? _liveProbe.resultFor(source)
+              : null,
           pinned: pinned,
           autofocus: index == 0,
           busy: _openingResource == source.resource,
@@ -672,6 +705,7 @@ class _TvSourceRow extends StatefulWidget {
     super.key,
     required this.source,
     required this.assessment,
+    required this.liveProbe,
     required this.pinned,
     required this.autofocus,
     required this.busy,
@@ -681,6 +715,7 @@ class _TvSourceRow extends StatefulWidget {
 
   final SourceResult source;
   final FreeSourceAssessment? assessment;
+  final LocalTorrentProbeResult? liveProbe;
   final bool pinned;
   final bool autofocus;
   final bool busy;
@@ -723,11 +758,16 @@ class _TvSourceRowState extends State<_TvSourceRow> {
   Widget build(BuildContext context) {
     final source = widget.source;
     final quality = source.quality ?? source.releaseQuality ?? '—';
+    final live = widget.liveProbe;
     final detail = <String>[
       source.provider,
       if (source.cached) 'Cached',
       if (source.sizeLabel != null) source.sizeLabel!,
       if (source.seeders != null) '${source.seeders} seeders',
+      if (live != null) live.label,
+      if (live != null) live.speedLabel,
+      if (live != null && live.connections > 0)
+        '${live.connections} live connections',
       source.isMagnet ? 'P2P' : 'Direct',
     ].join('  •  ');
 
