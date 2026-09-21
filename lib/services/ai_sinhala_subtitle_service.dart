@@ -292,8 +292,12 @@ class AiSinhalaSubtitleService {
       required String readyMessage,
     }) async {
       final cached = _preparedCache[cacheKey];
-      if (cached != null && cached.translatedCount == cached.cues.length) {
-        onStatus?.call('Cached exact transcript is ready.');
+      if (cached != null) {
+        onStatus?.call(
+          cached.translatedCount > 0
+              ? 'Cached transcript found • ${cached.translatedCount}/${cached.cues.length} Sinhala cues ready.'
+              : 'Cached exact transcript found • Sinhala will buffer during playback.',
+        );
         return cached;
       }
 
@@ -306,21 +310,10 @@ class AiSinhalaSubtitleService {
       );
       _preparedCache[cacheKey] = prepared;
 
-      await _translateEntireSubtitle(
-        prepared,
-        onProgress: (done, total) {
-          final percent =
-              total <= 0 ? 100 : ((done * 100) / total).round().clamp(0, 100);
-          onStatus?.call(
-            'Translating complete Sinhala transcript… $percent% ($done/$total)',
-          );
-        },
-      );
-      if (prepared.translatedCount != prepared.cues.length) {
-        throw const AiSubtitleException(
-          'The complete Sinhala transcript did not finish translating.',
-        );
-      }
+      // Sync-first V2.1: transcript discovery is allowed to block briefly,
+      // translation of the whole episode is not. Playback starts immediately
+      // and only a small moving window is translated/cached ahead of the
+      // current native English cue.
       onStatus?.call(readyMessage);
       return prepared;
     }
