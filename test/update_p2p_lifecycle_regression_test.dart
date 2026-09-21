@@ -36,6 +36,9 @@ void main() {
     expect(update, contains('orvix_update_handoff.ps1'));
     expect(update, contains('rootBundle.loadString'));
     expect(handoff, contains('Waiting for Orvix PID'));
+    expect(handoff, contains('Find-OrvixExecutable'));
+    expect(handoff, contains("InstallLocation"));
+    expect(handoff, contains("Programs\\Orvix\\orvix.exe"));
     expect(
       handoff,
       contains(
