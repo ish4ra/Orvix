@@ -247,6 +247,33 @@ jobs:
             throw "Installed Orvix is missing: $installed"
           }
 
+      - name: Smoke test installer over a running Orvix
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installed = Join-Path $env:LOCALAPPDATA 'Programs\\Orvix\\orvix.exe'
+          $installer = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.5-dev-Windows-x64.exe'
+          $upgradeLog = Join-Path $env:RUNNER_TEMP 'orvix-installer-running-app.log'
+
+          $running = Start-Process -FilePath $installed -PassThru
+          Start-Sleep -Seconds 3
+          if ($running.HasExited) {
+            throw 'Installed Orvix exited before the running-app update test.'
+          }
+
+          $upgrade = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/LOG=$upgradeLog" -Wait -PassThru
+          if ($upgrade.ExitCode -ne 0) {
+            if (Test-Path $upgradeLog) { Get-Content $upgradeLog }
+            Stop-Process -Id $running.Id -Force -ErrorAction SilentlyContinue
+            throw "Installer could not update a running Orvix instance; exit code $($upgrade.ExitCode)"
+          }
+
+          $running.Refresh()
+          if (-not $running.HasExited) {
+            Stop-Process -Id $running.Id -Force -ErrorAction SilentlyContinue
+            throw 'Installer returned success but the old Orvix process was still running.'
+          }
+
       - name: Smoke test Windows single-instance guard
         shell: pwsh
         run: |
