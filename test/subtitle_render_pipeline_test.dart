@@ -49,4 +49,23 @@ void main() {
       contains('Orvix font/background/position styling is only used for AI Sinhala.'),
     );
   });
+
+  test('generated Sinhala SRT paths stay visible with native subtitle rendering', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    final generatedStart =
+        player.indexOf('if (aiReady && _generatedAiSubtitlePath != null)');
+    final generatedEnd =
+        player.indexOf('} else if (aiReady && _preparedAiSubtitle != null)', generatedStart);
+    final generated = player.substring(generatedStart, generatedEnd);
+    expect(generated, contains('await _setNativeSubtitleVisibility(true);'));
+
+    final onlineStart =
+        player.indexOf('Future<void> _activateAiSinhalaFromOnlineSubtitle');
+    final onlineEnd =
+        player.indexOf('Future<void> _showOnlineSubtitles()', onlineStart);
+    final online = player.substring(onlineStart, onlineEnd);
+    expect(online, contains('await _setNativeSubtitleVisibility(true);'));
+  });
+
 }
