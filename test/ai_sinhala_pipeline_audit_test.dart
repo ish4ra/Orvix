@@ -55,4 +55,41 @@ void main() {
     expect(player, contains('bool _preflightWarmup = false;'));
     expect(player, contains('if (_closing || _preflightWarmup) return;'));
   });
+
+  test('live native-cue fallback actually translates when no transcript is prepared', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    final start =
+        player.indexOf('Future<void> _handleEmbeddedSubtitleCue(List<String> lines)');
+    final end =
+        player.indexOf('Future<void> _registerLiveTranslationFailure(', start);
+    final handler = player.substring(start, end);
+
+    expect(handler, contains('if (_liveAiFallback)'));
+    expect(handler, contains('await _translateLiveSubtitleCue(source);'));
+    expect(
+      handler.indexOf('await _translateLiveSubtitleCue(source);'),
+      lessThan(handler.indexOf('final prepared = _preparedAiSubtitle;')),
+    );
+  });
+
+  test('Windows local P2P starts playback normally then attaches native-cue AI', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    final openStart = player.indexOf('Future<void> _open()');
+    final prepareStart =
+        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
+    final open = player.substring(openStart, prepareStart);
+
+    expect(
+      open,
+      contains('play: deferAiForLocalP2p ? true : !aiPreferred'),
+    );
+    expect(open, contains('? await _tryPrepareEmbeddedAiTiming()'));
+    expect(
+      open,
+      isNot(contains('!deferAiForLocalP2p &&\n          (_preparedAiSubtitle')),
+    );
+  });
+
 }
