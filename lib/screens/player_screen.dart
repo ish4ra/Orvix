@@ -247,16 +247,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       final aiSettingEnabled =
           await AiSinhalaPreferencesService.isEnabled();
-      // Local torrent playback is intentionally stability-first. Automatic
-      // AI Sinhala preflight used to play/pause/seek the still-warming P2P
-      // stream before normal playback, which can destabilize native MPV on
-      // Windows. Keep manual/online subtitle tools available, but do not probe
-      // the local torrent stream automatically.
+      // Windows local P2P remains stability-first, but it must not disable AI
+      // Sinhala completely. Skip the old play/pause/seek preflight and start
+      // playback normally; once the container exposes its native English text
+      // track, use those real cue events as the subtitle clock.
       final deferAiForLocalP2p =
           Platform.isWindows && _localP2pStream && _preparedAiSubtitle == null;
       final aiPreferred = widget.allowAiSinhala &&
           !PlatformProfile.isAndroidTv &&
-          !deferAiForLocalP2p &&
           (_preparedAiSubtitle != null || aiSettingEnabled);
       var aiReady = _preparedAiSubtitle != null;
 
@@ -271,10 +269,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
           );
           _aiSubtitleUnavailable = false;
           _aiPreflightMessage = aiPreferred && !aiReady
-              ? 'Opening video paused to verify its real English subtitle track…'
-              : deferAiForLocalP2p && aiSettingEnabled
-                  ? 'AI Sinhala auto-preparation is deferred for local P2P stability. Use Audio & Subtitles to choose an online subtitle manually.'
-                  : '';
+              ? deferAiForLocalP2p
+                  ? 'Starting local P2P normally; AI Sinhala will follow the video’s own English cues.'
+                  : 'Opening video paused to verify its real English subtitle track…'
+              : '';
         });
       }
 
@@ -286,11 +284,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
       await widget.playback.open(
         widget.url,
         title: widget.title,
-        play: !aiPreferred,
+        // Local P2P must start normally. Its AI path only observes/selects
+        // subtitle cues after startup and never runs the seek/pause sampler.
+        play: deferAiForLocalP2p ? true : !aiPreferred,
       );
 
       if (aiPreferred && !aiReady) {
-        aiReady = await _prepareAiSinhalaBeforePlayback();
+        aiReady = deferAiForLocalP2p
+            ? await _tryPrepareEmbeddedAiTiming()
+            : await _prepareAiSinhalaBeforePlayback();
       }
 
       if (aiReady && _generatedAiSubtitlePath != null) {
@@ -1717,6 +1719,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (_aiDisplaySubtitle.isNotEmpty && mounted) {
         setState(() => _aiDisplaySubtitle = '');
       }
+      return;
+    }
+
+    if (_liveAiFallback) {
+      await _translateLiveSubtitleCue(source);
       return;
     }
 
