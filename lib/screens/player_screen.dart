@@ -37,6 +37,7 @@ class PlayerScreen extends StatefulWidget {
     this.onNext,
     this.onPlaybackStarted,
     this.onStartupFailed,
+    this.onStartupFallback,
   });
 
   final PlaybackService playback;
@@ -54,6 +55,7 @@ class PlayerScreen extends StatefulWidget {
   final Future<void> Function()? onNext;
   final VoidCallback? onPlaybackStarted;
   final ValueChanged<String>? onStartupFailed;
+  final Future<void> Function(String message)? onStartupFallback;
 
   @override
   State<PlayerScreen> createState() => _PlayerScreenState();
@@ -202,10 +204,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
-  void _reportStartupFailure(String message) {
-    if (_closing || _playbackStarted || _failureReported) return;
+  bool _reportStartupFailure(String message) {
+    if (_closing || _playbackStarted || _failureReported) return false;
     _failureReported = true;
     widget.onStartupFailed?.call(message);
+    final fallback = widget.onStartupFallback;
+    if (fallback != null) {
+      unawaited(_runStartupFallback(message, fallback));
+      return true;
+    }
+    return false;
+  }
+
+  Future<void> _runStartupFallback(
+    String message,
+    Future<void> Function(String message) fallback,
+  ) async {
+    await _preparePlayerExit();
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    await fallback(message);
   }
 
   Future<void> _open() async {
@@ -339,11 +358,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
           const message =
               'The stream is taking longer than expected to start. '
               'Orvix will recover automatically if media begins playing.';
-          _reportStartupFailure(message);
-          setState(() {
-            _startupFailureVisible = true;
-            _error = message;
-          });
+          final switchingEngine = _reportStartupFailure(message);
+          if (!switchingEngine && mounted) {
+            setState(() {
+              _startupFailureVisible = true;
+              _error = message;
+            });
+          }
         });
       }
 
@@ -351,8 +372,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (currentVolume > 0) _lastVolume = currentVolume;
     } catch (e) {
       final message = e.toString();
-      _reportStartupFailure(message);
-      if (mounted) {
+      final switchingEngine = _reportStartupFailure(message);
+      if (mounted && !switchingEngine) {
         setState(() {
           _transitionAi(AiSinhalaRuntimeMode.native);
           _error = message;
@@ -370,11 +391,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return;
     }
     final detail = 'Playback engine: ${message.trim()}';
-    _reportStartupFailure(detail);
-    setState(() {
-      _startupFailureVisible = true;
-      _error = detail;
-    });
+    final switchingEngine = _reportStartupFailure(detail);
+    if (!switchingEngine && mounted) {
+      setState(() {
+        _startupFailureVisible = true;
+        _error = detail;
+      });
+    }
   }
 
   bool _hasTextSubtitleTrack() {
