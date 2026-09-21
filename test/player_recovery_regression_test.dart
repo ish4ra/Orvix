@@ -96,5 +96,24 @@ void main() {
       exo,
       isNot(contains('primary.withValues(alpha: .34)')),
     );
+
+    // Back navigation is a strict one-step stack. The source picker stays
+    // mounted under the player and repeated Back events cannot pop two routes.
+    expect(details, contains('Future<void> Function(SourceResult source)? onPlaySource'));
+    expect(details, contains('await _chooseSource('));
+    expect(details, contains('onPlaySource: (selected) async'));
+    expect(details, contains('await play(source);'));
+    expect(
+      details,
+      contains('returning from playback does not refetch/refresh'),
+    );
+    expect(player, contains('bool _backNavigationInProgress = false;'));
+    expect(
+      player,
+      contains('if (_backNavigationInProgress || _closing) return;'),
+    );
+    expect(player, contains('_backNavigationInProgress = true;'));
+    expect(player, contains('Navigator.of(context).pop();'));
+
   });
 }
