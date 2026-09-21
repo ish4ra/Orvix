@@ -307,6 +307,7 @@ class _OrvixShellState extends State<_OrvixShell> {
         // Library revisions still rebuild this shell, but must not remount Home:
         // remounting recreates its Future/ListView and jumps the user to the top.
         catalog: widget.catalog,
+        sources: widget.sources,
         mediaState: widget.mediaState,
         onOpen: _openMedia,
       ),
