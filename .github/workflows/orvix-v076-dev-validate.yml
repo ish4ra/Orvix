@@ -274,6 +274,101 @@ jobs:
             throw 'Installer returned success but the old Orvix process was still running.'
           }
 
+      - name: Compatibility test beta.2 in-app updater to new installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $currentInstaller = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.5-dev-Windows-x64.exe'
+          $installedDir = Join-Path $env:LOCALAPPDATA 'Programs\\Orvix'
+          $uninstaller = Join-Path $installedDir 'unins000.exe'
+
+          # Reset to the exact public beta.2 package the user is running.
+          if (Test-Path $uninstaller) {
+            $cleanup = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+            if ($cleanup.ExitCode -ne 0) { throw "Pre-migration cleanup failed: $($cleanup.ExitCode)" }
+          }
+
+          $beta2 = Join-Path $env:RUNNER_TEMP 'Orvix-Setup-v0.7.6-beta.2-Windows-x64.exe'
+          Invoke-WebRequest -Uri 'https://github.com/ish4ra/Orvix/releases/download/v0.7.6-beta.2/Orvix-Setup-v0.7.6-beta.2-Windows-x64.exe' -OutFile $beta2
+          if ((Get-Item $beta2).Length -lt 70000000) { throw 'Downloaded beta.2 installer looks incomplete.' }
+
+          $installBeta2 = Start-Process -FilePath $beta2 -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Wait -PassThru
+          if ($installBeta2.ExitCode -ne 0) { throw "beta.2 setup failed: $($installBeta2.ExitCode)" }
+
+          $beta2Exe = Join-Path $installedDir 'orvix.exe'
+          $beta2Helper = Join-Path $installedDir 'orvix_updater_helper.exe'
+          $beta2Stream = Join-Path $installedDir 'orvix-stream-server.exe'
+          foreach ($required in @($beta2Exe, $beta2Helper, $beta2Stream)) {
+            if (-not (Test-Path $required)) { throw "beta.2 migration fixture missing: $required" }
+          }
+
+          # Reproduce the old bug class: beta.2 UI + an orphanable P2P engine
+          # are alive when the old updater helper takes over.
+          $oldApp = Start-Process -FilePath $beta2Exe -PassThru
+          $streamWork = Join-Path $env:RUNNER_TEMP 'beta2-stream-server'
+          New-Item -ItemType Directory -Force -Path $streamWork | Out-Null
+          $oldStream = Start-Process -FilePath $beta2Stream -ArgumentList '--no-tray' -WorkingDirectory $streamWork -PassThru
+          Start-Sleep -Seconds 3
+          if ($oldApp.HasExited) { throw 'beta.2 app exited before migration test.' }
+          if ($oldStream.HasExited) { throw 'beta.2 stream-server exited before migration test.' }
+
+          $helperCopy = Join-Path $env:RUNNER_TEMP 'beta2-updater-helper.exe'
+          Copy-Item $beta2Helper $helperCopy -Force
+          $status = Join-Path $env:RUNNER_TEMP 'beta2-to-next-status.txt'
+          $helperLog = Join-Path $env:RUNNER_TEMP 'beta2-to-next-helper.log'
+          $installerLog = Join-Path $env:RUNNER_TEMP 'beta2-to-next-installer.log'
+          foreach ($path in @($status, $helperLog, $installerLog)) {
+            if (Test-Path $path) { Remove-Item $path -Force }
+          }
+
+          $helperArgs = @(
+            '--parent-pid', "$($oldApp.Id)",
+            '--installer', "$currentInstaller",
+            '--restart-exe', '',
+            '--target-version', '0.7.5-dev',
+            '--log', "$helperLog",
+            '--installer-log', "$installerLog",
+            '--status', "$status",
+            '--no-restart'
+          )
+          $helper = Start-Process -FilePath $helperCopy -ArgumentList $helperArgs -PassThru
+          Start-Sleep -Milliseconds 700
+
+          # beta.2 itself used exit(0) after handing off. Force-stopping the
+          # fixture reproduces that abrupt parent disappearance.
+          Stop-Process -Id $oldApp.Id -Force -ErrorAction SilentlyContinue
+
+          if (-not $helper.WaitForExit(90000)) {
+            Stop-Process -Id $helper.Id -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $oldStream.Id -Force -ErrorAction SilentlyContinue
+            throw 'beta.2 updater helper timed out while applying the new installer.'
+          }
+          if ($helper.ExitCode -ne 0) {
+            if (Test-Path $helperLog) { Get-Content $helperLog }
+            if (Test-Path $installerLog) { Get-Content $installerLog }
+            Stop-Process -Id $oldStream.Id -Force -ErrorAction SilentlyContinue
+            throw "beta.2 updater helper failed with exit code $($helper.ExitCode)"
+          }
+
+          if (-not (Test-Path $status)) { throw 'beta.2 helper did not write migration status.' }
+          $value = (Get-Content -Raw $status).Trim()
+          if ($value -ne 'success|0|0.7.5-dev') {
+            if (Test-Path $helperLog) { Get-Content $helperLog }
+            if (Test-Path $installerLog) { Get-Content $installerLog }
+            throw "Unexpected beta.2 migration status: $value"
+          }
+
+          # The new installer must have killed the stale old P2P process before
+          # replacing its executable.
+          $oldStream.Refresh()
+          if (-not $oldStream.HasExited) {
+            Stop-Process -Id $oldStream.Id -Force -ErrorAction SilentlyContinue
+            throw 'Old beta.2 stream-server survived the upgrade.'
+          }
+          if (-not (Test-Path (Join-Path $installedDir 'orvix.exe'))) {
+            throw 'Orvix is missing after beta.2 migration.'
+          }
+
       - name: Smoke test Windows single-instance guard
         shell: pwsh
         run: |
