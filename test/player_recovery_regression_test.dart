@@ -55,5 +55,9 @@ void main() {
     expect(player, contains('await _preparePlayerExit();'));
     expect(exo, contains('await controller.dispose();'));
     expect(exo, contains('ReadingOrderTraversalPolicy'));
+    expect(
+      exo,
+      contains('if (!_surfaceFocus.hasPrimaryFocus) return KeyEventResult.ignored;'),
+    );
   });
 }
