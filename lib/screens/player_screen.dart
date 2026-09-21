@@ -305,7 +305,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           ),
         );
         await _setNativeSubtitleDelayProperty(0);
-        await _setNativeSubtitleVisibility(false);
+        await _setNativeSubtitleVisibility(true);
         if (mounted) {
           setState(() {
             _transitionAi(AiSinhalaRuntimeMode.native);
@@ -1053,19 +1053,34 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (prepared == null) return;
     _subtitleChoiceOverridden = true;
     await _setNativeSubtitleDelayProperty(0);
-    await _setNativeSubtitleVisibility(false);
     if (!mounted) return;
     setState(() {
       _transitionAi(AiSinhalaRuntimeMode.prepared);
       _lastAiPrefetchBucket = -1;
+      _aiDisplaySubtitle = '';
     });
     _positionSubscription ??=
         widget.playback.player.stream.position.listen(_onPosition);
-    _timingTrackSelected = false;
-    _timingTrackIsText = false;
+    _subtitleTimingSubscription ??=
+        widget.playback.player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
+
+    await _ensureEnglishTimingTrack();
     await _loadManualSync();
     if (!mounted) return;
-    _refreshAiSubtitle();
+
+    if (_timingTrackSelected && _timingTrackIsText) {
+      await _setNativeSubtitleVisibility(true);
+      final position = widget.playback.player.state.position;
+      final bucket = position.inSeconds ~/ 30;
+      _lastAiPrefetchBucket = bucket;
+      unawaited(_ensureAiTranslationNear(position, bucket: bucket));
+      unawaited(_refreshNativeCueAfterSeek());
+    } else {
+      // Last-resort legacy path when no readable native text timing track is
+      // exposed. Position lookup remains available, but never hide a selected
+      // source subtitle merely because AI was requested.
+      _refreshAiSubtitle();
+    }
   }
 
   Future<void> _setSubtitleFontSize(double value) async {
@@ -1574,7 +1589,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (chosen != null) {
         _timingTrackSelected = true;
         _timingTrackIsText = !_isImageSubtitleTrack(chosen);
-        await _hideNativeTimingSubtitle();
+        await _setNativeSubtitleDelayProperty(0);
+        await _setNativeSubtitleVisibility(true);
         _startNativeSubtitleClock();
         return;
       }
@@ -2052,7 +2068,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ),
       );
       await _setNativeSubtitleDelayProperty(0);
-      await _setNativeSubtitleVisibility(false);
+      await _setNativeSubtitleVisibility(true);
 
       if (!mounted) return;
       setState(() {
