@@ -38,11 +38,12 @@ void AppendLog(const std::wstring& path, const std::wstring& message) {
   int bytes_needed =
       WideCharToMultiByte(CP_UTF8, 0, line.c_str(), -1, nullptr, 0, nullptr, nullptr);
   if (bytes_needed > 1) {
-    std::string utf8(static_cast<size_t>(bytes_needed - 1), '\0');
+    std::string utf8(static_cast<size_t>(bytes_needed), '\0');
     WideCharToMultiByte(CP_UTF8, 0, line.c_str(), -1, utf8.data(), bytes_needed,
                         nullptr, nullptr);
     DWORD written = 0;
-    WriteFile(file, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
+    WriteFile(file, utf8.data(), static_cast<DWORD>(bytes_needed - 1), &written,
+              nullptr);
   }
   CloseHandle(file);
 }
@@ -55,11 +56,12 @@ void WriteStatus(const std::wstring& path, const std::wstring& value) {
   int bytes_needed =
       WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, nullptr, 0, nullptr, nullptr);
   if (bytes_needed > 1) {
-    std::string utf8(static_cast<size_t>(bytes_needed - 1), '\0');
+    std::string utf8(static_cast<size_t>(bytes_needed), '\0');
     WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, utf8.data(), bytes_needed,
                         nullptr, nullptr);
     DWORD written = 0;
-    WriteFile(file, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
+    WriteFile(file, utf8.data(), static_cast<DWORD>(bytes_needed - 1), &written,
+              nullptr);
   }
   CloseHandle(file);
 }
@@ -204,6 +206,13 @@ bool HasArg(const std::vector<std::wstring>& args, const std::wstring& key) {
 int wmain(int argc, wchar_t* argv[]) {
   std::vector<std::wstring> args;
   for (int i = 1; i < argc; ++i) args.emplace_back(argv[i]);
+
+  if (HasArg(args, L"--self-test")) {
+    const std::wstring status = ArgValue(args, L"--status");
+    if (status.empty()) return 65;
+    WriteStatus(status, L"success|self_test|native_helper");
+    return 0;
+  }
 
   const std::wstring parent_text = ArgValue(args, L"--parent-pid");
   const std::wstring installer = ArgValue(args, L"--installer");
