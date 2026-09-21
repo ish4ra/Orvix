@@ -234,18 +234,146 @@ class AppUpdateService {
     File file,
   ) async {
     if (Platform.isWindows) {
+      // Never ask the installer to replace a running Orvix process. Stage a
+      // tiny detached handoff helper instead: it waits for this process to
+      // fully exit, runs Inno Setup, waits for a real installer exit code, then
+      // relaunches Orvix. This mirrors the safe principle used by managed
+      // updaters such as Nuvio/Expo: apply only after the current runtime has
+      // relinquished ownership of its files.
+      final support = await getApplicationSupportDirectory();
+      final handoffDir = Directory(
+        '${support.path}${Platform.pathSeparator}update-handoff',
+      );
+      await handoffDir.create(recursive: true);
+
+      final script = File(
+        '${handoffDir.path}${Platform.pathSeparator}orvix-update-handoff.ps1',
+      );
+      final logFile = File(
+        '${handoffDir.path}${Platform.pathSeparator}orvix-update-handoff.log',
+      );
+      final installerLog = File(
+        '${handoffDir.path}${Platform.pathSeparator}orvix-installer.log',
+      );
+      final statusFile = File(
+        '${handoffDir.path}${Platform.pathSeparator}last-update-status.txt',
+      );
+      if (await statusFile.exists()) {
+        await statusFile.delete();
+      }
+
+      await script.writeAsString(r'''
+param(
+  [int]$ParentPid,
+  [string]$Installer,
+  [string]$RestartExe,
+  [string]$TargetVersion,
+  [string]$LogPath,
+  [string]$InstallerLog,
+  [string]$StatusPath
+)
+
+$ErrorActionPreference = 'Stop'
+
+function Write-OrvixUpdateLog([string]$Message) {
+  try {
+    Add-Content -LiteralPath $LogPath -Value ("[" + (Get-Date -Format o) + "] " + $Message)
+  } catch {}
+}
+
+function Write-OrvixStatus([string]$Value) {
+  try {
+    Set-Content -LiteralPath $StatusPath -Value $Value -Encoding UTF8
+  } catch {}
+}
+
+try {
+  Write-OrvixUpdateLog "Waiting for Orvix PID $ParentPid to exit."
+  $deadline = (Get-Date).AddSeconds(30)
+  while ((Get-Process -Id $ParentPid -ErrorAction SilentlyContinue) -and
+         ((Get-Date) -lt $deadline)) {
+    Start-Sleep -Milliseconds 200
+  }
+
+  if (Get-Process -Id $ParentPid -ErrorAction SilentlyContinue) {
+    Write-OrvixUpdateLog "Parent process did not exit in time."
+    Write-OrvixStatus "failed|parent_timeout|$TargetVersion"
+    if (Test-Path -LiteralPath $RestartExe) {
+      Start-Process -FilePath $RestartExe
+    }
+    exit 2
+  }
+
+  Start-Sleep -Milliseconds 350
+  Write-OrvixUpdateLog "Starting installer: $Installer"
+
+  $installerArgs = @(
+    '/VERYSILENT',
+    '/SUPPRESSMSGBOXES',
+    '/NORESTART',
+    '/SP-',
+    ('/LOG="' + $InstallerLog + '"')
+  )
+
+  $process = Start-Process -FilePath $Installer -ArgumentList $installerArgs -Wait -PassThru
+  Write-OrvixUpdateLog "Installer exit code: $([int]$process.ExitCode)"
+
+  if ($process.ExitCode -eq 0) {
+    Write-OrvixStatus "success|0|$TargetVersion"
+  } else {
+    Write-OrvixStatus ("failed|" + $process.ExitCode + "|$TargetVersion")
+  }
+
+  if (Test-Path -LiteralPath $RestartExe) {
+    Start-Process -FilePath $RestartExe
+  } else {
+    Write-OrvixUpdateLog "Restart executable not found: $RestartExe"
+  }
+} catch {
+  Write-OrvixUpdateLog ("Handoff failed: " + $_.Exception.Message)
+  Write-OrvixStatus ("failed|exception|$TargetVersion")
+  if (Test-Path -LiteralPath $RestartExe) {
+    try { Start-Process -FilePath $RestartExe } catch {}
+  }
+  exit 1
+}
+''');
+
       await LocalTorrentService.instance.dispose();
+
       await Process.start(
-        file.path,
-        const [
-          '/VERYSILENT',
-          '/SUPPRESSMSGBOXES',
-          '/NORESTART',
-          '/CLOSEAPPLICATIONS',
+        'powershell.exe',
+        [
+          '-NoLogo',
+          '-NoProfile',
+          '-NonInteractive',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-WindowStyle',
+          'Hidden',
+          '-File',
+          script.path,
+          '-ParentPid',
+          pid.toString(),
+          '-Installer',
+          file.path,
+          '-RestartExe',
+          Platform.resolvedExecutable,
+          '-TargetVersion',
+          update.version,
+          '-LogPath',
+          logFile.path,
+          '-InstallerLog',
+          installerLog.path,
+          '-StatusPath',
+          statusFile.path,
         ],
         mode: ProcessStartMode.detached,
       );
-      await Future<void>.delayed(const Duration(milliseconds: 350));
+
+      // Give PowerShell enough time to start and own the handoff before this
+      // process exits. The helper, not Inno Setup, now owns installation.
+      await Future<void>.delayed(const Duration(milliseconds: 700));
       exit(0);
     }
 
