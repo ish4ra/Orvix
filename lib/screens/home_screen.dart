@@ -816,14 +816,6 @@ class _DesktopContinueCardState extends State<_DesktopContinueCard> {
                         : Colors.white.withValues(alpha: .10),
                     width: active ? 1.6 : 1,
                   ),
-                  boxShadow: active
-                      ? [
-                          BoxShadow(
-                            color: lime.withValues(alpha: .12),
-                            blurRadius: 20,
-                          ),
-                        ]
-                      : const [],
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: Stack(
