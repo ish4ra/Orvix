@@ -22,6 +22,7 @@ void main() {
     final windows =
         File('windows/runner/flutter_window.cpp').readAsStringSync();
     final installer = File('installer/orvix.iss').readAsStringSync();
+    final handoff = File('assets/update/orvix_update_handoff.ps1').readAsStringSync();
 
     expect(app, contains('WidgetsBindingObserver'));
     expect(app, contains('AppLifecycleState.detached'));
@@ -32,9 +33,10 @@ void main() {
     expect(update, contains('Android-TV.apk'));
     expect(update, contains('Android-Mobile.apk'));
     expect(update, contains('sha256.bind(file.openRead())'));
-    expect(update, contains('orvix-update-handoff.ps1'));
-    expect(update, contains('Waiting for Orvix PID'));
-    expect(update, contains("Start-Process -FilePath \$Installer -ArgumentList \$installerArgs -Wait -PassThru"));
+    expect(update, contains('orvix_update_handoff.ps1'));
+    expect(update, contains('rootBundle.loadString'));
+    expect(handoff, contains('Waiting for Orvix PID'));
+    expect(handoff, contains('Start-Process -FilePath $Installer -ArgumentList $installerArgs -Wait -PassThru'));
     expect(update, isNot(contains("'/CLOSEAPPLICATIONS'")));
     expect(installer, isNot(contains('Check: WizardSilent')));
     expect(gate, contains('View what changed'));
