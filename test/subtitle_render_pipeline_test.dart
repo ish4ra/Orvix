@@ -35,5 +35,10 @@ void main() {
       contains('await _setNativeSubtitleVisibility(true);'),
     );
     expect(player, contains('mk.SubtitleTrack.uri('));
+    expect(player, contains('!_aiSinhalaRequested ||'));
+    expect(
+      player,
+      contains('embedded subtitle can then appear with its own authored styling'),
+    );
   });
 }
