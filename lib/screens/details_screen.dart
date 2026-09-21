@@ -1677,8 +1677,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         // also exists.
         includeLowQuality: true,
       );
-      final hasCloudConnection =
-          (await widget.pikpak.isSignedIn) || (await widget.torbox.isConnected);
+      final hasDebridConnection = await widget.torbox.isConnected;
       await Navigator.of(context).push<void>(
         PageRouteBuilder<void>(
           transitionDuration: const Duration(milliseconds: 180),
@@ -1693,7 +1692,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               item: item,
               episode: episode,
               resultsFuture: resultsFuture,
-              preferFreeP2p: !hasCloudConnection,
+              preferFreeP2p: !hasDebridConnection,
               onPlaySource: (chosen) async {
                 final hasCloudConnection =
                     (await widget.pikpak.isSignedIn) ||
@@ -2243,8 +2242,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     MediaItem item,
     EpisodeItem? episode,
   ) async {
-    final hasCloudConnection =
-        (await widget.pikpak.isSignedIn) || (await widget.torbox.isConnected);
+    final hasDebridConnection = await widget.torbox.isConnected;
 
     if (PlatformProfile.isAndroidTv) {
       if (!mounted) return null;
@@ -2272,7 +2270,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     var resultLimit = await widget.sources.getResultLimit();
     var compatibilityOnly = false;
     var smoothRanking = false;
-    var freeStreamingRanking = !hasCloudConnection;
+    var freeStreamingRanking = !hasDebridConnection;
     final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
     final seriesWidePin = item.kind == MediaKind.series;
     var pinnedIdentity = await widget.sources.getPinnedSourceIdentity(pinKey);
