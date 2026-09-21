@@ -59,5 +59,22 @@ void main() {
       exo,
       contains('if (!_surfaceFocus.hasPrimaryFocus) return KeyEventResult.ignored;'),
     );
+
+    // Windows localhost P2P must not run the automatic AI-Sinhala
+    // play/pause/seek probe before stable playback.
+    expect(player, contains('deferAiForLocalP2p'));
+    expect(player, contains('Platform.isWindows && _localP2pStream'));
+    expect(
+      player,
+      contains('AI Sinhala auto-preparation is deferred for local P2P stability.'),
+    );
+
+    // The native torrent endpoint should be warmed with real bytes before MPV
+    // opens it on Windows.
+    final torrent =
+        File('lib/services/local_torrent_service.dart').readAsStringSync();
+    expect(torrent, contains('Platform.isWindows'));
+    expect(torrent, contains('targetBytes: 2 * 1024 * 1024'));
+    expect(torrent, contains('_primeLocalStream'));
   });
 }
