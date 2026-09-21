@@ -23,6 +23,7 @@ class TvSourceBrowserScreen extends StatefulWidget {
     required this.resultsFuture,
     this.episode,
     this.onPlaySource,
+    this.preferFreeP2p = true,
   });
 
   final SourceProviderService sources;
@@ -30,6 +31,7 @@ class TvSourceBrowserScreen extends StatefulWidget {
   final EpisodeItem? episode;
   final Future<List<SourceResult>> resultsFuture;
   final Future<void> Function(SourceResult source)? onPlaySource;
+  final bool preferFreeP2p;
 
   @override
   State<TvSourceBrowserScreen> createState() => _TvSourceBrowserScreenState();
@@ -46,7 +48,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
   String? _pinnedIdentity;
   String? _providerFilter;
   bool _compatibilityOnly = false;
-  _TvSourceSort _sort = _TvSourceSort.free;
+  late _TvSourceSort _sort;
 
   String get _pinKey =>
       widget.sources.sourceTargetKey(widget.item, episode: widget.episode);
@@ -56,6 +58,8 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
   @override
   void initState() {
     super.initState();
+    _sort =
+        widget.preferFreeP2p ? _TvSourceSort.free : _TvSourceSort.best;
     unawaited(_load());
   }
 
@@ -248,7 +252,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'This is the same priority used by Android/mobile. #1 wins first when Best mode is selected.',
+                  'This is the same priority used by Android/mobile. #1 wins first when Default mode is selected.',
                   style: TextStyle(
                     color: Color(0xFFB8C0BA),
                     height: 1.4,
@@ -372,7 +376,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
           child: Text(
             'Free P2P: ranks sources for the best chance of playing across phones and TVs — viable swarm first, then broad codec/device compatibility, exact file routing, seed health and practical size. Resolution/quality is not a priority.\n\n'
             'Smooth: favors TV-friendly formats, 1080p/720p, efficient codecs, healthy seeders and smaller files.\n\n'
-            'Best: uses your normal Orvix source-priority settings.\n\n'
+            'Default: uses your normal Orvix source-priority settings.\n\n'
             'Compatible only: hides sources that look risky for a typical TV decoder, such as 8K, AV1, Hi10P/10-bit AVC, or Dolby Vision-only releases. It does not change the player or torrent engine.',
             style: TextStyle(
               color: Color(0xFFC7CEC8),
@@ -544,8 +548,8 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
               const SizedBox(width: 8),
               _TvFilterChip(
                 selected: _sort == _TvSourceSort.best,
-                label: 'Best',
-                icon: Icons.auto_awesome_rounded,
+                label: 'Default',
+                icon: Icons.tune_rounded,
                 onPressed: () => setState(() => _sort = _TvSourceSort.best),
               ),
               const SizedBox(width: 8),
