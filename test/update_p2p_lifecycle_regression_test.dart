@@ -58,6 +58,9 @@ void main() {
     expect(windowsCmake, isNot(contains('install(TARGETS orvix_updater_helper')));
     expect(installer, contains('CloseApplications=force'));
     expect(installer, contains('RestartApplications=no'));
+    expect(installer, contains('function PrepareToInstall'));
+    expect(installer, contains('orvix-stream-server.exe'));
+    expect(installer, contains('taskkill.exe'));
     expect(installer, isNot(contains('powershell.exe')));
     expect(windowsMain, contains('CreateMutexW'));
     expect(windowsMain, contains('OrvixDesktopSingleInstanceV1'));
