@@ -11,7 +11,7 @@ add_executable(orvix_updater_helper
 )
 apply_standard_settings(orvix_updater_helper)
 target_compile_definitions(orvix_updater_helper PRIVATE "NOMINMAX")
-target_link_libraries(orvix_updater_helper PRIVATE "advapi32.lib" "shell32.lib")
+target_link_libraries(orvix_updater_helper PRIVATE "advapi32.lib" "shell32.lib" "ole32.lib")
 
 add_executable(${BINARY_NAME} WIN32
   "flutter_window.cpp"
