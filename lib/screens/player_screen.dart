@@ -87,6 +87,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _startupFailureVisible = false;
   bool _preflightWarmup = false;
   bool _exitPrepared = false;
+  Future<void>? _exitPreparation;
   bool _closing = false;
   final FocusNode _focusNode = FocusNode();
   AiPreparedSubtitle? _preparedAiSubtitle;
@@ -1224,7 +1225,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _preparePlayerExit() async {
-    if (_exitPrepared || _closing) return;
+    if (_exitPrepared) return;
+
+    final existing = _exitPreparation;
+    if (existing != null) {
+      await existing;
+      return;
+    }
+
+    final future = _preparePlayerExitInternal();
+    _exitPreparation = future;
+    try {
+      await future;
+    } finally {
+      if (!_exitPrepared) _exitPreparation = null;
+    }
+  }
+
+  Future<void> _preparePlayerExitInternal() async {
     _closing = true;
     _hideTimer?.cancel();
     _saveTimer?.cancel();
@@ -1249,9 +1267,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
     try {
       await _persistProgress();
     } catch (_) {}
+
+    // Windows local P2P has a native MPV surface reading from a localhost
+    // torrent endpoint. Pause first, then stop, and give libmpv one short
+    // settle window before Flutter disposes the Video surface during route pop.
+    // This avoids a stop/surface-destroy race on Back.
+    try {
+      await widget.playback.player.pause();
+    } catch (_) {}
     try {
       await widget.playback.stop();
     } catch (_) {}
+    if (Platform.isWindows && _localP2pStream) {
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+    }
+
     _exitPrepared = true;
   }
 
@@ -3205,8 +3235,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     foregroundColor: Colors.black,
                                     focusColor: const Color(0xFFCBFF75),
                                     hoverColor: const Color(0xFFD6FF91),
-                                    shadowColor: const Color(0x883CFF00),
-                                    elevation: 6,
+                                    elevation: 0,
                                   ),
                                   tooltip:
                                       snapshot.data == true ? 'Pause' : 'Play',
@@ -3363,8 +3392,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               foregroundColor: Colors.black,
               focusColor: const Color(0xFFCBFF75),
               hoverColor: const Color(0xFFD6FF91),
-              shadowColor: const Color(0x883CFF00),
-              elevation: 6,
+              elevation: 0,
             ),
             tooltip: snapshot.data == true ? 'Pause' : 'Play',
             onPressed: player.playOrPause,
@@ -3498,15 +3526,6 @@ class _TvPlayerActionState extends State<_TvPlayerAction> {
                     : const Color(0x554F6550),
             width: _focused ? 2.2 : 1,
           ),
-          boxShadow: _focused || widget.prominent
-              ? [
-                  BoxShadow(
-                    color: lime.withValues(alpha: _focused ? .34 : .18),
-                    blurRadius: _focused ? 24 : 14,
-                    spreadRadius: _focused ? 1 : 0,
-                  ),
-                ]
-              : const [],
         ),
         child: Material(
           color: Colors.transparent,
