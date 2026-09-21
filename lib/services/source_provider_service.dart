@@ -251,6 +251,16 @@ class _SourcePlaybackHistory {
     );
   }
 }
+class _SourceResolveCacheEntry {
+  const _SourceResolveCacheEntry({
+    required this.createdAt,
+    required this.results,
+  });
+
+  final DateTime createdAt;
+  final List<SourceResult> results;
+}
+
 class PinnedSourcePreference {
   const PinnedSourcePreference({
     required this.identity,
@@ -307,6 +317,10 @@ class SourceProviderService {
   final Map<String, _SourcePlaybackHistory> _playbackHistory =
       <String, _SourcePlaybackHistory>{};
   bool _playbackHistoryLoaded = false;
+  final Map<String, _SourceResolveCacheEntry> _resolveCache =
+      <String, _SourceResolveCacheEntry>{};
+  final Map<String, Future<List<SourceResult>>> _resolveInFlight =
+      <String, Future<List<SourceResult>>>{};
 
   Future<void> _ensurePlaybackHistoryLoaded() async {
     if (_playbackHistoryLoaded) return;
@@ -474,14 +488,6 @@ class SourceProviderService {
     final exactFile = source.torrentFileIndex != null ||
         source.fileNameHint?.trim().isNotEmpty == true;
 
-    if (historyRank >= 2) {
-      return const FreeSourceAssessment(
-        label: 'WORKED BEFORE',
-        detail: 'This exact release played successfully on this device recently.',
-        recommended: true,
-        warning: false,
-      );
-    }
     if (historyRank <= -2) {
       final reason = _friendlyFailureReason(_historyFor(source)?.lastFailureReason);
       return FreeSourceAssessment(
@@ -998,10 +1004,9 @@ class SourceProviderService {
     return 180;
   }
 
-  /// Playback ordering aimed at users who are not relying on a paid debrid
-  /// cache. Seeder HEALTH is the strongest signal, but raw seeder counts do
-  /// not grow forever: once a swarm is healthy, release quality and resolution
-  /// decide the order so a heavily-seeded low-quality encode cannot dominate.
+  /// Free P2P ordering is intentionally playability-first. Resolution and
+  /// source-quality labels do not participate in this score: a compatible,
+  /// healthy 480p/720p file should outrank a fragile 4K/1080p release.
   List<SourceResult> sortForFreeStreaming(Iterable<SourceResult> results) {
     final out = results.toList();
     out.sort(_compareFreeStreaming);
@@ -1012,11 +1017,9 @@ class SourceProviderService {
     final scoreCmp = _freeStreamingScore(b).compareTo(_freeStreamingScore(a));
     if (scoreCmp != 0) return scoreCmp;
 
-    // Inside the same health/quality bucket, prefer the stronger swarm.
     final seedCmp = (b.seeders ?? -1).compareTo(a.seeders ?? -1);
     if (seedCmp != 0) return seedCmp;
 
-    // Then prefer the smaller payload as a final bandwidth-friendly tie break.
     final aSize = a.sizeBytes;
     final bSize = b.sizeBytes;
     if (aSize != null && bSize != null && aSize != bSize) {
@@ -1029,33 +1032,63 @@ class SourceProviderService {
   }
 
   int _freeStreamingScore(SourceResult result) {
-    final direct = result.isMagnet ? 0 : 1;
     final history = _historyRank(result);
-    final compatibility = result.compatibilityFriendly ? 1 : 0;
-    final seedHealth = _freeSeederHealthRank(result.seeders);
-    final viableSwarm = (result.seeders ?? 0) >= 3 ? 1 : 0;
+    final direct = result.isMagnet ? 0 : 1;
+    final availability = _freeAvailabilityRank(result.seeders);
+    final universal = _universalPlaybackRank(result);
     final exactFile = result.torrentFileIndex != null ||
             result.fileNameHint?.trim().isNotEmpty == true
         ? 1
         : 0;
+    final seedHealth = _freeSeederHealthRank(result.seeders);
     final size = _freeSizeEfficiencyRank(result);
-    final resolution = _freeResolutionRank(result);
-    final release = _freeReleaseRank(result);
 
-    // Free P2P is a reliability ranking, not a quality contest. Seeder health
-    // deliberately beats the small 1080p-vs-720p preference, while extremely
-    // large payloads can still lose to efficient encodes.
-    return direct * 50000000 +
-        history * 20000000 +
-        compatibility * 10000000 +
-        viableSwarm * 5000000 +
-        seedHealth * 2000000 +
-        exactFile * 1200000 +
-        size * 1000000 +
-        resolution * 100000 +
-        release * 10000 +
-        (result.preferredGroup ? 1 : 0);
+    // A recent real failure is stronger evidence than addon labels. Successful
+    // history is deliberately NOT boosted: "played here before" does not mean
+    // the release is the most portable choice on another Android/TV device.
+    final recentFailurePenalty = history <= -2 ? 1500000000 : 0;
+
+    return direct * 2000000000 +
+        availability * 400000000 +
+        universal * 30000000 +
+        exactFile * 120000000 +
+        seedHealth * 10000000 +
+        size * 1000000 -
+        recentFailurePenalty;
   }
+
+  int _freeAvailabilityRank(int? seeders) {
+    final value = seeders ?? 0;
+    if (value >= 8) return 3;
+    if (value >= 3) return 2;
+    if (value >= 1) return 1;
+    return 0;
+  }
+
+  int _universalPlaybackRank(SourceResult result) {
+    if (!result.isMagnet) return 10;
+    if (!result.compatibilityFriendly) return 0;
+
+    final text = '${result.title} ${result.fileNameHint ?? ''}'.toLowerCase();
+    var rank = 6;
+
+    // H.264/AVC + AAC/AC3 are the broadest common Android/TV path. HEVC is
+    // also widely supported, but older/cheaper devices are less predictable.
+    if (RegExp(r'\b(?:x264|h[ ._-]?264|avc)\b').hasMatch(text)) {
+      rank = 10;
+    } else if (RegExp(r'\b(?:x265|h[ ._-]?265|hevc)\b').hasMatch(text)) {
+      rank = 8;
+    }
+
+    if (RegExp(r'\b(?:aac|ac3|eac3|e-ac-3)\b').hasMatch(text)) rank += 1;
+    if (RegExp(r'\b(?:truehd|dts[ ._-]?hd|dts:x)\b').hasMatch(text)) {
+      rank -= 2;
+    }
+    if (RegExp(r'\b(?:hdr10\+?|hdr)\b').hasMatch(text)) rank -= 1;
+
+    return rank.clamp(0, 10).toInt();
+  }
+
   int _freeSeederHealthRank(int? seeders) {
     final value = seeders ?? 0;
     if (value >= 200) return 8;
@@ -1069,49 +1102,12 @@ class SourceProviderService {
     return 0;
   }
 
-  int _freeReleaseRank(SourceResult result) {
-    var rank = switch (result.releaseQuality?.toUpperCase()) {
-      'WEB-DL' => 8,
-      'WEBRIP' => 7,
-      'BLURAY' => 7,
-      'HDTV' => 5,
-      // Remux is excellent quality but commonly too large for free real-time
-      // torrent playback, so it deliberately sits below efficient encodes.
-      'REMUX' => 4,
-      'DVD' => 2,
-      'CAM' => 0,
-      _ => 3,
-    };
-    if (result.preferredGroup) rank += 1;
-    return rank;
-  }
-
-  int _freeResolutionRank(SourceResult result) {
-    switch (result.quality?.toUpperCase()) {
-      case '1080P':
-        return 6;
-      case '720P':
-        return 5;
-      case '1440P':
-        return 4;
-      case '2160P':
-      case '4K':
-        return 3;
-      case '480P':
-        return 1;
-      default:
-        return 2;
-    }
-  }
-
   int _freeSizeEfficiencyRank(SourceResult result) {
     final bytes = result.sizeBytes;
     if (bytes == null || bytes <= 0) return 4;
     const mb = 1024 * 1024;
     const gb = 1024 * mb;
 
-    // Sweet spot for free playback: enough bitrate for HD, small enough to
-    // begin quickly on an ordinary home connection.
     if (bytes >= 350 * mb && bytes <= 1500 * mb) return 10;
     if (bytes > 1500 * mb && bytes <= 2500 * mb) return 8;
     if (bytes >= 200 * mb && bytes < 350 * mb) return 7;
@@ -1183,48 +1179,102 @@ class SourceProviderService {
     final mediaId = episode == null
         ? item.id
         : '${item.id}:${episode.season}:${episode.episode}';
+    final cacheKey = <String>[
+      type,
+      mediaId,
+      includeLowQuality.toString(),
+      show3D.toString(),
+      showLowQuality.toString(),
+      sortMode.name,
+      priority.map((e) => e.name).join(','),
+      preferredGroups.join(',').toLowerCase(),
+      addons.join('|'),
+    ].join('::');
 
-    final groups = await Future.wait(
-      addons.map(
-        (addon) => _resolveAddon(
-          addon,
-          type,
-          mediaId,
-          sortMode,
-          show3D,
-          preferredGroups,
+    final cached = _resolveCache[cacheKey];
+    if (cached != null &&
+        DateTime.now().difference(cached.createdAt) <
+            const Duration(seconds: 45)) {
+      return [...cached.results];
+    }
+
+    final running = _resolveInFlight[cacheKey];
+    if (running != null) return [...await running];
+
+    final future = (() async {
+      final groups = await Future.wait(
+        addons.map(
+          (addon) => _resolveAddon(
+            addon,
+            type,
+            mediaId,
+            sortMode,
+            show3D,
+            preferredGroups,
+          ),
         ),
-      ),
-    );
-
-    final out = <SourceResult>[];
-    final seen = <String>{};
-    for (final group in groups) {
-      for (final result in group) {
-        // Keep the same source returned by different providers visible: their
-        // reported seed counts/metadata may differ. Only remove exact duplicate
-        // rows from the same provider.
-        final dedupeKey = '${result.provider}\u0000${result.resource}';
-        if (seen.add(dedupeKey)) out.add(result);
-      }
-    }
-    // Apply the quality floor BEFORE cache ranking. Cache is the first
-    // ranking criterion only among sources that survive the normal quality
-    // filter, so cached CAM/DVD/sub-720p rows cannot jump ahead of good HD
-    // sources merely because they are cached.
-    var visible = out;
-    if (!includeLowQuality && !showLowQuality) {
-      final hasHd = out.any(
-        (r) => r.qualityRank >= 300 && r.releaseQuality?.toUpperCase() != 'CAM',
       );
-      if (hasHd) {
-        visible = out.where((r) {
-          final release = r.releaseQuality?.toUpperCase();
-          return release != 'CAM' && release != 'DVD' && r.qualityRank >= 300;
-        }).toList();
+
+      final out = <SourceResult>[];
+      final seen = <String>{};
+      for (final group in groups) {
+        for (final result in group) {
+          final dedupeKey = '${result.provider}\u0000${result.resource}';
+          if (seen.add(dedupeKey)) out.add(result);
+        }
+      }
+
+      var visible = out;
+      if (!includeLowQuality && !showLowQuality) {
+        final hasHd = out.any(
+          (r) =>
+              r.qualityRank >= 300 &&
+              r.releaseQuality?.toUpperCase() != 'CAM',
+        );
+        if (hasHd) {
+          visible = out.where((r) {
+            final release = r.releaseQuality?.toUpperCase();
+            return release != 'CAM' &&
+                release != 'DVD' &&
+                r.qualityRank >= 300;
+          }).toList();
+        }
+      }
+      return sortResults(visible, priority);
+    })();
+
+    _resolveInFlight[cacheKey] = future;
+    try {
+      final results = await future;
+      _resolveCache[cacheKey] = _SourceResolveCacheEntry(
+        createdAt: DateTime.now(),
+        results: results,
+      );
+      return [...results];
+    } finally {
+      _resolveInFlight.remove(cacheKey);
+      if (_resolveCache.length > 30) {
+        final entries = _resolveCache.entries.toList()
+          ..sort((a, b) => b.value.createdAt.compareTo(a.value.createdAt));
+        final keep = entries.take(24).map((entry) => entry.key).toSet();
+        _resolveCache.removeWhere((key, value) => !keep.contains(key));
       }
     }
-    return sortResults(visible, priority);
+  }
+
+  Future<void> prefetch(
+    MediaItem item, {
+    EpisodeItem? episode,
+  }) async {
+    try {
+      await resolve(
+        item,
+        episode: episode,
+        includeLowQuality: true,
+      );
+    } catch (_) {
+      // Prefetching is opportunistic and must never affect navigation.
+    }
   }
 
   SourceResult? bestSource(List<SourceResult> results) {
