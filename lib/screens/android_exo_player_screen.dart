@@ -6,6 +6,7 @@ import 'package:video_player/video_player.dart';
 
 import '../models/media_item.dart';
 import '../services/media_state_service.dart';
+import '../widgets/player_loading_overlay.dart';
 
 class AndroidExoPlayerResult {
   const AndroidExoPlayerResult({
@@ -341,8 +342,11 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
               else
                 const ColoredBox(color: Colors.black),
               if (!initialized && _error == null)
-                const Center(
-                  child: CircularProgressIndicator(color: Colors.white),
+                PlayerLoadingOverlay(
+                  item: widget.item,
+                  title: widget.title,
+                  message: 'Starting playback…',
+                  detail: widget.episode == null ? null : widget.title,
                 ),
               if (value?.isBuffering == true && _error == null)
                 const Center(
