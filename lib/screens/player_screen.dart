@@ -3542,7 +3542,7 @@ class _TvPlayerActionState extends State<_TvPlayerAction> {
                       const SizedBox(width: 8),
                       Text(
                         widget.label!,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color:
                               widget.prominent ? Colors.black : Colors.white,
                           fontSize: 13,
