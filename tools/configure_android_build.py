@@ -432,6 +432,8 @@ class JniStreamingServerController {
     companion object {
         @Volatile
         private var nativeLoaded = false
+        @Volatile
+        private var serverRunning = false
 
         @Synchronized
         private fun ensureNativeLoaded() {
@@ -462,17 +464,21 @@ class JniStreamingServerController {
             val cacheDir = File(context.cacheDir, "stream-server")
             configDir.mkdirs()
             cacheDir.mkdirs()
-            return startServerNative(
+            val url = startServerNative(
                 context.applicationContext,
                 configDir.absolutePath,
                 cacheDir.absolutePath,
                 11470
             )
+            serverRunning = true
+            return url
         }
 
         @JvmStatic
+        @Synchronized
         fun stop() {
-            if (!nativeLoaded) return
+            if (!nativeLoaded || !serverRunning) return
+            serverRunning = false
             stopServerNative()
         }
     }
