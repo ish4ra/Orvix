@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('full transcript is translated before real playback starts', () {
+  test('verified transcript is selected before playback but translated incrementally', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
@@ -18,11 +18,12 @@ void main() {
 
     expect(transcript, contains('_downloadSubtitle(candidate.url)'));
     expect(transcript, contains('_parseSubtitle(text)'));
-    expect(transcript, contains('_translateEntireSubtitle('));
+    expect(transcript, isNot(contains('_translateEntireSubtitle(')));
     expect(
       transcript,
-      contains('prepared.translatedCount != prepared.cues.length'),
+      contains('Sinhala will buffer ahead while playback continues'),
     );
+    expect(service, contains('ensureTranslatedAround('));
     expect(transcript, isNot(contains('_writeGeneratedSrt(')));
   });
 
