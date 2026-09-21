@@ -72,7 +72,15 @@ def patch_android(tv: bool) -> None:
             '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n'
             '    <uses-permission android:name="android.permission.INTERNET" />\n'
             '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n'
-            '    <uses-permission android:name="android.permission.WAKE_LOCK" />',
+            '    <uses-permission android:name="android.permission.WAKE_LOCK" />\n'
+            '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />',
+        )
+
+    if "android.permission.REQUEST_INSTALL_PACKAGES" not in text:
+        text = text.replace(
+            "<application",
+            '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n<application',
+            1,
         )
 
     text = text.replace(
@@ -122,6 +130,30 @@ def patch_android(tv: bool) -> None:
                 '<category android:name="android.intent.category.LAUNCHER"/>\n'
                 '                <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>',
             )
+
+    if "androidx.core.content.FileProvider" not in text:
+        text = text.replace(
+            "</application>",
+            '        <provider\n'
+            '            android:name="androidx.core.content.FileProvider"\n'
+            '            android:authorities="${applicationId}.fileprovider"\n'
+            '            android:exported="false"\n'
+            '            android:grantUriPermissions="true">\n'
+            '            <meta-data\n'
+            '                android:name="android.support.FILE_PROVIDER_PATHS"\n'
+            '                android:resource="@xml/orvix_file_paths" />\n'
+            '        </provider>\n'
+            '    </application>',
+            1,
+        )
+
+    file_paths = Path("android/app/src/main/res/xml/orvix_file_paths.xml")
+    file_paths.parent.mkdir(parents=True, exist_ok=True)
+    file_paths.write_text(
+        '<paths xmlns:android="http://schemas.android.com/apk/res/android">\n'
+        '    <cache-path name="orvix_updates" path="." />\n'
+        '</paths>\n'
+    )
 
     manifest.write_text(text)
 
@@ -262,10 +294,16 @@ def patch_android(tv: bool) -> None:
     main_activity.write_text(
         """package com.orvix.orvix
 
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import androidx.core.content.FileProvider
 import com.stremio.mobile.server.JniStreamingServerController
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
@@ -273,6 +311,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "orvix/torrent_engine"
@@ -310,10 +349,73 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "orvix/app_update"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "installApk" -> {
+                    val path = call.argument<String>("path")
+                    if (path.isNullOrBlank()) {
+                        result.error("missing_apk", "APK path is missing", null)
+                        return@setMethodCallHandler
+                    }
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                        !packageManager.canRequestPackageInstalls()
+                    ) {
+                        val intent = Intent(
+                            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:$packageName")
+                        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(intent)
+                        result.success("permission_required")
+                        return@setMethodCallHandler
+                    }
+
+                    try {
+                        val apk = File(path)
+                        val uri = FileProvider.getUriForFile(
+                            this,
+                            "$packageName.fileprovider",
+                            apk
+                        )
+                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(
+                                uri,
+                                "application/vnd.android.package-archive"
+                            )
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        startActivity(intent)
+                        result.success("installer_opened")
+                    } catch (error: Throwable) {
+                        result.error(
+                            "apk_install_failed",
+                            error.message ?: error.toString(),
+                            null
+                        )
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        if (isFinishing) {
+            try {
+                JniStreamingServerController.stop()
+            } catch (_: Throwable) {
+            }
+        }
+        super.onDestroy()
     }
 }
 """
-    )
+    ) )
 
     controller = Path(
         "android/app/src/main/kotlin/com/stremio/mobile/server/"
