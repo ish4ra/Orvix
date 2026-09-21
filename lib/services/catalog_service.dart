@@ -645,7 +645,13 @@ class CatalogService {
           ? await Future.wait(
               chartRows.map((row) => _metaByImdbId(row.id, kind)),
             )
-          : List<MediaItem?>.filled(chartRows.length, null);
+          : await Future.wait(
+              chartRows.indexed.map(
+                (entry) => entry.$1 < 4
+                    ? _metaByImdbId(entry.$2.id, kind)
+                    : Future<MediaItem?>.value(null),
+              ),
+            );
 
       final out = <MediaItem>[];
       for (var i = 0; i < chartRows.length; i++) {
