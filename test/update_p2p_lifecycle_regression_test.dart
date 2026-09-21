@@ -28,7 +28,7 @@ void main() {
     expect(app, contains('AppLifecycleState.detached'));
     expect(app, contains('OrvixUpdateGate'));
 
-    expect(update, contains("currentVersion = '0.7.5'"));
+    expect(update, contains("currentVersion = '0.7.6-beta.1'"));
     expect(update, contains("name.contains('Windows-x64')"));
     expect(update, contains('Android-TV.apk'));
     expect(update, contains('Android-Mobile.apk'));
