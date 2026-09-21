@@ -50,6 +50,7 @@ void main() {
     expect(installer, contains('Check: WizardSilent'));
     expect(installer, contains('function PrepareToInstall'));
     expect(installer, contains('function IsOrvixRunning'));
+    expect(installer, contains('Get-Process -Name orvix'));
     expect(gate, contains('View what changed'));
     expect(gate, contains("label: const Text('Update')"));
 
