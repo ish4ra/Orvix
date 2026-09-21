@@ -1994,7 +1994,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
             resultLimit > 0
                 ? 'Showing ${sorted.length} of $totalAfterFilter results'
                 : '${sorted.length} result${sorted.length == 1 ? '' : 's'} shown',
-            if (freeStreamingRanking) 'free streaming ranking on',
+            if (freeStreamingRanking) 'free P2P ranking on',
             if (smoothRanking) 'smooth ranking on',
             if (compatibilityHiddenCount > 0)
               '$compatibilityHiddenCount risky hidden',
@@ -2035,9 +2035,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
                         FilterChip(
                           selected: freeStreamingRanking,
                           avatar: const Icon(Icons.bolt_rounded, size: 18),
-                          label: const Text('Free Streaming'),
+                          label: const Text('Free P2P'),
                           tooltip:
-                              'Prioritize healthy torrent swarms for non-debrid playback.',
+                              'Rank viable sources by broad device compatibility, exact file routing, swarm health and practical size. Resolution is not a priority.',
                           onSelected: (value) => setSheetState(() {
                             freeStreamingRanking = value;
                             if (value) smoothRanking = false;
