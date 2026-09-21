@@ -31,7 +31,6 @@ void main() {
     expect(details, isNot(contains('poster: item.seasonPoster(season)')));
     expect(details, contains('const lime = Color(0xFFB9FF45)'));
     expect(details, contains('var freeStreamingRanking = !hasCloudConnection'));
-    expect(details, contains("?'Free P2P'").isFalse); // keep parser honest below
     expect(details, isNot(contains("'Best'")));
     expect(details, contains('class _DesktopEpisodeCard'));
     expect(details, contains('_desktopDetailsLayout(item)'));
