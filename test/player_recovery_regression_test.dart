@@ -97,18 +97,18 @@ void main() {
       isNot(contains('primary.withValues(alpha: .34)')),
     );
 
-    // Back navigation is a strict one-step stack. The source picker stays
-    // mounted under the player and repeated Back events cannot pop two routes.
-    expect(details, contains('Future<void> Function(SourceResult source)? onPlaySource'));
-    expect(details, contains('await _chooseSource('));
-    expect(details, contains('onPlaySource: (selected) async'));
-    expect(details, contains('await play(source);'));
-    expect(details, contains('var sourcePlaybackInProgress = false;'));
-    expect(details, contains('if (sourcePlaybackInProgress) return;'));
+    // Back navigation is a strict one-step stack. The modal source picker
+    // closes before player push, then reopens from cached results when the
+    // player returns. This avoids rendering the player underneath the sheet.
+    expect(details, contains('FreeP2pLiveProbeService? probeSession'));
+    expect(details, contains('final probeSession = FreeP2pLiveProbeService();'));
+    expect(details, contains('while (mounted)'));
+    expect(details, contains('probeSession: probeSession'));
     expect(
       details,
-      contains('returning from playback does not refetch/refresh'),
+      contains('same already-resolved results and cached live-probe ranking'),
     );
+    expect(details, isNot(contains('onPlaySource: (selected) async')));
     expect(player, contains('bool _backNavigationInProgress = false;'));
     expect(
       player,
