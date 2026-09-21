@@ -736,16 +736,20 @@ class _DesktopContinueRail extends StatelessWidget {
           ),
           const SizedBox(height: 13),
           SizedBox(
-            height: 212,
+            height: 172,
             child: ListView.separated(
               padding: const EdgeInsets.symmetric(horizontal: 46, vertical: 6),
               scrollDirection: Axis.horizontal,
+              cacheExtent: 1400,
               itemCount: items.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 14),
+              separatorBuilder: (_, __) => const SizedBox(width: 16),
               itemBuilder: (context, index) {
                 final entry = items[index];
-                return _DesktopContinueCard(
+                return _ContinueWideCard(
                   entry: entry,
+                  width: 400,
+                  height: 160,
+                  imageWidth: 104,
                   onTap: () => onOpen(entry),
                   onPreview: () => onPrefetch(entry),
                 );
@@ -758,22 +762,30 @@ class _DesktopContinueRail extends StatelessWidget {
   }
 }
 
-class _DesktopContinueCard extends StatefulWidget {
-  const _DesktopContinueCard({
+class _ContinueWideCard extends StatefulWidget {
+  const _ContinueWideCard({
     required this.entry,
+    required this.width,
+    required this.height,
+    required this.imageWidth,
     required this.onTap,
-    required this.onPreview,
+    this.onPreview,
+    this.autofocus = false,
   });
 
   final ContinueWatchingEntry entry;
+  final double width;
+  final double height;
+  final double imageWidth;
   final VoidCallback onTap;
-  final VoidCallback onPreview;
+  final VoidCallback? onPreview;
+  final bool autofocus;
 
   @override
-  State<_DesktopContinueCard> createState() => _DesktopContinueCardState();
+  State<_ContinueWideCard> createState() => _ContinueWideCardState();
 }
 
-class _DesktopContinueCardState extends State<_DesktopContinueCard> {
+class _ContinueWideCardState extends State<_ContinueWideCard> {
   bool _hovered = false;
   bool _focused = false;
 
@@ -781,110 +793,182 @@ class _DesktopContinueCardState extends State<_DesktopContinueCard> {
   Widget build(BuildContext context) {
     const lime = Color(0xFFB9FF45);
     final active = _hovered || _focused;
-    final item = widget.entry.item;
-    final art = item.background ?? item.poster;
+    final entry = widget.entry;
+    final item = entry.item;
+    final episode = entry.episode;
+    final image = item.poster ?? item.background;
+    final isUpNext = item.kind == MediaKind.series && entry.progress <= .001;
+    final compact = widget.height <= 125;
+
+    final detail = episode != null
+        ? [
+            episode.label,
+            if (episode.title.trim().isNotEmpty) episode.title.trim(),
+          ].join('  •  ')
+        : [
+            item.typeLabel,
+            if (item.year?.trim().isNotEmpty == true) item.year!.trim(),
+          ].join('  •  ');
 
     return MouseRegion(
       onEnter: (_) {
         setState(() => _hovered = true);
-        widget.onPreview();
+        widget.onPreview?.call();
       },
       onExit: (_) => setState(() => _hovered = false),
       child: AnimatedScale(
-        scale: active ? 1.025 : 1,
-        duration: const Duration(milliseconds: 120),
+        scale: active ? 1.018 : 1,
+        duration: const Duration(milliseconds: 115),
+        curve: Curves.easeOutCubic,
         child: SizedBox(
-          width: 300,
+          width: widget.width,
+          height: widget.height,
           child: Material(
-            color: const Color(0xFF0C100E),
-            borderRadius: BorderRadius.circular(16),
+            color: const Color(0xFF111512),
+            borderRadius: BorderRadius.circular(14),
+            clipBehavior: Clip.antiAlias,
             child: InkWell(
-              borderRadius: BorderRadius.circular(16),
+              autofocus: widget.autofocus,
               focusColor: Colors.transparent,
               hoverColor: Colors.transparent,
+              splashColor: Colors.transparent,
               onFocusChange: (value) {
                 setState(() => _focused = value);
-                if (value) widget.onPreview();
+                if (value) widget.onPreview?.call();
               },
               onTap: widget.onTap,
-              child: Container(
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 115),
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(14),
                   border: Border.all(
                     color: active
-                        ? lime.withValues(alpha: .78)
-                        : Colors.white.withValues(alpha: .10),
+                        ? lime.withValues(alpha: .88)
+                        : const Color(0xFF303731),
                     width: active ? 1.6 : 1,
                   ),
                 ),
-                clipBehavior: Clip.antiAlias,
-                child: Stack(
-                  fit: StackFit.expand,
+                child: Row(
                   children: [
-                    if (art?.trim().isNotEmpty == true)
-                      CachedNetworkImage(
-                        imageUrl: art!,
-                        fit: BoxFit.cover,
-                        memCacheWidth: 700,
-                        fadeInDuration: Duration.zero,
-                      )
-                    else
-                      const ColoredBox(color: Color(0xFF141815)),
-                    const DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            Color(0x10000000),
-                            Color(0x7A000000),
-                            Color(0xF20A0C0B),
-                          ],
-                          stops: [0, .56, 1],
-                        ),
-                      ),
+                    SizedBox(
+                      width: widget.imageWidth,
+                      height: double.infinity,
+                      child: image?.trim().isNotEmpty == true
+                          ? CachedNetworkImage(
+                              imageUrl: image!,
+                              fit: BoxFit.cover,
+                              memCacheWidth: compact ? 300 : 420,
+                              fadeInDuration: Duration.zero,
+                              placeholder: (_, __) => const ColoredBox(
+                                color: Color(0xFF171C18),
+                              ),
+                              errorWidget: (_, __, ___) => const ColoredBox(
+                                color: Color(0xFF171C18),
+                                child: Center(
+                                  child: Icon(
+                                    Icons.movie_outlined,
+                                    color: Color(0xFF7D887F),
+                                  ),
+                                ),
+                              ),
+                            )
+                          : const ColoredBox(
+                              color: Color(0xFF171C18),
+                              child: Center(
+                                child: Icon(
+                                  Icons.movie_outlined,
+                                  color: Color(0xFF7D887F),
+                                ),
+                              ),
+                            ),
                     ),
-                    Positioned(
-                      left: 14,
-                      right: 14,
-                      bottom: 12,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            item.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w900,
+                    Expanded(
+                      child: Padding(
+                        padding: EdgeInsets.fromLTRB(
+                          compact ? 12 : 15,
+                          compact ? 11 : 15,
+                          compact ? 12 : 15,
+                          compact ? 10 : 13,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    item.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: const Color(0xFFF0F3F0),
+                                      fontSize: compact ? 14 : 17,
+                                      height: 1.05,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ),
+                                if (isUpNext) ...[
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: compact ? 7 : 9,
+                                      vertical: compact ? 3 : 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: lime,
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                    child: Text(
+                                      'Up Next',
+                                      style: TextStyle(
+                                        color: Colors.black,
+                                        fontSize: compact ? 9 : 10.5,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
-                          ),
-                          const SizedBox(height: 7),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(999),
-                            child: LinearProgressIndicator(
-                              minHeight: 4,
-                              value: widget.entry.progress,
-                              backgroundColor: Colors.white.withValues(alpha: .14),
-                              valueColor:
-                                  const AlwaysStoppedAnimation<Color>(lime),
+                            SizedBox(height: compact ? 7 : 10),
+                            Text(
+                              detail,
+                              maxLines: compact ? 1 : 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: const Color(0xFFADB7B0),
+                                fontSize: compact ? 10.5 : 12.5,
+                                height: 1.25,
+                                fontWeight: FontWeight.w650,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 5),
-                          Text(
-                            [
-                              if (widget.entry.episode != null)
-                                widget.entry.episode!.label,
-                              '${(widget.entry.progress * 100).round()}% watched',
-                            ].join(' • '),
-                            style: const TextStyle(
-                              color: Color(0xFFBDC5BF),
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w700,
+                            const Spacer(),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(999),
+                              child: LinearProgressIndicator(
+                                minHeight: compact ? 3.5 : 4,
+                                value: entry.progress,
+                                backgroundColor:
+                                    Colors.white.withValues(alpha: .10),
+                                valueColor:
+                                    const AlwaysStoppedAnimation<Color>(lime),
+                              ),
                             ),
-                          ),
-                        ],
+                            SizedBox(height: compact ? 5 : 7),
+                            Text(
+                              '${(entry.progress * 100).round()}% watched',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: const Color(0xFF98A29B),
+                                fontSize: compact ? 9.5 : 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ],
@@ -898,7 +982,7 @@ class _DesktopContinueCardState extends State<_DesktopContinueCard> {
   }
 }
 
-class _Hero extends StatelessWidget {
+class _Hero extends StatelessWidget {class _Hero extends StatelessWidget {
   const _Hero({required this.item, required this.onOpen});
   final MediaItem item;
   final VoidCallback onOpen;
@@ -1005,77 +1089,50 @@ class _ContinueRail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (items.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 26),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
+            padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               children: [
                 Text(
                   'Continue Watching',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w900,
+                      ),
                 ),
-                const SizedBox(width: 10),
-                const Icon(Icons.history_rounded, size: 20),
-                const SizedBox(width: 10),
+                const SizedBox(width: 9),
                 Text(
                   '${items.length}',
-                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 13),
           SizedBox(
-            height: PlatformProfile.isAndroidTv ? 270 : 330,
+            height: 132,
             child: ListView.separated(
-              padding: EdgeInsets.symmetric(
-                horizontal: PlatformProfile.isAndroidTv ? 24 : 32,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
               scrollDirection: Axis.horizontal,
+              cacheExtent: 1000,
               itemCount: items.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 16),
+              separatorBuilder: (_, __) => const SizedBox(width: 14),
               itemBuilder: (context, index) {
                 final entry = items[index];
-                final tv = PlatformProfile.isAndroidTv;
-                return SizedBox(
-                  width: tv ? 138 : 170,
-                  child: Column(
-                    children: [
-                      Expanded(
-                        child: MediaCard(
-                          item: entry.item,
-                          width: tv ? 138 : 170,
-                          onTap: () => onOpen(entry),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(999),
-                        child: LinearProgressIndicator(
-                          minHeight: 5,
-                          value: entry.progress,
-                          backgroundColor: const Color(0xFF1C202B),
-                        ),
-                      ),
-                      const SizedBox(height: 5),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          [
-                            if (entry.episode != null) entry.episode!.label,
-                            '${(entry.progress * 100).round()}% watched',
-                          ].join(' • '),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ),
-                    ],
-                  ),
+                return _ContinueWideCard(
+                  entry: entry,
+                  width: 280,
+                  height: 120,
+                  imageWidth: 82,
+                  onTap: () => onOpen(entry),
                 );
               },
             ),
@@ -1086,7 +1143,7 @@ class _ContinueRail extends StatelessWidget {
   }
 }
 
-class _MediaRail extends StatelessWidget {
+class _MediaRail extends StatelessWidget {class _MediaRail extends StatelessWidget {
   const _MediaRail({
     required this.title,
     required this.items,
@@ -1490,21 +1547,25 @@ class _TvContinueLandscapeRail extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           SizedBox(
-            height: 174,
+            height: 172,
             child: ListView.separated(
               padding: const EdgeInsets.symmetric(
                 horizontal: 42,
                 vertical: 6,
               ),
               scrollDirection: Axis.horizontal,
-              cacheExtent: 1200,
+              cacheExtent: 1400,
               itemCount: items.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 13),
+              separatorBuilder: (_, __) => const SizedBox(width: 18),
               itemBuilder: (context, index) {
                 final entry = items[index];
                 return RepaintBoundary(
-                  child: _TvContinueCard(
+                  child: _ContinueWideCard(
                     entry: entry,
+                    width: 400,
+                    height: 160,
+                    imageWidth: 104,
+                    autofocus: index == 0,
                     onTap: () => onOpen(entry),
                   ),
                 );
@@ -1517,128 +1578,7 @@ class _TvContinueLandscapeRail extends StatelessWidget {
   }
 }
 
-class _TvContinueCard extends StatefulWidget {
-  const _TvContinueCard({
-    required this.entry,
-    required this.onTap,
-  });
-
-  final ContinueWatchingEntry entry;
-  final VoidCallback onTap;
-
-  @override
-  State<_TvContinueCard> createState() => _TvContinueCardState();
-}
-
-class _TvContinueCardState extends State<_TvContinueCard> {
-  bool _focused = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final entry = widget.entry;
-    final item = entry.item;
-    final image = item.background ?? item.poster;
-    final primary = Theme.of(context).colorScheme.primary;
-
-    return AnimatedScale(
-      scale: _focused ? 1.025 : 1,
-      duration: const Duration(milliseconds: 110),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 110),
-        width: 270,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: _focused
-                ? Colors.white.withValues(alpha: .92)
-                : const Color(0xFF2A302C),
-            width: _focused ? 2.2 : 1,
-          ),
-          boxShadow: _focused
-              ? [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: .35),
-                    blurRadius: 20,
-                    offset: const Offset(0, 8),
-                  ),
-                ]
-              : const [],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(15),
-          child: Material(
-            color: const Color(0xFF141815),
-            child: InkWell(
-              focusColor: Colors.transparent,
-              onFocusChange: (value) => setState(() => _focused = value),
-              onTap: widget.onTap,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (image != null && image.isNotEmpty)
-                    CachedNetworkImage(
-                      imageUrl: image,
-                      fit: BoxFit.cover,
-                      memCacheWidth: 600,
-                      fadeInDuration: Duration.zero,
-                      placeholder: (_, __) =>
-                          const ColoredBox(color: Color(0xFF151A16)),
-                      errorWidget: (_, __, ___) =>
-                          const ColoredBox(color: Color(0xFF151A16)),
-                    ),
-                  const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Color(0x00000000),
-                          Color(0x33000000),
-                          Color(0xE6000000),
-                        ],
-                        stops: [0, .55, 1],
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    left: 12,
-                    right: 12,
-                    bottom: 14,
-                    child: Text(
-                      item.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    left: 12,
-                    right: 12,
-                    bottom: 7,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(99),
-                      child: LinearProgressIndicator(
-                        minHeight: 3,
-                        value: entry.progress,
-                        backgroundColor: Colors.white.withValues(alpha: .18),
-                        color: _focused ? primary : const Color(0xFFB9FF45),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TvHomeSkeleton extends StatefulWidget {
+class _TvHomeSkeleton extends StatefulWidget {class _TvHomeSkeleton extends StatefulWidget {
   const _TvHomeSkeleton();
 
   @override
