@@ -2352,13 +2352,21 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
     return showModalBottomSheet<SourceResult>(
       context: context,
-      backgroundColor: const Color(0xFF0D120E),
+      backgroundColor: const Color(0xFF090D0B),
+      barrierColor: Colors.black.withValues(alpha: .68),
       showDragHandle: true,
       isScrollControlled: true,
-      constraints: const BoxConstraints(maxWidth: 960),
+      useSafeArea: true,
+      clipBehavior: Clip.antiAlias,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      constraints: const BoxConstraints(maxWidth: 1080),
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) {
-          final compactSheet = MediaQuery.sizeOf(context).width < 680;
+          final sheetWidth = MediaQuery.sizeOf(context).width;
+          final compactSheet = sheetWidth < 680;
+          final desktopSheet = Platform.isWindows && sheetWidth >= 900;
           final ranked = freeStreamingRanking
               ? widget.sources.sortForFreeStreaming(results)
               : smoothRanking
@@ -2415,7 +2423,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
           return SafeArea(
             child: SizedBox(
-              height: MediaQuery.sizeOf(context).height * .84,
+              height: MediaQuery.sizeOf(context).height *
+                  (desktopSheet ? .88 : .84),
               child: Padding(
                 padding: EdgeInsets.fromLTRB(
                   compactSheet ? 16 : 22,
@@ -2426,14 +2435,46 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Choose source',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleLarge
-                          ?.copyWith(fontWeight: FontWeight.w900),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Choose source',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleLarge
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: -.35,
+                                    ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                episode == null
+                                    ? item.title
+                                    : '${item.title} • ${episode.label}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Color(0xFF98A19A),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (desktopSheet)
+                          const Icon(
+                            Icons.movie_filter_rounded,
+                            color: Color(0xFFB9FF45),
+                          ),
+                      ],
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 6),
                     Text(
                       summaryParts.join(' • '),
                       style: TextStyle(color: color.onSurfaceVariant),
@@ -2539,7 +2580,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                     Expanded(
                       child: ListView.separated(
                         itemCount: sorted.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
                         itemBuilder: (context, index) {
                           final result = sorted[index];
                           final isPinned = widget.sources.matchesPinned(
@@ -2659,82 +2700,110 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             );
                           }
 
-                          return ListTile(
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 7,
-                            ),
-                            leading: CircleAvatar(
-                              radius: 25,
-                              child: Text(
-                                result.quality?.replaceAll('P', '') ?? '—',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w900,
+                          return Material(
+                            color: const Color(0xFF0C110E),
+                            borderRadius: BorderRadius.circular(15),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(15),
+                              onTap: () =>
+                                  Navigator.pop(sheetContext, result),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(15),
+                                  border: Border.all(
+                                    color: isPinned
+                                        ? const Color(0x66B9FF45)
+                                        : Colors.white.withValues(alpha: .08),
+                                  ),
+                                ),
+                                child: ListTile(
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                  leading: CircleAvatar(
+                                    radius: 25,
+                                    backgroundColor:
+                                        const Color(0xFF263B18),
+                                    foregroundColor:
+                                        const Color(0xFFDCFFAA),
+                                    child: Text(
+                                      result.quality?.replaceAll('P', '') ?? '—',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                  ),
+                                  title: Text(
+                                    result.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(height: 1.38),
+                                  ),
+                                  subtitle: Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Text(
+                                      providerText,
+                                      style: const TextStyle(
+                                        color: Color(0xFFAAB3AC),
+                                      ),
+                                    ),
+                                  ),
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (statusLabel != null)
+                                        Chip(
+                                          avatar: isPinned
+                                              ? const Icon(
+                                                  Icons.push_pin_rounded,
+                                                  size: 16,
+                                                )
+                                              : null,
+                                          label: Text(statusLabel),
+                                        ),
+                                      const SizedBox(width: 4),
+                                      IconButton(
+                                        tooltip: isPinned
+                                            ? 'Unpin source'
+                                            : 'Pin source',
+                                        icon: Icon(
+                                          isPinned
+                                              ? Icons.push_pin_rounded
+                                              : Icons.push_pin_outlined,
+                                        ),
+                                        onPressed: () async {
+                                          if (isPinned) {
+                                            await widget.sources
+                                                .unpinSource(pinKey);
+                                            if (!context.mounted) return;
+                                            setSheetState(
+                                              () => pinnedIdentity = null,
+                                            );
+                                          } else {
+                                            await widget.sources.pinSource(
+                                              pinKey,
+                                              result,
+                                              seriesWide: seriesWidePin,
+                                            );
+                                            final identity =
+                                                widget.sources.sourceIdentity(
+                                              result,
+                                              seriesWide: seriesWidePin,
+                                            );
+                                            if (!context.mounted) return;
+                                            setSheetState(
+                                              () => pinnedIdentity = identity,
+                                            );
+                                          }
+                                        },
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
-                            title: Text(
-                              result.title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(height: 1.38),
-                            ),
-                            subtitle: Padding(
-                              padding: const EdgeInsets.only(top: 4),
-                              child: Text(providerText),
-                            ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (statusLabel != null)
-                                  Chip(
-                                    avatar: isPinned
-                                        ? const Icon(
-                                            Icons.push_pin_rounded,
-                                            size: 16,
-                                          )
-                                        : null,
-                                    label: Text(statusLabel),
-                                  ),
-                                const SizedBox(width: 4),
-                                IconButton(
-                                  tooltip: isPinned
-                                      ? 'Unpin source'
-                                      : 'Pin source',
-                                  icon: Icon(
-                                    isPinned
-                                        ? Icons.push_pin_rounded
-                                        : Icons.push_pin_outlined,
-                                  ),
-                                  onPressed: () async {
-                                    if (isPinned) {
-                                      await widget.sources.unpinSource(pinKey);
-                                      if (!context.mounted) return;
-                                      setSheetState(
-                                        () => pinnedIdentity = null,
-                                      );
-                                    } else {
-                                      await widget.sources.pinSource(
-                                        pinKey,
-                                        result,
-                                        seriesWide: seriesWidePin,
-                                      );
-                                      final identity =
-                                          widget.sources.sourceIdentity(
-                                        result,
-                                        seriesWide: seriesWidePin,
-                                      );
-                                      if (!context.mounted) return;
-                                      setSheetState(
-                                        () => pinnedIdentity = identity,
-                                      );
-                                    }
-                                  },
-                                ),
-                              ],
-                            ),
-                            onTap: () => Navigator.pop(sheetContext, result),
                           );
                         },
                       ),
