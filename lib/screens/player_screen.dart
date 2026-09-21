@@ -769,9 +769,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (mounted && _aiState.mode != AiSinhalaRuntimeMode.native) {
       setState(() => _transitionAi(AiSinhalaRuntimeMode.native));
     }
-    // media_kit's Flutter SubtitleView is the only visible native-language
-    // subtitle renderer. Keep libmpv's OSD subtitle rendering off or the same
-    // cue is drawn twice (one Flutter layer + one mpv layer).
+    // AI mode hides libmpv while Orvix draws Sinhala. On fallback we switch
+    // back to the native subtitle renderer so the source track's authored
+    // styling is preserved. Hide first only to avoid an overlap during the
+    // state transition, then restore the selected native track below.
     await _setNativeSubtitleVisibility(false);
 
     final player = widget.playback.player;
