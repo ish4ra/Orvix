@@ -92,6 +92,19 @@ class CatalogService {
     return selected;
   }
 
+  MediaItem? peekDetails(MediaItem item) {
+    final key = '${item.kind.name}:${item.id}';
+    final cached = _detailsCache[key];
+    if (cached == null) return null;
+    if (DateTime.now().difference(cached.at) >= const Duration(minutes: 30)) {
+      _detailsCache.remove(key);
+      return null;
+    }
+    return cached.item;
+  }
+
+  bool hasWarmDetails(MediaItem item) => peekDetails(item) != null;
+
   Future<MediaItem?> details(MediaItem item) async {
     final key = '${item.kind.name}:${item.id}';
     final cached = _detailsCache[key];
