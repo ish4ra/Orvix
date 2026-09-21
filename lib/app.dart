@@ -303,7 +303,9 @@ class _OrvixShellState extends State<_OrvixShell> {
   Widget build(BuildContext context) {
     final screens = <Widget>[
       HomeScreen(
-        key: ValueKey(_libraryRevision),
+        // Keep the Home element/state alive when returning from Details.
+        // Library revisions still rebuild this shell, but must not remount Home:
+        // remounting recreates its Future/ListView and jumps the user to the top.
         catalog: widget.catalog,
         mediaState: widget.mediaState,
         onOpen: _openMedia,
