@@ -2564,6 +2564,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final engine = PlayerEngineRouter.choose(
       preference: preference,
       isAndroid: Platform.isAndroid,
+      isAndroidTv: PlatformProfile.isAndroidTv,
       url: url,
       releaseHint: releaseHint,
       aiSinhalaEnabled: aiEnabled,
