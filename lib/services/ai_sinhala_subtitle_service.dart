@@ -528,9 +528,12 @@ class AiSinhalaSubtitleService {
     final cacheKey =
         'native-text|$videoIdentity|${candidate.id}|$selectedMatches|native-text-v1';
     final cached = _preparedCache[cacheKey];
-    if (cached != null &&
-        cached.translatedCount == cached.cues.length) {
-      onStatus?.call('Cached native-timed Sinhala transcript is ready.');
+    if (cached != null) {
+      onStatus?.call(
+        cached.translatedCount > 0
+            ? 'Cached dialogue-matched transcript found • ${cached.translatedCount}/${cached.cues.length} Sinhala cues ready.'
+            : 'Cached dialogue-matched transcript found • Sinhala will buffer during playback.',
+      );
       return cached;
     }
 
@@ -544,26 +547,7 @@ class AiSinhalaSubtitleService {
     _preparedCache[cacheKey] = prepared;
 
     onStatus?.call(
-      'Dialogue match verified ($selectedMatches cues). Translating the complete transcript before playback…',
-    );
-    await _translateEntireSubtitle(
-      prepared,
-      onProgress: (done, total) {
-        final percent =
-            total <= 0 ? 100 : ((done * 100) / total).round().clamp(0, 100);
-        onStatus?.call(
-          'Translating complete Sinhala transcript… $percent% ($done/$total)',
-        );
-      },
-    );
-    if (prepared.translatedCount != prepared.cues.length) {
-      throw const AiSubtitleException(
-        'The complete Sinhala transcript did not finish translating.',
-      );
-    }
-
-    onStatus?.call(
-      'Sinhala transcript ready. The video’s own English cues will control every subtitle timestamp.',
+      'Dialogue match verified ($selectedMatches cues). Sinhala will buffer ahead while playback continues.',
     );
     return prepared;
   }
