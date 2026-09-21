@@ -237,7 +237,21 @@ class LocalTorrentService {
     // preload idea without changing the player or downloading the whole file.
     if (Platform.isAndroid && PlatformProfile.isAndroidTv) {
       onProgress?.call('Connecting peers and pre-buffering…');
-      await _primeAndroidTvStream(streamUrl);
+      await _primeLocalStream(
+        streamUrl,
+        targetBytes: 1024 * 1024,
+        timeout: const Duration(seconds: 10),
+      );
+    } else if (Platform.isWindows) {
+      // Windows MPV is much happier when the localhost torrent endpoint has
+      // produced real bytes before libmpv opens it. This is best-effort and
+      // never blocks a viable slow swarm forever.
+      onProgress?.call('Connecting peers and warming Windows playback…');
+      await _primeLocalStream(
+        streamUrl,
+        targetBytes: 2 * 1024 * 1024,
+        timeout: const Duration(seconds: 12),
+      );
     }
 
     onProgress?.call('Opening player…');
@@ -277,12 +291,15 @@ class LocalTorrentService {
     }
   }
 
-  Future<void> _primeAndroidTvStream(String streamUrl) async {
+  Future<void> _primeLocalStream(
+    String streamUrl, {
+    required int targetBytes,
+    required Duration timeout,
+  }) async {
     final client = http.Client();
     try {
       await (() async {
         final request = http.Request('GET', Uri.parse(streamUrl));
-        const targetBytes = 1024 * 1024;
         request.headers['Range'] = 'bytes=0-${targetBytes - 1}';
         final response = await client.send(request);
         if (response.statusCode != 200 && response.statusCode != 206) return;
@@ -292,10 +309,10 @@ class LocalTorrentService {
           received += chunk.length;
           if (received >= targetBytes) break;
         }
-      })().timeout(const Duration(seconds: 10));
+      })().timeout(timeout);
     } catch (_) {
       // Warm-up is best effort. A slow swarm still gets a chance in the real
-      // player, while healthy swarms usually seed the first megabyte quickly.
+      // player, while healthy swarms usually seed the requested prefix.
     } finally {
       client.close();
     }
