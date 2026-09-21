@@ -3,7 +3,7 @@ name: Release Orvix v0.7.5-beta.13 — Continuation Build
 on:
   push:
     branches:
-      - orvix-v0.7.5-beta.13
+      - orvix-v0.7.5-dev
     paths:
       - '.github/workflows/orvix-v075-beta13-release.yml'
   workflow_dispatch:
