@@ -1164,6 +1164,7 @@ class SourceProviderService {
     MediaItem item, {
     EpisodeItem? episode,
     bool includeLowQuality = false,
+    bool forceRefresh = false,
   }) async {
     await _ensurePlaybackHistoryLoaded();
     final addons = await getAddonUrls();
@@ -1191,14 +1192,15 @@ class SourceProviderService {
     ].join('::');
 
     final cached = _resolveCache[cacheKey];
-    if (cached != null &&
+    if (!forceRefresh &&
+        cached != null &&
         DateTime.now().difference(cached.createdAt) <
             const Duration(seconds: 45)) {
       return [...cached.results];
     }
 
     final running = _resolveInFlight[cacheKey];
-    if (running != null) return [...await running];
+    if (!forceRefresh && running != null) return [...await running];
 
     final future = (() async {
       final groups = await Future.wait(
