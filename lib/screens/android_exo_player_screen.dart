@@ -673,20 +673,6 @@ class _ExoActionState extends State<_ExoAction> {
                 : Colors.white.withValues(alpha: .14),
             width: _focused ? 2.2 : 1,
           ),
-          boxShadow: _focused
-              ? [
-                  BoxShadow(
-                    color: primary.withValues(alpha: .34),
-                    blurRadius: 24,
-                    spreadRadius: 1,
-                  ),
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: .42),
-                    blurRadius: 16,
-                    offset: const Offset(0, 7),
-                  ),
-                ]
-              : const [],
         ),
         child: Material(
           color: Colors.transparent,
