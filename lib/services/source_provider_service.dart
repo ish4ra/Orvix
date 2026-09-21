@@ -1199,7 +1199,7 @@ class SourceProviderService {
     if (!forceRefresh &&
         cached != null &&
         DateTime.now().difference(cached.createdAt) <
-            const Duration(seconds: 45)) {
+            const Duration(minutes: 5)) {
       return [...cached.results];
     }
 
