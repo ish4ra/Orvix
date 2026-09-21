@@ -51,6 +51,7 @@ void main() {
     expect(update, contains('Process.start(\n        file.path'));
     expect(update, contains('ProcessStartMode.detached'));
     expect(update, contains('Duration(milliseconds: 700)'));
+    expect(update, contains('await windowManager.close();'));
     expect(update, contains('exit(0)'));
     expect(update, isNot(contains('powershell.exe')));
     expect(runnerCmake, isNot(contains('add_executable(orvix_updater_helper')));
@@ -79,6 +80,8 @@ void main() {
     expect(live, contains('retainSession: true'));
     expect(torrent, contains('prepareRetainedProbeForPlayback'));
     expect(torrent, contains('releaseRetainedProbeSessions'));
+    expect(torrent, contains('await process.exitCode.timeout'));
+    expect(torrent, contains('Duration(seconds: 3)'));
     expect(details, contains('liveProbe.rank(results, widget.sources)'));
     expect(tv, contains('_liveProbe.rank(_results, widget.sources)'));
 
