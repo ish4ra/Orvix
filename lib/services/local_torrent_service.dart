@@ -498,7 +498,9 @@ class LocalTorrentService {
     };
 
     try {
-      final response = await _createTorrent(body);
+      final response = await _createTorrent(body).timeout(
+        const Duration(milliseconds: 1800),
+      );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return LocalTorrentProbeResult(
           playableNow: false,
