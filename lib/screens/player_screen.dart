@@ -3152,8 +3152,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
                               return SliderTheme(
                                 data: SliderTheme.of(context).copyWith(
                                   trackHeight: 3.5,
+                                  activeTrackColor: const Color(0xFFB9FF45),
+                                  secondaryActiveTrackColor:
+                                      const Color(0xFF5F7F38),
+                                  inactiveTrackColor:
+                                      const Color(0xFF273027),
+                                  thumbColor: const Color(0xFFB9FF45),
+                                  overlayColor:
+                                      const Color(0x33B9FF45),
                                   thumbShape: const RoundSliderThumbShape(
-                                      enabledThumbRadius: 6),
+                                    enabledThumbRadius: 6,
+                                  ),
                                 ),
                                 child: Slider(
                                   value: actualMs,
@@ -3191,6 +3200,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                 initialData: player.state.playing,
                                 builder: (context, snapshot) =>
                                     IconButton.filled(
+                                  style: IconButton.styleFrom(
+                                    backgroundColor: const Color(0xFFB9FF45),
+                                    foregroundColor: Colors.black,
+                                    focusColor: const Color(0xFFCBFF75),
+                                    hoverColor: const Color(0xFFD6FF91),
+                                    shadowColor: const Color(0x883CFF00),
+                                    elevation: 6,
+                                  ),
                                   tooltip:
                                       snapshot.data == true ? 'Pause' : 'Play',
                                   onPressed: player.playOrPause,
@@ -3247,6 +3264,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                       SizedBox(
                                         width: 92,
                                         child: Slider(
+                                          activeColor: const Color(0xFFB9FF45),
+                                          secondaryActiveColor:
+                                              const Color(0xFF5F7F38),
+                                          thumbColor: const Color(0xFFB9FF45),
                                           min: 0,
                                           max: 100,
                                           value: volume,
@@ -3337,6 +3358,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
           stream: player.stream.playing,
           initialData: player.state.playing,
           builder: (context, snapshot) => IconButton.filled(
+            style: IconButton.styleFrom(
+              backgroundColor: const Color(0xFFB9FF45),
+              foregroundColor: Colors.black,
+              focusColor: const Color(0xFFCBFF75),
+              hoverColor: const Color(0xFFD6FF91),
+              shadowColor: const Color(0x883CFF00),
+              elevation: 6,
+            ),
             tooltip: snapshot.data == true ? 'Pause' : 'Play',
             onPressed: player.playOrPause,
             icon: Icon(
@@ -3444,20 +3473,40 @@ class _TvPlayerActionState extends State<_TvPlayerAction> {
   @override
   Widget build(BuildContext context) {
     final size = widget.prominent ? 64.0 : 48.0;
+    const lime = Color(0xFFB9FF45);
     return Semantics(
       button: true,
       label: widget.semanticLabel ?? widget.label,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 90),
         decoration: BoxDecoration(
-          color: _focused
-              ? const Color(0xE62A2E2B)
-              : const Color(0xA8151816),
+          gradient: LinearGradient(
+            colors: widget.prominent
+                ? (_focused
+                    ? const [Color(0xFFCBFF75), lime]
+                    : const [lime, Color(0xFF92D934)])
+                : (_focused
+                    ? const [Color(0xFF29411C), Color(0xFF182315)]
+                    : const [Color(0xDD141915), Color(0xDD0E120F)]),
+          ),
           borderRadius: BorderRadius.circular(widget.prominent ? 32 : 14),
           border: Border.all(
-            color: _focused ? Colors.white : const Color(0x664F5551),
+            color: _focused
+                ? const Color(0xFFCBFF75)
+                : widget.prominent
+                    ? lime.withValues(alpha: .75)
+                    : const Color(0x554F6550),
             width: _focused ? 2.2 : 1,
           ),
+          boxShadow: _focused || widget.prominent
+              ? [
+                  BoxShadow(
+                    color: lime.withValues(alpha: _focused ? .34 : .18),
+                    blurRadius: _focused ? 24 : 14,
+                    spreadRadius: _focused ? 1 : 0,
+                  ),
+                ]
+              : const [],
         ),
         child: Material(
           color: Colors.transparent,
@@ -3485,7 +3534,7 @@ class _TvPlayerActionState extends State<_TvPlayerAction> {
                       width: widget.label == null ? size - 2 : 30,
                       child: Icon(
                         widget.icon,
-                        color: Colors.white,
+                        color: widget.prominent ? Colors.black : Colors.white,
                         size: widget.prominent ? 34 : 26,
                       ),
                     ),
@@ -3494,7 +3543,8 @@ class _TvPlayerActionState extends State<_TvPlayerAction> {
                       Text(
                         widget.label!,
                         style: const TextStyle(
-                          color: Colors.white,
+                          color:
+                              widget.prominent ? Colors.black : Colors.white,
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
                         ),
@@ -3531,19 +3581,19 @@ class _TvProgressBar extends StatelessWidget {
             return Stack(
               fit: StackFit.expand,
               children: [
-                const ColoredBox(color: Color(0xFF4A4E4B)),
+                const ColoredBox(color: Color(0xFF252D27)),
                 Align(
                   alignment: Alignment.centerLeft,
                   child: SizedBox(
                     width: constraints.maxWidth * buffered,
-                    child: const ColoredBox(color: Color(0xFF747A76)),
+                    child: const ColoredBox(color: Color(0xFF526644)),
                   ),
                 ),
                 Align(
                   alignment: Alignment.centerLeft,
                   child: SizedBox(
                     width: constraints.maxWidth * played,
-                    child: const ColoredBox(color: Colors.white),
+                    child: const ColoredBox(color: Color(0xFFB9FF45)),
                   ),
                 ),
               ],
