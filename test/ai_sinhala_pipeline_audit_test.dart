@@ -111,6 +111,23 @@ void main() {
     expect(trusted, contains('translation of the whole episode is not'));
   });
 
+  test('dialogue-matched fallback also buffers instead of translating the full episode', () {
+    final service =
+        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+
+    final start = service.indexOf(
+      'static Future<AiPreparedSubtitle>\n      prepareTranslatedTranscriptForNativeTiming',
+    );
+    final end = service.indexOf('static Future', start + 80);
+    final matched = service.substring(start, end);
+
+    expect(matched, isNot(contains('_translateEntireSubtitle(')));
+    expect(
+      matched,
+      contains('Sinhala will buffer ahead while playback continues'),
+    );
+  });
+
   test('AI preparation cannot cover already-playing video with a full-screen overlay', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
