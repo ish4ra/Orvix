@@ -188,6 +188,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
           if (PlatformProfile.isAndroidTv) {
             return _tvDetailsLayout(item);
           }
+          if (Platform.isWindows && MediaQuery.sizeOf(context).width >= 900) {
+            return _desktopDetailsLayout(item);
+          }
           return Stack(
             children: [
               CustomScrollView(
@@ -223,6 +226,365 @@ class _DetailsScreenState extends State<DetailsScreen> {
             ],
           );
         },
+      ),
+    );
+  }
+
+  Widget _desktopDetailsLayout(MediaItem item) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const ColoredBox(color: Color(0xFF060807)),
+        CustomScrollView(
+          key: PageStorageKey('orvix-windows-details-${item.kind.name}-${item.id}'),
+          cacheExtent: 1500,
+          slivers: [
+            SliverToBoxAdapter(child: _desktopHero(item)),
+            SliverToBoxAdapter(child: _metadataSection(item)),
+            if (item.kind == MediaKind.series && item.episodes.isNotEmpty)
+              SliverToBoxAdapter(child: _desktopSeriesRail(item)),
+            if (item.kind == MediaKind.series && item.episodes.isEmpty)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(46, 12, 46, 54),
+                  child: Text(
+                    'Episode metadata is still warming up…',
+                    style: TextStyle(
+                      color: Color(0xFF98A19A),
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ),
+            const SliverToBoxAdapter(child: SizedBox(height: 78)),
+          ],
+        ),
+        Positioned(
+          top: 18,
+          left: 18,
+          child: SafeArea(
+            child: IconButton.filled(
+              tooltip: 'Back',
+              onPressed: () => Navigator.of(context).pop(),
+              style: IconButton.styleFrom(
+                backgroundColor: const Color(0xC9141816),
+                foregroundColor: Colors.white,
+                side: BorderSide(
+                  color: Colors.white.withValues(alpha: .10),
+                ),
+              ),
+              icon: const Icon(Icons.arrow_back_rounded),
+            ),
+          ),
+        ),
+        if (_resolving) _busyOverlay(item),
+      ],
+    );
+  }
+
+  Widget _desktopHero(MediaItem item) {
+    const lime = Color(0xFFB9FF45);
+    final backdrop = item.background ?? item.poster;
+    return SizedBox(
+      height: 585,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (backdrop?.trim().isNotEmpty == true)
+            CachedNetworkImage(
+              imageUrl: backdrop!,
+              fit: BoxFit.cover,
+              alignment: Alignment.centerRight,
+              memCacheWidth: 1900,
+              fadeInDuration: Duration.zero,
+              placeholder: (_, __) =>
+                  const ColoredBox(color: Color(0xFF090C0A)),
+              errorWidget: (_, __, ___) =>
+                  const ColoredBox(color: Color(0xFF090C0A)),
+            )
+          else
+            const ColoredBox(color: Color(0xFF090C0A)),
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [
+                  Color(0xFF060807),
+                  Color(0xFA060807),
+                  Color(0xC0060807),
+                  Color(0x40060807),
+                  Color(0x00060807),
+                ],
+                stops: [0, .22, .48, .77, 1],
+              ),
+            ),
+          ),
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0x12000000),
+                  Color(0x00000000),
+                  Color(0x24000000),
+                  Color(0xFF060807),
+                ],
+                stops: [0, .36, .72, 1],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(54, 82, 54, 52),
+            child: Align(
+              alignment: Alignment.bottomLeft,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 720),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (item.logo?.trim().isNotEmpty == true)
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: 430,
+                          maxHeight: 135,
+                        ),
+                        child: CachedNetworkImage(
+                          imageUrl: item.logo!,
+                          fit: BoxFit.contain,
+                          alignment: Alignment.centerLeft,
+                          fadeInDuration: Duration.zero,
+                          errorWidget: (_, __, ___) => Text(
+                            item.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 44,
+                              height: 1.02,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -1.1,
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      Text(
+                        item.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 44,
+                          height: 1.02,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -1.1,
+                        ),
+                      ),
+                    const SizedBox(height: 15),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _MetaPill(item.typeLabel),
+                        if (item.year != null) _MetaPill(item.year!),
+                        if (item.runtime != null) _MetaPill(item.runtime!),
+                        if (item.rating != null)
+                          _MetaPill('★ ${item.rating!.toStringAsFixed(1)}'),
+                        ...item.genres.take(3).map(_MetaPill.new),
+                      ],
+                    ),
+                    if (item.description?.trim().isNotEmpty == true) ...[
+                      const SizedBox(height: 17),
+                      Text(
+                        item.description!,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFFE0E5E1),
+                          fontSize: 15,
+                          height: 1.52,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 23),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        if (item.kind == MediaKind.movie)
+                          FilledButton.icon(
+                            onPressed: _resolving ? null : () => _play(item),
+                            icon: const Icon(Icons.play_arrow_rounded),
+                            label: const Text('Play'),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: lime,
+                              foregroundColor: Colors.black,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 22,
+                                vertical: 15,
+                              ),
+                              textStyle: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          )
+                        else
+                          FilledButton.tonalIcon(
+                            onPressed: null,
+                            icon: const Icon(Icons.video_library_outlined),
+                            label: const Text('Choose an episode below'),
+                          ),
+                        if (item.kind == MediaKind.movie)
+                          OutlinedButton.icon(
+                            onPressed: _resolving
+                                ? null
+                                : () => _findSourcesAndPlay(item),
+                            icon: const Icon(Icons.travel_explore_rounded),
+                            label: const Text('Sources'),
+                            style: _desktopSecondaryButtonStyle(),
+                          ),
+                        FilledButton.tonalIcon(
+                          onPressed: () => _toggleLibrary(item),
+                          icon: Icon(
+                            _inLibrary
+                                ? Icons.video_library_rounded
+                                : Icons.library_add_outlined,
+                          ),
+                          label: Text(
+                            _inLibrary ? 'In Library' : 'Add to Library',
+                          ),
+                          style: _desktopSecondaryButtonStyle(),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () => _toggleWatchlist(item),
+                          icon: Icon(
+                            _watchlisted
+                                ? Icons.bookmark_rounded
+                                : Icons.bookmark_add_outlined,
+                          ),
+                          label: Text(
+                            _watchlisted ? 'Watchlisted' : 'Watchlist',
+                          ),
+                          style: _desktopSecondaryButtonStyle(),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  ButtonStyle _desktopSecondaryButtonStyle() {
+    const lime = Color(0xFFB9FF45);
+    return ButtonStyle(
+      foregroundColor: const WidgetStatePropertyAll(Colors.white),
+      backgroundColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.hovered) ||
+            states.contains(WidgetState.focused)) {
+          return const Color(0xFF1A2119);
+        }
+        return const Color(0xC7111513);
+      }),
+      side: WidgetStateProperty.resolveWith((states) {
+        final active = states.contains(WidgetState.hovered) ||
+            states.contains(WidgetState.focused);
+        return BorderSide(
+          color: active
+              ? lime.withValues(alpha: .72)
+              : Colors.white.withValues(alpha: .13),
+          width: active ? 1.5 : 1,
+        );
+      }),
+      padding: const WidgetStatePropertyAll(
+        EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+      ),
+      shape: const WidgetStatePropertyAll(StadiumBorder()),
+      textStyle: const WidgetStatePropertyAll(
+        TextStyle(fontWeight: FontWeight.w800),
+      ),
+    );
+  }
+
+  Widget _desktopSeriesRail(MediaItem item) {
+    final seasons = item.episodes.map((e) => e.season).toSet().toList()..sort();
+    if (seasons.isEmpty) return const SizedBox.shrink();
+    final selected = _selectedSeason ?? seasons.first;
+    final episodes = item.episodes.where((e) => e.season == selected).toList()
+      ..sort((a, b) => a.episode.compareTo(b.episode));
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 18, bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 46),
+            child: Text(
+              'Seasons',
+              style: TextStyle(
+                fontSize: 23,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -.35,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 58,
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 46, vertical: 5),
+              scrollDirection: Axis.horizontal,
+              itemCount: seasons.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final season = seasons[index];
+                return _MobileSeasonTile(
+                  season: season,
+                  selected: season == selected,
+                  onTap: () => _selectSeason(item, season),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 18),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 46),
+            child: Text(
+              selected == 0 ? 'Specials' : 'Season $selected',
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -.2,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 208,
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 46, vertical: 6),
+              scrollDirection: Axis.horizontal,
+              cacheExtent: 1800,
+              itemCount: episodes.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 14),
+              itemBuilder: (context, index) {
+                final episode = episodes[index];
+                return _DesktopEpisodeCard(
+                  episode: episode,
+                  onTap: _resolving
+                      ? null
+                      : () => _findSourcesAndPlay(item, episode: episode),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -3363,6 +3725,209 @@ class _TvEpisodeCardState extends State<_TvEpisodeCard> {
                     ),
                   ),
                 ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopEpisodeCard extends StatefulWidget {
+  const _DesktopEpisodeCard({
+    required this.episode,
+    required this.onTap,
+  });
+
+  final EpisodeItem episode;
+  final VoidCallback? onTap;
+
+  @override
+  State<_DesktopEpisodeCard> createState() => _DesktopEpisodeCardState();
+}
+
+class _DesktopEpisodeCardState extends State<_DesktopEpisodeCard> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const lime = Color(0xFFB9FF45);
+    final active = _hovered || _focused;
+    final episode = widget.episode;
+    final cleanOverview = episode.overview?.replaceFirst(
+      RegExp(r'^★\s*\d+(?:\.\d+)?\s*'),
+      '',
+    );
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedScale(
+        scale: active ? 1.025 : 1,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOutCubic,
+        child: SizedBox(
+          width: 322,
+          child: Material(
+            color: const Color(0xFF0C100E),
+            borderRadius: BorderRadius.circular(16),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(16),
+              focusColor: Colors.transparent,
+              hoverColor: Colors.transparent,
+              onFocusChange: (value) => setState(() => _focused = value),
+              onTap: widget.onTap,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: active
+                        ? lime.withValues(alpha: .72)
+                        : Colors.white.withValues(alpha: .10),
+                    width: active ? 1.6 : 1,
+                  ),
+                  boxShadow: active
+                      ? [
+                          BoxShadow(
+                            color: lime.withValues(alpha: .12),
+                            blurRadius: 22,
+                          ),
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: .38),
+                            blurRadius: 20,
+                            offset: const Offset(0, 8),
+                          ),
+                        ]
+                      : const [],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (episode.thumbnail?.trim().isNotEmpty == true)
+                      CachedNetworkImage(
+                        imageUrl: episode.thumbnail!,
+                        fit: BoxFit.cover,
+                        memCacheWidth: 720,
+                        fadeInDuration: Duration.zero,
+                        placeholder: (_, __) =>
+                            const ColoredBox(color: Color(0xFF151916)),
+                        errorWidget: (_, __, ___) =>
+                            const ColoredBox(color: Color(0xFF151916)),
+                      )
+                    else
+                      const ColoredBox(color: Color(0xFF151916)),
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Color(0x08000000),
+                            Color(0x24000000),
+                            Color(0xA6000000),
+                            Color(0xF6090B0A),
+                          ],
+                          stops: [0, .35, .68, 1],
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 11,
+                      left: 12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xB3090B0A),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: .12),
+                          ),
+                        ),
+                        child: Text(
+                          episode.label,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      right: 11,
+                      top: 11,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 120),
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: active
+                              ? lime
+                              : const Color(0xB3090B0A),
+                          border: Border.all(
+                            color: active
+                                ? lime
+                                : Colors.white.withValues(alpha: .14),
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.play_arrow_rounded,
+                          color: active ? Colors.black : Colors.white,
+                          size: 23,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 14,
+                      right: 14,
+                      bottom: 12,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            episode.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 15.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          if (cleanOverview?.trim().isNotEmpty == true) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              cleanOverview!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFFC4CBC6),
+                                fontSize: 11.2,
+                              ),
+                            ),
+                          ],
+                          if (episode.rating != null) ...[
+                            const SizedBox(height: 5),
+                            Text(
+                              '★ ${episode.rating!.toStringAsFixed(1)}',
+                              style: const TextStyle(
+                                color: Color(0xFFD8DED9),
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
