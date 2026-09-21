@@ -152,16 +152,13 @@ class CatalogService {
     }
 
     final resolved = _mergeMetadata(aio, cinemeta) ?? item;
-    var episodes = resolved.episodes;
-    if (item.kind == MediaKind.series && episodes.isNotEmpty) {
-      episodes = await _enrichEpisodeRatings(item.id, episodes);
-    }
-
     final richDescription = _richDescription(resolved);
 
-    // Keep live IMDb chart data when the title came from an IMDb ranked shelf,
-    // while AIOMetadata supplies richer art, cast/director data and episodes.
-    return MediaItem(
+    // Metadata, artwork, cast and episodes are the critical path for opening a
+    // title. IMDb episode-rating pagination is useful decoration, but waiting
+    // for it made series details look blank for several seconds. Return the
+    // usable rich item immediately and upgrade the in-memory cache later.
+    final ready = MediaItem(
       id: resolved.id.isNotEmpty ? resolved.id : item.id,
       kind: resolved.kind,
       title: resolved.title.isNotEmpty ? resolved.title : item.title,
@@ -173,7 +170,8 @@ class CatalogService {
       rating: item.rating ?? resolved.rating,
       runtime: resolved.runtime ?? item.runtime,
       genres: resolved.genres.isNotEmpty ? resolved.genres : item.genres,
-      episodes: episodes.isNotEmpty ? episodes : item.episodes,
+      episodes:
+          resolved.episodes.isNotEmpty ? resolved.episodes : item.episodes,
       cast: resolved.cast,
       castMembers: resolved.castMembers,
       seasonPosters: resolved.seasonPosters,
@@ -181,6 +179,11 @@ class CatalogService {
       country: resolved.country,
       certification: resolved.certification,
     );
+
+    if (ready.kind == MediaKind.series && ready.episodes.isNotEmpty) {
+      unawaited(_enrichEpisodeRatingsInBackground(ready));
+    }
+    return ready;
   }
 
   Future<MediaItem?> _aioMetadataDetails(MediaItem item) async {
@@ -391,6 +394,42 @@ class CatalogService {
     final line = facts.join('  •  ');
     if (description == null || description.isEmpty) return line;
     return '$line\n$description';
+  }
+
+  Future<void> _enrichEpisodeRatingsInBackground(MediaItem item) async {
+    final enriched = await _enrichEpisodeRatings(item.id, item.episodes);
+    if (enriched.length != item.episodes.length) return;
+    var changed = false;
+    for (var index = 0; index < enriched.length; index++) {
+      if (enriched[index].rating != item.episodes[index].rating) {
+        changed = true;
+        break;
+      }
+    }
+    if (!changed) return;
+
+    final upgraded = MediaItem(
+      id: item.id,
+      kind: item.kind,
+      title: item.title,
+      year: item.year,
+      poster: item.poster,
+      background: item.background,
+      logo: item.logo,
+      description: item.description,
+      rating: item.rating,
+      runtime: item.runtime,
+      genres: item.genres,
+      episodes: enriched,
+      cast: item.cast,
+      castMembers: item.castMembers,
+      seasonPosters: item.seasonPosters,
+      directors: item.directors,
+      country: item.country,
+      certification: item.certification,
+    );
+    final key = '${item.kind.name}:${item.id}';
+    _detailsCache[key] = (at: DateTime.now(), item: upgraded);
   }
 
   Future<List<EpisodeItem>> _enrichEpisodeRatings(
