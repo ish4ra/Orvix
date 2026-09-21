@@ -203,6 +203,8 @@ class LocalTorrentService {
   Future<void>? _starting;
   bool _androidProfileConfigured = false;
   String? _currentInfoHash;
+  final Set<String> _retainedProbeInfoHashes = <String>{};
+  Timer? _probeCleanupTimer;
 
   Future<String> resolve(
     SourceResult source, {
@@ -298,6 +300,7 @@ class LocalTorrentService {
     );
 
     _currentInfoHash = infoHash;
+    _retainedProbeInfoHashes.remove(infoHash);
 
     // Android TV players tend to fail faster than the torrent swarm can warm
     // up on marginal sources. Prime a small HTTP range into the stream-server
@@ -465,6 +468,7 @@ class LocalTorrentService {
     SourceResult source, {
     Duration timeout = const Duration(milliseconds: 4800),
     int windowBytes = 512 * 1024,
+    bool retainSession = false,
   }) async {
     if (!source.isMagnet) {
       return const LocalTorrentProbeResult(
@@ -603,6 +607,11 @@ class LocalTorrentService {
       final engineSpeed = health?.downloadSpeedBytesPerSecond ?? 0;
       final speed = measuredSpeed > engineSpeed ? measuredSpeed : engineSpeed;
 
+      if (retainSession) {
+        _retainedProbeInfoHashes.add(infoHash);
+        _scheduleProbeCleanup();
+      }
+
       return LocalTorrentProbeResult(
         playableNow: sampleWindowsPassed >= 2 && bytes >= 512 * 1024,
         bytesReceived: bytes,
@@ -615,9 +624,52 @@ class LocalTorrentService {
       );
     } finally {
       // Never detach a torrent that is currently being used by the player.
-      if (_currentInfoHash != infoHash) {
+      if (!retainSession && _currentInfoHash != infoHash) {
         await _removeEngine(infoHash);
       }
+    }
+  }
+
+  void _scheduleProbeCleanup() {
+    _probeCleanupTimer?.cancel();
+    _probeCleanupTimer = Timer(const Duration(seconds: 75), () {
+      unawaited(releaseRetainedProbeSessions());
+    });
+  }
+
+  Future<void> prepareRetainedProbeForPlayback(SourceResult source) async {
+    final selectedHash =
+        source.isMagnet ? _extractInfoHash(source.resource) : null;
+    final stale = _retainedProbeInfoHashes
+        .where((hash) => hash != selectedHash && hash != _currentInfoHash)
+        .toList(growable: false);
+    for (final hash in stale) {
+      await _removeEngine(hash);
+      _retainedProbeInfoHashes.remove(hash);
+    }
+
+    if (selectedHash != null && _retainedProbeInfoHashes.contains(selectedHash)) {
+      // Give the caller a short handoff window to call resolve(), which turns
+      // this warm probe into the active playback torrent.
+      _probeCleanupTimer?.cancel();
+      _probeCleanupTimer = Timer(const Duration(seconds: 25), () {
+        if (_currentInfoHash != selectedHash) {
+          _retainedProbeInfoHashes.remove(selectedHash);
+          unawaited(_removeEngine(selectedHash));
+        }
+      });
+    }
+  }
+
+  Future<void> releaseRetainedProbeSessions() async {
+    _probeCleanupTimer?.cancel();
+    _probeCleanupTimer = null;
+    final stale = _retainedProbeInfoHashes
+        .where((hash) => hash != _currentInfoHash)
+        .toList(growable: false);
+    for (final hash in stale) {
+      await _removeEngine(hash);
+      _retainedProbeInfoHashes.remove(hash);
     }
   }
 
@@ -808,6 +860,9 @@ class LocalTorrentService {
   }
 
   Future<void> dispose() async {
+    _probeCleanupTimer?.cancel();
+    _probeCleanupTimer = null;
+    await releaseRetainedProbeSessions();
     await releaseCurrentStream();
 
     final process = _process;
