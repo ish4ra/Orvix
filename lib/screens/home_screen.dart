@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
@@ -36,6 +38,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _load() => _homeFuture = _loadHome();
 
+  void _prefetchItem(MediaItem item) {
+    unawaited(widget.catalog.prefetchDetails(item));
+  }
+
+  void _openItem(MediaItem item) {
+    _prefetchItem(item);
+    widget.onOpen(item);
+  }
+
   Future<_HomeData> _loadHome() async {
     final sections = await _preferences.load();
     final media = <HomeSectionId, List<MediaItem>>{};
@@ -73,6 +84,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
     media[HomeSectionId.myLibrary] = library;
     media[HomeSectionId.myWatchlist] = watchlist;
+
+    final warm = <MediaItem>[];
+    final seenWarm = <String>{};
+    for (final section in sections) {
+      for (final item in (media[section] ?? const <MediaItem>[]).take(2)) {
+        final key = '${item.kind.name}:${item.id}';
+        if (seenWarm.add(key)) warm.add(item);
+        if (warm.length >= 10) break;
+      }
+      if (warm.length >= 10) break;
+    }
+    for (final item in warm) {
+      unawaited(widget.catalog.prefetchDetails(item));
+    }
 
     return _HomeData(
       sections: sections,
@@ -239,7 +264,8 @@ class _HomeScreenState extends State<HomeScreen> {
         if (PlatformProfile.isAndroidTv) {
           return _TvHomeView(
             data: data,
-            onOpen: widget.onOpen,
+            onOpen: _openItem,
+            onPrefetch: _prefetchItem,
           );
         }
 
@@ -251,7 +277,8 @@ class _HomeScreenState extends State<HomeScreen> {
           child: ListView(
             padding: EdgeInsets.zero,
             children: [
-              if (hero != null) _Hero(item: hero, onOpen: () => widget.onOpen(hero)),
+              if (hero != null)
+                _Hero(item: hero, onOpen: () => _openItem(hero)),
               Padding(
                 padding: const EdgeInsets.fromLTRB(32, 18, 32, 0),
                 child: Row(
@@ -278,7 +305,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   _MediaRail(
                     title: section.label,
                     items: data.items(section),
-                    onOpen: widget.onOpen,
+                    onOpen: _openItem,
+                    onPrefetch: _prefetchItem,
                   ),
               const SizedBox(height: 48),
             ],
@@ -478,11 +506,17 @@ class _ContinueRail extends StatelessWidget {
 }
 
 class _MediaRail extends StatelessWidget {
-  const _MediaRail({required this.title, required this.items, required this.onOpen});
+  const _MediaRail({
+    required this.title,
+    required this.items,
+    required this.onOpen,
+    required this.onPrefetch,
+  });
 
   final String title;
   final List<MediaItem> items;
   final ValueChanged<MediaItem> onOpen;
+  final ValueChanged<MediaItem> onPrefetch;
 
   @override
   Widget build(BuildContext context) {
@@ -515,6 +549,9 @@ class _MediaRail extends StatelessWidget {
                   item: item,
                   width: PlatformProfile.isAndroidTv ? 138 : 150,
                   compact: PlatformProfile.isAndroidTv,
+                  onFocusChanged: (focused) {
+                    if (focused) onPrefetch(item);
+                  },
                   onTap: () => onOpen(item),
                 );
               },
@@ -561,10 +598,12 @@ class _TvHomeView extends StatelessWidget {
   const _TvHomeView({
     required this.data,
     required this.onOpen,
+    required this.onPrefetch,
   });
 
   final _HomeData data;
   final ValueChanged<MediaItem> onOpen;
+  final ValueChanged<MediaItem> onPrefetch;
 
   @override
   Widget build(BuildContext context) {
@@ -592,6 +631,7 @@ class _TvHomeView extends StatelessWidget {
                 title: section.label,
                 items: data.items(section),
                 onOpen: onOpen,
+                onPrefetch: onPrefetch,
               ),
         ],
       ),
@@ -669,17 +709,42 @@ class _TvFeaturedHero extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      item.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 40,
-                        height: 1.0,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: -1.0,
+                    if (item.logo?.trim().isNotEmpty == true)
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: 360,
+                          maxHeight: 115,
+                        ),
+                        child: CachedNetworkImage(
+                          imageUrl: item.logo!,
+                          fit: BoxFit.contain,
+                          alignment: Alignment.centerLeft,
+                          fadeInDuration: Duration.zero,
+                          errorWidget: (_, __, ___) => Text(
+                            item.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 40,
+                              height: 1,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -1,
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      Text(
+                        item.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 40,
+                          height: 1,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -1,
+                        ),
                       ),
-                    ),
                     const SizedBox(height: 13),
                     Text(
                       [
@@ -740,11 +805,13 @@ class _TvPosterShelf extends StatelessWidget {
     required this.title,
     required this.items,
     required this.onOpen,
+    required this.onPrefetch,
   });
 
   final String title;
   final List<MediaItem> items;
   final ValueChanged<MediaItem> onOpen;
+  final ValueChanged<MediaItem> onPrefetch;
 
   @override
   Widget build(BuildContext context) {
@@ -797,6 +864,9 @@ class _TvPosterShelf extends StatelessWidget {
                     compact: true,
                     focusScale: 1.055,
                     autofocus: false,
+                    onFocusChanged: (focused) {
+                      if (focused) onPrefetch(item);
+                    },
                     onTap: () => onOpen(item),
                   ),
                 );
