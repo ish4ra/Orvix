@@ -1,5 +1,17 @@
 enum MediaKind { movie, series }
 
+class CastMember {
+  const CastMember({
+    required this.name,
+    this.character,
+    this.photo,
+  });
+
+  final String name;
+  final String? character;
+  final String? photo;
+}
+
 class EpisodeItem {
   const EpisodeItem({
     required this.id,
@@ -96,12 +108,15 @@ class MediaItem {
     this.year,
     this.poster,
     this.background,
+    this.logo,
     this.description,
     this.rating,
     this.runtime,
     this.genres = const [],
     this.episodes = const [],
     this.cast = const [],
+    this.castMembers = const [],
+    this.seasonPosters = const [],
     this.directors = const [],
     this.country,
     this.certification,
@@ -113,15 +128,24 @@ class MediaItem {
   final String? year;
   final String? poster;
   final String? background;
+  final String? logo;
   final String? description;
   final double? rating;
   final String? runtime;
   final List<String> genres;
   final List<EpisodeItem> episodes;
   final List<String> cast;
+  final List<CastMember> castMembers;
+  final List<String?> seasonPosters;
   final List<String> directors;
   final String? country;
   final String? certification;
+
+  String? seasonPoster(int season) {
+    if (season <= 0 || season > seasonPosters.length) return null;
+    final value = seasonPosters[season - 1]?.trim();
+    return value == null || value.isEmpty ? null : value;
+  }
 
   int? get startYear {
     final match = RegExp(r'\b(?:19|20)\d{2}\b').firstMatch(year ?? '');
@@ -171,9 +195,18 @@ class MediaItem {
             .toList(growable: false)
         : const <EpisodeItem>[];
 
+    final appExtras = json['app_extras'];
+    final richCast = appExtras is Map ? _castMembers(appExtras['cast']) : const <CastMember>[];
     final legacyCast = _stringList(json['cast']);
     final linkedCast = _linkNames(json['links'], const {'actor', 'cast'});
-    final cast = legacyCast.isNotEmpty ? legacyCast : linkedCast;
+    final cast = richCast.isNotEmpty
+        ? richCast.map((member) => member.name).toList(growable: false)
+        : legacyCast.isNotEmpty
+            ? legacyCast
+            : linkedCast;
+    final seasonPosters = appExtras is Map
+        ? _nullableStringList(appExtras['seasonPosters'])
+        : const <String?>[];
 
     final legacyDirectors = _stringList(json['director'] ?? json['directors']);
     final linkedDirectors = _linkNames(json['links'], const {'director'});
@@ -187,18 +220,52 @@ class MediaItem {
       year: (json['year'] ?? json['releaseInfo'])?.toString(),
       poster: json['poster']?.toString(),
       background: json['background']?.toString(),
+      logo: json['logo']?.toString(),
       description: json['description']?.toString(),
       rating: rating,
       runtime: json['runtime']?.toString(),
       genres: genres,
       episodes: episodes,
       cast: cast,
+      castMembers: richCast,
+      seasonPosters: seasonPosters,
       directors: directors,
       country: _stringValue(json['country']),
       certification: _stringValue(
         json['certification'] ?? json['ageRating'] ?? json['rated'],
       ),
     );
+  }
+
+  static List<CastMember> _castMembers(dynamic value) {
+    if (value is! List) return const <CastMember>[];
+    final out = <CastMember>[];
+    final seen = <String>{};
+    for (final entry in value) {
+      if (entry is! Map) continue;
+      final name = entry['name']?.toString().trim() ?? '';
+      if (name.isEmpty || !seen.add(name.toLowerCase())) continue;
+      final character = entry['character']?.toString().trim();
+      final photo = entry['photo']?.toString().trim();
+      out.add(
+        CastMember(
+          name: name,
+          character: character == null || character.isEmpty ? null : character,
+          photo: photo == null || photo.isEmpty ? null : photo,
+        ),
+      );
+    }
+    return out;
+  }
+
+  static List<String?> _nullableStringList(dynamic value) {
+    if (value is! List) return const <String?>[];
+    return value
+        .map((entry) {
+          final text = entry?.toString().trim();
+          return text == null || text.isEmpty ? null : text;
+        })
+        .toList(growable: false);
   }
 
   static List<String> _linkNames(dynamic value, Set<String> categories) {
