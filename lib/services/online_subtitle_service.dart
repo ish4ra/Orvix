@@ -29,7 +29,9 @@ class OnlineSubtitleService {
   OnlineSubtitleService._();
 
   static const providerName = 'OpenSubtitles v3';
+  static const legacyProviderName = 'OpenSubtitles';
   static const _base = 'https://opensubtitles-v3.strem.io';
+  static const _legacyBase = 'https://opensubtitles.strem.io/stremio/v1';
 
   static Future<List<OnlineSubtitleResult>> search({
     required MediaItem item,
@@ -48,7 +50,7 @@ class OnlineSubtitleService {
         ? '$imdbId:${episode.season}:${episode.episode}'
         : imdbId;
 
-    final endpoints = <({Uri uri, int bonus})>[];
+    final endpoints = <({Uri uri, int bonus, String provider})>[];
     final extras = <String>[];
     final cleanHash = videoHash?.trim().toLowerCase();
     final validHash = cleanHash != null &&
@@ -70,11 +72,34 @@ class OnlineSubtitleService {
           '$_base/subtitles/$type/$suffix/${extras.join('&')}.json',
         ),
         bonus: validHash ? 600 : 40,
+        provider: providerName,
       ));
     }
     endpoints.add((
       uri: Uri.parse('$_base/subtitles/$type/$suffix.json'),
       bonus: 0,
+      provider: providerName,
+    ));
+
+    // Stremio still ships the older official OpenSubtitles addon alongside
+    // v3. Use it as a secondary corpus and dedupe identical subtitle URLs.
+    if (validHash) {
+      final legacyExtras = <String>[
+        'videoID=${Uri.encodeComponent(suffix)}',
+        if (videoSize != null && videoSize > 0) 'videoSize=$videoSize',
+      ];
+      endpoints.add((
+        uri: Uri.parse(
+          '$_legacyBase/subtitles/$type/$cleanHash/${legacyExtras.join('&')}.json',
+        ),
+        bonus: 520,
+        provider: legacyProviderName,
+      ));
+    }
+    endpoints.add((
+      uri: Uri.parse('$_legacyBase/subtitles/$type/$suffix.json'),
+      bonus: -10,
+      provider: legacyProviderName,
     ));
 
     final preferred = normalizeLanguage(preferredLanguage);
@@ -126,7 +151,7 @@ class OnlineSubtitleService {
             language: language,
             languageLabel: languageName(language),
             label: rawLabel.isEmpty ? 'Subtitle' : rawLabel,
-            provider: providerName,
+            provider: endpoint.provider,
             score: score,
           );
 
