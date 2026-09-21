@@ -126,6 +126,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool get _desktop =>
       Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
+  bool get _localP2pStream {
+    final uri = Uri.tryParse(widget.url);
+    return uri != null &&
+        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
+        uri.port == 11470;
+  }
+
   bool get _aiSinhalaRequested => _aiState.requested;
   bool get _aiSinhalaEnabled => _aiState.enabled;
   bool get _liveAiFallback => _aiState.liveEmbedded;
@@ -236,10 +243,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
         setState(() => _error = null);
       }
 
+      final aiSettingEnabled =
+          await AiSinhalaPreferencesService.isEnabled();
+      // Local torrent playback is intentionally stability-first. Automatic
+      // AI Sinhala preflight used to play/pause/seek the still-warming P2P
+      // stream before normal playback, which can destabilize native MPV on
+      // Windows. Keep manual/online subtitle tools available, but do not probe
+      // the local torrent stream automatically.
+      final deferAiForLocalP2p =
+          Platform.isWindows && _localP2pStream && _preparedAiSubtitle == null;
       final aiPreferred = widget.allowAiSinhala &&
           !PlatformProfile.isAndroidTv &&
-          (_preparedAiSubtitle != null ||
-              await AiSinhalaPreferencesService.isEnabled());
+          !deferAiForLocalP2p &&
+          (_preparedAiSubtitle != null || aiSettingEnabled);
       var aiReady = _preparedAiSubtitle != null;
 
       if (mounted && !_subtitleChoiceOverridden) {
@@ -254,7 +270,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
           _aiSubtitleUnavailable = false;
           _aiPreflightMessage = aiPreferred && !aiReady
               ? 'Opening video paused to verify its real English subtitle track…'
-              : '';
+              : deferAiForLocalP2p && aiSettingEnabled
+                  ? 'AI Sinhala auto-preparation is deferred for local P2P stability. Use Audio & Subtitles to choose an online subtitle manually.'
+                  : '';
         });
       }
 
