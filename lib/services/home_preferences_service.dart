@@ -22,9 +22,9 @@ extension HomeSectionLabel on HomeSectionId {
       case HomeSectionId.myWatchlist:
         return 'My Watchlist';
       case HomeSectionId.popularMovies:
-        return 'Popular Movies';
+        return 'Trending Movies';
       case HomeSectionId.popularTv:
-        return 'Popular TV';
+        return 'Trending TV';
       case HomeSectionId.imdbTopMovies:
         return 'IMDb Top 250 Movies';
       case HomeSectionId.imdbTopTv:
