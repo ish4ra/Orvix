@@ -2351,7 +2351,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
       }
     }
 
-    return showModalBottomSheet<SourceResult>(
+    final selected = await showModalBottomSheet<SourceResult>(
       context: context,
       backgroundColor: const Color(0xFF090D0B),
       barrierColor: Colors.black.withValues(alpha: .68),
@@ -2856,6 +2856,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
         },
       ),
     );
+
+    if (selected != null && freeStreamingRanking) {
+      await liveProbe.prepareForPlayback(selected);
+    } else {
+      await liveProbe.release();
+    }
+    return selected;
   }
 
   Future<TorBoxItem?> _findInTorBox(
