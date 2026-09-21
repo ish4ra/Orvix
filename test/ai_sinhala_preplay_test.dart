@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('AI Sinhala opens media paused and does not show it until preparation finishes', () {
+  test('AI Sinhala never covers already-playing local P2P while buffering', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(
@@ -27,16 +27,22 @@ void main() {
       contains('Starting local P2P normally; AI Sinhala will follow'),
     );
     expect(open, contains('await widget.playback.player.play();'));
-    expect(player, contains('if (_error == null && _aiSubtitleLoading)'));
-    expect(player, contains('Preparing AI Sinhala before playback'));
+    expect(
+      player,
+      contains(
+        '_aiSubtitleLoading &&\n'
+        '                    !_playbackStarted',
+      ),
+    );
   });
 
-  test('native timing mode keeps the English track selected but invisible', () {
+  test('native timing mode keeps English as a visible safety fallback until Sinhala is ready', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    expect(player, contains('await _setNativeSubtitleVisibility(false);'));
     expect(player, contains('_timingTrackSelected = true;'));
     expect(player, contains('_timingTrackIsText = true;'));
     expect(player, contains('player.stream.subtitle.listen(_onEmbeddedSubtitleCue)'));
+    expect(player, contains('await _setNativeSubtitleVisibility(true);'));
+    expect(player, contains('unawaited(_setNativeSubtitleVisibility(false));'));
   });
 }
