@@ -16,13 +16,24 @@ void main() {
     expect(service, contains('_writeGeneratedSrt('));
   });
 
-  test('text subtitles have one renderer and responsive sizing', () {
+  test('AI styling is isolated from normal source subtitle rendering', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(player, contains('double _effectiveSubtitleFontSize(BuildContext context)'));
     expect(player, contains('fontSize: _effectiveSubtitleFontSize(context)'));
-    expect(player, contains('await _setNativeSubtitleVisibility(false);'));
-    expect(player, contains('visible: !_aiSinhalaRequested'));
+    expect(
+      player,
+      contains(
+        'visible: !_aiSinhalaRequested &&\n'
+        '                          widget.playback.player.platform is! mk.NativePlayer',
+      ),
+    );
+    expect(player, contains("'sub-ass-override'"));
+    expect(player, contains("'no'"));
+    expect(
+      player,
+      contains('await _setNativeSubtitleVisibility(true);'),
+    );
     expect(player, contains('mk.SubtitleTrack.uri('));
   });
 }
