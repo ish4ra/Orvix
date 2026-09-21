@@ -1213,6 +1213,8 @@ class SourceProviderService {
             addon,
             type,
             mediaId,
+            item,
+            episode,
             sortMode,
             show3D,
             preferredGroups,
@@ -1293,6 +1295,8 @@ class SourceProviderService {
     String addon,
     String type,
     String mediaId,
+    MediaItem item,
+    EpisodeItem? episode,
     SourceSortMode sortMode,
     bool show3D,
     List<String> preferredGroups,
@@ -1339,6 +1343,21 @@ class SourceProviderService {
           rawTitle,
           fileNameHint ?? '',
         ].where((value) => value.trim().isNotEmpty).join('\n');
+
+        // Addons occasionally return a different title that happens to share
+        // the same name/season/episode numbering (for example One Piece 1999
+        // anime vs One Piece 2023 live action). Reject only strong identity
+        // contradictions: an explicit show/movie year mismatch or an explicit
+        // SxxEyy mismatch. Ambiguous releases without those clues stay visible.
+        if (!sourceMatchesRequestedMedia(
+          item,
+          episode,
+          rawTitle,
+          fileNameHint,
+        )) {
+          continue;
+        }
+
         final cached = _guessCached(raw, metadataText);
         if (!show3D && _is3DRelease(metadataText)) continue;
         final preferredGroup = _matchesPreferredGroup(
@@ -1427,6 +1446,82 @@ class SourceProviderService {
     } catch (_) {
       return const [];
     }
+  }
+
+  bool sourceMatchesRequestedMedia(
+    MediaItem item,
+    EpisodeItem? episode,
+    String rawTitle,
+    String? fileNameHint,
+  ) {
+    final candidates = <String>[
+      rawTitle,
+      if (fileNameHint?.trim().isNotEmpty == true) fileNameHint!,
+    ];
+
+    final expectedYear = item.startYear;
+    final normalizedTitle = _normalizeIdentityText(item.title);
+
+    for (final candidate in candidates) {
+      final normalized = _normalizeIdentityText(candidate);
+
+      if (expectedYear != null && normalizedTitle.isNotEmpty) {
+        final titleIndex = normalized.indexOf(normalizedTitle);
+        if (titleIndex >= 0) {
+          final tail = normalized.substring(
+            titleIndex + normalizedTitle.length,
+          );
+          final nearby = tail.length > 44 ? tail.substring(0, 44) : tail;
+          final yearMatch = RegExp(r'\b(?:19|20)\d{2}\b').firstMatch(nearby);
+          final explicitYear =
+              int.tryParse(yearMatch?.group(0) ?? '');
+          if (explicitYear != null &&
+              (explicitYear - expectedYear).abs() > 1) {
+            return false;
+          }
+        }
+      }
+
+      if (episode != null) {
+        final explicitEpisode = RegExp(
+          r'\bs(\d{1,2})[ ._-]*e(\d{1,3})\b',
+          caseSensitive: false,
+        ).firstMatch(candidate);
+        if (explicitEpisode != null) {
+          final season = int.tryParse(explicitEpisode.group(1) ?? '');
+          final number = int.tryParse(explicitEpisode.group(2) ?? '');
+          if (season != null &&
+              number != null &&
+              (season != episode.season || number != episode.episode)) {
+            return false;
+          }
+        }
+
+        final xEpisode = RegExp(
+          r'\b(\d{1,2})x(\d{1,3})\b',
+          caseSensitive: false,
+        ).firstMatch(candidate);
+        if (xEpisode != null) {
+          final season = int.tryParse(xEpisode.group(1) ?? '');
+          final number = int.tryParse(xEpisode.group(2) ?? '');
+          if (season != null &&
+              number != null &&
+              (season != episode.season || number != episode.episode)) {
+            return false;
+          }
+        }
+      }
+    }
+
+    return true;
+  }
+
+  String _normalizeIdentityText(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
   }
 
   Future<void> _seedRecommendedProviders(SharedPreferences prefs) async {
