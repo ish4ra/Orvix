@@ -22,7 +22,12 @@ void main() {
     final windows =
         File('windows/runner/flutter_window.cpp').readAsStringSync();
     final installer = File('installer/orvix.iss').readAsStringSync();
-    final handoff = File('assets/update/orvix_update_handoff.ps1').readAsStringSync();
+    final helper =
+        File('windows/runner/updater_helper.cpp').readAsStringSync();
+    final runnerCmake =
+        File('windows/runner/CMakeLists.txt').readAsStringSync();
+    final windowsCmake =
+        File('windows/CMakeLists.txt').readAsStringSync();
 
     expect(app, contains('WidgetsBindingObserver'));
     expect(app, contains('AppLifecycleState.detached'));
@@ -33,24 +38,21 @@ void main() {
     expect(update, contains('Android-TV.apk'));
     expect(update, contains('Android-Mobile.apk'));
     expect(update, contains('sha256.bind(file.openRead())'));
-    expect(update, contains('orvix_update_handoff.ps1'));
-    expect(update, contains('rootBundle.loadString'));
-    expect(handoff, contains('Waiting for Orvix PID'));
-    expect(handoff, contains('Find-OrvixExecutable'));
-    expect(handoff, contains("InstallLocation"));
-    expect(handoff, contains("Programs\\Orvix\\orvix.exe"));
-    expect(handoff, contains("Orvix is already running after installer completion."));
-    expect(
-      handoff,
-      contains(
-        r'Start-Process -FilePath $Installer -ArgumentList $installerArgs -Wait -PassThru',
-      ),
-    );
+    expect(update, contains('orvix_updater_helper.exe'));
+    expect(update, contains('ProcessStartMode.detached'));
+    expect(update, isNot(contains('powershell.exe')));
     expect(update, isNot(contains("'/CLOSEAPPLICATIONS'")));
-    expect(installer, contains('Check: WizardSilent'));
-    expect(installer, contains('function PrepareToInstall'));
-    expect(installer, contains('function IsOrvixRunning'));
-    expect(installer, contains('Get-Process -Name orvix'));
+    expect(helper, contains('WaitForSingleObject(parent, 30000)'));
+    expect(helper, contains('CreateProcessW'));
+    expect(helper, contains('FindInstalledOrvix'));
+    expect(helper, contains('InstallLocation'));
+    expect(helper, contains('FOLDERID_LocalAppData'));
+    expect(helper, contains('--no-restart'));
+    expect(runnerCmake, contains('add_executable(orvix_updater_helper'));
+    expect(windowsCmake, contains('install(TARGETS orvix_updater_helper'));
+    expect(installer, isNot(contains('powershell.exe')));
+    expect(installer, isNot(contains('Check: WizardSilent')));
+    expect(installer, isNot(contains('function PrepareToInstall')));
     expect(gate, contains('View what changed'));
     expect(gate, contains("label: const Text('Update')"));
 
