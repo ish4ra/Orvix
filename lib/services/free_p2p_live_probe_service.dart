@@ -7,6 +7,7 @@ class FreeP2pLiveProbeService {
   final Map<String, ({DateTime at, LocalTorrentProbeResult result})> _cache =
       <String, ({DateTime at, LocalTorrentProbeResult result})>{};
   Future<void>? _running;
+  bool _rankingReady = false;
 
   String _key(SourceResult source) =>
       '${source.resource}|${source.torrentFileIndex ?? source.fileNameHint ?? 'auto'}';
@@ -43,6 +44,10 @@ class FreeP2pLiveProbeService {
     final baseIndex = <String, int>{
       for (var i = 0; i < base.length; i++) _key(base[i]): i,
     };
+    if (_running != null && !_rankingReady) {
+      return base;
+    }
+
     final out = [...base];
     out.sort((a, b) {
       if (a.isMagnet != b.isMagnet) {
@@ -75,6 +80,7 @@ class FreeP2pLiveProbeService {
 
     final completer = Completer<void>();
     _running = completer.future;
+    _rankingReady = false;
     unawaited(() async {
       try {
         final candidates = sources
@@ -95,8 +101,12 @@ class FreeP2pLiveProbeService {
               _cache[_key(source)] = (at: DateTime.now(), result: result);
             }),
           );
+          // Update status chips as probes finish, but keep the list ordering
+          // stable until the whole shortlist has been sampled.
           onUpdate?.call();
         }
+        _rankingReady = true;
+        onUpdate?.call();
         if (!completer.isCompleted) completer.complete();
       } catch (error, stackTrace) {
         if (!completer.isCompleted) {
@@ -109,5 +119,8 @@ class FreeP2pLiveProbeService {
     return completer.future;
   }
 
-  void clear() => _cache.clear();
+  void clear() {
+    _cache.clear();
+    _rankingReady = false;
+  }
 }
