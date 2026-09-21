@@ -91,13 +91,13 @@ void main() {
   test('Free ignores resolution when playability signals are otherwise equal', () {
     final service = SourceProviderService();
     final low = torrent(
-      name: 'Portable.480p.x264.AAC',
+      name: 'A.Portable.480p.x264.AAC',
       seeders: 25,
       sizeBytes: 700 * 1024 * 1024,
       quality: '480P',
     );
     final high = torrent(
-      name: 'Portable.1080p.x264.AAC',
+      name: 'Z.Portable.1080p.x264.AAC',
       seeders: 25,
       sizeBytes: 700 * 1024 * 1024,
       quality: '1080P',
