@@ -582,7 +582,7 @@ class LocalTorrentService {
             final maxSafeOffset = size - windowBytes;
             final secondOffset = maxSafeOffset > preferredOffset
                 ? preferredOffset
-                : maxSafeOffset.clamp(windowBytes, preferredOffset);
+                : maxSafeOffset.clamp(windowBytes, preferredOffset).toInt();
             final second = await readWindow(secondOffset, windowBytes);
             bytes += second;
             if (second >= 256 * 1024) sampleWindowsPassed++;
