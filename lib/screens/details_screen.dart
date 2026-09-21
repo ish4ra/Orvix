@@ -973,7 +973,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
           ),
           const SizedBox(height: 12),
           SizedBox(
-            height: compact ? 72 : 84,
+            height: 58,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: seasons.length,
@@ -982,7 +982,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 final season = seasons[index];
                 return _MobileSeasonTile(
                   season: season,
-                  poster: item.seasonPoster(season),
                   selected: season == selected,
                   onTap: () => _selectSeason(item, season),
                 );
@@ -1316,6 +1315,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
         // also exists.
         includeLowQuality: true,
       );
+      final hasCloudConnection =
+          (await widget.pikpak.isSignedIn) || (await widget.torbox.isConnected);
       await Navigator.of(context).push<void>(
         PageRouteBuilder<void>(
           transitionDuration: const Duration(milliseconds: 180),
@@ -1330,6 +1331,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               item: item,
               episode: episode,
               resultsFuture: resultsFuture,
+              preferFreeP2p: !hasCloudConnection,
               onPlaySource: (chosen) async {
                 final hasCloudConnection =
                     (await widget.pikpak.isSignedIn) ||
@@ -1879,6 +1881,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
     MediaItem item,
     EpisodeItem? episode,
   ) async {
+    final hasCloudConnection =
+        (await widget.pikpak.isSignedIn) || (await widget.torbox.isConnected);
+
     if (PlatformProfile.isAndroidTv) {
       if (!mounted) return null;
       return Navigator.of(context).push<SourceResult>(
@@ -1895,6 +1900,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               item: item,
               episode: episode,
               resultsFuture: Future.value(results),
+              preferFreeP2p: !hasCloudConnection,
             ),
           ),
         ),
@@ -1904,7 +1910,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     var resultLimit = await widget.sources.getResultLimit();
     var compatibilityOnly = false;
     var smoothRanking = false;
-    var freeStreamingRanking = false;
+    var freeStreamingRanking = !hasCloudConnection;
     final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
     final seriesWidePin = item.kind == MediaKind.series;
     var pinnedIdentity = await widget.sources.getPinnedSourceIdentity(pinKey);
@@ -1968,7 +1974,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 onPressed: () => Navigator.pop(dialogContext, [
                   ...SourceProviderService.defaultPriority,
                 ]),
-                child: const Text('Reset best'),
+                child: const Text('Reset default'),
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(dialogContext, working),
@@ -2035,7 +2041,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               ? 'Free P2P: availability → device compatibility → exact file → seed health → practical size'
               : smoothRanking
                   ? 'Smooth: compatibility → 1080/720 → efficient codec → seeders → smaller files → cache'
-                  : 'Priority: $priorityText';
+                  : 'Default: $priorityText';
           final summaryParts = <String>[
             resultLimit > 0
                 ? 'Showing ${sorted.length} of $totalAfterFilter results'
@@ -2183,13 +2189,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
                           );
                           final statusLabel = isPinned
                               ? 'Pinned'
-                              : index == 0
-                                  ? freeStreamingRanking
-                                      ? 'Free Stream'
-                                      : smoothRanking
-                                          ? 'Smooth'
-                                          : 'Best'
-                                  : null;
+                              : index == 0 && freeStreamingRanking
+                                  ? 'Free P2P'
+                                  : index == 0 && smoothRanking
+                                      ? 'Smooth'
+                                      : null;
                           final providerText =
                               '${result.provider}${result.isMagnet ? ' • torrent / P2P' : ' • direct URL'}${result.compatibilityFriendly ? '' : ' • ⚠ compatibility risk'}';
 
@@ -3050,70 +3054,93 @@ class _TvSeasonTileState extends State<_TvSeasonTile> {
   }
 }
 
-class _MobileSeasonTile extends StatelessWidget {
+class _MobileSeasonTile extends StatefulWidget {
   const _MobileSeasonTile({
     required this.season,
-    required this.poster,
     required this.selected,
     required this.onTap,
   });
 
   final int season;
-  final String? poster;
   final bool selected;
   final VoidCallback onTap;
 
   @override
+  State<_MobileSeasonTile> createState() => _MobileSeasonTileState();
+}
+
+class _MobileSeasonTileState extends State<_MobileSeasonTile> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
   Widget build(BuildContext context) {
-    return Material(
-      color: selected
-          ? Theme.of(context)
-              .colorScheme
-              .primaryContainer
-              .withValues(alpha: .45)
-          : const Color(0xFF111612),
-      borderRadius: BorderRadius.circular(13),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(13),
-        onTap: onTap,
-        child: Container(
-          width: 138,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(13),
-            border: Border.all(
-              color: selected
-                  ? Theme.of(context).colorScheme.primary
-                  : const Color(0xFF2A332C),
-              width: selected ? 1.8 : 1,
-            ),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Row(
-            children: [
-              if (poster?.trim().isNotEmpty == true)
-                SizedBox(
-                  width: 42,
-                  height: double.infinity,
-                  child: CachedNetworkImage(
-                    imageUrl: poster!,
-                    fit: BoxFit.cover,
-                    memCacheWidth: 130,
-                    fadeInDuration: Duration.zero,
-                  ),
+    const lime = Color(0xFFB9FF45);
+    final active = widget.selected;
+    final highlighted = _hovered || _focused;
+    final label = widget.season == 0 ? 'Specials' : 'Season ${widget.season}';
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedScale(
+        scale: highlighted ? 1.025 : 1,
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOutCubic,
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            focusColor: Colors.transparent,
+            hoverColor: Colors.transparent,
+            splashColor: Colors.transparent,
+            onFocusChange: (value) => setState(() => _focused = value),
+            onTap: widget.onTap,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              height: 46,
+              constraints: const BoxConstraints(minWidth: 112),
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: active
+                    ? lime
+                    : highlighted
+                        ? const Color(0xFF1B211A)
+                        : const Color(0xFF101411),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: active
+                      ? lime
+                      : highlighted
+                          ? lime.withValues(alpha: .72)
+                          : Colors.white.withValues(alpha: .10),
+                  width: active || highlighted ? 1.6 : 1,
                 ),
-              Expanded(
-                child: Center(
-                  child: Text(
-                    'Season $season',
-                    style: TextStyle(
-                      fontWeight:
-                          selected ? FontWeight.w900 : FontWeight.w700,
-                      fontSize: 13,
-                    ),
-                  ),
+                boxShadow: active || highlighted
+                    ? [
+                        BoxShadow(
+                          color: lime.withValues(
+                            alpha: active ? .20 : .10,
+                          ),
+                          blurRadius: active ? 18 : 12,
+                          spreadRadius: active ? 1 : 0,
+                        ),
+                      ]
+                    : const [],
+              ),
+              child: Text(
+                label,
+                maxLines: 1,
+                style: TextStyle(
+                  color: active ? Colors.black : Colors.white,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -.1,
                 ),
               ),
-            ],
+            ),
           ),
         ),
       ),
