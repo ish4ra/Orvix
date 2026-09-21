@@ -67,10 +67,14 @@ class AppUpdateService {
       await statusFile.delete();
       final parts = raw.split('|');
       if (parts.length < 3) return null;
+      final version = parts.sublist(2).join('|');
+      // A manual/newer install may leave an old helper status file behind.
+      // Never surface a stale failure for an older target version.
+      if (isVersionNewer(currentVersion, version)) return null;
       return (
         success: parts[0] == 'success',
         detail: parts[1],
-        version: parts.sublist(2).join('|'),
+        version: version,
       );
     } catch (_) {
       return null;
@@ -258,68 +262,29 @@ class AppUpdateService {
     File file,
   ) async {
     if (Platform.isWindows) {
-      final support = await getApplicationSupportDirectory();
-      final handoffDir = Directory(
-        '${support.path}${Platform.pathSeparator}update-handoff',
-      );
-      await handoffDir.create(recursive: true);
-
-      final sourceHelper = File(
-        '${File(Platform.resolvedExecutable).parent.path}'
-        '${Platform.pathSeparator}orvix_updater_helper.exe',
-      );
-      if (!await sourceHelper.exists() || await sourceHelper.length() <= 0) {
-        throw StateError(
-          'Windows updater helper is missing from this Orvix installation.',
-        );
-      }
-
-      final helper = File(
-        '${handoffDir.path}${Platform.pathSeparator}'
-        'orvix-updater-helper-$pid.exe',
-      );
-      if (await helper.exists()) await helper.delete();
-      await sourceHelper.copy(helper.path);
-
-      final logFile = File(
-        '${handoffDir.path}${Platform.pathSeparator}orvix-update-handoff.log',
-      );
-      final installerLog = File(
-        '${handoffDir.path}${Platform.pathSeparator}orvix-installer.log',
-      );
-      final statusFile = File(
-        '${handoffDir.path}${Platform.pathSeparator}last-update-status.txt',
-      );
-      if (await statusFile.exists()) await statusFile.delete();
-
+      // Keep Windows updates deliberately simple and observable. The old
+      // helper -> silent installer -> helper restart chain could fail on a
+      // locked file and then reopen the previous build, creating duplicate
+      // windows if the user relaunched Orvix at the same time.
+      //
+      // Instead, hand the verified installer directly to Windows, then close
+      // Orvix. The interactive installer owns file replacement and can show a
+      // real error/retry UI if Windows has a lock. The installer itself offers
+      // to launch the updated Orvix when setup completes.
       await LocalTorrentService.instance.dispose();
 
       final process = await Process.start(
-        helper.path,
-        [
-          '--parent-pid',
-          pid.toString(),
-          '--installer',
-          file.path,
-          '--restart-exe',
-          Platform.resolvedExecutable,
-          '--target-version',
-          update.version,
-          '--log',
-          logFile.path,
-          '--installer-log',
-          installerLog.path,
-          '--status',
-          statusFile.path,
-        ],
+        file.path,
+        const [],
         mode: ProcessStartMode.detached,
       );
-
       if (process.pid <= 0) {
-        throw StateError('Windows updater helper could not be started.');
+        throw StateError('Windows installer could not be started.');
       }
 
-      await Future<void>.delayed(const Duration(milliseconds: 450));
+      // Match the proven desktop-updater pattern: give Setup enough time to
+      // create its UI/process before releasing the running app's file locks.
+      await Future<void>.delayed(const Duration(milliseconds: 700));
       exit(0);
     }
 
