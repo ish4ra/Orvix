@@ -1058,11 +1058,10 @@ class SourceProviderService {
   }
 
   int _freeAvailabilityRank(int? seeders) {
-    final value = seeders ?? 0;
-    if (value >= 8) return 3;
-    if (value >= 3) return 2;
-    if (value >= 1) return 1;
-    return 0;
+    // First separate a dead/unavailable swarm from one that can at least
+    // connect. Once viable, portability and exact file routing matter more
+    // than chasing a larger reported seeder number.
+    return (seeders ?? 0) > 0 ? 1 : 0;
   }
 
   int _universalPlaybackRank(SourceResult result) {
