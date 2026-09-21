@@ -17,6 +17,7 @@ import '../services/online_subtitle_service.dart';
 import '../services/playback_service.dart';
 import '../services/platform_profile.dart';
 import '../services/subtitle_preferences_service.dart';
+import '../widgets/player_loading_overlay.dart';
 
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({
@@ -2686,61 +2687,36 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   StreamBuilder<bool>(
                     stream: player.stream.buffering,
                     initialData: player.state.buffering,
-                    builder: (context, snapshot) => snapshot.data == true
-                        ? Center(
-                            child: CircularProgressIndicator(
-                              color: PlatformProfile.isAndroidTv
-                                  ? Colors.white
-                                  : null,
-                            ),
-                          )
-                        : const SizedBox.shrink(),
+                    builder: (context, snapshot) {
+                      if (snapshot.data != true) {
+                        return const SizedBox.shrink();
+                      }
+                      if (!_playbackStarted) {
+                        return PlayerLoadingOverlay(
+                          item: widget.item,
+                          title: widget.title,
+                          message: 'Starting playback…',
+                          detail: widget.episode == null ? null : widget.title,
+                        );
+                      }
+                      return Center(
+                        child: CircularProgressIndicator(
+                          color: PlatformProfile.isAndroidTv
+                              ? Colors.white
+                              : null,
+                        ),
+                      );
+                    },
                   ),
                 if (_error == null && _aiSubtitleLoading)
-                  ColoredBox(
-                    color: Colors.black,
-                    child: Center(
-                      child: Container(
-                        constraints: const BoxConstraints(maxWidth: 520),
-                        margin: const EdgeInsets.symmetric(horizontal: 24),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 22,
-                        vertical: 18,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xE8171B16),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: const Color(0xFF394934)),
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const CircularProgressIndicator(),
-                          const SizedBox(height: 14),
-                          const Text(
-                            'Preparing AI Sinhala before playback',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          const SizedBox(height: 7),
-                          Text(
-                            _aiPreflightMessage.trim().isEmpty
-                                ? 'Checking the safest subtitle timing source…'
-                                : _aiPreflightMessage,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Color(0xFFB9C4B7),
-                              height: 1.4,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                  PlayerLoadingOverlay(
+                    item: widget.item,
+                    title: widget.title,
+                    message: 'Preparing AI Sinhala before playback',
+                    detail: _aiPreflightMessage.trim().isEmpty
+                        ? 'Checking the safest subtitle timing source…'
+                        : _aiPreflightMessage,
                   ),
-                ),
                 if (_aiSinhalaEnabled && _aiDisplaySubtitle.isNotEmpty)
                   _aiSubtitleOverlay(),
                 AnimatedOpacity(
