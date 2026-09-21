@@ -822,10 +822,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               : Colors.white.withValues(alpha: .12),
         );
       }),
-      elevation: WidgetStateProperty.resolveWith(
-        (states) => states.contains(WidgetState.focused) ? 8 : 0,
-      ),
-      shadowColor: WidgetStatePropertyAll(primary.withValues(alpha: .45)),
+      elevation: const WidgetStatePropertyAll(0),
       padding: const WidgetStatePropertyAll(
         EdgeInsets.symmetric(horizontal: 18, vertical: 12),
       ),
@@ -3474,17 +3471,6 @@ class _TvSeasonTileState extends State<_TvSeasonTile> {
                         : Colors.white.withValues(alpha: .10),
                 width: widget.selected || _focused ? 2 : 1,
               ),
-              boxShadow: widget.selected || _focused
-                  ? [
-                      BoxShadow(
-                        color: lime.withValues(
-                          alpha: widget.selected ? .25 : .15,
-                        ),
-                        blurRadius: widget.selected ? 22 : 17,
-                        spreadRadius: widget.selected ? 1 : 0,
-                      ),
-                    ]
-                  : const [],
             ),
             child: Text(
               label,
@@ -3566,17 +3552,6 @@ class _MobileSeasonTileState extends State<_MobileSeasonTile> {
                           : Colors.white.withValues(alpha: .10),
                   width: active || highlighted ? 1.6 : 1,
                 ),
-                boxShadow: active || highlighted
-                    ? [
-                        BoxShadow(
-                          color: lime.withValues(
-                            alpha: active ? .20 : .10,
-                          ),
-                          blurRadius: active ? 18 : 12,
-                          spreadRadius: active ? 1 : 0,
-                        ),
-                      ]
-                    : const [],
               ),
               child: Text(
                 label,
@@ -3669,11 +3644,6 @@ class _TvEpisodeCardState extends State<_TvEpisodeCard> {
           ),
           boxShadow: _focused
               ? [
-                  BoxShadow(
-                    color: primary.withValues(alpha: .24),
-                    blurRadius: 24,
-                    spreadRadius: 1,
-                  ),
                   BoxShadow(
                     color: Colors.black.withValues(alpha: .46),
                     blurRadius: 22,
@@ -3831,14 +3801,6 @@ class _TvEpisodeCardState extends State<_TvEpisodeCard> {
                         border: Border.all(
                           color: Colors.white.withValues(alpha: .18),
                         ),
-                        boxShadow: _focused
-                            ? [
-                                BoxShadow(
-                                  color: primary.withValues(alpha: .42),
-                                  blurRadius: 16,
-                                ),
-                              ]
-                            : const [],
                       ),
                       child: const Icon(
                         Icons.play_arrow_rounded,
@@ -3914,10 +3876,6 @@ class _DesktopEpisodeCardState extends State<_DesktopEpisodeCard> {
                   ),
                   boxShadow: active
                       ? [
-                          BoxShadow(
-                            color: lime.withValues(alpha: .12),
-                            blurRadius: 22,
-                          ),
                           BoxShadow(
                             color: Colors.black.withValues(alpha: .38),
                             blurRadius: 20,
