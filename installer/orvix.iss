@@ -52,7 +52,7 @@ begin
   PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
   Params :=
     '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ' +
-    '"if (Get-Process -Name ''''orvix'''' -ErrorAction SilentlyContinue) { exit 7 } else { exit 0 }"';
+    '"if (Get-Process -Name orvix -ErrorAction SilentlyContinue) { exit 7 } else { exit 0 }"';
 
   if Exec(PowerShellPath, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     Result := ResultCode = 7
