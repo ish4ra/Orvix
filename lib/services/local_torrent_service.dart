@@ -514,6 +514,7 @@ class LocalTorrentService {
         'fileMustInclude': <String>[fileHint],
     };
 
+    var retainedProbe = false;
     try {
       final response = await _createTorrent(body).timeout(
         const Duration(milliseconds: 1800),
@@ -609,6 +610,7 @@ class LocalTorrentService {
 
       if (retainSession) {
         _retainedProbeInfoHashes.add(infoHash);
+        retainedProbe = true;
         _scheduleProbeCleanup();
       }
 
@@ -624,7 +626,7 @@ class LocalTorrentService {
       );
     } finally {
       // Never detach a torrent that is currently being used by the player.
-      if (!retainSession && _currentInfoHash != infoHash) {
+      if (!retainedProbe && _currentInfoHash != infoHash) {
         await _removeEngine(infoHash);
       }
     }
