@@ -1523,7 +1523,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
           _preparedAiSubtitle?.key != prepared.key) {
         return;
       }
-      _refreshAiSubtitle();
+      if (_timingTrackSelected && _timingTrackIsText) {
+        // The buffer may finish while the same English cue is still on screen.
+        // Re-read that native cue so it can switch to Sinhala immediately
+        // instead of waiting for the next line of dialogue.
+        unawaited(_refreshNativeCueAfterSeek());
+      } else {
+        _refreshAiSubtitle();
+      }
     } catch (_) {
       if (mounted &&
           (bucket == null || bucket == _lastAiPrefetchBucket)) {
