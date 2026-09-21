@@ -327,7 +327,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       } else {
         final currentSubtitle = widget.playback.player.state.track.subtitle;
         await _setNativeSubtitleVisibility(
-          currentSubtitle.id.toLowerCase() != 'no',
+          // When AI Sinhala is off, keep libmpv subtitle rendering enabled even
+          // if track metadata arrives a moment after open(). A later/default
+          // embedded subtitle can then appear with its own authored styling.
+          !_aiSinhalaRequested ||
+              currentSubtitle.id.toLowerCase() != 'no',
         );
       }
 
