@@ -2543,6 +2543,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     String? releaseHint,
     int? expectedSizeBytes,
     String? expectedVideoHash,
+    bool fallbackToExo = false,
   }) async {
     if (!mounted) return;
 
@@ -2570,35 +2571,20 @@ class _DetailsScreenState extends State<DetailsScreen> {
       aiSinhalaEnabled: aiEnabled,
     );
 
+    final tvFreeP2pAuto = PlatformProfile.isAndroidTv &&
+        source?.isMagnet == true &&
+        preference == PlayerEnginePreference.auto;
+
     if (engine == PlayerEngineKind.exoPlayer && Platform.isAndroid) {
-      final result = await Navigator.of(context).push<AndroidExoPlayerResult>(
-        MaterialPageRoute(
-          builder: (_) => AndroidExoPlayerScreen(
-            url: url,
-            title: title,
-            mediaState: widget.mediaState,
-            item: item,
-            episode: episode,
-            autoFallbackToMpv:
-                preference == PlayerEnginePreference.auto,
-          ),
-        ),
+      final result = await _openExoPlayer(
+        url,
+        title,
+        item,
+        episode,
+        source: source,
+        autoFallbackToMpv: preference == PlayerEnginePreference.auto,
       );
       if (!mounted) return;
-
-      if (source != null && result?.started == true) {
-        unawaited(
-          widget.sources.recordPlaybackOutcome(source, success: true),
-        );
-      } else if (source != null && result?.failed == true) {
-        unawaited(
-          widget.sources.recordPlaybackOutcome(
-            source,
-            success: false,
-            reason: result?.error,
-          ),
-        );
-      }
 
       final shouldFallback = result?.switchToMpv == true ||
           (preference == PlayerEnginePreference.auto &&
@@ -2613,6 +2599,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
           ),
         );
       }
+      // Exo owns native decoder/surface resources. Give its fully-awaited
+      // teardown one frame before starting MPV to avoid Android TV races.
+      await Future<void>.delayed(const Duration(milliseconds: 180));
     }
 
     await _openMpvPlayer(
@@ -2625,10 +2614,48 @@ class _DetailsScreenState extends State<DetailsScreen> {
       releaseHint: releaseHint,
       expectedSizeBytes: expectedSizeBytes,
       expectedVideoHash: expectedVideoHash,
+      fallbackToExo: tvFreeP2pAuto,
     );
   }
 
-  Future<void> _recordSourceStartupFailure(
+  Future<AndroidExoPlayerResult?> _openExoPlayer(
+    String url,
+    String title,
+    MediaItem item,
+    EpisodeItem? episode, {
+    SourceResult? source,
+    bool autoFallbackToMpv = false,
+  }) async {
+    if (!mounted || !Platform.isAndroid) return null;
+    final result = await Navigator.of(context).push<AndroidExoPlayerResult>(
+      MaterialPageRoute(
+        builder: (_) => AndroidExoPlayerScreen(
+          url: url,
+          title: title,
+          mediaState: widget.mediaState,
+          item: item,
+          episode: episode,
+          autoFallbackToMpv: autoFallbackToMpv,
+        ),
+      ),
+    );
+    if (!mounted) return result;
+
+    if (source != null && result?.started == true) {
+      unawaited(widget.sources.recordPlaybackOutcome(source, success: true));
+    } else if (source != null && result?.failed == true) {
+      unawaited(
+        widget.sources.recordPlaybackOutcome(
+          source,
+          success: false,
+          reason: result?.error,
+        ),
+      );
+    }
+    return result;
+  }
+
+  Future<void> _recordSourceStartupFailure(  Future<void> _recordSourceStartupFailure(
     SourceResult source,
     String url,
     String message,
@@ -2689,6 +2716,25 @@ class _DetailsScreenState extends State<DetailsScreen> {
               : (message) {
                   unawaited(
                     _recordSourceStartupFailure(source, url, message),
+                  );
+                },
+          onStartupFallback: !fallbackToExo
+              ? null
+              : (message) async {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('MPV could not start — trying ExoPlayer…'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                  await _openExoPlayer(
+                    url,
+                    title,
+                    item,
+                    episode,
+                    source: source,
+                    autoFallbackToMpv: false,
                   );
                 },
           onNext: next == null
