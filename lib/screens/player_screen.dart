@@ -2591,9 +2591,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  _subtitleAppearanceControls(setSheetState),
-                  const SizedBox(height: 12),
-                  if (!_aiSinhalaEnabled) ...[
+                  if (_aiSinhalaEnabled) ...[
+                    _subtitleAppearanceControls(setSheetState),
+                    const SizedBox(height: 12),
+                  ] else ...[
+                    const _EmptyTrackMessage(
+                      'Source subtitle appearance is preserved by the native player. '
+                      'Orvix font/background/position styling is only used for AI Sinhala.',
+                    ),
+                    const SizedBox(height: 12),
                     _subtitleSyncControls(setSheetState),
                     const SizedBox(height: 12),
                   ],
