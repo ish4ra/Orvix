@@ -235,7 +235,7 @@ jobs:
           )
           $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
-          & $iscc '/DMyAppVersion=0.7.6-beta.2' 'installer\orvix.iss'
+          & $iscc '/DMyAppVersion=0.7.6-beta.3' 'installer\orvix.iss'
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
 
       - name: End-to-end smoke test Windows updater handoff
@@ -256,7 +256,7 @@ jobs:
             '--parent-pid', "$($parent.Id)",
             '--installer', "$installer",
             '--restart-exe', '',
-            '--target-version', '0.7.6-beta.2',
+            '--target-version', '0.7.6-beta.3',
             '--log', "$log",
             '--installer-log', "$installerLog",
             '--status', "$status",
@@ -271,7 +271,7 @@ jobs:
 
           if (-not (Test-Path $status)) { throw 'Updater handoff did not write status.' }
           $value = (Get-Content -Raw $status).Trim()
-          if ($value -ne 'success|0|0.7.6-beta.2') {
+          if ($value -ne 'success|0|0.7.6-beta.3') {
             if (Test-Path $log) { Get-Content $log }
             if (Test-Path $installerLog) { Get-Content $installerLog }
             throw "Unexpected updater handoff status: $value"
