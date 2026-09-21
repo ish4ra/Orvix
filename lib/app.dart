@@ -12,6 +12,7 @@ import 'screens/media_library_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/sources_screen.dart';
+import 'services/app_update_service.dart';
 import 'services/catalog_service.dart';
 import 'services/cloud_preferences_service.dart';
 import 'services/local_torrent_service.dart';
@@ -23,6 +24,7 @@ import 'services/playback_service.dart';
 import 'services/platform_profile.dart';
 import 'services/source_provider_service.dart';
 import 'services/torbox_service.dart';
+import 'widgets/orvix_update_gate.dart';
 
 class OrvixApp extends StatefulWidget {
   const OrvixApp({super.key});
@@ -31,7 +33,8 @@ class OrvixApp extends StatefulWidget {
   State<OrvixApp> createState() => _OrvixAppState();
 }
 
-class _OrvixAppState extends State<OrvixApp> {
+class _OrvixAppState extends State<OrvixApp>
+    with WidgetsBindingObserver {
   late final CatalogService _catalog;
   late final PikPakService _pikpak;
   late final PikPakTransferService _transfer;
@@ -44,6 +47,7 @@ class _OrvixAppState extends State<OrvixApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _catalog = CatalogService();
     _pikpak = PikPakService();
     _transfer = PikPakTransferService();
@@ -56,7 +60,15 @@ class _OrvixAppState extends State<OrvixApp> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.detached) {
+      unawaited(LocalTorrentService.instance.dispose());
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _catalog.dispose();
     _pikpak.dispose();
     _transfer.dispose();
@@ -73,6 +85,13 @@ class _OrvixAppState extends State<OrvixApp> {
       seedColor: const Color(0xFFB9FF45),
       brightness: Brightness.dark,
       surface: const Color(0xFF0B0F0C),
+    ).copyWith(
+      primary: const Color(0xFFB9FF45),
+      onPrimary: Colors.black,
+      primaryContainer: const Color(0xFF263B18),
+      onPrimaryContainer: const Color(0xFFE9FFD0),
+      secondary: const Color(0xFF9FEA3A),
+      onSecondary: Colors.black,
     );
 
     return MaterialApp(
@@ -182,15 +201,17 @@ class _OrvixAppState extends State<OrvixApp> {
           ),
         ),
       ),
-      home: _OrvixShell(
-        catalog: _catalog,
-        pikpak: _pikpak,
-        transfer: _transfer,
-        sources: _sources,
-        torbox: _torbox,
-        cloudPreferences: _cloudPreferences,
-        playback: _playback,
-        mediaState: _mediaState,
+      home: OrvixUpdateGate(
+        child: _OrvixShell(
+          catalog: _catalog,
+          pikpak: _pikpak,
+          transfer: _transfer,
+          sources: _sources,
+          torbox: _torbox,
+          cloudPreferences: _cloudPreferences,
+          playback: _playback,
+          mediaState: _mediaState,
+        ),
       ),
     );
   }
@@ -579,7 +600,7 @@ class _AboutScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Orvix v0.7.5-beta.11',
+                'Orvix v${AppUpdateService.currentVersion}',
                 style: Theme.of(context)
                     .textTheme
                     .headlineMedium
