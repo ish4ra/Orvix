@@ -10,6 +10,8 @@ on:
       - 'test/**'
       - 'pubspec.yaml'
       - 'tools/**'
+      - 'windows/**'
+      - 'installer/**'
       - 'supabase/functions/opensubtitles-exact/**'
       - 'supabase/functions/translate-subtitle-si/**'
       - 'supabase/functions/subdl-transcript/**'
@@ -163,6 +165,21 @@ jobs:
 
       - name: Build Windows
         run: flutter build windows --release
+
+      - name: Smoke test native Windows updater helper
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $helper = Resolve-Path 'build\windows\x64\runner\Release\orvix_updater_helper.exe'
+          $status = Join-Path $env:RUNNER_TEMP 'orvix-updater-self-test.txt'
+          if (Test-Path $status) { Remove-Item $status -Force }
+          & $helper --self-test --status $status
+          if ($LASTEXITCODE -ne 0) { throw "Updater helper self-test failed with exit code $LASTEXITCODE" }
+          if (-not (Test-Path $status)) { throw 'Updater helper did not create self-test status.' }
+          $value = (Get-Content -Raw $status).Trim()
+          if ($value -ne 'success|self_test|native_helper') {
+            throw "Unexpected updater helper status: $value"
+          }
 
       - name: Verify committed Windows icon
         shell: pwsh
