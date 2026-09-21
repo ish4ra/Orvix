@@ -211,6 +211,12 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
 
   KeyEventResult _onSurfaceKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
+
+    // When a real control owns primary focus, let Flutter's normal TV focus
+    // traversal and ActivateAction handle D-pad/OK. Intercepting these keys
+    // here used to trap focus on Play and made "MPV" effectively unreachable.
+    if (!_surfaceFocus.hasPrimaryFocus) return KeyEventResult.ignored;
+
     final key = event.logicalKey;
 
     if (key == LogicalKeyboardKey.select ||
