@@ -45,6 +45,10 @@ class FreeP2pLiveProbeService {
     };
     final out = [...base];
     out.sort((a, b) {
+      if (a.isMagnet != b.isMagnet) {
+        return a.isMagnet ? 1 : -1;
+      }
+
       final pa = resultFor(a);
       final pb = resultFor(b);
       if (pa != null && pb != null) {
