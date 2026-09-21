@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'local_torrent_service.dart';
 import 'platform_profile.dart';
@@ -285,6 +286,13 @@ class AppUpdateService {
       // Match the proven desktop-updater pattern: give Setup enough time to
       // create its UI/process before releasing the running app's file locks.
       await Future<void>.delayed(const Duration(milliseconds: 700));
+      try {
+        // Close through the native window first so WM_DESTROY cleanup runs.
+        // Keep exit(0) only as a last-resort fallback if a plugin/window hook
+        // refuses to close for some unexpected reason.
+        await windowManager.close();
+        await Future<void>.delayed(const Duration(milliseconds: 350));
+      } catch (_) {}
       exit(0);
     }
 
