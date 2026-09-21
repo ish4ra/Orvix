@@ -7,6 +7,7 @@ void main() {
     final app = File('lib/app.dart').readAsStringSync();
     final update =
         File('lib/services/app_update_service.dart').readAsStringSync();
+    final pubspec = File('pubspec.yaml').readAsStringSync();
     final gate =
         File('lib/widgets/orvix_update_gate.dart').readAsStringSync();
     final torrent =
@@ -33,7 +34,15 @@ void main() {
     expect(app, contains('AppLifecycleState.detached'));
     expect(app, contains('OrvixUpdateGate'));
 
-    expect(update, contains("currentVersion = '0.7.6-beta.3'"));
+    final packageVersion = RegExp(
+      r'^version:\\s*([^+\\s]+)',
+      multiLine: true,
+    ).firstMatch(pubspec)?.group(1);
+    final updaterVersion = RegExp(
+      r"currentVersion\\s*=\\s*'([^']+)'",
+    ).firstMatch(update)?.group(1);
+    expect(packageVersion, isNotNull);
+    expect(updaterVersion, packageVersion);
     expect(update, contains("name.contains('Windows-x64')"));
     expect(update, contains('Android-TV.apk'));
     expect(update, contains('Android-Mobile.apk'));
