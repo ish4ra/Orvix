@@ -53,6 +53,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
   late _TvSourceSort _sort;
   final FreeP2pLiveProbeService _liveProbe = FreeP2pLiveProbeService();
   bool _liveProbeStarted = false;
+  bool _probeHandedToPlayback = false;
 
   String get _pinKey =>
       widget.sources.sourceTargetKey(widget.item, episode: widget.episode);
@@ -425,6 +426,11 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
   Future<void> _play(SourceResult source) async {
     if (_openingResource != null) return;
 
+    if (_sort == _TvSourceSort.free) {
+      await _liveProbe.prepareForPlayback(source);
+      _probeHandedToPlayback = true;
+    }
+
     final callback = widget.onPlaySource;
     if (callback == null) {
       Navigator.of(context).pop(source);
@@ -448,6 +454,14 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
     } finally {
       if (mounted) setState(() => _openingResource = null);
     }
+  }
+
+  @override
+  void dispose() {
+    if (!_probeHandedToPlayback) {
+      unawaited(_liveProbe.release());
+    }
+    super.dispose();
   }
 
   @override
