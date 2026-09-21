@@ -11,6 +11,19 @@ class FreeP2pLiveProbeService {
   String _key(SourceResult source) =>
       '${source.resource}|${source.torrentFileIndex ?? source.fileNameHint ?? 'auto'}';
 
+  bool get isRunning => _running != null;
+
+  bool get hasAnyResult => _cache.values.any(
+        (entry) =>
+            DateTime.now().difference(entry.at) <= const Duration(minutes: 3),
+      );
+
+  bool get hasPlayableResult => _cache.values.any(
+        (entry) =>
+            DateTime.now().difference(entry.at) <= const Duration(minutes: 3) &&
+            entry.result.playableNow,
+      );
+
   LocalTorrentProbeResult? resultFor(SourceResult source) {
     final key = _key(source);
     final cached = _cache[key];
