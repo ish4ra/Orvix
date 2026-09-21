@@ -8,6 +8,7 @@ import '../models/media_item.dart';
 import '../services/ai_sinhala_preferences_service.dart';
 import '../services/catalog_service.dart';
 import '../services/cloud_preferences_service.dart';
+import '../services/free_p2p_live_probe_service.dart';
 import '../services/local_torrent_service.dart';
 import '../services/media_state_service.dart';
 import '../services/pikpak_service.dart';
@@ -2276,6 +2277,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
     var pinnedIdentity = await widget.sources.getPinnedSourceIdentity(pinKey);
     if (!mounted) return null;
 
+    final liveProbe = FreeP2pLiveProbeService();
+    var liveProbeStarted = false;
+
     Future<void> customizePriority(
       BuildContext dialogContext,
       StateSetter setSheetState,
@@ -2364,11 +2368,30 @@ class _DetailsScreenState extends State<DetailsScreen> {
       constraints: const BoxConstraints(maxWidth: 1080),
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) {
+          if (freeStreamingRanking && !liveProbeStarted) {
+            liveProbeStarted = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              unawaited(
+                liveProbe
+                    .probeTopCandidates(
+                      results,
+                      widget.sources,
+                      onUpdate: () {
+                        if (sheetContext.mounted) {
+                          setSheetState(() {});
+                        }
+                      },
+                    )
+                    .catchError((_) {}),
+              );
+            });
+          }
+
           final sheetWidth = MediaQuery.sizeOf(context).width;
           final compactSheet = sheetWidth < 680;
           final desktopSheet = Platform.isWindows && sheetWidth >= 900;
           final ranked = freeStreamingRanking
-              ? widget.sources.sortForFreeStreaming(results)
+              ? liveProbe.rank(results, widget.sources)
               : smoothRanking
                   ? widget.sources.sortForSmoothPlayback(results)
                   : widget.sources.sortResults(results, priority);
@@ -2406,7 +2429,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
           final priorityText =
               priority.map((e) => e.label.toLowerCase()).join(' → ');
           final rankingText = freeStreamingRanking
-              ? 'Free P2P: availability → device compatibility → exact file → seed health → practical size'
+              ? 'Free P2P: live bytes → first-byte latency → real speed/peers → compatibility → exact file → practical size'
               : smoothRanking
                   ? 'Smooth: compatibility → 1080/720 → efficient codec → seeders → smaller files → cache'
                   : 'Default: $priorityText';
@@ -2588,15 +2611,22 @@ class _DetailsScreenState extends State<DetailsScreen> {
                             pinnedIdentity,
                             seriesWide: seriesWidePin,
                           );
+                          final live = freeStreamingRanking
+                              ? liveProbe.resultFor(result)
+                              : null;
                           final statusLabel = isPinned
                               ? 'Pinned'
-                              : index == 0 && freeStreamingRanking
-                                  ? 'Free P2P'
-                                  : index == 0 && smoothRanking
-                                      ? 'Smooth'
-                                      : null;
+                              : live != null
+                                  ? live.label
+                                  : index == 0 && freeStreamingRanking
+                                      ? 'Checking live…'
+                                      : index == 0 && smoothRanking
+                                          ? 'Smooth'
+                                          : null;
                           final providerText =
-                              '${result.provider}${result.isMagnet ? ' • torrent / P2P' : ' • direct URL'}${result.compatibilityFriendly ? '' : ' • ⚠ compatibility risk'}';
+                              '${result.provider}${result.isMagnet ? ' • torrent / P2P' : ' • direct URL'}'
+                              '${live == null ? '' : ' • ${live.speedLabel} • ${live.connections} connections'}'
+                              '${result.compatibilityFriendly ? '' : ' • ⚠ compatibility risk'}';
 
                           if (compactSheet) {
                             return InkWell(
