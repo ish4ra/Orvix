@@ -48,6 +48,7 @@ void main() {
     expect(player, contains('lookAhead: 24'));
     expect(player, contains('final bucket = position.inSeconds ~/ 30;'));
     expect(player, contains('unawaited(_ensureAiTranslationNear(position'));
+    expect(player, contains('unawaited(_refreshNativeCueAfterSeek());'));
   });
 
   test('live AI fallback shows English while translation is in flight', () {
