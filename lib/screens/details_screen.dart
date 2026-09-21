@@ -2557,12 +2557,24 @@ class _DetailsScreenState extends State<DetailsScreen> {
                         ),
                         if (best != null)
                           FilledButton.icon(
-                            onPressed: () => Navigator.pop(sheetContext, best),
-                            icon: const Icon(Icons.bolt_rounded),
+                            onPressed: freeStreamingRanking &&
+                                    !liveProbe.hasPlayableResult
+                                ? null
+                                : () => Navigator.pop(sheetContext, best),
+                            icon: Icon(
+                              freeStreamingRanking &&
+                                      !liveProbe.hasPlayableResult
+                                  ? Icons.radar_rounded
+                                  : Icons.bolt_rounded,
+                            ),
                             label: Text(
-                              bestIsPinned
-                                  ? 'Play pinned'
-                                  : 'Quick Play ${best.quality ?? ''}'.trim(),
+                              freeStreamingRanking &&
+                                      !liveProbe.hasPlayableResult
+                                  ? 'Checking live…'
+                                  : bestIsPinned
+                                      ? 'Play pinned'
+                                      : 'Quick Play ${best.quality ?? ''}'
+                                          .trim(),
                             ),
                           ),
                       ],
