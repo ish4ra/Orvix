@@ -76,4 +76,23 @@ void main() {
     );
     expect(trusted, isNot(contains('_writeGeneratedSrt(')));
   });
+  test('manual AI enable also refuses title-only subtitle timing', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    final start = player.indexOf('Future<bool> _tryPrepareEmbeddedAiTiming()');
+    final end = player.indexOf('Future<void> _loadSubtitlePreferences()', start);
+    final manualEnable = player.substring(start, end);
+
+    expect(
+      manualEnable,
+      contains('prepareTrustedTranscriptForNativeClock('),
+    );
+    expect(manualEnable, isNot(contains('prepareForEmbeddedTiming(')));
+    expect(manualEnable, contains('_enableEmbeddedLiveAiFallback('));
+    expect(
+      manualEnable,
+      contains('native English cues control timing'),
+    );
+  });
+
 }
