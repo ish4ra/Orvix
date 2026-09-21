@@ -22,9 +22,9 @@ void main() {
         File('tools/configure_android_build.py').readAsStringSync();
     final windows =
         File('windows/runner/flutter_window.cpp').readAsStringSync();
+    final windowsMain =
+        File('windows/runner/main.cpp').readAsStringSync();
     final installer = File('installer/orvix.iss').readAsStringSync();
-    final helper =
-        File('windows/runner/updater_helper.cpp').readAsStringSync();
     final runnerCmake =
         File('windows/runner/CMakeLists.txt').readAsStringSync();
     final windowsCmake =
@@ -47,23 +47,28 @@ void main() {
     expect(update, contains('Android-TV.apk'));
     expect(update, contains('Android-Mobile.apk'));
     expect(update, contains('sha256.bind(file.openRead())'));
-    expect(update, contains('orvix_updater_helper.exe'));
+    expect(update, isNot(contains('orvix_updater_helper.exe')));
+    expect(update, contains('Process.start(\n        file.path'));
     expect(update, contains('ProcessStartMode.detached'));
+    expect(update, contains('Duration(milliseconds: 700)'));
+    expect(update, contains('exit(0)'));
     expect(update, isNot(contains('powershell.exe')));
-    expect(update, isNot(contains("'/CLOSEAPPLICATIONS'")));
-    expect(helper, contains('WaitForSingleObject(parent, 30000)'));
-    expect(helper, contains('CreateProcessW'));
-    expect(helper, contains('FindInstalledOrvix'));
-    expect(helper, contains('InstallLocation'));
-    expect(helper, contains('FOLDERID_LocalAppData'));
-    expect(helper, contains('--no-restart'));
-    expect(runnerCmake, contains('add_executable(orvix_updater_helper'));
-    expect(windowsCmake, contains('install(TARGETS orvix_updater_helper'));
+    expect(runnerCmake, isNot(contains('add_executable(orvix_updater_helper')));
+    expect(windowsCmake, isNot(contains('install(TARGETS orvix_updater_helper')));
+    expect(installer, contains('CloseApplications=force'));
+    expect(installer, contains('RestartApplications=no'));
     expect(installer, isNot(contains('powershell.exe')));
-    expect(installer, isNot(contains('Check: WizardSilent')));
-    expect(installer, isNot(contains('function PrepareToInstall')));
+    expect(windowsMain, contains('CreateMutexW'));
+    expect(windowsMain, contains('OrvixDesktopSingleInstanceV1'));
+    expect(windowsMain, contains('ERROR_ALREADY_EXISTS'));
+    expect(windowsMain, contains('FindWindowW(nullptr, L"orvix")'));
+    expect(windowsMain, contains('SetForegroundWindow(existing)'));
     expect(gate, contains('View what changed'));
     expect(gate, contains("label: const Text('Update')"));
+    expect(
+      gate,
+      contains('Orvix will close; finish setup in the Windows installer'),
+    );
 
     expect(torrent, contains('Future<LocalTorrentProbeResult> probe('));
     expect(torrent, contains('firstByteLatency'));
