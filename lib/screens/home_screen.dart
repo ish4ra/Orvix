@@ -1143,7 +1143,7 @@ class _ContinueRail extends StatelessWidget {
   }
 }
 
-class _MediaRail extends StatelessWidget {class _MediaRail extends StatelessWidget {
+class _MediaRail extends StatelessWidget {
   const _MediaRail({
     required this.title,
     required this.items,
