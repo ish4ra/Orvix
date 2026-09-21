@@ -36,6 +36,15 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
+      - name: Validate build helper syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/configure_android_build.py \
+            tools/configure_android_mobile_compat.py \
+            tools/configure_android_signing.py
+
       - name: Analyze
         run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
 
