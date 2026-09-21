@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
@@ -23,6 +24,7 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate> {
   bool _dismissed = false;
   bool _installing = false;
   double _progress = 0;
+  File? _downloadedFile;
 
   @override
   void initState() {
@@ -53,13 +55,19 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate> {
     });
 
     try {
-      final file = await _updates.download(
-        update,
-        onProgress: (value) {
-          if (!mounted) return;
-          setState(() => _progress = value);
-        },
-      );
+      var file = _downloadedFile;
+      if (file == null || !await file.exists()) {
+        file = await _updates.download(
+          update,
+          onProgress: (value) {
+            if (!mounted) return;
+            setState(() => _progress = value);
+          },
+        );
+        _downloadedFile = file;
+      } else if (mounted) {
+        setState(() => _progress = 1);
+      }
       if (!mounted) return;
 
       final result = await _updates.install(update, file);
