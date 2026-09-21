@@ -22,6 +22,46 @@ function Write-OrvixStatus([string]$Value) {
   } catch {}
 }
 
+function Find-OrvixExecutable() {
+  try {
+    $uninstallRoots = @(
+      'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+      'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+      'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
+
+    foreach ($root in $uninstallRoots) {
+      if (-not (Test-Path $root)) { continue }
+      foreach ($entry in Get-ChildItem $root -ErrorAction SilentlyContinue) {
+        try {
+          $props = Get-ItemProperty $entry.PSPath -ErrorAction Stop
+          if ($props.DisplayName -ne 'Orvix') { continue }
+          $location = [string]$props.InstallLocation
+          if ([string]::IsNullOrWhiteSpace($location)) { continue }
+          $candidate = Join-Path $location 'orvix.exe'
+          if (Test-Path -LiteralPath $candidate) { return $candidate }
+        } catch {}
+      }
+    }
+  } catch {}
+
+  $defaultCandidate = Join-Path $env:LOCALAPPDATA 'Programs\Orvix\orvix.exe'
+  if (Test-Path -LiteralPath $defaultCandidate) { return $defaultCandidate }
+
+  if (Test-Path -LiteralPath $RestartExe) { return $RestartExe }
+  return $null
+}
+
+function Start-OrvixAfterUpdate() {
+  $candidate = Find-OrvixExecutable
+  if ($null -ne $candidate) {
+    Write-OrvixUpdateLog "Launching Orvix from: $candidate"
+    Start-Process -FilePath $candidate
+  } else {
+    Write-OrvixUpdateLog "No Orvix executable could be found after update."
+  }
+}
+
 try {
   Write-OrvixUpdateLog "Waiting for Orvix PID $ParentPid to exit."
   $deadline = (Get-Date).AddSeconds(30)
@@ -33,9 +73,7 @@ try {
   if (Get-Process -Id $ParentPid -ErrorAction SilentlyContinue) {
     Write-OrvixUpdateLog "Parent process did not exit in time."
     Write-OrvixStatus "failed|parent_timeout|$TargetVersion"
-    if (Test-Path -LiteralPath $RestartExe) {
-      Start-Process -FilePath $RestartExe
-    }
+    Start-OrvixAfterUpdate
     exit 2
   }
 
@@ -59,16 +97,10 @@ try {
     Write-OrvixStatus ("failed|" + $process.ExitCode + "|$TargetVersion")
   }
 
-  if (Test-Path -LiteralPath $RestartExe) {
-    Start-Process -FilePath $RestartExe
-  } else {
-    Write-OrvixUpdateLog "Restart executable not found: $RestartExe"
-  }
+  Start-OrvixAfterUpdate
 } catch {
   Write-OrvixUpdateLog ("Handoff failed: " + $_.Exception.Message)
   Write-OrvixStatus ("failed|exception|$TargetVersion")
-  if (Test-Path -LiteralPath $RestartExe) {
-    try { Start-Process -FilePath $RestartExe } catch {}
-  }
+  try { Start-OrvixAfterUpdate } catch {}
   exit 1
 }
