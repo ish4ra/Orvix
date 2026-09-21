@@ -39,6 +39,7 @@ void main() {
     expect(handoff, contains('Find-OrvixExecutable'));
     expect(handoff, contains("InstallLocation"));
     expect(handoff, contains("Programs\\Orvix\\orvix.exe"));
+    expect(handoff, contains("Orvix is already running after installer completion."));
     expect(
       handoff,
       contains(
@@ -46,7 +47,9 @@ void main() {
       ),
     );
     expect(update, isNot(contains("'/CLOSEAPPLICATIONS'")));
-    expect(installer, isNot(contains('Check: WizardSilent')));
+    expect(installer, contains('Check: WizardSilent'));
+    expect(installer, contains('function PrepareToInstall'));
+    expect(installer, contains('function IsOrvixRunning'));
     expect(gate, contains('View what changed'));
     expect(gate, contains("label: const Text('Update')"));
 
@@ -56,6 +59,9 @@ void main() {
     expect(torrent, contains('preferredOffset = 8 * 1024 * 1024'));
     expect(live, contains('probeTopCandidates'));
     expect(live, contains('.take(6)'));
+    expect(live, contains('retainSession: true'));
+    expect(torrent, contains('prepareRetainedProbeForPlayback'));
+    expect(torrent, contains('releaseRetainedProbeSessions'));
     expect(details, contains('liveProbe.rank(results, widget.sources)'));
     expect(tv, contains('_liveProbe.rank(_results, widget.sources)'));
 
