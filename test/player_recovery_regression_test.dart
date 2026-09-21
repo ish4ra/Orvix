@@ -76,5 +76,25 @@ void main() {
     expect(torrent, contains('Platform.isWindows'));
     expect(torrent, contains('targetBytes: 2 * 1024 * 1024'));
     expect(torrent, contains('_primeLocalStream'));
+
+    // Player Back is serialized so a second Back press cannot pop the route
+    // while the first native teardown is still in progress.
+    expect(player, contains('Future<void>? _exitPreparation'));
+    expect(player, contains('await widget.playback.player.pause();'));
+    expect(
+      player,
+      contains('Duration(milliseconds: 180)'),
+    );
+
+    // Local P2P is detached only after the MPV route has fully closed.
+    expect(torrent, contains('Future<void> releaseCurrentStream()'));
+    expect(details, contains('await LocalTorrentService.instance.releaseCurrentStream();'));
+
+    // Focus/selection remains visible through fill/border/scale, not a neon halo.
+    expect(player, isNot(contains('Color(0x883CFF00)')));
+    expect(
+      exo,
+      isNot(contains('primary.withValues(alpha: .34)')),
+    );
   });
 }
