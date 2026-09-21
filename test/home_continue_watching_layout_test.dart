@@ -15,7 +15,7 @@ void main() {
     expect(home, contains('height: 120'));
     expect(home, contains('imageWidth: 82'));
     expect(home, contains("'Up Next'"));
-    expect(home, contains("'% watched'"));
+    expect(home, contains('% watched'));
     expect(home, isNot(contains('class _TvContinueCard')));
     expect(home, isNot(contains('class _DesktopContinueCard')));
   });
