@@ -2543,7 +2543,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
     String? releaseHint,
     int? expectedSizeBytes,
     String? expectedVideoHash,
-    bool fallbackToExo = false,
   }) async {
     if (!mounted) return;
 
@@ -2655,7 +2654,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     return result;
   }
 
-  Future<void> _recordSourceStartupFailure(  Future<void> _recordSourceStartupFailure(
+  Future<void> _recordSourceStartupFailure(
     SourceResult source,
     String url,
     String message,
@@ -2684,6 +2683,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     String? releaseHint,
     int? expectedSizeBytes,
     String? expectedVideoHash,
+    bool fallbackToExo = false,
   }) async {
     if (!mounted) return;
     await Navigator.of(context).push(
