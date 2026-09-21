@@ -53,6 +53,11 @@ function Find-OrvixExecutable() {
 }
 
 function Start-OrvixAfterUpdate() {
+  if (Get-Process -Name 'orvix' -ErrorAction SilentlyContinue) {
+    Write-OrvixUpdateLog "Orvix is already running after installer completion."
+    return
+  }
+
   $candidate = Find-OrvixExecutable
   if ($null -ne $candidate) {
     Write-OrvixUpdateLog "Launching Orvix from: $candidate"
