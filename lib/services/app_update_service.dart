@@ -138,81 +138,17 @@ class AppUpdateService {
     }
 
     if (Platform.isWindows) {
-      // Windows binary updates use a tiny native Win32 helper that is shipped
-      // beside orvix.exe. The helper is copied out of the install directory
-      // before handoff, waits for this PID to exit, runs Inno Setup, checks the
-      // real installer exit code, writes a persistent status/log, then launches
-      // the installed Orvix build. No PowerShell or execution-policy dependency.
-      final support = await getApplicationSupportDirectory();
-      final handoffDir = Directory(
-        '${support.path}${Platform.pathSeparator}update-handoff',
-      );
-      await handoffDir.create(recursive: true);
-
-      final sourceHelper = File(
-        '${File(Platform.resolvedExecutable).parent.path}'
-        '${Platform.pathSeparator}orvix_updater_helper.exe',
-      );
-      if (!await sourceHelper.exists() || await sourceHelper.length() <= 0) {
-        throw StateError(
-          'Windows updater helper is missing from this Orvix installation.',
-        );
-      }
-
-      final helper = File(
-        '${handoffDir.path}${Platform.pathSeparator}'
-        'orvix-updater-helper-$pid.exe',
-      );
-      if (await helper.exists()) {
-        await helper.delete();
-      }
-      await sourceHelper.copy(helper.path);
-
-      final logFile = File(
-        '${handoffDir.path}${Platform.pathSeparator}orvix-update-handoff.log',
-      );
-      final installerLog = File(
-        '${handoffDir.path}${Platform.pathSeparator}orvix-installer.log',
-      );
-      final statusFile = File(
-        '${handoffDir.path}${Platform.pathSeparator}last-update-status.txt',
-      );
-      if (await statusFile.exists()) {
-        await statusFile.delete();
-      }
-
-      await LocalTorrentService.instance.dispose();
-
-      final process = await Process.start(
-        helper.path,
-        [
-          '--parent-pid',
-          pid.toString(),
-          '--installer',
-          file.path,
-          '--restart-exe',
-          Platform.resolvedExecutable,
-          '--target-version',
-          update.version,
-          '--log',
-          logFile.path,
-          '--installer-log',
-          installerLog.path,
-          '--status',
-          statusFile.path,
-        ],
-        mode: ProcessStartMode.detached,
-      );
-
-      // Process.start returning here means Windows accepted the detached helper.
-      // Only then do we relinquish the current executable so the installer can
-      // safely replace it.
-      if (process.pid <= 0) {
-        throw StateError('Windows updater helper could not be started.');
-      }
-
-      await Future<void>.delayed(const Duration(milliseconds: 450));
-      exit(0);
+      return assets.cast<Map<String, dynamic>?>().firstWhere(
+            (asset) =>
+                asset != null &&
+                matches(
+                  asset,
+                  (name) =>
+                      name.contains('Windows-x64') &&
+                      name.toLowerCase().endsWith('.exe'),
+                ),
+            orElse: () => null,
+          );
     }
 
     if (Platform.isAndroid) {
@@ -322,21 +258,29 @@ class AppUpdateService {
     File file,
   ) async {
     if (Platform.isWindows) {
-      // Never ask the installer to replace a running Orvix process. Stage a
-      // tiny detached handoff helper instead: it waits for this process to
-      // fully exit, runs Inno Setup, waits for a real installer exit code, then
-      // relaunches Orvix. This mirrors the safe principle used by managed
-      // updaters such as Nuvio/Expo: apply only after the current runtime has
-      // relinquished ownership of its files.
       final support = await getApplicationSupportDirectory();
       final handoffDir = Directory(
         '${support.path}${Platform.pathSeparator}update-handoff',
       );
       await handoffDir.create(recursive: true);
 
-      final script = File(
-        '${handoffDir.path}${Platform.pathSeparator}orvix-update-handoff.ps1',
+      final sourceHelper = File(
+        '${File(Platform.resolvedExecutable).parent.path}'
+        '${Platform.pathSeparator}orvix_updater_helper.exe',
       );
+      if (!await sourceHelper.exists() || await sourceHelper.length() <= 0) {
+        throw StateError(
+          'Windows updater helper is missing from this Orvix installation.',
+        );
+      }
+
+      final helper = File(
+        '${handoffDir.path}${Platform.pathSeparator}'
+        'orvix-updater-helper-$pid.exe',
+      );
+      if (await helper.exists()) await helper.delete();
+      await sourceHelper.copy(helper.path);
+
       final logFile = File(
         '${handoffDir.path}${Platform.pathSeparator}orvix-update-handoff.log',
       );
@@ -346,51 +290,36 @@ class AppUpdateService {
       final statusFile = File(
         '${handoffDir.path}${Platform.pathSeparator}last-update-status.txt',
       );
-      if (await statusFile.exists()) {
-        await statusFile.delete();
-      }
-
-      await script.writeAsString(
-        await rootBundle.loadString(
-          'assets/update/orvix_update_handoff.ps1',
-        ),
-      );
+      if (await statusFile.exists()) await statusFile.delete();
 
       await LocalTorrentService.instance.dispose();
 
-      await Process.start(
-        'powershell.exe',
+      final process = await Process.start(
+        helper.path,
         [
-          '-NoLogo',
-          '-NoProfile',
-          '-NonInteractive',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-WindowStyle',
-          'Hidden',
-          '-File',
-          script.path,
-          '-ParentPid',
+          '--parent-pid',
           pid.toString(),
-          '-Installer',
+          '--installer',
           file.path,
-          '-RestartExe',
+          '--restart-exe',
           Platform.resolvedExecutable,
-          '-TargetVersion',
+          '--target-version',
           update.version,
-          '-LogPath',
+          '--log',
           logFile.path,
-          '-InstallerLog',
+          '--installer-log',
           installerLog.path,
-          '-StatusPath',
+          '--status',
           statusFile.path,
         ],
         mode: ProcessStartMode.detached,
       );
 
-      // Give PowerShell enough time to start and own the handoff before this
-      // process exits. The helper, not Inno Setup, now owns installation.
-      await Future<void>.delayed(const Duration(milliseconds: 700));
+      if (process.pid <= 0) {
+        throw StateError('Windows updater helper could not be started.');
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 450));
       exit(0);
     }
 
