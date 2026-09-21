@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
@@ -162,8 +163,23 @@ class _OrvixAppState extends State<OrvixApp> {
         ),
         navigationRailTheme: const NavigationRailThemeData(
           backgroundColor: Color(0xFF070A08),
-          indicatorColor: Color(0xFF172416),
-          selectedIconTheme: IconThemeData(color: Color(0xFFCBFF75)),
+          indicatorColor: Color(0xFF263B18),
+          selectedIconTheme: IconThemeData(
+            color: Color(0xFFB9FF45),
+            size: 25,
+          ),
+          unselectedIconTheme: IconThemeData(
+            color: Color(0xFF8D9790),
+            size: 23,
+          ),
+          selectedLabelTextStyle: TextStyle(
+            color: Color(0xFFEAF5DF),
+            fontWeight: FontWeight.w800,
+          ),
+          unselectedLabelTextStyle: TextStyle(
+            color: Color(0xFF8D9790),
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ),
       home: _OrvixShell(
@@ -343,6 +359,8 @@ class _OrvixShellState extends State<_OrvixShell> {
     final width = MediaQuery.sizeOf(context).width;
     final compact = width < 720;
     final extended = width >= 1180;
+    final windowsDesktop = Platform.isWindows && !compact;
+    final railExtended = extended && !windowsDesktop;
 
     Widget body = AnimatedSwitcher(
       duration: const Duration(milliseconds: 180),
@@ -436,18 +454,23 @@ class _OrvixShellState extends State<_OrvixShell> {
             child: NavigationRail(
               selectedIndex: _index,
               onDestinationSelected: _selectDestination,
-              extended: extended,
-              minWidth: 86,
+              extended: railExtended,
+              minWidth: windowsDesktop ? 72 : 86,
               minExtendedWidth: 226,
               groupAlignment: -0.72,
               leading: Padding(
-                padding: const EdgeInsets.fromLTRB(7, 18, 7, 28),
+                padding: EdgeInsets.fromLTRB(
+                  windowsDesktop ? 10 : 7,
+                  windowsDesktop ? 14 : 18,
+                  windowsDesktop ? 10 : 7,
+                  windowsDesktop ? 24 : 28,
+                ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     SizedBox(
-                      width: 72,
-                      height: 72,
+                      width: windowsDesktop ? 46 : 72,
+                      height: windowsDesktop ? 46 : 72,
                       child: Image.asset(
                         'assets/branding/orvix_icon.png',
                         fit: BoxFit.contain,
@@ -461,7 +484,7 @@ class _OrvixShellState extends State<_OrvixShell> {
                         ),
                       ),
                     ),
-                    if (extended) ...[
+                    if (railExtended) ...[
                       const SizedBox(width: 11),
                       const Text(
                         'ORVIX',
