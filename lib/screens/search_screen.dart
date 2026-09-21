@@ -7,17 +7,20 @@ import 'package:flutter/services.dart';
 import '../models/media_item.dart';
 import '../services/catalog_service.dart';
 import '../services/platform_profile.dart';
+import '../services/source_provider_service.dart';
 import '../widgets/media_card.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({
     super.key,
     required this.catalog,
+    required this.sources,
     required this.onOpen,
     this.active = true,
   });
 
   final CatalogService catalog;
+  final SourceProviderService sources;
   final ValueChanged<MediaItem> onOpen;
   final bool active;
 
@@ -36,6 +39,7 @@ class _SearchScreenState extends State<SearchScreen> {
   String? _error;
   int _generation = 0;
   MediaItem? _tvFocusedItem;
+  final Set<String> _warmingTitles = <String>{};
 
   @override
   void initState() {
@@ -68,6 +72,37 @@ class _SearchScreenState extends State<SearchScreen> {
     _focusNode.dispose();
     _firstResultFocusNode.dispose();
     super.dispose();
+  }
+
+  void _prefetchItem(MediaItem item) {
+    final key = '${item.kind.name}:${item.id}';
+    if (!_warmingTitles.add(key)) return;
+    unawaited(() async {
+      try {
+        final rich = await widget.catalog.details(item) ?? item;
+        EpisodeItem? episode;
+        if (rich.kind == MediaKind.series && rich.episodes.isNotEmpty) {
+          final ordered = [...rich.episodes]
+            ..sort((a, b) {
+              final bySeason = a.season.compareTo(b.season);
+              return bySeason != 0
+                  ? bySeason
+                  : a.episode.compareTo(b.episode);
+            });
+          episode = ordered.first;
+        }
+        await widget.sources.prefetch(rich, episode: episode);
+      } catch (_) {
+        // Search suggestions remain usable even if a background warm-up fails.
+      } finally {
+        _warmingTitles.remove(key);
+      }
+    }());
+  }
+
+  void _openItem(MediaItem item) {
+    _prefetchItem(item);
+    widget.onOpen(widget.catalog.peekDetails(item) ?? item);
   }
 
   void _focusFirstResult() {
@@ -408,11 +443,13 @@ class _SearchScreenState extends State<SearchScreen> {
                     focusNode: index == 0 ? _firstResultFocusNode : null,
                     onFocusChanged: (focused) {
                       if (!focused || !mounted) return;
+                      _prefetchItem(item);
                       if (_tvFocusedItem?.id != item.id) {
                         setState(() => _tvFocusedItem = item);
                       }
                     },
-                    onTap: () => widget.onOpen(item),
+                    onPreview: () => _prefetchItem(item),
+                    onTap: () => _openItem(item),
                   ),
                 );
               },
@@ -505,7 +542,11 @@ class _SearchScreenState extends State<SearchScreen> {
               width: double.infinity,
               compact: compactGrid,
               focusNode: index == 0 ? _firstResultFocusNode : null,
-              onTap: () => widget.onOpen(item),
+              onFocusChanged: (focused) {
+                if (focused) _prefetchItem(item);
+              },
+              onPreview: () => _prefetchItem(item),
+              onTap: () => _openItem(item),
             );
           },
         );
