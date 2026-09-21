@@ -2301,6 +2301,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
     final liveProbe = FreeP2pLiveProbeService();
     var liveProbeStarted = false;
+    var sourcePlaybackInProgress = false;
 
     Future<void> customizePriority(
       BuildContext dialogContext,
@@ -2472,16 +2473,22 @@ class _DetailsScreenState extends State<DetailsScreen> {
               Navigator.pop(sheetContext, source);
               return;
             }
+            if (sourcePlaybackInProgress) return;
 
             // Keep the picker route alive underneath the player. This gives
             // navigation a real one-step stack:
             // player -> source picker -> title details -> home.
             // The already-resolved result list and live-probe cache stay in
             // memory, so returning from playback does not refetch/refresh.
-            if (freeStreamingRanking) {
-              await liveProbe.prepareForPlayback(source);
+            sourcePlaybackInProgress = true;
+            try {
+              if (freeStreamingRanking) {
+                await liveProbe.prepareForPlayback(source);
+              }
+              await play(source);
+            } finally {
+              sourcePlaybackInProgress = false;
             }
-            await play(source);
           }
 
           return SafeArea(
