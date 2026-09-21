@@ -49,7 +49,9 @@ class AndroidExoPlayerScreen extends StatefulWidget {
 class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
   final FocusNode _surfaceFocus = FocusNode(debugLabel: 'exo-surface');
   final FocusNode _backFocus = FocusNode(debugLabel: 'exo-back');
+  final FocusNode _rewindFocus = FocusNode(debugLabel: 'exo-rewind');
   final FocusNode _playFocus = FocusNode(debugLabel: 'exo-play');
+  final FocusNode _forwardFocus = FocusNode(debugLabel: 'exo-forward');
   final FocusNode _switchFocus = FocusNode(debugLabel: 'exo-switch');
 
   VideoPlayerController? _controller;
@@ -262,20 +264,32 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     _closing = true;
     _hideTimer?.cancel();
     _saveTimer?.cancel();
+
+    final controller = _controller;
+    final started = _initialized &&
+        ((controller?.value.isPlaying ?? false) ||
+            (controller?.value.position ?? Duration.zero) > Duration.zero);
+
     await _persistProgress();
-    try {
-      await _controller?.pause();
-    } catch (_) {}
+    if (controller != null) {
+      controller.removeListener(_onControllerChanged);
+      try {
+        await controller.pause();
+      } catch (_) {}
+      try {
+        await controller.dispose();
+      } catch (_) {}
+      if (identical(_controller, controller)) {
+        _controller = null;
+      }
+    }
 
     if (!mounted) return;
     Navigator.of(context).pop(
       AndroidExoPlayerResult(
         failed: failed,
         switchToMpv: switchToMpv,
-        started: _initialized &&
-            ((_controller?.value.isPlaying ?? false) ||
-                (_controller?.value.position ?? Duration.zero) >
-                    Duration.zero),
+        started: started,
         error: error,
       ),
     );
@@ -304,7 +318,9 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     unawaited(_controller?.dispose() ?? Future<void>.value());
     _surfaceFocus.dispose();
     _backFocus.dispose();
+    _rewindFocus.dispose();
     _playFocus.dispose();
+    _forwardFocus.dispose();
     _switchFocus.dispose();
     super.dispose();
   }
@@ -389,7 +405,9 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
         ),
       ),
       child: SafeArea(
-        child: Column(
+        child: FocusTraversalGroup(
+          policy: ReadingOrderTraversalPolicy(),
+          child: Column(
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(28, 18, 28, 0),
@@ -441,8 +459,9 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                             minHeight: 5,
                             value: played,
                             backgroundColor: const Color(0xFF484D49),
-                            valueColor:
-                                const AlwaysStoppedAnimation<Color>(Colors.white),
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Theme.of(context).colorScheme.primary,
+                            ),
                           ),
                         ),
                       ),
@@ -458,13 +477,11 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                     ],
                   ),
                   const SizedBox(height: 18),
-                  Wrap(
-                    alignment: WrapAlignment.center,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 12,
-                    runSpacing: 10,
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       _ExoAction(
+                        focusNode: _rewindFocus,
                         icon: Icons.replay_10_rounded,
                         semanticLabel: 'Back 10 seconds',
                         onFocusChange: _onControlFocus,
@@ -472,6 +489,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                           _seekRelative(const Duration(seconds: -10)),
                         ),
                       ),
+                      const SizedBox(width: 12),
                       _ExoAction(
                         focusNode: _playFocus,
                         icon: value?.isPlaying == true
@@ -483,7 +501,9 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                         onFocusChange: _onControlFocus,
                         onPressed: () => unawaited(_togglePlay()),
                       ),
+                      const SizedBox(width: 12),
                       _ExoAction(
+                        focusNode: _forwardFocus,
                         icon: Icons.forward_10_rounded,
                         semanticLabel: 'Forward 10 seconds',
                         onFocusChange: _onControlFocus,
@@ -491,10 +511,11 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                           _seekRelative(const Duration(seconds: 10)),
                         ),
                       ),
+                      const SizedBox(width: 12),
                       _ExoAction(
                         focusNode: _switchFocus,
                         icon: Icons.swap_horiz_rounded,
-                        label: 'Use MPV',
+                        label: 'MPV',
                         semanticLabel: 'Switch to MPV',
                         onFocusChange: _onControlFocus,
                         onPressed: () => unawaited(
@@ -507,6 +528,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
               ),
             ),
           ],
+          ),
         ),
       ),
     );
@@ -615,20 +637,50 @@ class _ExoActionState extends State<_ExoAction> {
   @override
   Widget build(BuildContext context) {
     final size = widget.prominent ? 64.0 : 48.0;
+    final primary = Theme.of(context).colorScheme.primary;
     return Semantics(
       button: true,
       label: widget.semanticLabel ?? widget.label,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 90),
+        duration: const Duration(milliseconds: 110),
         decoration: BoxDecoration(
-          color: _focused
-              ? const Color(0xE62A2E2B)
-              : const Color(0xA8151816),
+          gradient: LinearGradient(
+            colors: _focused
+                ? [
+                    primary.withValues(alpha: widget.prominent ? .78 : .42),
+                    const Color(0xFF19162A),
+                  ]
+                : widget.prominent
+                    ? [
+                        primary.withValues(alpha: .56),
+                        const Color(0xFF171522),
+                      ]
+                    : const [
+                        Color(0xD914161B),
+                        Color(0xD91B1D26),
+                      ],
+          ),
           borderRadius: BorderRadius.circular(widget.prominent ? 32 : 14),
           border: Border.all(
-            color: _focused ? Colors.white : const Color(0x664F5551),
+            color: _focused
+                ? primary.withValues(alpha: .98)
+                : Colors.white.withValues(alpha: .14),
             width: _focused ? 2.2 : 1,
           ),
+          boxShadow: _focused
+              ? [
+                  BoxShadow(
+                    color: primary.withValues(alpha: .34),
+                    blurRadius: 24,
+                    spreadRadius: 1,
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: .42),
+                    blurRadius: 16,
+                    offset: const Offset(0, 7),
+                  ),
+                ]
+              : const [],
         ),
         child: Material(
           color: Colors.transparent,
