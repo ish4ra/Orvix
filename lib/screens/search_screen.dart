@@ -14,13 +14,13 @@ class SearchScreen extends StatefulWidget {
   const SearchScreen({
     super.key,
     required this.catalog,
-    required this.sources,
+    this.sources,
     required this.onOpen,
     this.active = true,
   });
 
   final CatalogService catalog;
-  final SourceProviderService sources;
+  final SourceProviderService? sources;
   final ValueChanged<MediaItem> onOpen;
   final bool active;
 
@@ -91,7 +91,10 @@ class _SearchScreenState extends State<SearchScreen> {
             });
           episode = ordered.first;
         }
-        await widget.sources.prefetch(rich, episode: episode);
+        final sources = widget.sources;
+        if (sources != null) {
+          await sources.prefetch(rich, episode: episode);
+        }
       } catch (_) {
         // Search suggestions remain usable even if a background warm-up fails.
       } finally {
