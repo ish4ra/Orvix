@@ -941,7 +941,7 @@ class _ContinueWideCardState extends State<_ContinueWideCard> {
                                 color: const Color(0xFFADB7B0),
                                 fontSize: compact ? 10.5 : 12.5,
                                 height: 1.25,
-                                fontWeight: FontWeight.w650,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                             const Spacer(),
@@ -982,7 +982,7 @@ class _ContinueWideCardState extends State<_ContinueWideCard> {
   }
 }
 
-class _Hero extends StatelessWidget {class _Hero extends StatelessWidget {
+class _Hero extends StatelessWidget {
   const _Hero({required this.item, required this.onOpen});
   final MediaItem item;
   final VoidCallback onOpen;
@@ -1578,7 +1578,7 @@ class _TvContinueLandscapeRail extends StatelessWidget {
   }
 }
 
-class _TvHomeSkeleton extends StatefulWidget {class _TvHomeSkeleton extends StatefulWidget {
+class _TvHomeSkeleton extends StatefulWidget {
   const _TvHomeSkeleton();
 
   @override
