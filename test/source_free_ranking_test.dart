@@ -7,6 +7,7 @@ SourceResult torrent({
   required int seeders,
   required int sizeBytes,
   String quality = '1080P',
+  bool exactFile = false,
 }) {
   return SourceResult(
     provider: 'Torrentio',
@@ -19,6 +20,7 @@ SourceResult torrent({
     releaseQuality: 'WEB-DL',
     seeders: seeders,
     sizeBytes: sizeBytes,
+    fileNameHint: exactFile ? name : null,
   );
 }
 
@@ -65,6 +67,28 @@ void main() {
     final ranked = service.sortForFreeStreaming([weaker1080, healthy720]);
 
     expect(ranked.first, same(healthy720));
+  });
+
+  test('Free prefers practical healthy 720p over a heavy 1080p torrent', () {
+    final service = SourceProviderService();
+    final heavy1080 = torrent(
+      name: 'The.Dark.Knight.2008.1080p.BluRay.x264.AAC',
+      seeders: 2000,
+      sizeBytes: 8 * 1024 * 1024 * 1024,
+      exactFile: true,
+    );
+    final practical720 = torrent(
+      name: 'The.Dark.Knight.2008.720p.BluRay.x264.AAC',
+      seeders: 120,
+      sizeBytes: 1100 * 1024 * 1024,
+      quality: '720P',
+      exactFile: true,
+    );
+
+    final ranked =
+        service.sortForFreeStreaming([heavy1080, practical720]);
+
+    expect(ranked.first, same(practical720));
   });
 
   test('Free success history is invisible and does not override live health', () async {
