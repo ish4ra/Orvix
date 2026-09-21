@@ -64,6 +64,15 @@ class LocalTorrentProbeResult {
   final int connections;
   final double downloadSpeedBytesPerSecond;
 
+  String get speedLabel {
+    final speed = downloadSpeedBytesPerSecond;
+    if (speed <= 0) return '0 KB/s';
+    if (speed >= 1024 * 1024) {
+      return '${(speed / (1024 * 1024)).toStringAsFixed(speed >= 10 * 1024 * 1024 ? 1 : 2)} MB/s';
+    }
+    return '${(speed / 1024).toStringAsFixed(speed >= 100 * 1024 ? 0 : 1)} KB/s';
+  }
+
   String get label {
     if (!playableNow) return 'No live data';
     if (downloadSpeedBytesPerSecond >= 2 * 1024 * 1024) return 'Ready now';
