@@ -2951,19 +2951,18 @@ class _TvSeasonTileState extends State<_TvSeasonTile> {
 
   @override
   Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
-    final active = widget.selected || _focused;
+    const lime = Color(0xFFB9FF45);
     final label = widget.season == 0 ? 'Specials' : 'Season ${widget.season}';
 
     return AnimatedScale(
-      scale: _focused ? 1.045 : 1,
+      scale: _focused ? 1.04 : 1,
       duration: const Duration(milliseconds: 110),
       curve: Curves.easeOutCubic,
       child: Material(
         color: Colors.transparent,
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(14),
         child: InkWell(
-          borderRadius: BorderRadius.circular(999),
+          borderRadius: BorderRadius.circular(14),
           focusColor: Colors.transparent,
           splashColor: Colors.transparent,
           onFocusChange: (value) => setState(() => _focused = value),
@@ -2973,79 +2972,43 @@ class _TvSeasonTileState extends State<_TvSeasonTile> {
             curve: Curves.easeOutCubic,
             height: 48,
             constraints: const BoxConstraints(minWidth: 118),
-            padding: const EdgeInsets.symmetric(horizontal: 18),
+            padding: const EdgeInsets.symmetric(horizontal: 19),
+            alignment: Alignment.center,
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: active
-                    ? [
-                        primary.withValues(alpha: .34),
-                        const Color(0xFF171627),
-                      ]
-                    : const [
-                        Color(0xFF101116),
-                        Color(0xFF171920),
-                      ],
-              ),
-              borderRadius: BorderRadius.circular(999),
+              color: widget.selected
+                  ? lime
+                  : _focused
+                      ? const Color(0xFF1B211A)
+                      : const Color(0xFF101411),
+              borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                color: _focused
-                    ? primary.withValues(alpha: .95)
-                    : widget.selected
-                        ? primary.withValues(alpha: .58)
+                color: widget.selected
+                    ? lime
+                    : _focused
+                        ? lime.withValues(alpha: .92)
                         : Colors.white.withValues(alpha: .10),
-                width: _focused ? 2 : 1,
+                width: widget.selected || _focused ? 2 : 1,
               ),
-              boxShadow: active
+              boxShadow: widget.selected || _focused
                   ? [
                       BoxShadow(
-                        color: primary.withValues(alpha: _focused ? .28 : .16),
-                        blurRadius: _focused ? 22 : 14,
-                        spreadRadius: _focused ? 1 : 0,
-                      ),
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: .34),
-                        blurRadius: 12,
-                        offset: const Offset(0, 5),
+                        color: lime.withValues(
+                          alpha: widget.selected ? .25 : .15,
+                        ),
+                        blurRadius: widget.selected ? 22 : 17,
+                        spreadRadius: widget.selected ? 1 : 0,
                       ),
                     ]
                   : const [],
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 120),
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: active
-                        ? primary
-                        : Colors.white.withValues(alpha: .26),
-                    boxShadow: active
-                        ? [
-                            BoxShadow(
-                              color: primary.withValues(alpha: .55),
-                              blurRadius: 9,
-                            ),
-                          ]
-                        : const [],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: active
-                        ? Colors.white
-                        : Colors.white.withValues(alpha: .72),
-                    fontSize: 14,
-                    fontWeight: active ? FontWeight.w900 : FontWeight.w700,
-                    letterSpacing: -.1,
-                  ),
-                ),
-              ],
+            child: Text(
+              label,
+              style: TextStyle(
+                color: widget.selected ? Colors.black : Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -.1,
+              ),
             ),
           ),
         ),
