@@ -348,7 +348,9 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                   message: 'Starting playback…',
                   detail: widget.episode == null ? null : widget.title,
                 ),
-              if (value?.isBuffering == true && _error == null)
+              if (initialized &&
+                  value?.isBuffering == true &&
+                  _error == null)
                 const Center(
                   child: CircularProgressIndicator(color: Colors.white),
                 ),
