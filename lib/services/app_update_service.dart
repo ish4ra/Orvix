@@ -138,17 +138,81 @@ class AppUpdateService {
     }
 
     if (Platform.isWindows) {
-      return assets.cast<Map<String, dynamic>?>().firstWhere(
-            (asset) =>
-                asset != null &&
-                matches(
-                  asset,
-                  (name) =>
-                      name.contains('Windows-x64') &&
-                      name.toLowerCase().endsWith('.exe'),
-                ),
-            orElse: () => null,
-          );
+      // Windows binary updates use a tiny native Win32 helper that is shipped
+      // beside orvix.exe. The helper is copied out of the install directory
+      // before handoff, waits for this PID to exit, runs Inno Setup, checks the
+      // real installer exit code, writes a persistent status/log, then launches
+      // the installed Orvix build. No PowerShell or execution-policy dependency.
+      final support = await getApplicationSupportDirectory();
+      final handoffDir = Directory(
+        '${support.path}${Platform.pathSeparator}update-handoff',
+      );
+      await handoffDir.create(recursive: true);
+
+      final sourceHelper = File(
+        '${File(Platform.resolvedExecutable).parent.path}'
+        '${Platform.pathSeparator}orvix_updater_helper.exe',
+      );
+      if (!await sourceHelper.exists() || await sourceHelper.length() <= 0) {
+        throw StateError(
+          'Windows updater helper is missing from this Orvix installation.',
+        );
+      }
+
+      final helper = File(
+        '${handoffDir.path}${Platform.pathSeparator}'
+        'orvix-updater-helper-$pid.exe',
+      );
+      if (await helper.exists()) {
+        await helper.delete();
+      }
+      await sourceHelper.copy(helper.path);
+
+      final logFile = File(
+        '${handoffDir.path}${Platform.pathSeparator}orvix-update-handoff.log',
+      );
+      final installerLog = File(
+        '${handoffDir.path}${Platform.pathSeparator}orvix-installer.log',
+      );
+      final statusFile = File(
+        '${handoffDir.path}${Platform.pathSeparator}last-update-status.txt',
+      );
+      if (await statusFile.exists()) {
+        await statusFile.delete();
+      }
+
+      await LocalTorrentService.instance.dispose();
+
+      final process = await Process.start(
+        helper.path,
+        [
+          '--parent-pid',
+          pid.toString(),
+          '--installer',
+          file.path,
+          '--restart-exe',
+          Platform.resolvedExecutable,
+          '--target-version',
+          update.version,
+          '--log',
+          logFile.path,
+          '--installer-log',
+          installerLog.path,
+          '--status',
+          statusFile.path,
+        ],
+        mode: ProcessStartMode.detached,
+      );
+
+      // Process.start returning here means Windows accepted the detached helper.
+      // Only then do we relinquish the current executable so the installer can
+      // safely replace it.
+      if (process.pid <= 0) {
+        throw StateError('Windows updater helper could not be started.');
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 450));
+      exit(0);
     }
 
     if (Platform.isAndroid) {
