@@ -30,7 +30,7 @@ void main() {
     expect(details, contains('class _MobileSeasonTileState'));
     expect(details, isNot(contains('poster: item.seasonPoster(season)')));
     expect(details, contains('const lime = Color(0xFFB9FF45)'));
-    expect(details, contains('var freeStreamingRanking = !hasCloudConnection'));
+    expect(details, contains('var freeStreamingRanking = !hasDebridConnection'));
     expect(details, isNot(contains("'Best'")));
     expect(details, contains('class _DesktopEpisodeCard'));
     expect(details, contains('_desktopDetailsLayout(item)'));
