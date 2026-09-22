@@ -76,4 +76,33 @@ void main() {
     expect(method, contains('unawaited(_refreshNativeCueAfterSeek());'));
   });
 
+
+  test('player exposes a persistent AI Sinhala switch and persists the preference', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(player, contains('class _AiSinhalaSwitchTile'));
+    expect(player, contains("title: const Text(\n          'AI Sinhala'"));
+    expect(player, contains('AiSinhalaPreferencesService.setEnabled(enabled)'));
+    expect(player, contains('_setAiSinhalaEnabledFromPlayer(value)'));
+  });
+
+  test('all prepared AI startup paths subscribe position and prebuffer nearby Sinhala', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    final openStart = player.indexOf('Future<void> _open()');
+    final embeddedStart =
+        player.indexOf('Future<bool> _tryPrepareEmbeddedAiTiming()', openStart);
+    final open = player.substring(openStart, embeddedStart);
+
+    expect(open, contains('player.stream.position.listen(_onPosition)'));
+    expect(open, contains('unawaited(_ensureAiTranslationNear(position'));
+  });
+
+  test('selected native English track identity is passed to embedded transcript extraction', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(player, contains('preferredTrackLabel: _subtitleTrackPreferenceLabel(chosen)'));
+    expect(player, contains('preferredTrackLabel: _subtitleTrackPreferenceLabel(timingTrack)'));
+  });
+
 }
