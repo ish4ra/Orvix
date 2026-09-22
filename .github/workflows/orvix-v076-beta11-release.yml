@@ -223,10 +223,18 @@ jobs:
           if (-not (Test-Path $ffprobe)) { throw "Bundled ffprobe.exe is missing: $ffprobe" }
           if ((Get-Item $ffmpeg).Length -lt 1000000) { throw 'Bundled ffmpeg.exe looks invalid' }
           if ((Get-Item $ffprobe).Length -lt 1000000) { throw 'Bundled ffprobe.exe looks invalid' }
-          & $ffmpeg -version | Select-Object -First 1
-          if ($LASTEXITCODE -ne 0) { throw 'Bundled ffmpeg.exe did not run successfully' }
-          & $ffprobe -version | Select-Object -First 1
-          if ($LASTEXITCODE -ne 0) { throw 'Bundled ffprobe.exe did not run successfully' }
+          # Do not pipe the process directly into Select-Object -First 1:
+          # closing stdout early can make FFmpeg exit non-zero even though the
+          # executable itself started correctly. Capture first, then inspect.
+          $ffmpegOutput = & $ffmpeg -version 2>&1
+          $ffmpegExit = $LASTEXITCODE
+          $ffmpegOutput | Select-Object -First 1
+          if ($ffmpegExit -ne 0) { throw "Bundled ffmpeg.exe did not run successfully (exit $ffmpegExit)" }
+
+          $ffprobeOutput = & $ffprobe -version 2>&1
+          $ffprobeExit = $LASTEXITCODE
+          $ffprobeOutput | Select-Object -First 1
+          if ($ffprobeExit -ne 0) { throw "Bundled ffprobe.exe did not run successfully (exit $ffprobeExit)" }
 
       - name: Bundle local P2P engine
         shell: pwsh
