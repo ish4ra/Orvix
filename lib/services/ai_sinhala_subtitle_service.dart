@@ -2643,6 +2643,12 @@ class AiSinhalaSubtitleService {
     return _TranslationResponse(status: response.statusCode, data: data);
   }
 
+  // Regression-test hook for subtitle container formats. Keeping parsing in
+  // the production service lets tests exercise the exact ASS/SRT/VTT path
+  // used by embedded source subtitles.
+  static List<AiSubtitleCue> parseSubtitleForTesting(String input) =>
+      _parseSubtitle(input);
+
   static void clearPreparedCache() {
     _preparedCache.clear();
     _translationWork.clear();
