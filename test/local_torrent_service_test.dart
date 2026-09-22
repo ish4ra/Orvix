@@ -18,6 +18,22 @@ void main() {
       expect(normalized, isNot(contains('x-orvix-')));
     });
 
+    test('prepends bundled FFmpeg tools to the Windows stream-server PATH', () {
+      final environment = LocalTorrentService.windowsStreamServerEnvironment(
+        r'C:\\Apps\\Orvix',
+        baseEnvironment: <String, String>{
+          'Path': r'C:\\Windows\\System32;C:\\Windows',
+          'TEMP': r'C:\\Temp',
+        },
+      );
+
+      expect(
+        environment['Path'],
+        r'C:\\Apps\\Orvix\\tools\\ffmpeg\\bin;C:\\Windows\\System32;C:\\Windows',
+      );
+      expect(environment['TEMP'], r'C:\\Temp');
+    });
+
     test('keeps provider tracker and adds fallback trackers without duplicates', () {
       final duplicateFallback = Uri.encodeQueryComponent(
         LocalTorrentService.fallbackTrackers.first,
