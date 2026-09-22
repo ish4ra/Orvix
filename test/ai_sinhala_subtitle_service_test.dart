@@ -100,4 +100,45 @@ void main() {
       isTrue,
     );
   });
+
+  test('embedded ASS subtitles are parsed with timing, commas and style tags intact', () {
+    const ass = r'''[Script Info]
+Title: Test
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.20,0:00:03.40,Default,,0,0,0,,{\i1}Michael,\Ndon't move.
+Dialogue: 0,0:00:04.00,0:00:05.50,Default,,0,0,0,,{\an8}[door slams]
+''';
+
+    final cues = AiSinhalaSubtitleService.parseSubtitleForTesting(ass);
+
+    expect(cues, hasLength(2));
+    expect(cues[0].start, const Duration(milliseconds: 1200));
+    expect(cues[0].end, const Duration(milliseconds: 3400));
+    expect(cues[0].source, "Michael,\ndon't move.");
+    expect(cues[1].source, '[door slams]');
+  });
+
+  test('native ASS cue formatting does not break transcript matching', () {
+    final prepared = AiPreparedSubtitle(
+      key: 'ass-match',
+      title: 'Test',
+      sourceUrl: 'embedded.ass',
+      sourceMatch: 'embedded-native-track',
+      cues: [
+        AiSubtitleCue(
+          start: const Duration(seconds: 1),
+          end: const Duration(seconds: 3),
+          source: "Michael,\ndon't move.",
+        ),
+      ],
+    );
+
+    final match = prepared.matchSourceCueRange(
+      r'{\i1}Michael,\Ndon''t move.',
+    );
+    expect(match?.index, 0);
+  });
+
 }
