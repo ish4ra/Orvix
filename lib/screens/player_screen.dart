@@ -289,23 +289,46 @@ class _PlayerScreenState extends State<PlayerScreen> {
         );
       }
 
+      var reopenedAfterAiFailure = false;
       if (aiPreferred && !aiReady && mounted && !_closing) {
+        final failureMessage = _aiPreflightMessage.trim().isEmpty
+            ? 'AI Sinhala could not generate a complete embedded subtitle. Normal playback will continue.'
+            : _aiPreflightMessage.trim();
+
+        // Do not try to recover the same paused AI-preflight media session.
+        // A failed FFmpeg/subtitle probe may leave native player state half
+        // initialized. Reopen the source cleanly in normal subtitle mode so
+        // AI failure can never take down playback.
+        _subtitleChoiceOverridden = true;
+        _nativeSubtitleClockTimer?.cancel();
+        _liveCueClearTimer?.cancel();
+        _generatedAiSubtitlePath = null;
+        _generatedAiSubtitleLabel = null;
+        _preparedAiSubtitle = null;
         setState(() {
           if (_aiState.mode != AiSinhalaRuntimeMode.native) {
             _transitionAi(AiSinhalaRuntimeMode.native);
           }
           _aiSubtitleUnavailable = true;
           _aiDisplaySubtitle = '';
-          if (_aiPreflightMessage.trim().isEmpty) {
-            _aiPreflightMessage =
-                'AI Sinhala could not generate a complete embedded subtitle. Normal playback will continue.';
-          }
+          _aiPreflightMessage = failureMessage;
         });
-        await _restoreNativeSubtitleFallback();
-        if (_aiPreflightMessage.trim().isNotEmpty) {
+
+        try {
+          await widget.playback.stop();
+        } catch (_) {}
+        await widget.playback.open(
+          widget.url,
+          title: widget.title,
+          play: true,
+        );
+        reopenedAfterAiFailure = true;
+        await _setNativeSubtitleVisibility(true);
+
+        if (mounted && !_closing) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(_aiPreflightMessage),
+              content: Text(failureMessage),
               duration: const Duration(seconds: 7),
             ),
           );
@@ -323,7 +346,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         }
       }
 
-      if (aiPreferred) {
+      if (aiPreferred && !reopenedAfterAiFailure) {
         await widget.playback.player.play();
       }
 
@@ -368,6 +391,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _onPlaybackError(String message) {
     if (_closing ||
         _preflightWarmup ||
+        _aiSubtitleLoading ||
         !mounted ||
         message.trim().isEmpty ||
         _hasPlaybackActivity()) {
