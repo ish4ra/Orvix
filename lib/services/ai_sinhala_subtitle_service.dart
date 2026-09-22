@@ -1444,10 +1444,31 @@ class AiSinhalaSubtitleService {
 
     for (var wave = 0; wave < batches.length; wave += parallelBatches) {
       final end = math.min(wave + parallelBatches, batches.length);
-      await Future.wait<void>([
-        for (var i = wave; i < end; i++)
-          _translateIndices(prepared, batches[i]),
-      ]);
+      try {
+        await Future.wait<void>([
+          for (var i = wave; i < end; i++)
+            _translateIndices(prepared, batches[i]),
+        ]);
+      } on AiSubtitleException catch (error) {
+        if (!error.rateLimited) rethrow;
+
+        // Parallel requests are the fast path. If the translation provider
+        // throttles a wave, keep every batch that already succeeded and finish
+        // only the still-missing cues sequentially instead of failing the
+        // whole episode or retranslating completed work.
+        for (var i = wave; i < end; i++) {
+          final remaining = batches[i]
+              .where((index) => !prepared.isTranslatedAt(index))
+              .toList(growable: false);
+          if (remaining.isEmpty) continue;
+          await Future<void>.delayed(const Duration(milliseconds: 1200));
+          await _translateIndices(prepared, remaining);
+          onProgress?.call(
+            prepared.translatedCount,
+            prepared.cues.length,
+          );
+        }
+      }
       onProgress?.call(
         prepared.translatedCount,
         prepared.cues.length,
