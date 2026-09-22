@@ -1078,6 +1078,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _afterSeek(Duration target) {
     if (!_aiSinhalaRequested) return;
+
+    // Complete-file AI Sinhala is a normal native SRT track. libmpv owns its
+    // seek/timing behavior, so never hide the native renderer after a jump.
+    if (_generatedAiSubtitlePath != null) {
+      unawaited(_setNativeSubtitleVisibility(true));
+      return;
+    }
+
     _lastNativeSubtitleStartMs = null;
     _lastAiPrefetchBucket = -1;
     _nativeAiMatchIndex = -1;
