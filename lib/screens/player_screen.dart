@@ -1804,7 +1804,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final previous = _lastNativeSubtitleStartMs;
     if (previous != null && (startMs - previous).abs() < 40) return;
     _lastNativeSubtitleStartMs = startMs;
-    if (!_timingTrackIsText) {
+    if (_timingTrackIsText) {
+      // Do not rely solely on media_kit's subtitle stream for ASS/SSA tracks.
+      // libmpv exposes the authoritative current text directly. Reading it
+      // whenever the native cue start changes makes styled embedded subtitles
+      // drive AI Sinhala even if a stream event is coalesced or missed.
+      final platform = widget.playback.player.platform;
+      if (platform is mk.NativePlayer) {
+        try {
+          final text = (await platform.getProperty(
+            'sub-text',
+            waitForInitialization: false,
+          ))
+              .trim();
+          if (text.isNotEmpty && mounted) {
+            unawaited(_handleEmbeddedSubtitleCue(<String>[text]));
+          }
+        } catch (_) {}
+      }
+    } else {
       _voteBitmapTiming(startMs);
     }
   }
