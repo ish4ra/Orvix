@@ -20,18 +20,18 @@ void main() {
 
     test('prepends bundled FFmpeg tools to the Windows stream-server PATH', () {
       final environment = LocalTorrentService.windowsStreamServerEnvironment(
-        r'C:\\Apps\\Orvix',
+        r'C:\Apps\Orvix',
         baseEnvironment: <String, String>{
-          'Path': r'C:\\Windows\\System32;C:\\Windows',
-          'TEMP': r'C:\\Temp',
+          'Path': r'C:\Windows\System32;C:\Windows',
+          'TEMP': r'C:\Temp',
         },
       );
 
       expect(
         environment['Path'],
-        r'C:\\Apps\\Orvix\\tools\\ffmpeg\\bin;C:\\Windows\\System32;C:\\Windows',
+        r'C:\Apps\Orvix\tools\ffmpeg\bin;C:\Windows\System32;C:\Windows',
       );
-      expect(environment['TEMP'], r'C:\\Temp');
+      expect(environment['TEMP'], r'C:\Temp');
     });
 
     test('keeps provider tracker and adds fallback trackers without duplicates', () {
