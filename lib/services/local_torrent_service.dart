@@ -124,6 +124,28 @@ class LocalTorrentService {
   static const MethodChannel _androidChannel =
       MethodChannel('orvix/torrent_engine');
 
+  /// The Windows build already contains media_kit's ffmpeg/ffprobe tools under
+  /// tools\\ffmpeg\\bin. The local stream-server launches ffmpeg/ffprobe by
+  /// command name, so prepend that bundled directory to the child PATH instead
+  /// of depending on a system-wide FFmpeg installation.
+  static Map<String, String> windowsStreamServerEnvironment(
+    String appDirPath, {
+    Map<String, String>? baseEnvironment,
+  }) {
+    final environment = Map<String, String>.from(
+      baseEnvironment ?? Platform.environment,
+    );
+    final pathKey = environment.keys.firstWhere(
+      (key) => key.toLowerCase() == 'path',
+      orElse: () => 'Path',
+    );
+    final ffmpegBin = '$appDirPath\\tools\\ffmpeg\\bin';
+    final currentPath = environment[pathKey]?.trim() ?? '';
+    environment[pathKey] =
+        currentPath.isEmpty ? ffmpegBin : '$ffmpegBin;$currentPath';
+    return environment;
+  }
+
   // Nuvio keeps a small public tracker fallback set in addition to provider
   // trackers. Stremio's server also accepts explicit peer-search sources.
   // Keeping these here makes startup less dependent on one stale addon tracker
@@ -815,6 +837,9 @@ class LocalTorrentService {
         const ['--no-tray'],
         workingDirectory: workDir.path,
         mode: ProcessStartMode.normal,
+        environment: Platform.isWindows
+            ? windowsStreamServerEnvironment(appDir.path)
+            : null,
       );
       _ownsProcess = true;
 
