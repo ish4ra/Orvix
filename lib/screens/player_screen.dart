@@ -323,8 +323,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _timingTrackSelected = true;
         _timingTrackIsText = true;
         _nativeAiMatchIndex = -1;
+        _positionSubscription ??=
+            player.stream.position.listen(_onPosition);
         _subtitleTimingSubscription ??=
-            widget.playback.player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
+            player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
+        _startNativeSubtitleClock();
+
+        final position = player.state.position;
+        final bucket = position.inSeconds ~/ 30;
+        _lastAiPrefetchBucket = bucket;
+        unawaited(_ensureAiTranslationNear(position, bucket: bucket));
       } else {
         final currentSubtitle = widget.playback.player.state.track.subtitle;
         await _setNativeSubtitleVisibility(
@@ -668,6 +676,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         releaseHint: widget.releaseHint,
         expectedSizeBytes: widget.expectedSizeBytes,
         expectedVideoHash: widget.expectedVideoHash,
+        preferredTrackLabel: _subtitleTrackPreferenceLabel(timingTrack),
         onStatus: (message) {
           if (!mounted || _closing) return;
           setState(() => _aiPreflightMessage = message);
@@ -908,6 +917,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             releaseHint: widget.releaseHint,
             expectedSizeBytes: widget.expectedSizeBytes,
             expectedVideoHash: widget.expectedVideoHash,
+            preferredTrackLabel: _subtitleTrackPreferenceLabel(chosen),
             onStatus: (message) {
               if (!mounted || _closing) return;
               setState(() => _aiPreflightMessage = message);
@@ -955,6 +965,91 @@ class _PlayerScreenState extends State<PlayerScreen> {
       await Future<void>.delayed(const Duration(milliseconds: 300));
     }
     return false;
+  }
+
+  Future<void> _setAiSinhalaEnabledFromPlayer(bool enabled) async {
+    await AiSinhalaPreferencesService.setEnabled(enabled);
+    if (!mounted || _closing) return;
+
+    if (!enabled) {
+      _subtitleChoiceOverridden = false;
+      _nativeSubtitleClockTimer?.cancel();
+      _liveCueClearTimer?.cancel();
+      _nativeAiMatchIndex = -1;
+      _lastAiPrefetchBucket = -1;
+      _liveCueGeneration++;
+      setState(() {
+        _transitionAi(AiSinhalaRuntimeMode.native);
+        _aiDisplaySubtitle = '';
+        _aiSubtitleUnavailable = false;
+        _aiPreflightMessage = '';
+      });
+      await _restoreNativeSubtitleFallback();
+      return;
+    }
+
+    _subtitleChoiceOverridden = false;
+
+    if (_preparedAiSubtitle != null) {
+      await _enablePreparedAiSubtitle();
+      return;
+    }
+
+    if (_aiState.mode == AiSinhalaRuntimeMode.native) {
+      setState(() {
+        _transitionAi(AiSinhalaRuntimeMode.preparing);
+        _aiSubtitleUnavailable = false;
+        _aiPreflightMessage =
+            'Preparing AI Sinhala from the selected video subtitle track…';
+      });
+    }
+
+    final player = widget.playback.player;
+    final wasPlaying = player.state.playing;
+    var ready = false;
+    try {
+      ready = Platform.isWindows && _localP2pStream
+          ? await _tryPrepareEmbeddedAiTiming()
+          : await _prepareAiSinhalaBeforePlayback();
+
+      if (ready && _preparedAiSubtitle != null && mounted && !_closing) {
+        _positionSubscription ??=
+            player.stream.position.listen(_onPosition);
+        _subtitleTimingSubscription ??=
+            player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
+        await _ensureEnglishTimingTrack();
+
+        if (_timingTrackSelected && _timingTrackIsText) {
+          await _setNativeSubtitleVisibility(true);
+          final position = player.state.position;
+          final bucket = position.inSeconds ~/ 30;
+          _lastAiPrefetchBucket = bucket;
+          unawaited(_ensureAiTranslationNear(position, bucket: bucket));
+          unawaited(_refreshNativeCueAfterSeek());
+        }
+      }
+
+      if (!ready && mounted && !_closing) {
+        await AiSinhalaPreferencesService.setEnabled(false);
+        setState(() {
+          if (_aiState.mode != AiSinhalaRuntimeMode.native) {
+            _transitionAi(AiSinhalaRuntimeMode.native);
+          }
+          _aiSubtitleUnavailable = true;
+          if (_aiPreflightMessage.trim().isEmpty) {
+            _aiPreflightMessage =
+                'AI Sinhala could not prepare a reliable subtitle path for this source.';
+          }
+        });
+        await _restoreNativeSubtitleFallback();
+      }
+    } finally {
+      if (wasPlaying && !_closing && !player.state.playing) {
+        try {
+          await player.play();
+        } catch (_) {}
+      }
+    }
   }
 
   Future<void> _loadSubtitlePreferences() async {
@@ -1596,6 +1691,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
       await Future<void>.delayed(const Duration(milliseconds: 300));
     }
+  }
+
+  String _subtitleTrackPreferenceLabel(dynamic track) {
+    final title = (track.title ?? '').toString().trim();
+    final language = (track.language ?? '').toString().trim();
+    final codec = (track.codec ?? '').toString().trim();
+    return <String>[title, language, codec]
+        .where((value) => value.isNotEmpty)
+        .join(' • ');
   }
 
   bool _isEnglishTrack(dynamic track) {
@@ -2607,6 +2711,28 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ],
                   ),
                   const SizedBox(height: 8),
+                  if (widget.allowAiSinhala && !PlatformProfile.isAndroidTv) ...[
+                    _AiSinhalaSwitchTile(
+                      value: _aiSinhalaRequested,
+                      busy: _aiSubtitleLoading,
+                      detail: _aiSubtitleLoading
+                          ? 'Preparing a verified native-timed Sinhala subtitle…'
+                          : _aiSinhalaEnabled
+                              ? 'On • Sinhala uses the selected video’s English cue timing'
+                              : _aiSubtitleUnavailable
+                                  ? (_aiPreflightMessage.trim().isEmpty
+                                      ? 'Off • last attempt could not prepare this source'
+                                      : 'Off • ${_aiPreflightMessage.trim()}')
+                                  : 'Off • turn on AI Sinhala for this playback and future videos',
+                      onChanged: (value) async {
+                        await _setAiSinhalaEnabledFromPlayer(value);
+                        if (sheetContext.mounted) {
+                          setSheetState(() {});
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   if (_aiSinhalaEnabled) ...[
                     _subtitleAppearanceControls(setSheetState),
                     const SizedBox(height: 12),
@@ -2619,26 +2745,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     _subtitleSyncControls(setSheetState),
                     const SizedBox(height: 12),
                   ],
-                  if (_preparedAiSubtitle != null)
-                    _TrackTile(
-                      title: 'AI Sinhala',
-                      detail: _aiSinhalaEnabled
-                          ? 'Active • translated Sinhala overlay'
-                          : 'Available • switch back to AI Sinhala',
-                      selected: _aiSinhalaRequested && _aiSinhalaEnabled,
-                      onTap: () async {
-                        await _enablePreparedAiSubtitle();
-                        if (sheetContext.mounted) Navigator.pop(sheetContext);
-                      },
-                    )
-                  else if (_liveAiFallback)
-                    _TrackTile(
-                      title: 'AI Sinhala',
-                      detail:
-                          'Active • translating the embedded English text track live',
-                      selected: true,
-                      onTap: () {},
-                    ),
                   if (_aiSubtitleLoading)
                     const _EmptyTrackMessage(
                       'AI Sinhala is preparing a verified subtitle timeline.',
@@ -3747,6 +3853,52 @@ class _TrackHeading extends StatelessWidget {
         Text(text,
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
       ],
+    );
+  }
+}
+
+class _AiSinhalaSwitchTile extends StatelessWidget {
+  const _AiSinhalaSwitchTile({
+    required this.value,
+    required this.busy,
+    required this.detail,
+    required this.onChanged,
+  });
+
+  final bool value;
+  final bool busy;
+  final String detail;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Container(
+      decoration: BoxDecoration(
+        color: value
+            ? primary.withValues(alpha: .10)
+            : const Color(0xFF101411),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: value
+              ? primary.withValues(alpha: .58)
+              : Colors.white.withValues(alpha: .10),
+        ),
+      ),
+      child: SwitchListTile.adaptive(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+        secondary: Icon(
+          Icons.translate_rounded,
+          color: value ? primary : null,
+        ),
+        title: const Text(
+          'AI Sinhala',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+        subtitle: Text(detail),
+        value: value,
+        onChanged: busy ? null : onChanged,
+      ),
     );
   }
 }
