@@ -282,6 +282,7 @@ class AiSinhalaSubtitleService {
     String? releaseHint,
     int? expectedSizeBytes,
     String? expectedVideoHash,
+    String? preferredTrackLabel,
     void Function(String message)? onStatus,
   }) async {
     Future<AiPreparedSubtitle> prepareComplete({
@@ -325,7 +326,10 @@ class AiSinhalaSubtitleService {
       onStatus?.call(
         'Checking the selected video for its own English subtitle transcript…',
       );
-      final embedded = await _fetchEmbeddedEnglishSubtitle(videoUrl);
+      final embedded = await _fetchEmbeddedEnglishSubtitle(
+        videoUrl,
+        preferredTrackLabel: preferredTrackLabel,
+      );
       if (embedded != null) {
         final cues = _parseSubtitle(embedded.content);
         if (cues.length >= 8) {
@@ -335,7 +339,7 @@ class AiSinhalaSubtitleService {
             sourceMatch: 'embedded-native-track',
             cues: cues,
             readyMessage:
-                'Video-embedded English transcript translated. Native cue timing remains authoritative.',
+                'Video-embedded English transcript verified. Sinhala will buffer during playback; native cue timing remains authoritative.',
           );
         }
       }
@@ -380,7 +384,7 @@ class AiSinhalaSubtitleService {
               sourceMatch: 'rest-exact-transcript-native-clock',
               cues: cues,
               readyMessage:
-                  'Exact-file English transcript translated. Native cue timing remains authoritative.',
+                  'Exact-file English transcript verified. Sinhala will buffer during playback; native cue timing remains authoritative.',
             );
           }
         }
@@ -983,8 +987,9 @@ class AiSinhalaSubtitleService {
   }
 
   static Future<_EmbeddedSubtitleSource?> _fetchEmbeddedEnglishSubtitle(
-    String rawVideoUrl,
-  ) async {
+    String rawVideoUrl, {
+    String? preferredTrackLabel,
+  }) async {
     final videoUri = Uri.tryParse(rawVideoUrl);
     if (videoUri == null ||
         !(videoUri.host == '127.0.0.1' || videoUri.host == 'localhost') ||
@@ -1032,7 +1037,10 @@ class AiSinhalaSubtitleService {
       final url = map['url']?.toString().trim() ?? '';
       final label = map['label']?.toString().trim() ?? '';
       if (url.isEmpty || label.isEmpty) continue;
-      final score = _englishTrackScore(label);
+      final score = _embeddedEnglishTrackScore(
+        label,
+        preferredTrackLabel: preferredTrackLabel,
+      );
       if (score <= 0) continue;
       map['_score'] = score;
       candidates.add(map);
@@ -1123,6 +1131,45 @@ class AiSinhalaSubtitleService {
     if (label.contains('forced') || label.contains('foreign')) score -= 90;
     if (label.contains('sign') || label.contains('song')) score -= 80;
     if (label.contains('sdh') || label.contains('hearing')) score -= 20;
+    return score;
+  }
+
+  static int _embeddedEnglishTrackScore(
+    String rawLabel, {
+    String? preferredTrackLabel,
+  }) {
+    var score = _englishTrackScore(rawLabel);
+    final preferred = preferredTrackLabel?.trim().toLowerCase() ?? '';
+    if (preferred.isEmpty) return score;
+
+    String normalize(String value) => value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    final label = normalize(rawLabel);
+    final target = normalize(preferred);
+    if (label.isEmpty || target.isEmpty) return score;
+
+    if (label == target) {
+      score += 600;
+    } else if (label.contains(target) || target.contains(label)) {
+      score += 320;
+    } else {
+      final labelWords = label.split(' ').where((word) => word.isNotEmpty).toSet();
+      final targetWords = target.split(' ').where((word) => word.isNotEmpty).toSet();
+      final overlap = labelWords.intersection(targetWords).length;
+      score += overlap * 70;
+    }
+
+    final labelSdh = label.contains('sdh') || label.contains('hearing');
+    final targetSdh = target.contains('sdh') || target.contains('hearing');
+    if (labelSdh == targetSdh) {
+      score += 120;
+    } else {
+      score -= 90;
+    }
     return score;
   }
 
@@ -2409,6 +2456,15 @@ class AiSinhalaSubtitleService {
         .replaceFirst('\uFEFF', '')
         .replaceAll('\r\n', '\n')
         .replaceAll('\r', '\n');
+
+    final lower = text.toLowerCase();
+    if (lower.contains('[events]') ||
+        RegExp(r'^\s*dialogue\s*:', multiLine: true, caseSensitive: false)
+            .hasMatch(text)) {
+      final ass = _parseAssSubtitle(text);
+      if (ass.isNotEmpty) return ass;
+    }
+
     if (text.trimLeft().startsWith('WEBVTT')) {
       text = text.replaceFirst(RegExp(r'^\s*WEBVTT[^\n]*\n'), '');
     }
@@ -2439,6 +2495,86 @@ class AiSinhalaSubtitleService {
     cues.sort((a, b) => a.start.compareTo(b.start));
     return cues;
   }
+
+  static List<AiSubtitleCue> _parseAssSubtitle(String input) {
+    final cues = <AiSubtitleCue>[];
+    var inEvents = false;
+    List<String>? format;
+
+    for (final rawLine in input.split('\n')) {
+      final line = rawLine.trim();
+      if (line.isEmpty || line.startsWith(';')) continue;
+
+      if (line.startsWith('[') && line.endsWith(']')) {
+        inEvents = line.toLowerCase() == '[events]';
+        continue;
+      }
+      if (!inEvents &&
+          !line.toLowerCase().startsWith('dialogue:') &&
+          !line.toLowerCase().startsWith('format:')) {
+        continue;
+      }
+
+      if (line.toLowerCase().startsWith('format:')) {
+        format = line
+            .substring(line.indexOf(':') + 1)
+            .split(',')
+            .map((field) => field.trim().toLowerCase())
+            .toList(growable: false);
+        continue;
+      }
+      if (!line.toLowerCase().startsWith('dialogue:')) continue;
+
+      final payload = line.substring(line.indexOf(':') + 1).trimLeft();
+      final fieldCount = format?.length ?? 10;
+      final parts = _splitAssFields(payload, fieldCount);
+      if (parts.length < fieldCount) continue;
+
+      final startIndex = format?.indexOf('start') ?? 1;
+      final endIndex = format?.indexOf('end') ?? 2;
+      final textIndex = format?.indexOf('text') ?? (fieldCount - 1);
+      if (startIndex < 0 ||
+          endIndex < 0 ||
+          textIndex < 0 ||
+          startIndex >= parts.length ||
+          endIndex >= parts.length ||
+          textIndex >= parts.length) {
+        continue;
+      }
+
+      final start = _parseTimestamp(parts[startIndex].trim());
+      final end = _parseTimestamp(parts[endIndex].trim());
+      if (start == null || end == null || end <= start) continue;
+
+      final cueText = _cleanAssCueText(parts[textIndex]);
+      if (cueText.isEmpty) continue;
+      cues.add(AiSubtitleCue(start: start, end: end, source: cueText));
+    }
+
+    cues.sort((a, b) => a.start.compareTo(b.start));
+    return cues;
+  }
+
+  static List<String> _splitAssFields(String payload, int fieldCount) {
+    if (fieldCount <= 1) return <String>[payload];
+    final parts = <String>[];
+    var start = 0;
+    for (var i = 0; i < payload.length && parts.length < fieldCount - 1; i++) {
+      if (payload.codeUnitAt(i) != 44) continue;
+      parts.add(payload.substring(start, i));
+      start = i + 1;
+    }
+    parts.add(payload.substring(start));
+    return parts;
+  }
+
+  static String _cleanAssCueText(String value) => value
+      .replaceAll(RegExp(r'\{[^}]*\}'), '')
+      .replaceAll(r'\N', '\n')
+      .replaceAll(r'\n', '\n')
+      .replaceAll(r'\h', ' ')
+      .replaceAll(RegExp(r'<[^>]+>'), '')
+      .trim();
 
   static Duration? _parseTimestamp(String raw) {
     final clean = raw.replaceAll(',', '.').trim();
@@ -2555,6 +2691,9 @@ double _cueTextSimilarity(String a, String b) {
 
 String _normalizeCue(String value) => value
     .toLowerCase()
+    .replaceAll(RegExp(r'\{[^}]*\}'), ' ')
+    .replaceAll(RegExp(r'\\[Nn]'), ' ')
+    .replaceAll(r'\h', ' ')
     .replaceAll(RegExp(r'<[^>]+>'), '')
     .replaceAll(RegExp(r"[^a-z0-9\s'’-]"), ' ')
     .replaceAll(RegExp(r'\s+'), ' ')
