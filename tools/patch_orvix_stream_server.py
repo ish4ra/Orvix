@@ -82,7 +82,7 @@ def patch_engine(root: pathlib.Path) -> None:
         }
 
         let video_extensions = ["mkv", "mp4", "avi", "webm", "mov"];
-        let is_video = |file: &_| {
+        let is_video = |file: &crate::backend::BackendFileInfo| {
             let path = std::path::PathBuf::from(&file.name);
             path.extension()
                 .and_then(|e| e.to_str())
