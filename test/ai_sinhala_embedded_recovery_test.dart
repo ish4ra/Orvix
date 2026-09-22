@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('automatic startup uses the native English track as the only timing clock', () {
+  test('automatic startup uses the complete embedded subtitle file as timing truth', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final openStart = player.indexOf('Future<void> _open()');
@@ -19,36 +19,27 @@ void main() {
       open.indexOf('await widget.playback.open('),
       lessThan(open.indexOf('await _prepareAiSinhalaBeforePlayback()')),
     );
-    expect(open, contains('play: deferAiForLocalP2p ? true : !aiPreferred'));
-    expect(open, contains('await _tryPrepareEmbeddedAiTiming()'));
-    expect(open, contains('deferAiForLocalP2p'));
-    expect(prepare, contains('prepareTrustedTranscriptForNativeClock('));
-    expect(prepare, contains('_captureNativeEnglishSamples()'));
-    expect(prepare, contains('OnlineSubtitleService.search('));
-    expect(
-      prepare,
-      contains('prepareTranslatedTranscriptForNativeTiming('),
-    );
-    expect(prepare, isNot(contains('prepareGeneratedSinhalaFile(')));
-    expect(prepare, isNot(contains('prepareGeneratedSinhalaFromNativeCalibration(')));
+    expect(open, contains('play: !aiPreferred'));
+    expect(open, contains('await _loadGeneratedAiSubtitleTrack()'));
+    expect(prepare, contains('prepareGeneratedSinhalaFromEmbeddedSubtitle('));
+    expect(prepare, contains('_generatedAiSubtitlePath = generated.path'));
+    expect(prepare, isNot(contains('_captureNativeEnglishSamples()')));
+    expect(prepare, isNot(contains('OnlineSubtitleService.search(')));
+    expect(prepare, isNot(contains('_enableEmbeddedLiveAiFallback(')));
   });
 
-  test('native preflight is hidden, bounded, and restores the player', () {
+  test('complete-file preparation never warms the video by secretly playing it', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final start =
-        player.indexOf('Future<List<AiNativeCueSample>> _captureNativeEnglishSamples()');
+        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
     final end =
-        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()', start);
-    final capture = player.substring(start, end);
+        player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
+    final prepare = player.substring(start, end);
 
-    expect(capture, contains('_preflightWarmup = true;'));
-    expect(capture, contains('await player.setVolume(0);'));
-    expect(capture, isNot(contains('await player.setRate(4.0);')));
-    expect(capture, contains('samples.length >= 5'));
-    expect(capture, contains('Duration(seconds: 18)'));
-    expect(capture, contains('await player.pause();'));
-    expect(capture, contains('await player.seek(originalPosition);'));
-    expect(capture, contains('await player.setVolume(originalVolume);'));
+    expect(prepare, isNot(contains('await player.play();')));
+    expect(prepare, isNot(contains('await player.setRate(')));
+    expect(prepare, isNot(contains('_primeSubtitleTracksForAiPreflight()')));
+    expect(prepare, contains('await _setNativeSubtitleVisibility(false);'));
   });
 }
