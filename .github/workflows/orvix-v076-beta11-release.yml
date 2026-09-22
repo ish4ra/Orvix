@@ -316,7 +316,7 @@ jobs:
             throw "Installed Orvix is missing: $installed"
           }
 
-      - name: Smoke test installer over a running Orvix
+      - name: Smoke test updater handoff over a running Orvix
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -327,20 +327,49 @@ jobs:
           $running = Start-Process -FilePath $installed -PassThru
           Start-Sleep -Seconds 3
           if ($running.HasExited) {
-            throw 'Installed Orvix exited before the running-app update test.'
+            throw 'Installed Orvix exited before the updater handoff test.'
           }
 
-          $upgrade = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/LOG=$upgradeLog" -Wait -PassThru
+          # Match the real in-app updater: Setup is started first, then Orvix
+          # releases its own file locks and exits shortly afterwards. Never
+          # leave a CI runner waiting indefinitely on a hidden installer UI.
+          $args = @(
+            '/VERYSILENT',
+            '/SUPPRESSMSGBOXES',
+            '/NORESTART',
+            '/SP-',
+            '/CLOSEAPPLICATIONS',
+            '/FORCECLOSEAPPLICATIONS',
+            '/LOGCLOSEAPPLICATIONS',
+            "/LOG=$upgradeLog"
+          )
+          $upgrade = Start-Process -FilePath $installer -ArgumentList $args -PassThru
+
+          Start-Sleep -Milliseconds 900
+          $running.Refresh()
+          if (-not $running.HasExited) {
+            Stop-Process -Id $running.Id -Force -ErrorAction SilentlyContinue
+          }
+
+          if (-not $upgrade.WaitForExit(180000)) {
+            if (Test-Path $upgradeLog) { Get-Content $upgradeLog }
+            Stop-Process -Id $upgrade.Id -Force -ErrorAction SilentlyContinue
+            throw 'Installer did not finish within 180 seconds after Orvix released its file locks.'
+          }
+
           if ($upgrade.ExitCode -ne 0) {
             if (Test-Path $upgradeLog) { Get-Content $upgradeLog }
-            Stop-Process -Id $running.Id -Force -ErrorAction SilentlyContinue
-            throw "Installer could not update a running Orvix instance; exit code $($upgrade.ExitCode)"
+            throw "Installer updater handoff failed with exit code $($upgrade.ExitCode)"
           }
 
           $running.Refresh()
           if (-not $running.HasExited) {
             Stop-Process -Id $running.Id -Force -ErrorAction SilentlyContinue
-            throw 'Installer returned success but the old Orvix process was still running.'
+            throw 'Old Orvix process was still running after updater handoff.'
+          }
+
+          if (-not (Test-Path $installed)) {
+            throw 'Updated Orvix executable is missing after updater handoff.'
           }
 
       - name: Compatibility test beta.2 in-app updater to new installer
