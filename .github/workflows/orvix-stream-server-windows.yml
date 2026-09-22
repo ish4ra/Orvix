@@ -20,7 +20,7 @@ concurrency:
 env:
   UPSTREAM_STREAM_SERVER_COMMIT: f585ab6eda9b1411034548c131bb0dc30c6f5f9e
   MOD_RELEASE_TAG: stream-server-orvix-v0.1.8.1
-  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  VCPKG_BINARY_SOURCES: "clear"
 
 jobs:
   build-windows:
