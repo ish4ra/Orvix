@@ -105,4 +105,17 @@ void main() {
     expect(player, contains('preferredTrackLabel: _subtitleTrackPreferenceLabel(timingTrack)'));
   });
 
+
+  test('native clock directly reads ASS text so AI does not depend on stream events', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    final start = player.indexOf('Future<void> _pollNativeSubtitleClock()');
+    final end = player.indexOf('void _acceptAutoSyncSample', start);
+    final poller = player.substring(start, end);
+
+    expect(poller, contains("'sub-text'"));
+    expect(poller, contains('_handleEmbeddedSubtitleCue(<String>[text])'));
+    expect(poller, contains('if (_timingTrackIsText)'));
+  });
+
 }
