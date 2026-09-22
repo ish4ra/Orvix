@@ -623,18 +623,49 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       await _setNativeSubtitleVisibility(false);
 
-      final generated = await AiSinhalaSubtitleService
-          .prepareGeneratedSinhalaFromEmbeddedSubtitle(
-        title: widget.title,
-        videoUrl: widget.url,
-        preferredTrackLabel: preferredTrack == null
-            ? null
-            : _subtitleTrackPreferenceLabel(preferredTrack),
-        onStatus: (message) {
-          if (!mounted || _closing) return;
-          setState(() => _aiPreflightMessage = message);
-        },
-      );
+      AiGeneratedSubtitleFile generated;
+      try {
+        generated = await AiSinhalaSubtitleService
+            .prepareGeneratedSinhalaFromEmbeddedSubtitle(
+          title: widget.title,
+          videoUrl: widget.url,
+          preferredTrackLabel: preferredTrack == null
+              ? null
+              : _subtitleTrackPreferenceLabel(preferredTrack),
+          onStatus: (message) {
+            if (!mounted || _closing) return;
+            setState(() => _aiPreflightMessage = message);
+          },
+        );
+      } on AiSubtitleException catch (error) {
+        final reason = error.message.toLowerCase();
+        final embeddedUnavailable =
+            reason.contains('no readable embedded english text subtitle') ||
+                reason.contains(
+                  'embedded english subtitle could not be parsed safely',
+                );
+        if (!embeddedUnavailable || widget.item == null) rethrow;
+
+        if (mounted && !_closing) {
+          setState(() {
+            _aiPreflightMessage =
+                'No usable embedded English text track. Trying an exact video-file fingerprint match…';
+          });
+        }
+
+        generated = await AiSinhalaSubtitleService.prepareGeneratedSinhalaFile(
+          item: widget.item!,
+          videoUrl: widget.url,
+          episode: widget.episode,
+          releaseHint: widget.releaseHint,
+          expectedSizeBytes: widget.expectedSizeBytes,
+          expectedVideoHash: widget.expectedVideoHash,
+          onStatus: (message) {
+            if (!mounted || _closing) return;
+            setState(() => _aiPreflightMessage = message);
+          },
+        );
+      }
 
       if (!mounted || _closing || _subtitleChoiceOverridden) return false;
 
