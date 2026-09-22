@@ -60,4 +60,17 @@ void main() {
     expect(toggle, contains('await _loadGeneratedAiSubtitleTrack();'));
     expect(toggle, isNot(contains('_enableEmbeddedLiveAiFallback(')));
   });
+
+  test('embedded extraction requires the Orvix exact-file server capability', () {
+    final service =
+        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+
+    expect(service, contains("path: '/orvix/capabilities'"));
+    expect(service, contains("decoded['exactFileEmbeddedSubtitles'] != true"));
+    expect(service, contains("decoded['exactSubtitleRouteVersion'] != 1"));
+    expect(service, contains("decoded['orvixExactFile'] != true"));
+    expect(service, contains("response.headers['x-orvix-exact-file'] != '1'"));
+    expect(service, isNot(contains('_guessStreamServerPrimaryVideoIndex(')));
+  });
+
 }
