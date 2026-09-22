@@ -1427,12 +1427,13 @@ class AiSinhalaSubtitleService {
       return;
     }
 
-    // Full-file mode is intentionally faster than the old playback buffer:
-    // translate up to three independent contiguous batches concurrently.
-    // 60 cues stays below the Edge Function's 80-cue cap while keeping enough
-    // neighbouring dialogue in each request for natural translation.
-    const batchSize = 60;
-    const parallelBatches = 3;
+    // Full-file mode must stay below the provider's practical response-size
+    // limit, not merely the Edge Function's 80-cue request cap. Large 60-cue
+    // waves can overflow/truncate an 8192-token JSON response and surface as
+    // "Could not translate subtitle buffer." Keep requests smaller and avoid
+    // hammering the provider with three large generations at once.
+    const batchSize = 28;
+    const parallelBatches = 2;
     final batches = <List<int>>[
       for (var cursor = 0; cursor < missing.length; cursor += batchSize)
         missing.sublist(
@@ -1446,7 +1447,7 @@ class AiSinhalaSubtitleService {
       try {
         await Future.wait<void>([
           for (var i = wave; i < end; i++)
-            _translateIndices(prepared, batches[i]),
+            _translateIndicesResilient(prepared, batches[i]),
         ]);
       } on AiSubtitleException catch (error) {
         if (!error.rateLimited) rethrow;
@@ -1461,7 +1462,7 @@ class AiSinhalaSubtitleService {
               .toList(growable: false);
           if (remaining.isEmpty) continue;
           await Future<void>.delayed(const Duration(milliseconds: 1200));
-          await _translateIndices(prepared, remaining);
+          await _translateIndicesResilient(prepared, remaining);
           onProgress?.call(
             prepared.translatedCount,
             prepared.cues.length,
@@ -2034,6 +2035,34 @@ class AiSinhalaSubtitleService {
         }
       }
       return;
+    }
+  }
+
+  static Future<void> _translateIndicesResilient(
+    AiPreparedSubtitle prepared,
+    List<int> indices,
+  ) async {
+    if (indices.isEmpty) return;
+    try {
+      await _translateIndices(prepared, indices);
+      return;
+    } on AiSubtitleException catch (error) {
+      if (error.rateLimited || indices.length <= 6) rethrow;
+
+      // Gemini can occasionally return a truncated/invalid JSON batch even
+      // though smaller requests work. Split only the failed batch so already
+      // translated cues stay cached and the whole episode does not fail.
+      final midpoint = indices.length ~/ 2;
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      await _translateIndicesResilient(
+        prepared,
+        indices.sublist(0, midpoint),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+      await _translateIndicesResilient(
+        prepared,
+        indices.sublist(midpoint),
+      );
     }
   }
 
