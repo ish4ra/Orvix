@@ -277,6 +277,62 @@ pub async fn orvix_capabilities() -> impl IntoResponse {
     }))
 }
 
+#[derive(serde::Deserialize)]
+pub struct OrvixResolveFileQuery {
+    pub hint: Option<String>,
+}
+
+pub async fn orvix_resolve_file(
+    State(state): State<AppState>,
+    Path(info_hash): Path<String>,
+    Query(query): Query<OrvixResolveFileQuery>,
+) -> impl IntoResponse {
+    let info_hash = info_hash.to_lowercase();
+    let Some(engine) = state.stream_engine().get_engine(&info_hash).await else {
+        return Json(json!({
+            "error": "Torrent engine not found",
+            "fileIdx": null,
+        }));
+    };
+
+    let files = engine.handle.get_files().await;
+    let candidates = files
+        .iter()
+        .enumerate()
+        .map(|(index, file)| crate::routes::compat::FileCandidate {
+            index,
+            name: file.name.clone(),
+            length: file.length,
+        })
+        .collect::<Vec<_>>();
+
+    let filters = query
+        .hint
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    match crate::routes::compat::resolve_file_idx("-1", &candidates, &filters) {
+        Ok(file_idx) => {
+            let file_name = files
+                .get(file_idx)
+                .map(|file| file.name.clone())
+                .unwrap_or_default();
+            Json(json!({
+                "error": null,
+                "fileIdx": file_idx,
+                "fileName": file_name,
+                "usedHint": !filters.is_empty(),
+            }))
+        }
+        Err(error) => Json(json!({
+            "error": error,
+            "fileIdx": null,
+        })),
+    }
+}
+
 /// Orvix extension: extract one embedded subtitle stream from the exact
 /// selected torrent video file. The original upstream route is retained for
 /// compatibility with clients that still use the largest-file heuristic.
@@ -342,6 +398,10 @@ def patch_router(root: pathlib.Path) -> None:
             get(routes::subtitles::orvix_capabilities),
         )
         .route(
+            "/orvix/{infoHash}/resolve-file",
+            get(routes::subtitles::orvix_resolve_file),
+        )
+        .route(
             "/{infoHash}/{fileIdx}/embedded/{trackId}/subtitles.vtt",
             get(routes::subtitles::get_exact_embedded_subtitles_vtt),
         )
@@ -367,10 +427,12 @@ def verify(root: pathlib.Path) -> None:
         ("find_subtitle_tracks_for_file", engine),
         ("selected_file_idx", engine),
         ("orvix_capabilities", subtitles),
+        ("orvix_resolve_file", subtitles),
         ("exactFileEmbeddedSubtitles", subtitles),
         ("get_exact_embedded_subtitles_vtt", subtitles),
         ("orvixExactFile", subtitles),
         ('"/orvix/capabilities"', lib),
+        ('"/orvix/{infoHash}/resolve-file"', lib),
         ('"/{infoHash}/{fileIdx}/embedded/{trackId}/subtitles.vtt"', lib),
     ]
     missing = [needle for needle, haystack in required if needle not in haystack]
