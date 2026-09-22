@@ -829,7 +829,7 @@ class AiSinhalaSubtitleService {
     );
     if (embedded == null) {
       throw const AiSubtitleException(
-        'This source does not expose a complete readable embedded English text subtitle.',
+        'This source needs the Orvix exact-file subtitle engine, but no readable embedded English text subtitle was returned for the selected video file.',
       );
     }
 
@@ -1081,16 +1081,30 @@ class AiSinhalaSubtitleService {
       return null;
     }
 
-    // stream-server v0.1.8 extracts embedded subtitles from the largest
-    // video file in the torrent. Only use that extractor when the selected
-    // playback file is the same file, otherwise a season pack could translate
-    // subtitles from a different episode.
+    // AI Sinhala requires the Orvix exact-file stream-server extension.
+    // Never fall back to upstream's largest-video heuristic for a season pack:
+    // translating the wrong episode is worse than returning no AI subtitle.
     final identity = _parseLocalP2pFileIdentity(videoUri);
     if (identity == null) return null;
-    final extractorFileIndex =
-        await _guessStreamServerPrimaryVideoIndex(videoUri, identity.infoHash);
-    if (extractorFileIndex == null ||
-        extractorFileIndex != identity.fileIndex) {
+
+    final capabilitiesUri = videoUri.replace(
+      path: '/orvix/capabilities',
+      query: '',
+      fragment: '',
+    );
+    try {
+      final response = await http
+          .get(capabilitiesUri)
+          .timeout(const Duration(seconds: 4));
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+      final decoded =
+          jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
+      if (decoded is! Map ||
+          decoded['exactFileEmbeddedSubtitles'] != true ||
+          decoded['exactSubtitleRouteVersion'] != 1) {
+        return null;
+      }
+    } catch (_) {
       return null;
     }
 
@@ -1112,7 +1126,12 @@ class AiSinhalaSubtitleService {
     }
 
     final raw = decoded is Map ? decoded['result'] : null;
-    if (raw is! List || raw.isEmpty) return null;
+    if (decoded is! Map ||
+        decoded['orvixExactFile'] != true ||
+        raw is! List ||
+        raw.isEmpty) {
+      return null;
+    }
 
     final candidates = <Map<String, dynamic>>[];
     for (final entry in raw) {
@@ -1120,7 +1139,17 @@ class AiSinhalaSubtitleService {
       final map = Map<String, dynamic>.from(entry);
       final url = map['url']?.toString().trim() ?? '';
       final label = map['label']?.toString().trim() ?? '';
-      if (url.isEmpty || label.isEmpty) continue;
+      final embedded = map['embedded'] == true;
+      final selectedFileIndex = map['videoFileIdx'] is num
+          ? (map['videoFileIdx'] as num).toInt()
+          : int.tryParse(map['videoFileIdx']?.toString() ?? '');
+      if (url.isEmpty ||
+          label.isEmpty ||
+          !embedded ||
+          selectedFileIndex != identity.fileIndex ||
+          !url.contains('/embedded/')) {
+        continue;
+      }
       final score = _embeddedEnglishTrackScore(
         label,
         preferredTrackLabel: preferredTrackLabel,
@@ -1142,6 +1171,7 @@ class AiSinhalaSubtitleService {
             .get(subtitleUri)
             .timeout(const Duration(seconds: 35));
         if (response.statusCode < 200 || response.statusCode >= 300) continue;
+        if (response.headers['x-orvix-exact-file'] != '1') continue;
         final content =
             utf8.decode(response.bodyBytes, allowMalformed: true).trim();
         if (content.isEmpty || _parseSubtitle(content).length < 8) continue;
@@ -1167,37 +1197,6 @@ class AiSinhalaSubtitleService {
       return _LocalP2pFileIdentity(infoHash: hash, fileIndex: index);
     }
     return null;
-  }
-
-  static Future<int?> _guessStreamServerPrimaryVideoIndex(
-    Uri videoUri,
-    String infoHash,
-  ) async {
-    final endpoint = videoUri.replace(
-      path: '/$infoHash/create',
-      query: '',
-      fragment: '',
-    );
-    try {
-      final response = await http
-          .post(
-            endpoint,
-            headers: const {'Content-Type': 'application/json'},
-            body: jsonEncode(<String, dynamic>{
-              'stream': <String, dynamic>{'infoHash': infoHash},
-              'guessFileIdx': true,
-            }),
-          )
-          .timeout(const Duration(seconds: 12));
-      if (response.statusCode < 200 || response.statusCode >= 300) return null;
-      final decoded =
-          jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
-      if (decoded is! Map) return null;
-      final raw = decoded['guessedFileIdx'];
-      return raw is num ? raw.toInt() : int.tryParse(raw?.toString() ?? '');
-    } catch (_) {
-      return null;
-    }
   }
 
   static int _englishTrackScore(String rawLabel) {
