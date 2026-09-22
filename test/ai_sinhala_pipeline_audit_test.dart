@@ -13,7 +13,7 @@ void main() {
     expect(RegExp(r'_aiSinhalaEnabled\s*=(?![=>])').allMatches(player), isEmpty);
   });
 
-  test('automatic startup never trusts online timing or loads an external Sinhala track', () {
+  test('automatic AI Sinhala uses the exact embedded subtitle as the source of truth', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final start =
@@ -22,136 +22,76 @@ void main() {
         player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
     final startup = player.substring(start, end);
 
-    expect(startup, contains('prepareTrustedTranscriptForNativeClock('));
-    expect(startup, contains('_captureNativeEnglishSamples()'));
-    expect(startup, contains('videoHash: widget.expectedVideoHash'));
-    expect(startup, contains('includeTranscriptFallbacks: true'));
-    expect(
-      startup,
-      contains('prepareTranslatedTranscriptForNativeTiming('),
-    );
-    expect(startup, isNot(contains('prepareGeneratedSinhalaFile(')));
-    expect(startup, isNot(contains('final chosen = english.first;')));
+    expect(startup, contains('prepareGeneratedSinhalaFromEmbeddedSubtitle('));
+    expect(startup, contains('_bestNativeEnglishTextTrack()'));
+    expect(startup, contains('preferredTrackLabel:'));
+    expect(startup, isNot(contains('prepareTrustedTranscriptForNativeClock(')));
+    expect(startup, isNot(contains('_captureNativeEnglishSamples()')));
+    expect(startup, isNot(contains('OnlineSubtitleService.search(')));
   });
 
-  test('actual playback cue handler never performs network translation', () {
-    final player = File('lib/screens/player_screen.dart').readAsStringSync();
-
-    final start =
-        player.indexOf('Future<void> _handleEmbeddedSubtitleCue(List<String> lines)');
-    final end =
-        player.indexOf('Future<void> _registerLiveTranslationFailure(', start);
-    final handler = player.substring(start, end);
-
-    expect(handler, contains('matchSourceCueRange('));
-    expect(handler, contains('_nativeAiMatchIndex'));
-    expect(handler, isNot(contains('translateCue(')));
-    expect(handler, isNot(contains('ensureTranslatedAround(')));
-    expect(handler, isNot(contains('_enableEmbeddedLiveAiFallback(')));
-  });
-
-  test('preflight playback cannot masquerade as normal playback', () {
-    final player = File('lib/screens/player_screen.dart').readAsStringSync();
-    expect(player, contains('bool _preflightWarmup = false;'));
-    expect(player, contains('if (_closing || _preflightWarmup) return;'));
-  });
-
-  test('live native-cue fallback actually translates when no transcript is prepared', () {
-    final player = File('lib/screens/player_screen.dart').readAsStringSync();
-
-    final start =
-        player.indexOf('Future<void> _handleEmbeddedSubtitleCue(List<String> lines)');
-    final end =
-        player.indexOf('Future<void> _registerLiveTranslationFailure(', start);
-    final handler = player.substring(start, end);
-
-    expect(handler, contains('if (_liveAiFallback)'));
-    expect(handler, contains('await _translateLiveSubtitleCue(source);'));
-    expect(
-      handler.indexOf('await _translateLiveSubtitleCue(source);'),
-      lessThan(handler.indexOf('final prepared = _preparedAiSubtitle;')),
-    );
-  });
-
-  test('Windows local P2P starts playback normally then attaches native-cue AI', () {
-    final player = File('lib/screens/player_screen.dart').readAsStringSync();
-
-    final openStart = player.indexOf('Future<void> _open()');
-    final prepareStart =
-        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
-    final open = player.substring(openStart, prepareStart);
-
-    expect(
-      open,
-      contains('play: deferAiForLocalP2p ? true : !aiPreferred'),
-    );
-    expect(open, contains('? await _tryPrepareEmbeddedAiTiming()'));
-    expect(
-      open,
-      isNot(contains('!deferAiForLocalP2p &&\n          (_preparedAiSubtitle')),
-    );
-  });
-
-
-  test('trusted transcript discovery never blocks on full-episode translation', () {
+  test('embedded full-file service preserves timing and writes one finished SRT', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
     final start = service.indexOf(
-      'static Future<AiPreparedSubtitle?> prepareTrustedTranscriptForNativeClock',
+      'prepareGeneratedSinhalaFromEmbeddedSubtitle',
     );
     final end = service.indexOf(
-      'static Future<AiPreparedSubtitle>\n      prepareTranslatedTranscriptForNativeTiming',
+      'prepareGeneratedSinhalaFromOnlineSubtitle',
       start,
     );
-    final trusted = service.substring(start, end);
+    final generated = service.substring(start, end);
 
-    expect(trusted, isNot(contains('_translateEntireSubtitle(')));
-    expect(trusted, contains('Sinhala will buffer during playback'));
-    expect(trusted, contains('translation of the whole episode is not'));
+    expect(generated, contains('_fetchEmbeddedEnglishSubtitle('));
+    expect(generated, contains('_parseSubtitle(embedded.content)'));
+    expect(generated, contains('_translateEntireSubtitle('));
+    expect(generated, contains('_writeGeneratedSrt(cacheKey, prepared)'));
+    expect(generated, contains("source: 'embedded-exact'"));
+    expect(generated, contains("sourceMatch: 'embedded-exact-full-file'"));
   });
 
-  test('dialogue-matched fallback also buffers instead of translating the full episode', () {
+  test('complete translation uses bounded parallel batching for faster startup', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
-    final start = service.indexOf(
-      'static Future<AiPreparedSubtitle>\n      prepareTranslatedTranscriptForNativeTiming',
-    );
-    final end = service.indexOf('static Future', start + 80);
-    final matched = service.substring(start, end);
+    final start =
+        service.indexOf('static Future<void> _translateEntireSubtitle(');
+    final end = service.indexOf('static Future<AiPreparedSubtitle?> prepareBuffered', start);
+    final translate = service.substring(start, end);
 
-    expect(matched, isNot(contains('_translateEntireSubtitle(')));
-    expect(
-      matched,
-      contains('Sinhala will buffer ahead while playback continues'),
-    );
+    expect(translate, contains('const batchSize = 60;'));
+    expect(translate, contains('const parallelBatches = 3;'));
+    expect(translate, contains('await Future.wait<void>'));
   });
 
-  test('AI preparation cannot cover already-playing video with a full-screen overlay', () {
+  test('automatic startup opens paused and only plays after generated SRT attachment', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
+    final start = player.indexOf('Future<void> _open()');
+    final end = player.indexOf('void _onPlaybackError', start);
+    final open = player.substring(start, end);
+
+    expect(open, contains('play: !aiPreferred'));
+    expect(open, contains('await _loadGeneratedAiSubtitleTrack();'));
+    expect(open, contains('await widget.playback.player.play();'));
     expect(
-      player,
-      contains(
-        '_aiSubtitleLoading &&\n'
-        '                    !_playbackStarted',
-      ),
+      open.indexOf('await _loadGeneratedAiSubtitleTrack();'),
+      lessThan(open.indexOf('await widget.playback.player.play();')),
     );
   });
 
-  test('prepared AI keeps English visible until a Sinhala cue is buffered', () {
+  test('automatic path does not invoke the old live cue fallback', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final start =
-        player.indexOf('Future<void> _handleEmbeddedSubtitleCue(List<String> lines)');
+        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
     final end =
-        player.indexOf('Future<void> _registerLiveTranslationFailure(', start);
-    final handler = player.substring(start, end);
+        player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
+    final startup = player.substring(start, end);
 
-    expect(handler, contains('unawaited(_setNativeSubtitleVisibility(true));'));
-    expect(handler, contains('unawaited(_ensureAiTranslationNear('));
-    expect(handler, contains('unawaited(_setNativeSubtitleVisibility(false));'));
+    expect(startup, isNot(contains('_enableEmbeddedLiveAiFallback(')));
+    expect(startup, isNot(contains('_translateLiveSubtitleCue(')));
+    expect(startup, isNot(contains('_ensureAiTranslationNear(')));
   });
-
 }
