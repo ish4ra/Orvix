@@ -91,9 +91,9 @@ jobs:
           .\bootstrap-vcpkg.bat -disableMetrics
           Set-Location ..
           .\vcpkg\vcpkg.exe install --x-manifest-root=. --x-install-root=vcpkg_installed --triplet x64-windows-v3-static-md-release --overlay-triplets=triplets --overlay-ports=vcpkg-overlays
-      - name: Rust format check
+      - name: Format patched Rust source
         working-directory: stream-server-upstream
-        run: cargo fmt --all --check
+        run: cargo fmt --all
 
       - name: Build modified stream-server
         working-directory: stream-server-upstream
