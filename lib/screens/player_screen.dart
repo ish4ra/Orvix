@@ -2531,9 +2531,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       value: _aiSinhalaRequested,
                       busy: _aiSubtitleLoading,
                       detail: _aiSubtitleLoading
-                          ? 'Preparing a verified native-timed Sinhala subtitle…'
+                          ? 'Translating the complete embedded subtitle before playback…'
                           : _aiSinhalaEnabled
-                              ? 'On • Sinhala uses the selected video’s English cue timing'
+                              ? 'On • complete embedded Sinhala SRT loaded with original timing'
                               : _aiSubtitleUnavailable
                                   ? (_aiPreflightMessage.trim().isEmpty
                                       ? 'Off • last attempt could not prepare this source'
@@ -2548,13 +2548,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ),
                     const SizedBox(height: 12),
                   ],
-                  if (_aiSinhalaEnabled) ...[
+                  if (_aiSinhalaEnabled &&
+                      _generatedAiSubtitlePath != null) ...[
+                    const _EmptyTrackMessage(
+                      'Complete Sinhala subtitle loaded as a native SRT track. '
+                      'Its timestamps come directly from the embedded English subtitle.',
+                    ),
+                    const SizedBox(height: 12),
+                  ] else if (_aiSinhalaEnabled) ...[
                     _subtitleAppearanceControls(setSheetState),
                     const SizedBox(height: 12),
                   ] else ...[
                     const _EmptyTrackMessage(
-                      'Source subtitle appearance is preserved by the native player. '
-                      'Orvix font/background/position styling is only used for AI Sinhala.',
+                      'Source subtitle appearance is preserved by the native player.',
                     ),
                     const SizedBox(height: 12),
                     _subtitleSyncControls(setSheetState),
@@ -2562,7 +2568,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ],
                   if (_aiSubtitleLoading)
                     const _EmptyTrackMessage(
-                      'AI Sinhala is preparing a verified subtitle timeline.',
+                      'AI Sinhala is translating the complete embedded subtitle. Playback stays paused until it is ready.',
                     )
                   else if (_aiSubtitleUnavailable)
                     _EmptyTrackMessage(
