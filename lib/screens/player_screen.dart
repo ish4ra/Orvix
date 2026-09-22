@@ -1005,7 +1005,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
 
     final player = widget.playback.player;
-    final wasPlaying = player.state.playing;
+    final resumePlaybackAfterToggle = player.state.playing;
     var ready = false;
     try {
       ready = Platform.isWindows && _localP2pStream
@@ -1044,7 +1044,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         await _restoreNativeSubtitleFallback();
       }
     } finally {
-      if (wasPlaying && !_closing && !player.state.playing) {
+      if (resumePlaybackAfterToggle && !_closing && !player.state.playing) {
         try {
           await player.play();
         } catch (_) {}
