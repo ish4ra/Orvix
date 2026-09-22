@@ -179,6 +179,66 @@ def patch_engine(root: pathlib.Path) -> None:
 
 '''
     text = text[:start] + replacement + text[end:]
+
+    text = replace_once(
+        text,
+        '        let mut cmd = tokio::process::Command::new("ffmpeg");\n',
+        '        let mut cmd = tokio::process::Command::new("ffmpeg");\n'
+        '        #[cfg(windows)]\n'
+        '        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW\n',
+        "hide exact-subtitle ffmpeg console",
+    )
+
+    ffprobe_anchor = '''    let output = tokio::process::Command::new("ffprobe")
+        .args([
+'''
+    ffprobe_replacement = '''    let mut cmd = tokio::process::Command::new("ffprobe");
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let output = cmd
+        .args([
+'''
+    text = replace_once(
+        text,
+        ffprobe_anchor,
+        ffprobe_replacement,
+        "hide exact-subtitle ffprobe console",
+    )
+
+    path.write_text(text, encoding="utf-8")
+
+
+def patch_ffmpeg_setup(root: pathlib.Path) -> None:
+    path = root / "server" / "src" / "ffmpeg_setup.rs"
+    text = path.read_text(encoding="utf-8")
+
+    anchor = '''fn command_available(command: &str) -> bool {
+    Command::new(command)
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+'''
+    replacement = '''fn command_available(command: &str) -> bool {
+    let mut cmd = Command::new(command);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd.arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+'''
+    text = replace_once(
+        text,
+        anchor,
+        replacement,
+        "hide FFmpeg availability-check console",
+    )
     path.write_text(text, encoding="utf-8")
 
 
@@ -421,11 +481,16 @@ def verify(root: pathlib.Path) -> None:
     subtitles = (
         root / "server" / "src" / "routes" / "subtitles.rs"
     ).read_text(encoding="utf-8")
+    ffmpeg_setup = (
+        root / "server" / "src" / "ffmpeg_setup.rs"
+    ).read_text(encoding="utf-8")
     lib = (root / "server" / "src" / "lib.rs").read_text(encoding="utf-8")
 
     required = [
         ("find_subtitle_tracks_for_file", engine),
         ("selected_file_idx", engine),
+        ("creation_flags(0x08000000)", engine),
+        ("creation_flags(0x08000000)", ffmpeg_setup),
         ("orvix_capabilities", subtitles),
         ("orvix_resolve_file", subtitles),
         ("exactFileEmbeddedSubtitles", subtitles),
@@ -448,6 +513,7 @@ def main() -> None:
         raise SystemExit(f"not a stream-server checkout: {root}")
 
     patch_engine(root)
+    patch_ffmpeg_setup(root)
     patch_subtitles_route(root)
     patch_router(root)
     verify(root)
