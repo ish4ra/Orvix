@@ -811,7 +811,91 @@ class AiSinhalaSubtitleService {
   }
 
 
-  static const _generatedSubtitleCacheVersion = 'srt-v3-exact-video';
+  static const _generatedSubtitleCacheVersion = 'srt-v4-complete-embedded';
+
+  static Future<AiGeneratedSubtitleFile>
+      prepareGeneratedSinhalaFromEmbeddedSubtitle({
+    required String title,
+    required String videoUrl,
+    String? preferredTrackLabel,
+    void Function(String message)? onStatus,
+  }) async {
+    onStatus?.call(
+      'Extracting the complete English subtitle embedded in this exact video…',
+    );
+    final embedded = await _fetchEmbeddedEnglishSubtitle(
+      videoUrl,
+      preferredTrackLabel: preferredTrackLabel,
+    );
+    if (embedded == null) {
+      throw const AiSubtitleException(
+        'This source does not expose a complete readable embedded English text subtitle.',
+      );
+    }
+
+    final cues = _parseSubtitle(embedded.content);
+    if (cues.length < 8) {
+      throw const AiSubtitleException(
+        'The embedded English subtitle could not be parsed safely.',
+      );
+    }
+
+    final contentDigest =
+        sha256.convert(utf8.encode(embedded.content)).toString();
+    final cacheKey =
+        'embedded-full|$contentDigest|$_generatedSubtitleCacheVersion';
+    final cached = await _cachedGeneratedFile(cacheKey);
+    if (cached != null) {
+      onStatus?.call(
+        'Cached complete Sinhala subtitle is ready • ${embedded.label}.',
+      );
+      return AiGeneratedSubtitleFile(
+        path: cached.path,
+        source: 'embedded-exact',
+        label: embedded.label,
+        cacheHit: true,
+      );
+    }
+
+    final prepared = AiPreparedSubtitle(
+      key: cacheKey,
+      title: title,
+      sourceUrl: embedded.identity,
+      cues: cues,
+      sourceMatch: 'embedded-exact-full-file',
+    );
+
+    onStatus?.call(
+      'Exact embedded timing locked • translating the complete subtitle before playback…',
+    );
+    await _translateEntireSubtitle(
+      prepared,
+      onProgress: (done, total) {
+        final percent =
+            total <= 0 ? 100 : ((done * 100) / total).round().clamp(0, 100);
+        onStatus?.call(
+          'Translating complete Sinhala subtitle… $percent% ($done/$total)',
+        );
+      },
+    );
+
+    if (prepared.translatedCount != prepared.cues.length) {
+      throw const AiSubtitleException(
+        'The complete embedded subtitle did not finish translating.',
+      );
+    }
+
+    final file = await _writeGeneratedSrt(cacheKey, prepared);
+    onStatus?.call(
+      'Complete Sinhala subtitle generated from the embedded track.',
+    );
+    return AiGeneratedSubtitleFile(
+      path: file.path,
+      source: 'embedded-exact',
+      label: embedded.label,
+      cacheHit: false,
+    );
+  }
 
   static Future<AiGeneratedSubtitleFile>
       prepareGeneratedSinhalaFromOnlineSubtitle({
@@ -1344,10 +1428,26 @@ class AiSinhalaSubtitleService {
       return;
     }
 
+    // Full-file mode is intentionally faster than the old playback buffer:
+    // translate up to three independent contiguous batches concurrently.
+    // 60 cues stays below the Edge Function's 80-cue cap while keeping enough
+    // neighbouring dialogue in each request for natural translation.
     const batchSize = 60;
-    for (var cursor = 0; cursor < missing.length; cursor += batchSize) {
-      final end = math.min(cursor + batchSize, missing.length);
-      await _translateIndices(prepared, missing.sublist(cursor, end));
+    const parallelBatches = 3;
+    final batches = <List<int>>[
+      for (var cursor = 0; cursor < missing.length; cursor += batchSize)
+        missing.sublist(
+          cursor,
+          math.min(cursor + batchSize, missing.length),
+        ),
+    ];
+
+    for (var wave = 0; wave < batches.length; wave += parallelBatches) {
+      final end = math.min(wave + parallelBatches, batches.length);
+      await Future.wait<void>([
+        for (var i = wave; i < end; i++)
+          _translateIndices(prepared, batches[i]),
+      ]);
       onProgress?.call(
         prepared.translatedCount,
         prepared.cues.length,
