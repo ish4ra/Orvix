@@ -211,6 +211,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  bool _isAiTranslationOnlyFailure(String message) {
+    final value = message.toLowerCase();
+    return value.contains('translate subtitle buffer') ||
+        value.contains('subtitle buffer was incomplete') ||
+        value.contains('non-sinhala subtitle buffer') ||
+        value.contains('did not finish translating') ||
+        value.contains('subtitle limit reached') ||
+        value.contains('translation_failed');
+  }
+
   bool _reportStartupFailure(String message) {
     if (_closing || _playbackStarted || _failureReported) return false;
     _failureReported = true;
@@ -314,16 +324,30 @@ class _PlayerScreenState extends State<PlayerScreen> {
           _aiPreflightMessage = failureMessage;
         });
 
-        try {
-          await widget.playback.stop();
-        } catch (_) {}
-        await widget.playback.open(
-          widget.url,
-          title: widget.title,
-          play: true,
-        );
-        reopenedAfterAiFailure = true;
-        await _setNativeSubtitleVisibility(true);
+        if (_isAiTranslationOnlyFailure(failureMessage)) {
+          // Extraction already succeeded, so the media session itself is
+          // healthy. Do not stop/open/seek the stream just because Gemini
+          // failed a batch: reopening a P2P source can disturb an otherwise
+          // perfectly synchronized embedded subtitle track.
+          await _setNativeSubtitleDelayProperty(0);
+          _subtitleDelaySeconds = 0;
+          await _restoreNativeSubtitleFallback();
+        } else {
+          // Keep the defensive reopen only for probe/extraction/source-level
+          // failures where the preflight path itself may be unhealthy.
+          try {
+            await widget.playback.stop();
+          } catch (_) {}
+          await widget.playback.open(
+            widget.url,
+            title: widget.title,
+            play: true,
+          );
+          reopenedAfterAiFailure = true;
+          _subtitleDelaySeconds = 0;
+          await _setNativeSubtitleDelayProperty(0);
+          await _setNativeSubtitleVisibility(true);
+        }
 
         if (mounted && !_closing) {
           ScaffoldMessenger.of(context).showSnackBar(
