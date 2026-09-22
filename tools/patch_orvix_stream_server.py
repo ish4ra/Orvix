@@ -269,6 +269,14 @@ pub async fn subtitles_tracks(
     Json(json!({ "error": null, "result": [], "orvixExactFile": false }))
 }
 
+pub async fn orvix_capabilities() -> impl IntoResponse {
+    Json(json!({
+        "name": "orvix-stream-server",
+        "exactFileEmbeddedSubtitles": true,
+        "exactSubtitleRouteVersion": 1,
+    }))
+}
+
 /// Orvix extension: extract one embedded subtitle stream from the exact
 /// selected torrent video file. The original upstream route is retained for
 /// compatibility with clients that still use the largest-file heuristic.
@@ -330,6 +338,10 @@ def patch_router(root: pathlib.Path) -> None:
         )
 '''
     replacement = '''        .route(
+            "/orvix/capabilities",
+            get(routes::subtitles::orvix_capabilities),
+        )
+        .route(
             "/{infoHash}/{fileIdx}/embedded/{trackId}/subtitles.vtt",
             get(routes::subtitles::get_exact_embedded_subtitles_vtt),
         )
@@ -354,8 +366,11 @@ def verify(root: pathlib.Path) -> None:
     required = [
         ("find_subtitle_tracks_for_file", engine),
         ("selected_file_idx", engine),
+        ("orvix_capabilities", subtitles),
+        ("exactFileEmbeddedSubtitles", subtitles),
         ("get_exact_embedded_subtitles_vtt", subtitles),
         ("orvixExactFile", subtitles),
+        ('"/orvix/capabilities"', lib),
         ('"/{infoHash}/{fileIdx}/embedded/{trackId}/subtitles.vtt"', lib),
     ]
     missing = [needle for needle, haystack in required if needle not in haystack]
