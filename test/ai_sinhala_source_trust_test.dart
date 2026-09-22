@@ -3,52 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('OpenSubtitles is used only as a transcript corpus, not a timing oracle', () {
-    final player = File('lib/screens/player_screen.dart').readAsStringSync();
-
-    final startupStart =
-        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
-    final startupEnd =
-        player.indexOf('Future<void> _restoreNativeSubtitleFallback()', startupStart);
-    final startup = player.substring(startupStart, startupEnd);
-
-    expect(startup, contains('prepareTrustedTranscriptForNativeClock('));
-    expect(startup, contains('_captureNativeEnglishSamples()'));
-    expect(startup, contains('OnlineSubtitleService.search('));
-    expect(startup, contains('videoHash: widget.expectedVideoHash'));
-    expect(startup, isNot(contains('final chosen = english.first;')));
-    expect(
-      startup,
-      contains('prepareTranslatedTranscriptForNativeTiming('),
-    );
-  });
-
-  test('transcript acceptance requires multiple sequential native dialogue matches', () {
-    final service =
-        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
-
-    expect(service, contains('selectedMatches < 3'));
-    expect(service, contains('searchFrom = bestIndex + bestCount'));
-    expect(service, contains('bestSimilarity < .60'));
-    expect(
-      service,
-      contains("sourceMatch: 'native-cue-text-oracle'"),
-    );
-  });
-
-  test('runtime matching is sequence-aware and seek recovery is exact-only globally', () {
-    final service =
-        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
-
-    expect(service, contains('({int index, int count})? matchSourceCueRange('));
-    expect(service, contains('previousIndex + 180'));
-    expect(service, contains('previousIndex - 3'));
-    expect(service, contains('count <= 3'));
-    expect(service, contains('if (previousIndex >= 0)'));
-    expect(service, contains('combined == target'));
-  });
-
-  test('exact hash may choose transcript text but automatic mode never loads an external SRT', () {
+  test('automatic AI Sinhala trusts only the complete embedded subtitle file', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final start =
@@ -57,43 +12,52 @@ void main() {
         player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
     final startup = player.substring(start, end);
 
-    expect(startup, contains('prepareTrustedTranscriptForNativeClock('));
+    expect(startup, contains('prepareGeneratedSinhalaFromEmbeddedSubtitle('));
     expect(startup, isNot(contains('prepareGeneratedSinhalaFile(')));
-    expect(startup, isNot(contains('mk.SubtitleTrack.uri(')));
+    expect(startup, isNot(contains('OnlineSubtitleService.search(')));
+    expect(startup, isNot(contains('prepareTrustedTranscriptForNativeClock(')));
+  });
 
+  test('embedded extractor prefers the selected English track identity', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
-    final trustedStart =
-        service.indexOf('prepareTrustedTranscriptForNativeClock');
-    final trustedEnd =
-        service.indexOf('prepareTranslatedTranscriptForNativeTiming', trustedStart);
-    final trusted = service.substring(trustedStart, trustedEnd);
-    expect(trusted, contains('_fetchEmbeddedEnglishSubtitle('));
-    expect(trusted, contains('preferredTrackLabel: preferredTrackLabel'));
-    expect(trusted, contains('_fetchExactRestSubtitle('));
-    expect(
-      trusted,
-      contains("sourceMatch: 'rest-exact-transcript-native-clock'"),
-    );
-    expect(trusted, isNot(contains('_writeGeneratedSrt(')));
+
+    expect(service, contains('String? preferredTrackLabel'));
+    expect(service, contains('_embeddedEnglishTrackScore('));
+    expect(service, contains('preferredTrackLabel: preferredTrackLabel'));
+    expect(service, contains('final targetSdh = target.contains'));
   });
-  test('manual AI enable also refuses title-only subtitle timing', () {
+
+  test('generated cache is keyed by the exact embedded subtitle contents', () {
+    final service =
+        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+
+    final start = service.indexOf(
+      'prepareGeneratedSinhalaFromEmbeddedSubtitle',
+    );
+    final end = service.indexOf(
+      'prepareGeneratedSinhalaFromOnlineSubtitle',
+      start,
+    );
+    final generated = service.substring(start, end);
+
+    expect(generated, contains('sha256.convert(utf8.encode(embedded.content))'));
+    expect(generated, contains("'embedded-full|\$contentDigest|"));
+    expect(generated, contains('_cachedGeneratedFile(cacheKey)'));
+  });
+
+  test('manual AI enable reuses the same strict full-file preparation path', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    final start = player.indexOf('Future<bool> _tryPrepareEmbeddedAiTiming()');
-    final end = player.indexOf('Future<void> _loadSubtitlePreferences()', start);
-    final manualEnable = player.substring(start, end);
+    final start = player.indexOf(
+      'Future<void> _setAiSinhalaEnabledFromPlayer(bool enabled)',
+    );
+    final end =
+        player.indexOf('Future<void> _loadSubtitlePreferences()', start);
+    final toggle = player.substring(start, end);
 
-    expect(
-      manualEnable,
-      contains('prepareTrustedTranscriptForNativeClock('),
-    );
-    expect(manualEnable, isNot(contains('prepareForEmbeddedTiming(')));
-    expect(manualEnable, contains('_enableEmbeddedLiveAiFallback('));
-    expect(
-      manualEnable,
-      contains('native English cues control timing'),
-    );
+    expect(toggle, contains('await _prepareAiSinhalaBeforePlayback();'));
+    expect(toggle, contains('await _loadGeneratedAiSubtitleTrack();'));
+    expect(toggle, isNot(contains('_enableEmbeddedLiveAiFallback(')));
   });
-
 }
