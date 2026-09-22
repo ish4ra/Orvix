@@ -67,4 +67,20 @@ void main() {
       isNot(contains('_aiSubtitleLoading &&\n                    !_playbackStarted')),
     );
   });
+
+  test('seeking keeps the generated Sinhala SRT native renderer visible', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    final start = player.indexOf('void _afterSeek(Duration target)');
+    final end = player.indexOf('Future<void> _toggleMute()', start);
+    final seek = player.substring(start, end);
+
+    expect(seek, contains('if (_generatedAiSubtitlePath != null)'));
+    expect(seek, contains('unawaited(_setNativeSubtitleVisibility(true));'));
+    expect(
+      seek.indexOf('if (_generatedAiSubtitlePath != null)'),
+      lessThan(seek.indexOf('_setNativeSubtitleVisibility(false)')),
+    );
+  });
+
 }
