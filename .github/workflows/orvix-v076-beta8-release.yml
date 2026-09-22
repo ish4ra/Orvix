@@ -635,6 +635,7 @@ jobs:
           Faster preparation:
           - Complete-file translation uses 60-cue contextual batches.
           - Up to three batches translate concurrently, reducing first-run wait time while staying below backend batch limits.
+          - If parallel translation is throttled, Orvix keeps completed batches and automatically finishes only the remaining cues sequentially.
           - Generated Sinhala SRT files are cached by the exact embedded subtitle content hash.
           - Replaying the same source can reuse the cached complete Sinhala subtitle instead of translating it again.
           - The preparation overlay shows progress and remains visible even when AI Sinhala is enabled during existing playback.
