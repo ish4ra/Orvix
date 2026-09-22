@@ -3,7 +3,9 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('automatic AI Sinhala trusts only the complete embedded subtitle file', () {
+  test(
+      'automatic AI Sinhala prefers exact embedded text then strict video fingerprint fallback',
+      () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final start =
@@ -13,9 +15,24 @@ void main() {
     final startup = player.substring(start, end);
 
     expect(startup, contains('prepareGeneratedSinhalaFromEmbeddedSubtitle('));
-    expect(startup, isNot(contains('prepareGeneratedSinhalaFile(')));
+    expect(startup, contains('embeddedUnavailable'));
+    expect(startup, contains('prepareGeneratedSinhalaFile('));
+    expect(startup, contains('expectedSizeBytes: widget.expectedSizeBytes'));
+    expect(startup, contains('expectedVideoHash: widget.expectedVideoHash'));
+
+    // Automatic mode may use only exact-file evidence. It must never drop to
+    // ranked title/release guesses after embedded extraction fails.
     expect(startup, isNot(contains('OnlineSubtitleService.search(')));
     expect(startup, isNot(contains('prepareTrustedTranscriptForNativeClock(')));
+
+    final service =
+        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+    expect(service, contains('_probeLocalOpenSubtitlesHash('));
+    expect(service, contains('_fetchExactRestSubtitle('));
+    expect(
+      service,
+      contains("'rest-moviehash+moviebytesize-generated-srt'"),
+    );
   });
 
   test('embedded extractor prefers the selected English track identity', () {
