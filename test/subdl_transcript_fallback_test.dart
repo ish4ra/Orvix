@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('SubDL is built in through the Orvix backend', () {
+  test('SubDL remains built in for online/manual subtitle discovery', () {
     final online =
         File('lib/services/online_subtitle_service.dart').readAsStringSync();
     final backend =
@@ -13,7 +13,6 @@ void main() {
 
     expect(online, contains('SubDlTranscriptService.searchEnglish('));
     expect(online, contains("provider: 'SubDL'"));
-    expect(player, contains('includeTranscriptFallbacks: true'));
     expect(
       backend,
       contains('/functions/v1/subdl-transcript'),
@@ -24,6 +23,19 @@ void main() {
     );
     expect(settings, isNot(contains('SubDL API key')));
     expect(settings, isNot(contains('Test & save')));
+
+    // Automatic AI Sinhala no longer chooses a generic online transcript:
+    // it translates the exact embedded track into one complete SRT instead.
+    final start =
+        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
+    final end =
+        player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
+    final automatic = player.substring(start, end);
+    expect(automatic, isNot(contains('includeTranscriptFallbacks: true')));
+    expect(
+      automatic,
+      contains('prepareGeneratedSinhalaFromEmbeddedSubtitle('),
+    );
   });
 
   test('SubDL private API key is not embedded in the client', () {
