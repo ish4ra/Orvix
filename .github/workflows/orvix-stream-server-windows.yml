@@ -73,7 +73,7 @@ jobs:
             C:\Users\runneradmin\.cargo\registry
             C:\Users\runneradmin\.cargo\git
             stream-server-upstream\target
-          key: orvix-stream-server-cargo-\${{ hashFiles('stream-server-upstream/Cargo.lock') }}
+          key: orvix-stream-server-cargo-${{ hashFiles('stream-server-upstream/Cargo.lock') }}
           restore-keys: |
             orvix-stream-server-cargo-
 
@@ -82,7 +82,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: stream-server-upstream\vcpkg_installed
-          key: orvix-stream-server-vcpkg-x64-v3-static-md-release-v1-\${{ hashFiles('stream-server-upstream/vcpkg.json','stream-server-upstream/triplets/**','stream-server-upstream/vcpkg-overlays/**') }}
+          key: orvix-stream-server-vcpkg-x64-v3-static-md-release-v1-${{ hashFiles('stream-server-upstream/vcpkg.json','stream-server-upstream/triplets/**','stream-server-upstream/vcpkg-overlays/**') }}
           restore-keys: |
             orvix-stream-server-vcpkg-x64-v3-static-md-release-v1-
 
@@ -91,14 +91,14 @@ jobs:
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgGitCommitId: '84bab45d415d22042bd0b9081aea57f362da3f35'
-          vcpkgDirectory: '\${{ github.workspace }}/stream-server-upstream/vcpkg'
-          vcpkgJsonGlob: '\${{ github.workspace }}/stream-server-upstream/vcpkg.json'
+          vcpkgDirectory: '${{ github.workspace }}/stream-server-upstream/vcpkg'
+          vcpkgJsonGlob: '${{ github.workspace }}/stream-server-upstream/vcpkg.json'
           runVcpkgInstall: true
         env:
-          VCPKG_INSTALLED_DIR: \${{ github.workspace }}/stream-server-upstream/vcpkg_installed
+          VCPKG_INSTALLED_DIR: ${{ github.workspace }}/stream-server-upstream/vcpkg_installed
           VCPKG_DEFAULT_TRIPLET: x64-windows-v3-static-md-release
-          VCPKG_OVERLAY_TRIPLETS: \${{ github.workspace }}/stream-server-upstream/triplets
-          VCPKG_OVERLAY_PORTS: \${{ github.workspace }}/stream-server-upstream/vcpkg-overlays
+          VCPKG_OVERLAY_TRIPLETS: ${{ github.workspace }}/stream-server-upstream/triplets
+          VCPKG_OVERLAY_PORTS: ${{ github.workspace }}/stream-server-upstream/vcpkg-overlays
 
       - name: Rust format check
         working-directory: stream-server-upstream
@@ -108,10 +108,10 @@ jobs:
         working-directory: stream-server-upstream
         shell: pwsh
         env:
-          VCPKG_ROOT: \${{ github.workspace }}\stream-server-upstream\vcpkg
-          VCPKG_INSTALLED_DIR: \${{ github.workspace }}\stream-server-upstream\vcpkg_installed
+          VCPKG_ROOT: ${{ github.workspace }}\stream-server-upstream\vcpkg
+          VCPKG_INSTALLED_DIR: ${{ github.workspace }}\stream-server-upstream\vcpkg_installed
           VCPKGRS_TRIPLET: x64-windows-v3-static-md-release
-          PKG_CONFIG_PATH: \${{ github.workspace }}\stream-server-upstream\vcpkg_installed\x64-windows-v3-static-md-release\lib\pkgconfig
+          PKG_CONFIG_PATH: ${{ github.workspace }}\stream-server-upstream\vcpkg_installed\x64-windows-v3-static-md-release\lib\pkgconfig
         run: |
           $ErrorActionPreference = 'Stop'
           cargo build --release --target x86_64-pc-windows-msvc --features libtorrent --no-default-features -p server
@@ -175,7 +175,7 @@ jobs:
 
       - name: Publish pinned Orvix mod release
         env:
-          GH_TOKEN: \${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -196,5 +196,5 @@ jobs:
             gh release upload $env:MOD_RELEASE_TAG --clobber 'dist\orvix-stream-server-windows-amd64.exe' 'dist\orvix-stream-server-windows-amd64.sha256'
             gh release edit $env:MOD_RELEASE_TAG --title 'Orvix Stream Server v0.1.8.1 — exact-file subtitles' --prerelease --notes-file 'dist\RELEASE_NOTES.md'
           } else {
-            gh release create $env:MOD_RELEASE_TAG --target '\${{ github.sha }}' --title 'Orvix Stream Server v0.1.8.1 — exact-file subtitles' --prerelease --notes-file 'dist\RELEASE_NOTES.md' 'dist\orvix-stream-server-windows-amd64.exe' 'dist\orvix-stream-server-windows-amd64.sha256'
+            gh release create $env:MOD_RELEASE_TAG --target '${{ github.sha }}' --title 'Orvix Stream Server v0.1.8.1 — exact-file subtitles' --prerelease --notes-file 'dist\RELEASE_NOTES.md' 'dist\orvix-stream-server-windows-amd64.exe' 'dist\orvix-stream-server-windows-amd64.sha256'
           }
