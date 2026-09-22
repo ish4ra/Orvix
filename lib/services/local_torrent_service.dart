@@ -283,20 +283,36 @@ class LocalTorrentService {
 
     final guessedFileIndex = _asInt(payload?['guessedFileIdx']);
     final explicitFileIndex = source.torrentFileIndex;
-    // Match Stremio's resolved Tramvai stream: an addon-provided fileIdx is
+    // Match Stremio's resolved stream: an addon-provided fileIdx is
     // authoritative. Guess only when the stream did not provide one.
-    final fileIndex = explicitFileIndex ??
+    var fileIndex = explicitFileIndex ??
         guessedFileIndex ??
         _asInt(payload?['fileIdx']) ??
         -1;
 
-    // Stremio's Android path deliberately permits -1 here: the local
-    // stream-server can auto-select the playable file when the addon/core does
-    // not expose an exact file index. Blocking -1 made Orvix reject sources
-    // that Stremio itself can open.
+    // Windows ships the Orvix stream-server extension. If upstream-style
+    // creation still returns -1, ask the running engine to resolve the same
+    // auto-selected file that playback would use, preferably with the addon
+    // filename hint. AI Sinhala needs a real non-negative index so it can
+    // extract subtitles from the exact episode instead of guessing.
+    if (fileIndex < 0 && Platform.isWindows) {
+      onProgress?.call('Resolving exact episode file…');
+      final resolved = await _resolveOrvixFileIndex(
+        infoHash,
+        fileHint: fileHint,
+      );
+      if (resolved != null) {
+        fileIndex = resolved;
+      }
+    }
+
+    // If an older/non-Orvix engine cannot resolve the index, playback keeps
+    // compatibility with -1. Preserve the filename filter in the URL so the
+    // stream route and any later resolver use the same selection rule.
     final streamUrl = _buildStreamUrl(
       infoHash: infoHash,
       fileIndex: fileIndex,
+      fileHint: fileHint,
     );
 
     _currentInfoHash = infoHash;
@@ -332,8 +348,47 @@ class LocalTorrentService {
   String _buildStreamUrl({
     required String infoHash,
     required int fileIndex,
+    String? fileHint,
   }) {
-    return '$baseUrl/$infoHash/$fileIndex';
+    final base = Uri.parse('$baseUrl/$infoHash/$fileIndex');
+    final hint = fileHint?.trim() ?? '';
+    if (fileIndex >= 0 || hint.isEmpty) return base.toString();
+    return base.replace(
+      queryParameters: <String, String>{'f': hint},
+    ).toString();
+  }
+
+  Future<int?> _resolveOrvixFileIndex(
+    String infoHash, {
+    String? fileHint,
+  }) async {
+    final hint = fileHint?.trim() ?? '';
+    for (var attempt = 0; attempt < 8; attempt++) {
+      try {
+        final uri = Uri.parse('$baseUrl/orvix/$infoHash/resolve-file').replace(
+          queryParameters:
+              hint.isEmpty ? null : <String, String>{'hint': hint},
+        );
+        final response = await http
+            .get(uri, headers: const {'Accept': 'application/json'})
+            .timeout(const Duration(seconds: 4));
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map) {
+            final resolved = _asInt(decoded['fileIdx']);
+            if (resolved != null && resolved >= 0) return resolved;
+          }
+        }
+      } catch (_) {
+        // Metadata may still be resolving. Retry briefly before falling back.
+      }
+      if (attempt < 7) {
+        await Future<void>.delayed(
+          Duration(milliseconds: 250 + (attempt * 150)),
+        );
+      }
+    }
+    return null;
   }
 
   Future<http.Response> _createTorrent(Map<String, dynamic> body) async {
