@@ -324,12 +324,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _timingTrackIsText = true;
         _nativeAiMatchIndex = -1;
         _positionSubscription ??=
-            player.stream.position.listen(_onPosition);
+            widget.playback.player.stream.position.listen(_onPosition);
         _subtitleTimingSubscription ??=
-            player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
+            widget.playback.player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
         _startNativeSubtitleClock();
 
-        final position = player.state.position;
+        final position = widget.playback.player.state.position;
         final bucket = position.inSeconds ~/ 30;
         _lastAiPrefetchBucket = bucket;
         unawaited(_ensureAiTranslationNear(position, bucket: bucket));
