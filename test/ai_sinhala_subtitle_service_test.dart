@@ -136,7 +136,7 @@ Dialogue: 0,0:00:04.00,0:00:05.50,Default,,0,0,0,,{\an8}[door slams]
     );
 
     final match = prepared.matchSourceCueRange(
-      r'{\i1}Michael,\Ndon''t move.',
+      r"{\i1}Michael,\Ndon't move.",
     );
     expect(match?.index, 0);
   });
