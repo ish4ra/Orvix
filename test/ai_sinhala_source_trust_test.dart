@@ -68,7 +68,8 @@ void main() {
     final trustedEnd =
         service.indexOf('prepareTranslatedTranscriptForNativeTiming', trustedStart);
     final trusted = service.substring(trustedStart, trustedEnd);
-    expect(trusted, contains('_fetchEmbeddedEnglishSubtitle(videoUrl)'));
+    expect(trusted, contains('_fetchEmbeddedEnglishSubtitle('));
+    expect(trusted, contains('preferredTrackLabel: preferredTrackLabel'));
     expect(trusted, contains('_fetchExactRestSubtitle('));
     expect(
       trusted,
