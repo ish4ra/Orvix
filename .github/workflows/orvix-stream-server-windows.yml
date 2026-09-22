@@ -1,0 +1,200 @@
+name: Build Orvix Stream Server exact-file mod
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.6-dev
+    paths:
+      - 'tools/patch_orvix_stream_server.py'
+      - 'docs/ORVIX_STREAM_SERVER_MOD.md'
+      - '.github/workflows/orvix-stream-server-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: orvix-stream-server-windows
+  cancel-in-progress: true
+
+env:
+  UPSTREAM_STREAM_SERVER_COMMIT: f585ab6eda9b1411034548c131bb0dc30c6f5f9e
+  MOD_RELEASE_TAG: stream-server-orvix-v0.1.8.1
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+jobs:
+  build-windows:
+    name: Build exact-file Windows engine
+    runs-on: windows-2022
+    steps:
+      - name: Checkout Orvix patch source
+        uses: actions/checkout@v4
+
+      - name: Clone pinned upstream stream-server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git clone https://github.com/stremio-native/stream-server.git stream-server-upstream
+          Set-Location stream-server-upstream
+          git checkout $env:UPSTREAM_STREAM_SERVER_COMMIT
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -ne $env:UPSTREAM_STREAM_SERVER_COMMIT) {
+            throw "Pinned upstream checkout mismatch: $actual"
+          }
+
+      - name: Apply Orvix exact-file subtitle patch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tools/patch_orvix_stream_server.py stream-server-upstream
+          $a = Select-String -Path stream-server-upstream\server\src\routes\subtitles.rs -Pattern 'get_exact_embedded_subtitles_vtt' -Quiet
+          if (-not $a) { throw 'Exact embedded subtitle handler was not patched in' }
+          $b = Select-String -Path stream-server-upstream\enginefs\src\engine.rs -Pattern 'find_subtitle_tracks_for_file' -Quiet
+          if (-not $b) { throw 'Exact-file subtitle discovery was not patched in' }
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          target: x86_64-pc-windows-msvc
+          components: rustfmt
+
+      - name: Export GitHub Actions cache env for vcpkg
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL);
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN);
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\Users\runneradmin\.cargo\registry
+            C:\Users\runneradmin\.cargo\git
+            stream-server-upstream\target
+          key: orvix-stream-server-cargo-\${{ hashFiles('stream-server-upstream/Cargo.lock') }}
+          restore-keys: |
+            orvix-stream-server-cargo-
+
+      - name: Cache vcpkg installed packages
+        id: vcpkg-cache
+        uses: actions/cache@v4
+        with:
+          path: stream-server-upstream\vcpkg_installed
+          key: orvix-stream-server-vcpkg-x64-v3-static-md-release-v1-\${{ hashFiles('stream-server-upstream/vcpkg.json','stream-server-upstream/triplets/**','stream-server-upstream/vcpkg-overlays/**') }}
+          restore-keys: |
+            orvix-stream-server-vcpkg-x64-v3-static-md-release-v1-
+
+      - name: Setup vcpkg
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: '84bab45d415d22042bd0b9081aea57f362da3f35'
+          vcpkgDirectory: '\${{ github.workspace }}/stream-server-upstream/vcpkg'
+          vcpkgJsonGlob: '\${{ github.workspace }}/stream-server-upstream/vcpkg.json'
+          runVcpkgInstall: true
+        env:
+          VCPKG_INSTALLED_DIR: \${{ github.workspace }}/stream-server-upstream/vcpkg_installed
+          VCPKG_DEFAULT_TRIPLET: x64-windows-v3-static-md-release
+          VCPKG_OVERLAY_TRIPLETS: \${{ github.workspace }}/stream-server-upstream/triplets
+          VCPKG_OVERLAY_PORTS: \${{ github.workspace }}/stream-server-upstream/vcpkg-overlays
+
+      - name: Rust format check
+        working-directory: stream-server-upstream
+        run: cargo fmt --all --check
+
+      - name: Build modified stream-server
+        working-directory: stream-server-upstream
+        shell: pwsh
+        env:
+          VCPKG_ROOT: \${{ github.workspace }}\stream-server-upstream\vcpkg
+          VCPKG_INSTALLED_DIR: \${{ github.workspace }}\stream-server-upstream\vcpkg_installed
+          VCPKGRS_TRIPLET: x64-windows-v3-static-md-release
+          PKG_CONFIG_PATH: \${{ github.workspace }}\stream-server-upstream\vcpkg_installed\x64-windows-v3-static-md-release\lib\pkgconfig
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo build --release --target x86_64-pc-windows-msvc --features libtorrent --no-default-features -p server
+
+      - name: Prepare mod binary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item 'stream-server-upstream\target\x86_64-pc-windows-msvc\release\server.exe' 'dist\orvix-stream-server-windows-amd64.exe'
+          if ((Get-Item 'dist\orvix-stream-server-windows-amd64.exe').Length -lt 1000000) {
+            throw 'Built stream-server binary looks unexpectedly small'
+          }
+          (Get-FileHash 'dist\orvix-stream-server-windows-amd64.exe' -Algorithm SHA256).Hash.ToLower() | Set-Content -NoNewline 'dist\orvix-stream-server-windows-amd64.sha256'
+
+      - name: Smoke test mod capabilities
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Resolve-Path 'dist\orvix-stream-server-windows-amd64.exe'
+          $work = Join-Path $env:RUNNER_TEMP 'orvix-stream-server-mod-smoke'
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          $proc = Start-Process -FilePath $exe -ArgumentList '--no-tray' -WorkingDirectory $work -PassThru
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 120; $i++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:11470/heartbeat' -TimeoutSec 2
+                if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 300) {
+                  $ready = $true
+                  break
+                }
+              } catch {}
+              if ($proc.HasExited) { throw "stream-server exited early with code $($proc.ExitCode)" }
+            }
+            if (-not $ready) { throw 'Modified stream-server heartbeat did not become ready' }
+
+            $caps = Invoke-RestMethod -Uri 'http://127.0.0.1:11470/orvix/capabilities' -TimeoutSec 5
+            if ($caps.name -ne 'orvix-stream-server') { throw "Unexpected capability name: $($caps.name)" }
+            if ($caps.exactFileEmbeddedSubtitles -ne $true) { throw 'Exact-file subtitle capability is missing' }
+            if ($caps.exactSubtitleRouteVersion -ne 1) { throw 'Unexpected exact subtitle route version' }
+
+            $fakeHash = '0000000000000000000000000000000000000000'
+            try {
+              Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:11470/$fakeHash/0/embedded/1000/subtitles.vtt" -TimeoutSec 5 | Out-Null
+              throw 'Expected fake exact-file extraction to return 404'
+            } catch {
+              if ($_.Exception.Response.StatusCode.value__ -ne 404) { throw }
+            }
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orvix-stream-server-windows-amd64
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish pinned Orvix mod release
+        env:
+          GH_TOKEN: \${{ github.token }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          @"
+          Orvix-modified stream-server based on upstream commit $env:UPSTREAM_STREAM_SERVER_COMMIT.
+
+          Changes:
+          - embedded subtitle discovery can target the exact selected torrent file index;
+          - exact embedded extraction carries both the video file index and subtitle track ID;
+          - legacy upstream subtitle routes remain available;
+          - /orvix/capabilities advertises the exact-file extension.
+
+          This binary remains MIT-licensed under the upstream stream-server license.
+          "@ | Set-Content 'dist\RELEASE_NOTES.md'
+
+          gh release view $env:MOD_RELEASE_TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:MOD_RELEASE_TAG --clobber 'dist\orvix-stream-server-windows-amd64.exe' 'dist\orvix-stream-server-windows-amd64.sha256'
+            gh release edit $env:MOD_RELEASE_TAG --title 'Orvix Stream Server v0.1.8.1 — exact-file subtitles' --prerelease --notes-file 'dist\RELEASE_NOTES.md'
+          } else {
+            gh release create $env:MOD_RELEASE_TAG --target '\${{ github.sha }}' --title 'Orvix Stream Server v0.1.8.1 — exact-file subtitles' --prerelease --notes-file 'dist\RELEASE_NOTES.md' 'dist\orvix-stream-server-windows-amd64.exe' 'dist\orvix-stream-server-windows-amd64.sha256'
+          }
