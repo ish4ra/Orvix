@@ -455,7 +455,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
                           label: Text(
                             _inLibrary ? 'In Library' : 'Add to Library',
                           ),
-                          style: _desktopSecondaryButtonStyle(),
+                          style: _desktopSecondaryButtonStyle(
+                            selected: _inLibrary,
+                          ),
                         ),
                         OutlinedButton.icon(
                           onPressed: () => _toggleWatchlist(item),
@@ -481,11 +483,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  ButtonStyle _desktopSecondaryButtonStyle() {
+  ButtonStyle _desktopSecondaryButtonStyle({bool selected = false}) {
     const lime = Color(0xFFB9FF45);
     return ButtonStyle(
-      foregroundColor: const WidgetStatePropertyAll(Colors.white),
+      foregroundColor: WidgetStatePropertyAll(
+        selected ? Colors.black : Colors.white,
+      ),
       backgroundColor: WidgetStateProperty.resolveWith((states) {
+        if (selected) return lime;
         if (states.contains(WidgetState.hovered) ||
             states.contains(WidgetState.focused)) {
           return const Color(0xFF1A2119);
@@ -493,6 +498,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
         return const Color(0xC7111513);
       }),
       side: WidgetStateProperty.resolveWith((states) {
+        if (selected) {
+          return const BorderSide(color: lime, width: 1.6);
+        }
         final active = states.contains(WidgetState.hovered) ||
             states.contains(WidgetState.focused);
         return BorderSide(
@@ -726,7 +734,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
                                       label: const Text('Choose source'),
                                     ),
                                   FilledButton.tonalIcon(
-                                    style: _tvGlowButtonStyle(),
+                                    style: _tvGlowButtonStyle(
+                                      selected: _inLibrary,
+                                    ),
                                     onPressed: () => _toggleLibrary(item),
                                     icon: Icon(
                                       _inLibrary
@@ -794,14 +804,24 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  ButtonStyle _tvGlowButtonStyle({bool prominent = false}) {
+  ButtonStyle _tvGlowButtonStyle({
+    bool prominent = false,
+    bool selected = false,
+  }) {
     final primary = Theme.of(context).colorScheme.primary;
+    const lime = Color(0xFFB9FF45);
     return ButtonStyle(
-      foregroundColor: const WidgetStatePropertyAll(Colors.white),
+      foregroundColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.disabled)) {
+          return Colors.white.withValues(alpha: .42);
+        }
+        return selected ? Colors.black : Colors.white;
+      }),
       backgroundColor: WidgetStateProperty.resolveWith((states) {
         if (states.contains(WidgetState.disabled)) {
           return const Color(0xFF111318);
         }
+        if (selected) return lime;
         if (states.contains(WidgetState.focused)) {
           return primary.withValues(alpha: prominent ? .56 : .32);
         }
@@ -810,6 +830,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
             : const Color(0xFF14161D);
       }),
       side: WidgetStateProperty.resolveWith((states) {
+        if (selected) {
+          return const BorderSide(color: lime, width: 2);
+        }
         if (states.contains(WidgetState.focused)) {
           return BorderSide(
             color: primary.withValues(alpha: .95),
@@ -1124,6 +1147,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
                           label: Text(
                             _inLibrary ? 'In Library' : 'Add to Library',
                           ),
+                          style: _inLibrary
+                              ? FilledButton.styleFrom(
+                                  backgroundColor: const Color(0xFFB9FF45),
+                                  foregroundColor: Colors.black,
+                                )
+                              : null,
                         ),
                         OutlinedButton.icon(
                           onPressed: () => _toggleWatchlist(item),
