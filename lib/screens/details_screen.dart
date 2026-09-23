@@ -3766,6 +3766,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
                   .prepareGeneratedSinhalaFromEmbeddedSubtitle(
                 title: title,
                 videoUrl: subtitleOracleUrl,
+                videoFileNameHint: source.fileNameHint ?? releaseHint,
                 onStatus: (message) {
                   if (!mounted) return;
                   setState(() => _status = 'AI Sinhala • $message');
