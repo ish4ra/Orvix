@@ -110,6 +110,64 @@ void main() {
     );
   });
 
+  test('PikPak AI path requests the original container, never the default transcode', () {
+    final details = File('lib/screens/details_screen.dart').readAsStringSync();
+    final pikpak =
+        File('lib/services/pikpak_transfer_service.dart').readAsStringSync();
+
+    expect(details, contains('preferOriginal: windowsAi'));
+    expect(
+      details,
+      contains('AI Sinhala • requesting the original PikPak container…'),
+    );
+    expect(
+      details,
+      contains('AI Sinhala • resolving the original PikPak container…'),
+    );
+    expect(details, contains('expectedVideoHash: source?.videoHash'));
+    expect(details, contains('expectedSizeBytes: source?.sizeBytes'));
+
+    final originalBranch = pikpak.indexOf('if (preferOriginal) {');
+    final originChoice =
+        pikpak.indexOf("media['is_origin'] == true", originalBranch);
+    final defaultChoice =
+        pikpak.indexOf("media['is_default'] == true", originalBranch);
+    expect(originalBranch, greaterThanOrEqualTo(0));
+    expect(originChoice, greaterThan(originalBranch));
+    expect(defaultChoice, greaterThan(originChoice));
+  });
+
+  test('PikPak cloud task preserves addon exact-file identity metadata', () {
+    final source =
+        File('lib/services/source_provider_service.dart').readAsStringSync();
+    final pikpak =
+        File('lib/services/pikpak_transfer_service.dart').readAsStringSync();
+    final details = File('lib/screens/details_screen.dart').readAsStringSync();
+
+    expect(source, contains('x-orvix-video-hash=\$videoHash'));
+    expect(pikpak, contains("case 'x-orvix-video-hash':"));
+    expect(pikpak, contains('final String? videoHash;'));
+    expect(details, contains('source: chosen'));
+    expect(details, contains('expectedVideoHash: source?.videoHash'));
+  });
+
+  test('Windows PikPak AI refuses transcode-only playback instead of guessing', () {
+    final details = File('lib/screens/details_screen.dart').readAsStringSync();
+
+    expect(
+      details,
+      contains(
+        'Only a provider rendition/transcode is available, so Orvix cannot safely recover embedded subtitles or an exact-file hash.',
+      ),
+    );
+    expect(
+      details,
+      contains(
+        'AI Sinhala requires the original container so embedded subtitles and exact-file fingerprinting remain valid.',
+      ),
+    );
+  });
+
   test('Windows client launches bundled media engine on its own port', () {
     final service =
         File('lib/services/orvix_media_engine_service.dart').readAsStringSync();
