@@ -138,7 +138,7 @@ class LocalMediaBridgeService {
         HttpHeaders.acceptRangesHeader,
         HttpHeaders.etagHeader,
         HttpHeaders.lastModifiedHeader,
-        HttpHeaders.contentDispositionHeader,
+        'content-disposition',
       ]) {
         _copyResponseHeader(response, request, name);
       }
