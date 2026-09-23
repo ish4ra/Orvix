@@ -149,6 +149,51 @@ jobs:
           path: native/
           if-no-files-found: error
 
+
+  macos:
+    name: Build macOS cross-platform subtitle path
+    needs: validate
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate macOS platform
+        run: flutter create --platforms=macos --org com.orvix --project-name orvix .
+
+      - name: Require macOS 10.15+
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          podfile = Path("macos/Podfile")
+          if podfile.exists():
+              text = podfile.read_text()
+              if "platform :osx" in text:
+                  import re
+                  text = re.sub(r"#?\s*platform :osx, ['\"][^'\"]+['\"]", "platform :osx, '10.15'", text, count=1)
+              else:
+                  text = "platform :osx, '10.15'\n" + text
+              podfile.write_text(text)
+          PY
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build macOS
+        run: flutter build macos --release
+
+      - name: Verify macOS app
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d build/macos/Build/Products/Release/orvix.app
+
   windows:
     needs: validate
     runs-on: windows-latest
