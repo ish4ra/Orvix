@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -42,6 +43,7 @@ type prepareResponse struct {
 	MovieByteSize  int64  `json:"movieByteSize,omitempty"`
 	ProbeError     string `json:"probeError,omitempty"`
 	HashError      string `json:"hashError,omitempty"`
+	PlaybackURL    string `json:"playbackUrl,omitempty"`
 }
 
 type ffprobeOutput struct {
@@ -67,10 +69,14 @@ type subtitleCandidate struct {
 }
 
 type server struct {
-	httpClient  *http.Client
-	idleTimeout time.Duration
-	lastMu      sync.Mutex
-	lastRequest time.Time
+	httpClient    *http.Client
+	proxyClient   *http.Client
+	idleTimeout   time.Duration
+	lastMu        sync.Mutex
+	lastRequest   time.Time
+	activeStreams int
+	sessionMu     sync.RWMutex
+	sessions      map[string]string
 }
 
 func main() {
@@ -88,14 +94,24 @@ func main() {
 				return nil
 			},
 		},
+		proxyClient: &http.Client{
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 8 {
+					return errors.New("too many redirects")
+				}
+				return nil
+			},
+		},
 		idleTimeout: *idle,
 		lastRequest: time.Now(),
+		sessions:    make(map[string]string),
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/heartbeat", s.touch(s.heartbeat))
 	mux.HandleFunc("/capabilities", s.touch(s.capabilities))
 	mux.HandleFunc("/prepare", s.touch(s.prepare))
+	mux.HandleFunc("/media/", s.touch(s.media))
 
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(*port))
 	httpServer := &http.Server{
@@ -129,7 +145,10 @@ func (s *server) watchIdle(httpServer *http.Server) {
 		s.lastMu.Lock()
 		idleFor := time.Since(s.lastRequest)
 		s.lastMu.Unlock()
-		if idleFor < s.idleTimeout {
+		s.lastMu.Lock()
+		activeStreams := s.activeStreams
+		s.lastMu.Unlock()
+		if idleFor < s.idleTimeout || activeStreams > 0 {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -162,6 +181,7 @@ func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
 		"prePlayerPreparation":       true,
 		"embeddedTextExtraction":     true,
 		"openSubtitlesFingerprint":   true,
+		"playbackProxy":              true,
 		"requiresPlayerForDiscovery": false,
 	})
 }
@@ -206,12 +226,16 @@ func (s *server) prepare(w http.ResponseWriter, r *http.Request) {
 	}()
 	wg.Wait()
 
+	sessionID, sessionErr := s.newSession(req.VideoURL)
 	resp := prepareResponse{
 		OK:            true,
 		Engine:        engineName,
 		Version:       engineVersion,
 		MovieHash:     hash,
 		MovieByteSize: size,
+	}
+	if sessionErr == nil {
+		resp.PlaybackURL = "http://127.0.0.1:11471/media/" + sessionID
 	}
 	if probeErr != nil {
 		resp.ProbeError = probeErr.Error()
@@ -227,6 +251,91 @@ func (s *server) prepare(w http.ResponseWriter, r *http.Request) {
 		resp.EmbeddedStream = candidate.Index
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *server) newSession(videoURL string) (string, error) {
+	raw := make([]byte, 18)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	id := hex.EncodeToString(raw)
+	s.sessionMu.Lock()
+	s.sessions[id] = videoURL
+	s.sessionMu.Unlock()
+	return id, nil
+}
+
+func (s *server) media(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	sessionID := strings.TrimPrefix(r.URL.Path, "/media/")
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || strings.Contains(sessionID, "/") {
+		http.Error(w, "invalid media session", http.StatusBadRequest)
+		return
+	}
+
+	s.sessionMu.RLock()
+	videoURL, ok := s.sessions[sessionID]
+	s.sessionMu.RUnlock()
+	if !ok {
+		http.Error(w, "media session not found", http.StatusNotFound)
+		return
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, videoURL, nil)
+	if err != nil {
+		http.Error(w, "could not create upstream request", http.StatusBadGateway)
+		return
+	}
+	for _, name := range []string{
+		"Range", "If-Range", "Accept", "Accept-Encoding",
+		"Accept-Language", "User-Agent",
+	} {
+		if value := r.Header.Get(name); value != "" {
+			req.Header.Set(name, value)
+		}
+	}
+	if req.Header.Get("Accept-Encoding") == "" {
+		req.Header.Set("Accept-Encoding", "identity")
+	}
+
+	upstream, err := s.proxyClient.Do(req)
+	if err != nil {
+		http.Error(w, "media proxy error: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer upstream.Body.Close()
+
+	for _, name := range []string{
+		"Accept-Ranges", "Content-Type", "Content-Length", "Content-Range",
+		"Last-Modified", "ETag", "Cache-Control",
+	} {
+		if value := upstream.Header.Get(name); value != "" {
+			w.Header().Set(name, value)
+		}
+	}
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.WriteHeader(upstream.StatusCode)
+	if r.Method == http.MethodHead {
+		return
+	}
+
+	s.lastMu.Lock()
+	s.activeStreams++
+	s.lastRequest = time.Now()
+	s.lastMu.Unlock()
+	defer func() {
+		s.lastMu.Lock()
+		s.activeStreams--
+		s.lastRequest = time.Now()
+		s.lastMu.Unlock()
+	}()
+
+	_, _ = io.Copy(w, upstream.Body)
 }
 
 func probeAndExtract(ctx context.Context, videoURL, preferred string) (*subtitleCandidate, string, error) {
