@@ -2344,16 +2344,26 @@ class _DetailsScreenState extends State<DetailsScreen> {
         initialFileId: added.fileId,
         item: item,
         episode: episode,
+        source: chosen,
       );
       return;
     }
 
     if (added.fileId != null &&
-        await _tryOpenFileId(added.fileId!, item, episode)) {
+        await _tryOpenFileId(
+          added.fileId!,
+          item,
+          episode,
+          source: chosen,
+        )) {
       return;
     }
 
-    await _waitForLibraryMatch(item, episode: episode);
+    await _waitForLibraryMatch(
+      item,
+      episode: episode,
+      source: chosen,
+    );
   }
 
   Future<void> _waitForTask(
@@ -2361,6 +2371,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     required MediaItem item,
     EpisodeItem? episode,
     String? initialFileId,
+    SourceResult? source,
   }) async {
     var fileId = initialFileId;
     for (var attempt = 0; attempt < 45; attempt++) {
@@ -2392,13 +2403,24 @@ class _DetailsScreenState extends State<DetailsScreen> {
           _resolveProgress = 1;
           _status = 'Ready — opening player…';
         });
-        if (fileId != null && await _tryOpenFileId(fileId, item, episode)) {
+        if (fileId != null &&
+            await _tryOpenFileId(
+              fileId,
+              item,
+              episode,
+              source: source,
+            )) {
           return;
         }
         for (var scan = 0; scan < 5; scan++) {
           final match = await _findInPikPak(item, episode: episode);
           if (match != null) {
-            await _openPikPakFile(match, item, episode);
+            await _openPikPakFile(
+              match,
+              item,
+              episode,
+              source: source,
+            );
             return;
           }
           await Future<void>.delayed(const Duration(seconds: 2));
@@ -2426,6 +2448,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Future<void> _waitForLibraryMatch(
     MediaItem item, {
     EpisodeItem? episode,
+    SourceResult? source,
   }) async {
     for (var attempt = 1; attempt <= 18; attempt++) {
       if (!mounted) return;
@@ -2436,7 +2459,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
       await Future<void>.delayed(const Duration(seconds: 5));
       final match = await _findInPikPak(item, episode: episode);
       if (match != null) {
-        await _openPikPakFile(match, item, episode);
+        await _openPikPakFile(
+          match,
+          item,
+          episode,
+          source: source,
+        );
         return;
       }
     }
@@ -3255,19 +3283,47 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Future<bool> _tryOpenFileId(
     String fileId,
     MediaItem item,
-    EpisodeItem? episode,
-  ) async {
+    EpisodeItem? episode, {
+    SourceResult? source,
+  }) async {
     try {
-      final url = await widget.transfer.fetchPlayableUrl(fileId);
-      if (url == null || url.isEmpty) return false;
+      final windowsAi =
+          Platform.isWindows && await AiSinhalaPreferencesService.isEnabled();
+      if (windowsAi && mounted) {
+        setState(() {
+          _resolving = true;
+          _resolveProgress = null;
+          _status =
+              'AI Sinhala • requesting the original PikPak container…';
+        });
+      }
+
+      final url = await widget.transfer.fetchPlayableUrl(
+        fileId,
+        preferOriginal: windowsAi,
+      );
+      if (url == null || url.isEmpty) {
+        if (windowsAi) {
+          throw const PikPakTransferException(
+            'PikPak did not expose the original video container. Only a provider rendition/transcode is available, so Orvix cannot safely recover embedded subtitles or an exact-file hash.',
+          );
+        }
+        return false;
+      }
+
       await _openPlayerUrl(
         url,
         item,
         episode,
+        source: source,
+        releaseHint: source?.fileNameHint,
+        expectedSizeBytes: source?.sizeBytes,
+        expectedVideoHash: source?.videoHash,
         useLocalMediaBridge: true,
       );
       return true;
     } catch (_) {
+      if (source != null) rethrow;
       return false;
     }
   }
@@ -3275,20 +3331,45 @@ class _DetailsScreenState extends State<DetailsScreen> {
   Future<void> _openPikPakFile(
     PikPakFile file,
     MediaItem item,
-    EpisodeItem? episode,
-  ) async {
+    EpisodeItem? episode, {
+    SourceResult? source,
+  }) async {
     if (!mounted) return;
-    setState(() => _status = 'Resolving PikPak streaming URL…');
-    final url =
-        await widget.transfer.fetchPlayableUrl(file.id) ?? file.webContentLink;
+
+    final windowsAi =
+        Platform.isWindows && await AiSinhalaPreferencesService.isEnabled();
+    setState(() {
+      _resolving = true;
+      _resolveProgress = null;
+      _status = windowsAi
+          ? 'AI Sinhala • resolving the original PikPak container…'
+          : 'Resolving PikPak streaming URL…';
+    });
+
+    final url = await widget.transfer.fetchPlayableUrl(
+          file.id,
+          preferOriginal: windowsAi,
+        ) ??
+        (windowsAi ? null : file.webContentLink);
+
     if (url == null || url.isEmpty) {
+      if (windowsAi) {
+        throw const PikPakTransferException(
+          'PikPak exposed only a transcoded rendition for this file. AI Sinhala requires the original container so embedded subtitles and exact-file fingerprinting remain valid.',
+        );
+      }
       throw Exception('PikPak did not return a playable URL yet.');
     }
+
+    final parsedFileSize = int.tryParse(file.size ?? '');
     await _openPlayerUrl(
       url,
       item,
       episode,
-      releaseHint: file.name,
+      source: source,
+      releaseHint: source?.fileNameHint ?? file.name,
+      expectedSizeBytes: source?.sizeBytes ?? parsedFileSize,
+      expectedVideoHash: source?.videoHash,
       useLocalMediaBridge: true,
     );
   }
