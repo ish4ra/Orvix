@@ -8,8 +8,8 @@ void main() {
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
     expect(service, contains('static Future<void> _translateEntireSubtitle('));
-    expect(service, contains('const batchSize = 28;'));
-    expect(service, contains('const parallelBatches = 2;'));
+    expect(service, contains('const batchSize = 96;'));
+    expect(service, contains('const parallelBatches = 3;'));
     expect(service, contains('await Future.wait<void>'));
     expect(service, contains('_translateIndicesResilient('));
     expect(
