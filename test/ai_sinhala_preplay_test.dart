@@ -32,10 +32,17 @@ void main() {
       player,
       contains('if (_error == null && _aiSubtitleLoading)'),
     );
-    expect(
-      player,
-      isNot(contains('_aiSubtitleLoading &&\n                    !_playbackStarted')),
+    // The ordinary startup overlay may be gated by both
+    // !AI-loading and !playback-started. What matters here is that the actual
+    // AI preparation overlay itself is still independent of playback state.
+    const aiOverlay = 'if (_error == null && _aiSubtitleLoading)';
+    expect(player, contains(aiOverlay));
+    final aiOverlayIndex = player.indexOf(aiOverlay);
+    final aiOverlayTail = player.substring(
+      aiOverlayIndex,
+      (aiOverlayIndex + 700).clamp(0, player.length),
     );
+    expect(aiOverlayTail, isNot(contains('&& !_playbackStarted')));
   });
 
   test('automatic preparation translates the complete embedded track, not live cues', () {
