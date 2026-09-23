@@ -6,12 +6,14 @@ import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
 import '../services/ai_sinhala_preferences_service.dart';
+import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/catalog_service.dart';
 import '../services/cloud_preferences_service.dart';
 import '../services/free_p2p_live_probe_service.dart';
 import '../services/local_media_bridge_service.dart';
 import '../services/local_torrent_service.dart';
 import '../services/media_state_service.dart';
+import '../services/orvix_media_engine_service.dart';
 import '../services/pikpak_service.dart';
 import '../services/pikpak_transfer_service.dart';
 import '../services/playback_service.dart';
@@ -3344,16 +3346,89 @@ class _DetailsScreenState extends State<DetailsScreen> {
       }
     }
 
-    setState(() {
-      _resolving = false;
-      _resolveProgress = null;
-      _status = '';
-    });
-
     final title = episode == null
         ? item.title
         : '${item.title} • ${episode.label} ${episode.title}';
     final next = _nextEpisode(item, episode);
+
+    AiGeneratedSubtitleFile? preparedAiSubtitleFile;
+    String? aiPreflightFailure;
+    var aiPreflightAttempted = false;
+
+    // Windows AI Sinhala is prepared entirely before PlayerScreen exists.
+    // The standalone media engine reads the exact resolved media URL, extracts
+    // embedded English text (or fingerprints the file for an exact
+    // OpenSubtitles lookup), and the complete Sinhala SRT is generated here.
+    // MPV is not opened, played, paused or seeked during this stage.
+    if (Platform.isWindows &&
+        await AiSinhalaPreferencesService.isEnabled()) {
+      aiPreflightAttempted = true;
+      if (mounted) {
+        setState(() {
+          _resolving = true;
+          _status =
+              'AI Sinhala • preparing the exact video before the player opens…';
+        });
+      }
+
+      try {
+        final preparation = await OrvixMediaEngineService.instance.prepare(
+          playbackUrl,
+          onStatus: (message) {
+            if (!mounted) return;
+            setState(() => _status = 'AI Sinhala • $message');
+          },
+        );
+
+        if (preparation.hasEmbeddedText) {
+          final identity =
+              'orvix-media-engine://${preparation.movieHash ?? 'unknown'}/${preparation.embeddedStreamIndex ?? -1}';
+          preparedAiSubtitleFile = await AiSinhalaSubtitleService
+              .prepareGeneratedSinhalaFromEngineEmbedded(
+            title: title,
+            embeddedSrt: preparation.embeddedSrt!,
+            embeddedIdentity: identity,
+            embeddedLabel:
+                preparation.embeddedLabel ?? 'English embedded',
+            onStatus: (message) {
+              if (!mounted) return;
+              setState(() => _status = 'AI Sinhala • $message');
+            },
+          );
+        } else if (preparation.hasExactFingerprint) {
+          preparedAiSubtitleFile = await AiSinhalaSubtitleService
+              .prepareGeneratedSinhalaFromExactFingerprint(
+            title: title,
+            movieHash: preparation.movieHash!,
+            movieByteSize: preparation.movieByteSize!,
+            onStatus: (message) {
+              if (!mounted) return;
+              setState(() => _status = 'AI Sinhala • $message');
+            },
+          );
+        } else {
+          final detail = [
+            preparation.probeError,
+            preparation.hashError,
+          ].whereType<String>().where((value) => value.trim().isNotEmpty).join(' • ');
+          throw AiSubtitleException(
+            detail.isEmpty
+                ? 'The standalone media engine found no readable embedded English text subtitle and could not create an exact-file fingerprint.'
+                : detail,
+          );
+        }
+      } catch (error) {
+        aiPreflightFailure = error.toString().trim();
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _resolving = false;
+        _resolveProgress = null;
+        _status = '';
+      });
+    }
 
     try {
       final preference = await PlayerEnginePreferencesService.get();
@@ -3411,6 +3486,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
         releaseHint: releaseHint,
         expectedSizeBytes: expectedSizeBytes,
         expectedVideoHash: expectedVideoHash,
+        preparedAiSubtitleFile: preparedAiSubtitleFile,
+        aiPreflightAttempted: aiPreflightAttempted,
+        aiPreflightFailure: aiPreflightFailure,
         fallbackToExo: tvFreeP2pAuto,
       );
     } finally {
@@ -3488,6 +3566,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
     String? releaseHint,
     int? expectedSizeBytes,
     String? expectedVideoHash,
+    AiGeneratedSubtitleFile? preparedAiSubtitleFile,
+    bool aiPreflightAttempted = false,
+    String? aiPreflightFailure,
     bool fallbackToExo = false,
   }) async {
     if (!mounted) return;
@@ -3509,6 +3590,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
           item: item,
           episode: episode,
           aiSubtitle: null,
+          preparedAiSubtitleFile: preparedAiSubtitleFile,
+          aiPreflightAttempted: aiPreflightAttempted,
+          aiPreflightFailure: aiPreflightFailure,
           allowAiSinhala: true,
           releaseHint: releaseHint,
           expectedSizeBytes: expectedSizeBytes,
