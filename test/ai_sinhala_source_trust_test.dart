@@ -90,7 +90,7 @@ void main() {
     expect(service, isNot(contains('_guessStreamServerPrimaryVideoIndex(')));
   });
 
-  test('debrid/direct fallback is isolated from the local P2P exact path', () {
+  test('local bridge keeps debrid on embedded then exact-hash evidence only', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final helperStart = player.indexOf(
@@ -117,8 +117,15 @@ void main() {
         player.indexOf('Future<void> _restoreNativeSubtitleFallback()', prepareStart);
     final prepare = player.substring(prepareStart, prepareEnd);
 
-    expect(prepare, contains('if (_localP2pStream) rethrow;'));
-    expect(prepare, contains('generated = await _prepareRemoteDirectAiFallback();'));
+    expect(
+      prepare,
+      contains('if (_localP2pStream || _localMediaBridgeStream) rethrow;'),
+    );
+    expect(
+      prepare,
+      contains('generated = await _prepareRemoteDirectAiFallback();'),
+    );
+    expect(player, contains('bool get _localMediaBridgeStream'));
   });
 
 }
