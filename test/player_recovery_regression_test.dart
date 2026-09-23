@@ -60,14 +60,14 @@ void main() {
       contains('if (!_surfaceFocus.hasPrimaryFocus) return KeyEventResult.ignored;'),
     );
 
-    // AI Sinhala complete-file mode keeps every source paused until the
-    // exact embedded subtitle has been translated and attached as a generated
-    // Sinhala SRT. This also applies to Windows localhost P2P.
-    expect(player, contains('play: !aiPreferred'));
-    expect(
-      player,
-      contains('prepareGeneratedSinhalaFromEmbeddedSubtitle('),
-    );
+    // Windows AI Sinhala now prepares outside the player. The standalone
+    // media engine runs from DetailsScreen before PlayerScreen is pushed, and
+    // PlayerScreen only attaches the already-generated Sinhala SRT.
+    expect(details, contains('OrvixMediaEngineService.instance.prepare('));
+    expect(details, contains('prepareGeneratedSinhalaFromEngineEmbedded('));
+    expect(details, contains('preparedAiSubtitleFile: preparedAiSubtitleFile'));
+    expect(player, contains('final preprepared ='));
+    expect(player, contains('play: !(aiReady || usePlayerPreflight)'));
     expect(player, contains('await _loadGeneratedAiSubtitleTrack();'));
     expect(player, isNot(contains('deferAiForLocalP2p')));
 
