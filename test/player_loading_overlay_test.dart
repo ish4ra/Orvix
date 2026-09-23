@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:orvix/models/media_item.dart';
@@ -28,5 +30,20 @@ void main() {
     expect(find.text('Starting playback…'), findsOneWidget);
     expect(find.text('Silo • S01E01 Freedom Day'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
+  });
+
+  test('player keeps cinematic startup overlay until media position advances', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(player, contains('!_playbackStarted)'));
+    expect(player, contains("message: 'Starting playback…'"));
+    expect(
+      player,
+      contains('(state.playing && state.position > Duration.zero)'),
+    );
+    expect(
+      player,
+      isNot(contains('if (playing) _markPlaybackStarted();')),
+    );
   });
 }
