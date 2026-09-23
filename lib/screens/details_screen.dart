@@ -3655,29 +3655,30 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 preferredLanguage: 'eng',
                 includeTranscriptFallbacks: false,
               );
-              OnlineSubtitleResult? candidate;
-              for (final current in candidates) {
-                if (current.language == 'eng' && current.score >= 900) {
-                  candidate = current;
+              OnlineSubtitleResult? selectedCandidate;
+              for (final candidate in candidates) {
+                if (candidate.language == 'eng' && candidate.score >= 900) {
+                  selectedCandidate = candidate;
                   break;
                 }
               }
-              if (candidate == null) continue;
+              if (selectedCandidate == null) continue;
 
               unawaited(
                 AiSinhalaTraceService.write(
                   'hash-addon-match label=${tuple.label} '
-                  'provider=${candidate.provider} score=${candidate.score}',
+                  'provider=${selectedCandidate.provider} '
+                  'score=${selectedCandidate.score}',
                 ),
               );
               preparedAiSubtitleFile = await AiSinhalaSubtitleService
                   .prepareGeneratedSinhalaFromOnlineSubtitle(
                 title: title,
-                subtitleUrl: candidate.url,
+                subtitleUrl: selectedCandidate.url,
                 subtitleIdentity:
-                    'hash-addon|${tuple.label}|${candidate.provider}|${candidate.id}',
+                    'hash-addon|${tuple.label}|${selectedCandidate.provider}|${selectedCandidate.id}',
                 subtitleLabel:
-                    '${candidate.provider} • ${candidate.label}',
+                    '${selectedCandidate.provider} • ${selectedCandidate.label}',
                 onStatus: (message) {
                   if (!mounted) return;
                   setState(() => _status = 'AI Sinhala • $message');
