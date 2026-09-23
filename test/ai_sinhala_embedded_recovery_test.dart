@@ -3,29 +3,28 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('automatic startup uses the complete embedded subtitle file as timing truth', () {
+  test('automatic Windows startup uses the complete pre-player embedded subtitle as timing truth', () {
+    final details = File('lib/screens/details_screen.dart').readAsStringSync();
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
+    final engineIndex =
+        details.indexOf('OrvixMediaEngineService.instance.prepare(');
+    final playerIndex = details.indexOf('await _openMpvPlayer(');
+    expect(engineIndex, greaterThanOrEqualTo(0));
+    expect(playerIndex, greaterThan(engineIndex));
+    expect(details, contains('prepareGeneratedSinhalaFromEngineEmbedded('));
+    expect(details, contains('preparedAiSubtitleFile: preparedAiSubtitleFile'));
+
     final openStart = player.indexOf('Future<void> _open()');
-    final prepareStart =
-        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
-    final prepareEnd =
-        player.indexOf('Future<void> _restoreNativeSubtitleFallback()', prepareStart);
-
-    final open = player.substring(openStart, prepareStart);
-    final prepare = player.substring(prepareStart, prepareEnd);
-
-    expect(
-      open.indexOf('await widget.playback.open('),
-      lessThan(open.indexOf('await _prepareAiSinhalaBeforePlayback()')),
-    );
-    expect(open, contains('play: !aiPreferred'));
+    final openEnd = player.indexOf('void _onPlaybackError', openStart);
+    final open = player.substring(openStart, openEnd);
+    expect(open, contains('final preprepared ='));
+    expect(open, contains('play: !(aiReady || usePlayerPreflight)'));
     expect(open, contains('await _loadGeneratedAiSubtitleTrack()'));
-    expect(prepare, contains('prepareGeneratedSinhalaFromEmbeddedSubtitle('));
-    expect(prepare, contains('_generatedAiSubtitlePath = generated.path'));
-    expect(prepare, isNot(contains('_captureNativeEnglishSamples()')));
-    expect(prepare, isNot(contains('OnlineSubtitleService.search(')));
-    expect(prepare, isNot(contains('_enableEmbeddedLiveAiFallback(')));
+    expect(
+      open.indexOf('await _loadGeneratedAiSubtitleTrack()'),
+      lessThan(open.indexOf('await widget.playback.player.play();')),
+    );
   });
 
   test('complete-file preparation never warms the video by secretly playing it', () {
