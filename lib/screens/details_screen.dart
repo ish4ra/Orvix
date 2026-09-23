@@ -3656,19 +3656,47 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 includeTranscriptFallbacks: false,
               );
               OnlineSubtitleResult? selectedCandidate;
+
+              // The official legacy addon has a materially stronger route:
+              // the OpenSubtitles file hash is the resource id itself. Prefer
+              // that over v3 results even when v3 has a larger ranking bonus.
               for (final candidate in candidates) {
-                if (candidate.language == 'eng' && candidate.score >= 900) {
+                if (candidate.language == 'eng' && candidate.exactHashPath) {
                   selectedCandidate = candidate;
                   break;
                 }
               }
-              if (selectedCandidate == null) continue;
+
+              // OpenSubtitles v3 receives videoHash/videoSize as optional extra
+              // parameters but can still return generic IMDb/episode results.
+              // Do not silently treat those as exact. Only auto-use v3 when
+              // its result metadata also matches a release-specific token.
+              selectedCandidate ??= candidates.cast<OnlineSubtitleResult?>().firstWhere(
+                    (candidate) =>
+                        candidate?.language == 'eng' &&
+                        candidate?.hashScoped == true &&
+                        (candidate?.strongReleaseMatchCount ?? 0) > 0,
+                    orElse: () => null,
+                  );
+
+              if (selectedCandidate == null) {
+                unawaited(
+                  AiSinhalaTraceService.write(
+                    'hash-addon-rejected label=${tuple.label} '
+                    'reason=no-exact-or-release-specific-match',
+                  ),
+                );
+                continue;
+              }
 
               unawaited(
                 AiSinhalaTraceService.write(
                   'hash-addon-match label=${tuple.label} '
                   'provider=${selectedCandidate.provider} '
-                  'score=${selectedCandidate.score}',
+                  'score=${selectedCandidate.score} '
+                  'exactHashPath=${selectedCandidate.exactHashPath} '
+                  'releaseMatches=${selectedCandidate.releaseMatchCount} '
+                  'strongReleaseMatches=${selectedCandidate.strongReleaseMatchCount}',
                 ),
               );
               preparedAiSubtitleFile = await AiSinhalaSubtitleService
