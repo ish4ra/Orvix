@@ -12,18 +12,24 @@ void main() {
     expect(player, contains('_setAiSinhalaEnabledFromPlayer(value)'));
   });
 
-  test('AI startup never begins video playback while translation is incomplete', () {
+  test('Windows AI startup cannot begin playback before standalone translation finishes', () {
+    final details = File('lib/screens/details_screen.dart').readAsStringSync();
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    final engineIndex =
+        details.indexOf('OrvixMediaEngineService.instance.prepare(');
+    final routeIndex = details.indexOf('await _openMpvPlayer(');
+    expect(engineIndex, greaterThanOrEqualTo(0));
+    expect(routeIndex, greaterThan(engineIndex));
+    expect(details, contains('prepareGeneratedSinhalaFromEngineEmbedded('));
 
     final start = player.indexOf('Future<void> _open()');
     final end = player.indexOf('void _onPlaybackError', start);
     final open = player.substring(start, end);
-
-    expect(open, contains('play: !aiPreferred'));
-    expect(open, contains('await _prepareAiSinhalaBeforePlayback();'));
+    expect(open, contains('final preprepared ='));
     expect(open, contains('await _loadGeneratedAiSubtitleTrack();'));
     expect(
-      open.indexOf('await _prepareAiSinhalaBeforePlayback();'),
+      open.indexOf('await _loadGeneratedAiSubtitleTrack();'),
       lessThan(open.indexOf('await widget.playback.player.play();')),
     );
   });
