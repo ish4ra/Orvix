@@ -74,4 +74,54 @@ void main() {
     );
     expect(details, contains('allowAiSinhala: true'));
   });
+  test('single und/default text track is a safe metadata fallback', () {
+    expect(
+      EmbeddedSubtitleExtractorService.safelyUnlabeledTrackForTesting(
+        codec: 'subrip',
+        language: 'und',
+        title: 'Default',
+      ),
+      isTrue,
+    );
+    expect(
+      EmbeddedSubtitleExtractorService.safelyUnlabeledTrackForTesting(
+        codec: 'subrip',
+        language: 'spa',
+        title: '',
+      ),
+      isFalse,
+    );
+  });
+
+  test('unlabeled extracted dialogue must actually look English', () {
+    expect(
+      EmbeddedSubtitleExtractorService.looksLikeEnglishSubtitleForTesting(
+        '''1
+00:00:01,000 --> 00:00:03,000
+What are you doing here?
+
+2
+00:00:04,000 --> 00:00:06,000
+I know that you want to get out of there.
+
+3
+00:00:07,000 --> 00:00:09,000
+But this is not the way we do things.''',
+      ),
+      isTrue,
+    );
+    expect(
+      EmbeddedSubtitleExtractorService.looksLikeEnglishSubtitleForTesting(
+        '''1
+00:00:01,000 --> 00:00:03,000
+Hola amigo buenos días.
+
+2
+00:00:04,000 --> 00:00:06,000
+Gracias por venir esta noche.''',
+      ),
+      isFalse,
+    );
+  });
+
 }
