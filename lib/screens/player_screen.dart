@@ -282,6 +282,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final preprepared =
           aiPreferred ? widget.preparedAiSubtitleFile : null;
 
+      unawaited(
+        AiSinhalaTraceService.write(
+          'player-open aiSetting=$aiSettingEnabled '
+          'allowAi=${widget.allowAiSinhala} '
+          'preflightAttempted=${widget.aiPreflightAttempted} '
+          'preprepared=${preprepared != null} '
+          'host=${AiSinhalaTraceService.safeHost(widget.url)}',
+        ),
+      );
+
       // Windows must never fall back to the old player-driven subtitle
       // discovery path. DetailsScreen is responsible for running the
       // standalone media engine and preparing the complete Sinhala SRT first.
