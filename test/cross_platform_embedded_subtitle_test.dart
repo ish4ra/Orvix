@@ -44,8 +44,9 @@ void main() {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
 
-    final wrapperStart =
-        service.indexOf('static Future<_EmbeddedSubtitleSource?> _fetchEmbeddedEnglishSubtitle(');
+    final wrapperStart = service.indexOf(
+      'static Future<_EmbeddedSubtitleSource?> _fetchEmbeddedEnglishSubtitle(',
+    );
     final localStart = service.indexOf(
       'static Future<_EmbeddedSubtitleSource?> _fetchLocalP2pEmbeddedEnglishSubtitle(',
       wrapperStart,
@@ -53,10 +54,15 @@ void main() {
     final wrapper = service.substring(wrapperStart, localStart);
 
     expect(wrapper, contains('_fetchLocalP2pEmbeddedEnglishSubtitle('));
-    expect(wrapper, contains('EmbeddedSubtitleExtractorService.extractEnglishText('));
+    expect(
+      wrapper,
+      contains('EmbeddedSubtitleExtractorService.extractEnglishText('),
+    );
     expect(
       wrapper.indexOf('_fetchLocalP2pEmbeddedEnglishSubtitle('),
-      lessThan(wrapper.indexOf('EmbeddedSubtitleExtractorService.extractEnglishText(')),
+      lessThan(
+        wrapper.indexOf('EmbeddedSubtitleExtractorService.extractEnglishText('),
+      ),
     );
   });
 
@@ -66,14 +72,23 @@ void main() {
 
     expect(
       player,
-      isNot(contains('widget.allowAiSinhala &&\n          !PlatformProfile.isAndroidTv')),
+      isNot(
+        contains(
+          'widget.allowAiSinhala &&\n          !PlatformProfile.isAndroidTv',
+        ),
+      ),
     );
     expect(
       player,
-      isNot(contains('widget.allowAiSinhala && !PlatformProfile.isAndroidTv')),
+      isNot(
+        contains(
+          'widget.allowAiSinhala && !PlatformProfile.isAndroidTv',
+        ),
+      ),
     );
     expect(details, contains('allowAiSinhala: true'));
   });
+
   test('single und/default text track is a safe metadata fallback', () {
     expect(
       EmbeddedSubtitleExtractorService.safelyUnlabeledTrackForTesting(
@@ -102,58 +117,8 @@ void main() {
     expect(torrent, contains('_remoteProxyHasMediaBytes('));
     expect(torrent, contains("headers['Range'] = 'bytes=0-1'"));
     expect(torrent, contains('response.stream.first'));
-    expect(
-      playback,
-      contains("RegExp(r'^[0-9a-fA-F]{40}\\    final ai =
-        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
-    final details = File('lib/screens/details_screen.dart').readAsStringSync();
-    final torrent =
-        File('lib/services/local_torrent_service.dart').readAsStringSync();
-
-    expect(ai, contains('_fetchOrvixRemoteEmbeddedEnglishSubtitle('));
-    expect(ai, contains('/orvix/remote/subtitlesTracks'));
-    expect(ai, contains('/orvix/remote/embedded/'));
-    expect(ai, contains('remoteEmbeddedSubtitles'));
-    expect(details, contains('LocalTorrentService.instance.proxyRemoteUrl('));
-    expect(details, contains('Opening through the Orvix stream engine'));
-    expect(torrent, contains("Uri.parse('\$baseUrl/proxy/')"));
-    expect(torrent, contains('remoteSubtitleRouteVersion'));
-  });
-
-  test('unlabeled extracted dialogue must actually look English', () {
-    expect(
-      EmbeddedSubtitleExtractorService.looksLikeEnglishSubtitleForTesting(
-        '''1
-00:00:01,000 --> 00:00:03,000
-What are you doing here?
-
-2
-00:00:04,000 --> 00:00:06,000
-I know that you want to get out of there.
-
-3
-00:00:07,000 --> 00:00:09,000
-But this is not the way we do things.''',
-      ),
-      isTrue,
-    );
-    expect(
-      EmbeddedSubtitleExtractorService.looksLikeEnglishSubtitleForTesting(
-        '''1
-00:00:01,000 --> 00:00:03,000
-Hola amigo buenos días.
-
-2
-00:00:04,000 --> 00:00:06,000
-Gracias por venir esta noche.''',
-      ),
-      isFalse,
-    );
-  });
-
-}
-)"),
-    );
+    expect(playback, contains('uri.pathSegments.length >= 2'));
+    expect(playback, contains('int.tryParse(uri.pathSegments[1]) != null'));
   });
 
   test('Windows debrid path uses the same Orvix native stream engine family', () {
@@ -203,5 +168,4 @@ Gracias por venir esta noche.''',
       isFalse,
     );
   });
-
 }
