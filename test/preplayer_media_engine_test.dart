@@ -254,6 +254,32 @@ void main() {
     );
   });
 
+  test('debrid AI can reuse the exact Free P2P subtitle path without switching video playback', () {
+    final details = File('lib/screens/details_screen.dart').readAsStringSync();
+
+    expect(details, contains('p2p-subtitle-oracle-start'));
+    expect(details, contains('source.isMagnet'));
+    expect(details, contains('!originalLocalP2p'));
+    expect(details, contains('source.torrentFileIndex != null'));
+    expect(details, contains('source.fileNameHint?.trim().isNotEmpty == true'));
+    expect(
+      details,
+      contains('await LocalTorrentService.instance.resolve('),
+    );
+    expect(
+      details,
+      contains('prepareGeneratedSinhalaFromEmbeddedSubtitle('),
+    );
+    expect(
+      details,
+      contains('await LocalTorrentService.instance.releaseCurrentStream();'),
+    );
+
+    // The debrid/CDN playback session must remain authoritative. The local
+    // torrent is only a subtitle oracle and must never replace playbackUrl.
+    expect(details, contains('playbackUrl = enginePlaybackUrl;'));
+  });
+
   test('Windows client launches bundled media engine on its own port', () {
     final service =
         File('lib/services/orvix_media_engine_service.dart').readAsStringSync();
