@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../models/media_item.dart';
 import '../services/ai_sinhala_preferences_service.dart';
 import '../services/ai_sinhala_subtitle_service.dart';
+import '../services/ai_sinhala_trace_service.dart';
 import '../services/catalog_service.dart';
 import '../services/cloud_preferences_service.dart';
 import '../services/free_p2p_live_probe_service.dart';
@@ -3303,6 +3304,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
         fileId,
         preferOriginal: windowsAi,
       );
+      unawaited(
+        AiSinhalaTraceService.write(
+          'pikpak-file-id originalRequested=$windowsAi '
+          'resolved=${url != null && url.isNotEmpty} '
+          'host=${AiSinhalaTraceService.safeHost(url)}',
+        ),
+      );
       if (url == null || url.isEmpty) {
         if (windowsAi) {
           throw const PikPakTransferException(
@@ -3352,6 +3360,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
           preferOriginal: windowsAi,
         ) ??
         (windowsAi ? null : file.webContentLink);
+    unawaited(
+      AiSinhalaTraceService.write(
+        'pikpak-library originalRequested=$windowsAi '
+        'resolved=${url != null && url.isNotEmpty} '
+        'host=${AiSinhalaTraceService.safeHost(url)}',
+      ),
+    );
 
     if (url == null || url.isEmpty) {
       if (windowsAi) {
@@ -3402,6 +3417,15 @@ class _DetailsScreenState extends State<DetailsScreen> {
         originalUri.pathSegments.length >= 2 &&
         RegExp(r'^[0-9a-fA-F]{40}$').hasMatch(originalUri.pathSegments.first) &&
         int.tryParse(originalUri.pathSegments[1]) != null;
+
+    unawaited(
+      AiSinhalaTraceService.write(
+        'open-player ai=$aiSettingEnabled windows=${Platform.isWindows} '
+        'provider=${source?.provider ?? 'unknown'} '
+        'cloudBridge=$useLocalMediaBridge localP2p=$originalLocalP2p '
+        'host=${AiSinhalaTraceService.safeHost(url)}',
+      ),
+    );
 
     LocalMediaBridgeHandle? bridgeHandle;
     var playbackUrl = url;
@@ -3471,6 +3495,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
       }
 
       try {
+        unawaited(
+          AiSinhalaTraceService.write(
+            'preflight-start provider=${source?.provider ?? 'unknown'} '
+            'host=${AiSinhalaTraceService.safeHost(url)}',
+          ),
+        );
         final preparation = await OrvixMediaEngineService.instance.prepare(
           url,
           onStatus: (message) {
@@ -3480,6 +3510,13 @@ class _DetailsScreenState extends State<DetailsScreen> {
         );
 
         final enginePlaybackUrl = preparation.playbackUrl;
+        unawaited(
+          AiSinhalaTraceService.write(
+            'preflight-result embedded=${preparation.hasEmbeddedText} '
+            'fingerprint=${preparation.hasExactFingerprint} '
+            'playbackSession=${enginePlaybackUrl != null && enginePlaybackUrl.isNotEmpty}',
+          ),
+        );
         if (enginePlaybackUrl == null || enginePlaybackUrl.isEmpty) {
           throw const AiSubtitleException(
             'The Orvix media engine did not create a local playback session.',
@@ -3556,6 +3593,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
           });
         }
       } catch (error) {
+        unawaited(
+          AiSinhalaTraceService.write(
+            'preflight-failed type=${error.runtimeType}',
+          ),
+        );
         if (originalLocalP2p) {
           try {
             await LocalTorrentService.instance.releaseCurrentStream();
