@@ -5663,7 +5663,7 @@ class _MetaPill extends StatelessWidget {
           // different HTTP representation.
           if (sourceHashValid) {
             preparedAiSubtitleFile = await tryExact(
-              hash: sourceHash,
+              hash: sourceHash!,
               size: expectedSizeBytes!,
               label: 'source',
             );
@@ -5677,7 +5677,7 @@ class _MetaPill extends StatelessWidget {
                 expectedSizeBytes == preparation.movieByteSize;
             if (!sameTuple) {
               preparedAiSubtitleFile = await tryExact(
-                hash: engineHash,
+                hash: engineHash!,
                 size: preparation.movieByteSize!,
                 label: 'engine',
               );
