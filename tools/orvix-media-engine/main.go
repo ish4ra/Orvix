@@ -338,23 +338,52 @@ func (s *server) media(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, upstream.Body)
 }
 
+func probeSubtitleStreams(ctx context.Context, videoURL string) ([]byte, error) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		cmd := exec.CommandContext(ctx, "ffprobe",
+			"-v", "error",
+			"-rw_timeout", "30000000",
+			"-probesize", "12000000",
+			"-analyzeduration", "12000000",
+			"-select_streams", "s",
+			"-show_entries", "stream=index,codec_name:stream_tags=language,title:stream_disposition=forced,hearing_impaired",
+			"-of", "json",
+			videoURL,
+		)
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		if err == nil {
+			return out, nil
+		}
+
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			lastErr = fmt.Errorf("ffprobe failed: %w", err)
+		} else {
+			lastErr = fmt.Errorf("ffprobe failed: %w: %s", err, detail)
+		}
+
+		if attempt < 2 {
+			delay := time.Duration(attempt+1) * 450 * time.Millisecond
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+	}
+	return nil, lastErr
+}
+
 func probeAndExtract(ctx context.Context, videoURL, preferred string) (*subtitleCandidate, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 75*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "ffprobe",
-		"-v", "error",
-		"-rw_timeout", "30000000",
-		"-probesize", "12000000",
-		"-analyzeduration", "12000000",
-		"-select_streams", "s",
-		"-show_entries", "stream=index,codec_name:stream_tags=language,title:stream_disposition=forced,hearing_impaired",
-		"-of", "json",
-		videoURL,
-	)
-	out, err := cmd.Output()
+	out, err := probeSubtitleStreams(ctx, videoURL)
 	if err != nil {
-		return nil, "", fmt.Errorf("ffprobe failed: %w", err)
+		return nil, "", err
 	}
 
 	var parsed ffprobeOutput
