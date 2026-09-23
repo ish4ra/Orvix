@@ -41,6 +41,21 @@ void main() {
     expect(handler, isNot(contains('_effectiveSyncOffsetMs')));
   });
 
+
+  test('Windows preflight never promotes a generic v3 result to exact timing', () {
+    final details = File('lib/screens/details_screen.dart').readAsStringSync();
+    final online =
+        File('lib/services/online_subtitle_service.dart').readAsStringSync();
+
+    expect(details, contains('candidate.exactHashPath'));
+    expect(details, contains('candidate.strongReleaseMatchCount > 0'));
+    expect(details, contains('hash-addon-rejected'));
+    expect(online, contains('final bool exactHashPath;'));
+    expect(online, contains('final int strongReleaseMatchCount;'));
+    expect(online, contains('exactHashPath: true'));
+    expect(online, contains('exactHashPath: false'));
+  });
+
   test('desktop subtitle scaling remains restrained', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
