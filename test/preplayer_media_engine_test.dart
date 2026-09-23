@@ -52,27 +52,61 @@ void main() {
     expect(engine, contains('openSubtitlesFingerprint('));
   });
 
-  test('Windows cloud AI playback stays inside the standalone media engine', () {
+  test('every Windows AI source stays inside the standalone media engine', () {
     final details = File('lib/screens/details_screen.dart').readAsStringSync();
     final engine =
         File('tools/orvix-media-engine/main.go').readAsStringSync();
 
-    expect(details, contains('final windowsCloudAiEngine ='));
+    // The gate must NOT depend on useLocalMediaBridge. Direct HTTP is ranked
+    // first by free-stream ordering and local free-P2P arrives on :11470.
     expect(
       details,
-      contains('playbackUrl = enginePlaybackUrl;'),
+      contains('final windowsAiEngine = Platform.isWindows && aiSettingEnabled;'),
     );
+    expect(details, isNot(contains('Platform.isWindows && useLocalMediaBridge && aiSettingEnabled')));
+    expect(details, contains('if (windowsAiEngine) {'));
+    expect(details, contains('playbackUrl = enginePlaybackUrl;'));
+    expect(details, contains('releaseLocalP2pOnExit: originalLocalP2p'));
     expect(
       details,
       contains('AI Sinhala preparation failed before playback:'),
     );
-    expect(
-      details,
-      contains('Do not silently open normal playback'),
-    );
     expect(engine, contains('mux.HandleFunc("/media/"'));
     expect(engine, contains('"playbackProxy"'));
     expect(engine, contains('s.activeStreams++'));
+  });
+
+  test('Windows PlayerScreen refuses legacy in-player AI fallback', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(player, contains('final missingWindowsPreflight = Platform.isWindows'));
+    expect(
+      player,
+      contains('AI Sinhala startup was blocked because Windows pre-player preparation was bypassed.'),
+    );
+    expect(
+      player,
+      contains('final usePlayerPreflight = aiPreferred &&\n'
+          '          !Platform.isWindows &&'),
+    );
+  });
+
+  test('direct HTTP and local P2P enter the same Windows AI preflight', () {
+    final details = File('lib/screens/details_screen.dart').readAsStringSync();
+
+    final directOpen = details.indexOf("_status = 'Opening direct stream…';");
+    final aiGate = details.indexOf('final windowsAiEngine =');
+    final enginePrepare =
+        details.indexOf('OrvixMediaEngineService.instance.prepare(');
+    expect(directOpen, greaterThanOrEqualTo(0));
+    expect(aiGate, greaterThan(directOpen));
+    expect(enginePrepare, greaterThan(aiGate));
+
+    expect(details, contains('originalUri.port == 11470'));
+    expect(
+      details,
+      contains('await LocalTorrentService.instance.releaseCurrentStream();'),
+    );
   });
 
   test('Windows client launches bundled media engine on its own port', () {
