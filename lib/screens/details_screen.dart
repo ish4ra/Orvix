@@ -3671,13 +3671,16 @@ class _DetailsScreenState extends State<DetailsScreen> {
               // parameters but can still return generic IMDb/episode results.
               // Do not silently treat those as exact. Only auto-use v3 when
               // its result metadata also matches a release-specific token.
-              selectedCandidate ??= candidates.cast<OnlineSubtitleResult?>().firstWhere(
-                    (candidate) =>
-                        candidate?.language == 'eng' &&
-                        candidate?.hashScoped == true &&
-                        (candidate?.strongReleaseMatchCount ?? 0) > 0,
-                    orElse: () => null,
-                  );
+              if (selectedCandidate == null) {
+                for (final candidate in candidates) {
+                  if (candidate.language == 'eng' &&
+                      candidate.hashScoped &&
+                      candidate.strongReleaseMatchCount > 0) {
+                    selectedCandidate = candidate;
+                    break;
+                  }
+                }
+              }
 
               if (selectedCandidate == null) {
                 unawaited(
