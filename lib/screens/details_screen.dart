@@ -3754,6 +3754,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
               final subtitleOracleUrl =
                   await LocalTorrentService.instance.resolve(
                 source,
+                warmForPlayback: false,
                 onProgress: (message) {
                   if (!mounted) return;
                   setState(() {
