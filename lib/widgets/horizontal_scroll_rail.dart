@@ -114,7 +114,6 @@ class _HorizontalScrollRailState extends State<HorizontalScrollRail> {
           scrollDirection: Axis.horizontal,
           physics: const ClampingScrollPhysics(),
           padding: widget.padding,
-          scrollCacheExtent: 1800,
           itemCount: widget.itemCount,
           separatorBuilder: (_, __) => SizedBox(width: widget.separatorWidth),
           itemBuilder: widget.itemBuilder,
