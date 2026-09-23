@@ -30,6 +30,7 @@ void main() {
       player,
       contains(
         'final usePlayerPreflight = aiPreferred &&\n'
+        '          !Platform.isWindows &&\n'
         '          !widget.aiPreflightAttempted',
       ),
     );
