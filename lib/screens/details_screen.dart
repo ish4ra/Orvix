@@ -3307,16 +3307,1173 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
     final aiSettingEnabled =
         await AiSinhalaPreferencesService.isEnabled();
-    final windowsCloudAiEngine =
-        Platform.isWindows && useLocalMediaBridge && aiSettingEnabled;
+
+    // IMPORTANT: AI Sinhala must be a Windows playback invariant, not a
+    // cloud-only feature. The source picker deliberately ranks direct HTTP
+    // streams first, and free P2P resolves to localhost:11470. beta.19 only
+    // entered the standalone engine when useLocalMediaBridge=true, so those
+    // two common paths bypassed pre-player preparation and fell back to the
+    // old in-player sampler. That exactly produced "video starts immediately,
+    // no embedded/translation message".
+    final windowsAiEngine = Platform.isWindows && aiSettingEnabled;
+    final originalUri = Uri.tryParse(url);
+    final originalLocalP2p = originalUri != null &&
+        (originalUri.host == '127.0.0.1' || originalUri.host == 'localhost') &&
+        originalUri.port == 11470 &&
+        originalUri.pathSegments.length >= 2 &&
+        RegExp(r'^[0-9a-fA-F]{40}      var nativeEngineReady = false;
+
+      if (Platform.isWindows) {
+        setState(() {
+          _resolving = true;
+          _status = 'Opening through the Orvix stream engine…';
+        });
+        try {
+          playbackUrl = await LocalTorrentService.instance.proxyRemoteUrl(
+            url,
+            fileNameHint: releaseHint,
+          );
+          nativeEngineReady = true;
+        } catch (_) {
+          if (mounted) {
+            setState(() {
+              _status =
+                  'Native stream engine could not read this source; using the local media bridge…';
+            });
+          }
+        }
+      }
+
+      if (!nativeEngineReady) {
+        setState(() {
+          _resolving = true;
+          _status = 'Opening through the Orvix local media bridge…';
+        });
+        bridgeHandle = await LocalMediaBridgeService.instance.bridge(
+          url,
+          fileNameHint: releaseHint,
+        );
+        playbackUrl = bridgeHandle.url;
+      }
+    }
+
+    final title = episode == null
+        ? item.title
+        : '${item.title} • ${episode.label} ${episode.title}';
+    final next = _nextEpisode(item, episode);
+
+    AiGeneratedSubtitleFile? preparedAiSubtitleFile;
+    var aiPreflightAttempted = false;
+
+    // Cloud/debrid AI Sinhala on Windows is fail-closed: the player route does
+    // not exist until the standalone engine has inspected the exact provider
+    // URL, generated the complete Sinhala SRT and returned its own local media
+    // session. This prevents audio/video from starting underneath a loading
+    // screen and removes the old player-driven play/pause/seek fallback.
+    if (windowsAiEngine) {
+      aiPreflightAttempted = true;
+      if (mounted) {
+        setState(() {
+          _resolving = true;
+          _resolveProgress = null;
+          _status =
+              'AI Sinhala • starting the Orvix media engine before playback…';
+        });
+      }
+
+      try {
+        final preparation = await OrvixMediaEngineService.instance.prepare(
+          url,
+          onStatus: (message) {
+            if (!mounted) return;
+            setState(() => _status = 'AI Sinhala • $message');
+          },
+        );
+
+        final enginePlaybackUrl = preparation.playbackUrl;
+        if (enginePlaybackUrl == null || enginePlaybackUrl.isEmpty) {
+          throw const AiSubtitleException(
+            'The Orvix media engine did not create a local playback session.',
+          );
+        }
+
+        if (preparation.hasEmbeddedText) {
+          final identity =
+              'orvix-media-engine://${preparation.movieHash ?? 'unknown'}/${preparation.embeddedStreamIndex ?? -1}';
+          preparedAiSubtitleFile = await AiSinhalaSubtitleService
+              .prepareGeneratedSinhalaFromEngineEmbedded(
+            title: title,
+            embeddedSrt: preparation.embeddedSrt!,
+            embeddedIdentity: identity,
+            embeddedLabel:
+                preparation.embeddedLabel ?? 'English embedded',
+            onStatus: (message) {
+              if (!mounted) return;
+              setState(() => _status = 'AI Sinhala • $message');
+            },
+          );
+        } else if (preparation.hasExactFingerprint) {
+          preparedAiSubtitleFile = await AiSinhalaSubtitleService
+              .prepareGeneratedSinhalaFromExactFingerprint(
+            title: title,
+            movieHash: preparation.movieHash!,
+            movieByteSize: preparation.movieByteSize!,
+            onStatus: (message) {
+              if (!mounted) return;
+              setState(() => _status = 'AI Sinhala • $message');
+            },
+          );
+        } else if (expectedVideoHash != null &&
+            RegExp(r'^[0-9a-fA-F]{16}          final detail = [
+            preparation.probeError,
+            preparation.hashError,
+          ]
+              .whereType<String>()
+              .where((value) => value.trim().isNotEmpty)
+              .join(' • ');
+          throw AiSubtitleException(
+            detail.isEmpty
+                ? 'No readable embedded English text subtitle was found and an exact-file OpenSubtitles fingerprint could not be created.'
+                : detail,
+          );
+        }
+
+        playbackUrl = enginePlaybackUrl;
+
+        if (mounted) {
+          setState(() {
+            _status =
+                'AI Sinhala • complete subtitle ready. Opening player…';
+          });
+        }
+      } catch (error) {
+        if (originalLocalP2p) {
+          try {
+            await LocalTorrentService.instance.releaseCurrentStream();
+          } catch (_) {}
+        }
+        if (mounted) {
+          setState(() {
+            _resolving = false;
+            _resolveProgress = null;
+            _status = '';
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'AI Sinhala preparation failed before playback: ${error.toString()}',
+              ),
+              duration: const Duration(seconds: 9),
+            ),
+          );
+        }
+        // Fail closed. On Windows with AI Sinhala enabled, PlayerScreen is not
+        // allowed to exist unless the complete Sinhala SRT is already ready.
+        return;
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _resolving = false;
+        _resolveProgress = null;
+        _status = '';
+      });
+    }
+
+    try {
+      final preference = await PlayerEnginePreferencesService.get();
+      final aiEnabled =
+          Platform.isAndroid && aiSettingEnabled;
+      final engine = PlayerEngineRouter.choose(
+        preference: preference,
+        isAndroid: Platform.isAndroid,
+        isAndroidTv: PlatformProfile.isAndroidTv,
+        url: playbackUrl,
+        releaseHint: releaseHint,
+        aiSinhalaEnabled: aiEnabled,
+      );
+
+      final tvFreeP2pAuto = PlatformProfile.isAndroidTv &&
+          source?.isMagnet == true &&
+          preference == PlayerEnginePreference.auto;
+
+      if (engine == PlayerEngineKind.exoPlayer && Platform.isAndroid) {
+        final result = await _openExoPlayer(
+          playbackUrl,
+          title,
+          item,
+          episode,
+          source: source,
+          autoFallbackToMpv: preference == PlayerEnginePreference.auto,
+        );
+        if (!mounted) return;
+
+        final shouldFallback = result?.switchToMpv == true ||
+            (preference == PlayerEnginePreference.auto &&
+                result?.failed == true);
+        if (!shouldFallback) return;
+
+        if (result?.failed == true) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('ExoPlayer failed — trying MPV…'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 180));
+      }
+
+      await _openMpvPlayer(
+        playbackUrl,
+        title,
+        item,
+        episode,
+        next,
+        source: source,
+        releaseHint: releaseHint,
+        expectedSizeBytes: expectedSizeBytes,
+        expectedVideoHash: expectedVideoHash,
+        preparedAiSubtitleFile: preparedAiSubtitleFile,
+        aiPreflightAttempted: aiPreflightAttempted,
+        aiPreflightFailure: null,
+        fallbackToExo: tvFreeP2pAuto,
+        releaseLocalP2pOnExit: originalLocalP2p,
+      );
+    } finally {
+      if (bridgeHandle != null) {
+        await LocalMediaBridgeService.instance.release(
+          bridgeHandle.sessionId,
+        );
+      }
+    }
+  }
+
+  Future<AndroidExoPlayerResult?> _openExoPlayer(
+    String url,
+    String title,
+    MediaItem item,
+    EpisodeItem? episode, {
+    SourceResult? source,
+    bool autoFallbackToMpv = false,
+  }) async {
+    if (!mounted || !Platform.isAndroid) return null;
+    final result = await Navigator.of(context).push<AndroidExoPlayerResult>(
+      MaterialPageRoute(
+        builder: (_) => AndroidExoPlayerScreen(
+          url: url,
+          title: title,
+          mediaState: widget.mediaState,
+          item: item,
+          episode: episode,
+          autoFallbackToMpv: autoFallbackToMpv,
+        ),
+      ),
+    );
+    if (!mounted) return result;
+
+    if (source != null && result?.started == true) {
+      unawaited(widget.sources.recordPlaybackOutcome(source, success: true));
+    } else if (source != null && result?.failed == true) {
+      unawaited(
+        widget.sources.recordPlaybackOutcome(
+          source,
+          success: false,
+          reason: result?.error,
+        ),
+      );
+    }
+    return result;
+  }
+
+  Future<void> _recordSourceStartupFailure(
+    SourceResult source,
+    String url,
+    String message,
+  ) async {
+    var reason = message.trim();
+    if (source.isMagnet) {
+      final health = await LocalTorrentService.instance.healthForStreamUrl(url);
+      if (health != null) {
+        reason = '$reason • ${health.summary}';
+      }
+    }
+    await widget.sources.recordPlaybackOutcome(
+      source,
+      success: false,
+      reason: reason,
+    );
+  }
+
+  Future<void> _openMpvPlayer(
+    String url,
+    String title,
+    MediaItem item,
+    EpisodeItem? episode,
+    EpisodeItem? next, {
+    SourceResult? source,
+    String? releaseHint,
+    int? expectedSizeBytes,
+    String? expectedVideoHash,
+    AiGeneratedSubtitleFile? preparedAiSubtitleFile,
+    bool aiPreflightAttempted = false,
+    String? aiPreflightFailure,
+    bool fallbackToExo = false,
+    bool releaseLocalP2pOnExit = false,
+  }) async {
+    if (!mounted) return;
+    final uri = Uri.tryParse(url);
+    final localP2p = uri != null &&
+        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
+        uri.port == 11470 &&
+        uri.pathSegments.length >= 2 &&
+        RegExp(r'^[0-9a-fA-F]{40}$').hasMatch(uri.pathSegments.first) &&
+        int.tryParse(uri.pathSegments[1]) != null;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PlayerScreen(
+          playback: widget.playback,
+          url: url,
+          title: title,
+          mediaState: widget.mediaState,
+          item: item,
+          episode: episode,
+          aiSubtitle: null,
+          preparedAiSubtitleFile: preparedAiSubtitleFile,
+          aiPreflightAttempted: aiPreflightAttempted,
+          aiPreflightFailure: aiPreflightFailure,
+          allowAiSinhala: true,
+          releaseHint: releaseHint,
+          expectedSizeBytes: expectedSizeBytes,
+          expectedVideoHash: expectedVideoHash,
+          nextEpisodeLabel: next == null ? null : '${next.label} ${next.title}',
+          onPlaybackStarted: source == null
+              ? null
+              : () {
+                  unawaited(
+                    widget.sources.recordPlaybackOutcome(
+                      source,
+                      success: true,
+                    ),
+                  );
+                },
+          onStartupFailed: source == null
+              ? null
+              : (message) {
+                  unawaited(
+                    _recordSourceStartupFailure(source, url, message),
+                  );
+                },
+          onStartupFallback: !fallbackToExo
+              ? null
+              : (message) async {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('MPV could not start — trying ExoPlayer…'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                  await _openExoPlayer(
+                    url,
+                    title,
+                    item,
+                    episode,
+                    source: source,
+                    autoFallbackToMpv: false,
+                  );
+                },
+          onNext: next == null
+              ? null
+              : () async {
+                  if (!mounted) return;
+                  await _play(item, episode: next);
+                },
+        ),
+      ),
+    );
+
+    // Only detach after the MPV route and native video surface are fully gone.
+    // Android TV may still need the same P2P URL for its Exo fallback, so that
+    // handoff path deliberately keeps the torrent attached.
+    if ((localP2p || releaseLocalP2pOnExit) && !fallbackToExo) {
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      await LocalTorrentService.instance.releaseCurrentStream();
+    }
+  }
+
+  EpisodeItem? _nextEpisode(MediaItem item, EpisodeItem? current) {
+    if (current == null || item.episodes.isEmpty) return null;
+    final episodes = [...item.episodes]..sort((a, b) {
+        final season = a.season.compareTo(b.season);
+        return season != 0 ? season : a.episode.compareTo(b.episode);
+      });
+    final index = episodes.indexWhere(
+      (episode) =>
+          episode.id == current.id ||
+          (episode.season == current.season &&
+              episode.episode == current.episode),
+    );
+    if (index < 0 || index + 1 >= episodes.length) return null;
+    return episodes[index + 1];
+  }
+
+  String? _extractYear(String value) {
+    return RegExp(r'\b(?:19|20)\d{2}\b').firstMatch(value)?.group(0);
+  }
+
+  String _normalize(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+
+  void _showPlayError(Object error) {
+    if (!mounted) return;
+    setState(() {
+      _resolving = false;
+      _resolveProgress = null;
+    });
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('Could not play: $error')));
+  }
+}
+
+class _CastRail extends StatelessWidget {
+  const _CastRail({
+    required this.members,
+    required this.tv,
+  });
+
+  final List<CastMember> members;
+  final bool tv;
+
+  @override
+  Widget build(BuildContext context) {
+    if (members.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Cast',
+          style: TextStyle(
+            fontSize: tv ? 19 : 17,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: tv ? 164 : 150,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: members.length,
+            separatorBuilder: (_, __) => SizedBox(width: tv ? 16 : 12),
+            itemBuilder: (context, index) {
+              final member = members[index];
+              return SizedBox(
+                width: tv ? 92 : 82,
+                child: Column(
+                  children: [
+                    ClipOval(
+                      child: SizedBox(
+                        width: tv ? 82 : 72,
+                        height: tv ? 82 : 72,
+                        child: member.photo?.trim().isNotEmpty == true
+                            ? CachedNetworkImage(
+                                imageUrl: member.photo!,
+                                fit: BoxFit.cover,
+                                memCacheWidth: 220,
+                                fadeInDuration: Duration.zero,
+                                placeholder: (_, __) => const ColoredBox(
+                                  color: Color(0xFF171C18),
+                                ),
+                                errorWidget: (_, __, ___) => const ColoredBox(
+                                  color: Color(0xFF171C18),
+                                  child: Icon(Icons.person_outline_rounded),
+                                ),
+                              )
+                            : const ColoredBox(
+                                color: Color(0xFF171C18),
+                                child: Icon(Icons.person_outline_rounded),
+                              ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      member.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: tv ? 12.5 : 11.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (member.character?.trim().isNotEmpty == true) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        member.character!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xFF8E9990),
+                          fontSize: 10,
+                          height: 1.15,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TvSeasonTile extends StatefulWidget {
+  const _TvSeasonTile({
+    required this.season,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final int season;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  State<_TvSeasonTile> createState() => _TvSeasonTileState();
+}
+
+class _TvSeasonTileState extends State<_TvSeasonTile> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const lime = Color(0xFFB9FF45);
+    final label = widget.season == 0 ? 'Specials' : 'Season ${widget.season}';
+
+    return AnimatedScale(
+      scale: _focused ? 1.04 : 1,
+      duration: const Duration(milliseconds: 110),
+      curve: Curves.easeOutCubic,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          focusColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          onFocusChange: (value) => setState(() => _focused = value),
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOutCubic,
+            height: 48,
+            constraints: const BoxConstraints(minWidth: 118),
+            padding: const EdgeInsets.symmetric(horizontal: 19),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: widget.selected
+                  ? lime
+                  : _focused
+                      ? const Color(0xFF1B211A)
+                      : const Color(0xFF101411),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: widget.selected
+                    ? lime
+                    : _focused
+                        ? lime.withValues(alpha: .92)
+                        : Colors.white.withValues(alpha: .10),
+                width: widget.selected || _focused ? 2 : 1,
+              ),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: widget.selected ? Colors.black : Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -.1,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MobileSeasonTile extends StatefulWidget {
+  const _MobileSeasonTile({
+    required this.season,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final int season;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  State<_MobileSeasonTile> createState() => _MobileSeasonTileState();
+}
+
+class _MobileSeasonTileState extends State<_MobileSeasonTile> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const lime = Color(0xFFB9FF45);
+    final active = widget.selected;
+    final highlighted = _hovered || _focused;
+    final label = widget.season == 0 ? 'Specials' : 'Season ${widget.season}';
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedScale(
+        scale: highlighted ? 1.025 : 1,
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOutCubic,
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            focusColor: Colors.transparent,
+            hoverColor: Colors.transparent,
+            splashColor: Colors.transparent,
+            onFocusChange: (value) => setState(() => _focused = value),
+            onTap: widget.onTap,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              height: 46,
+              constraints: const BoxConstraints(minWidth: 112),
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: active
+                    ? lime
+                    : highlighted
+                        ? const Color(0xFF1B211A)
+                        : const Color(0xFF101411),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: active
+                      ? lime
+                      : highlighted
+                          ? lime.withValues(alpha: .72)
+                          : Colors.white.withValues(alpha: .10),
+                  width: active || highlighted ? 1.6 : 1,
+                ),
+              ),
+              child: Text(
+                label,
+                maxLines: 1,
+                style: TextStyle(
+                  color: active ? Colors.black : Colors.white,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -.1,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TvMetaText extends StatelessWidget {
+  const _TvMetaText(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: const TextStyle(
+        color: Color(0xFFB6C0B8),
+        fontSize: 12.5,
+        fontWeight: FontWeight.w800,
+      ),
+    );
+  }
+}
+
+class _TvEpisodeCard extends StatefulWidget {
+  const _TvEpisodeCard({
+    required this.episode,
+    required this.onPlay,
+  });
+
+  final EpisodeItem episode;
+  final VoidCallback? onPlay;
+
+  @override
+  State<_TvEpisodeCard> createState() => _TvEpisodeCardState();
+}
+
+class _TvEpisodeCardState extends State<_TvEpisodeCard> {
+  bool _focused = false;
+
+  String? _dateLabel(EpisodeItem episode) {
+    final date = episode.releaseDate;
+    if (date == null) return null;
+    const months = <String>[
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${months[date.month - 1]} ${date.day}, ${date.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final episode = widget.episode;
+    final primary = Theme.of(context).colorScheme.primary;
+    final overview = episode.overview?.replaceFirst(
+      RegExp(r'^★\s*\d+(?:\.\d+)?\s*'),
+      '',
+    );
+    final date = _dateLabel(episode);
+
+    return AnimatedScale(
+      scale: _focused ? 1.035 : 1,
+      duration: const Duration(milliseconds: 115),
+      curve: Curves.easeOutCubic,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 115),
+        curve: Curves.easeOutCubic,
+        width: 292,
+        height: 174,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: _focused
+                ? primary.withValues(alpha: .95)
+                : Colors.white.withValues(alpha: .11),
+            width: _focused ? 2.2 : 1,
+          ),
+          boxShadow: _focused
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: .46),
+                    blurRadius: 22,
+                    offset: const Offset(0, 8),
+                  ),
+                ]
+              : const [],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(15),
+          child: Material(
+            color: const Color(0xFF0D0F12),
+            child: InkWell(
+              focusColor: Colors.transparent,
+              splashColor: Colors.transparent,
+              onFocusChange: (value) => setState(() => _focused = value),
+              onTap: widget.onPlay,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (episode.thumbnail?.trim().isNotEmpty == true)
+                    CachedNetworkImage(
+                      imageUrl: episode.thumbnail!,
+                      fit: BoxFit.cover,
+                      memCacheWidth: 620,
+                      fadeInDuration: Duration.zero,
+                      placeholder: (_, __) =>
+                          const ColoredBox(color: Color(0xFF15171B)),
+                      errorWidget: (_, __, ___) =>
+                          const ColoredBox(color: Color(0xFF15171B)),
+                    )
+                  else
+                    const ColoredBox(color: Color(0xFF15171B)),
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0x08000000),
+                          Color(0x26000000),
+                          Color(0xA8000000),
+                          Color(0xF207090B),
+                        ],
+                        stops: [0, .36, .68, 1],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 13,
+                    right: 13,
+                    bottom: 10,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: .64),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: .10),
+                            ),
+                          ),
+                          child: Text(
+                            'EPISODE ${episode.episode}',
+                            style: const TextStyle(
+                              fontSize: 9.8,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: .35,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          episode.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14.7,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -.15,
+                          ),
+                        ),
+                        if (overview != null && overview.trim().isNotEmpty) ...[
+                          const SizedBox(height: 3),
+                          Text(
+                            overview,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFFD0D5D1),
+                              fontSize: 11.1,
+                              height: 1.3,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                        if (episode.rating != null || date != null) ...[
+                          const SizedBox(height: 5),
+                          Row(
+                            children: [
+                              if (episode.rating != null) ...[
+                                const Icon(
+                                  Icons.star_rounded,
+                                  color: Color(0xFFFFD65A),
+                                  size: 13,
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  episode.rating!.toStringAsFixed(1),
+                                  style: const TextStyle(
+                                    color: Color(0xFFE9ECEA),
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
+                              if (episode.rating != null && date != null)
+                                const SizedBox(width: 9),
+                              if (date != null)
+                                Flexible(
+                                  child: Text(
+                                    date,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Color(0xFFAEB5B0),
+                                      fontSize: 10.2,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  Positioned(
+                    top: 9,
+                    right: 9,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 110),
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _focused
+                            ? primary.withValues(alpha: .92)
+                            : Colors.black.withValues(alpha: .55),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: .18),
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.play_arrow_rounded,
+                        color: Colors.white,
+                        size: 21,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopEpisodeCard extends StatefulWidget {
+  const _DesktopEpisodeCard({
+    required this.episode,
+    required this.onTap,
+  });
+
+  final EpisodeItem episode;
+  final VoidCallback? onTap;
+
+  @override
+  State<_DesktopEpisodeCard> createState() => _DesktopEpisodeCardState();
+}
+
+class _DesktopEpisodeCardState extends State<_DesktopEpisodeCard> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const lime = Color(0xFFB9FF45);
+    final active = _hovered || _focused;
+    final episode = widget.episode;
+    final cleanOverview = episode.overview?.replaceFirst(
+      RegExp(r'^★\s*\d+(?:\.\d+)?\s*'),
+      '',
+    );
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedScale(
+        scale: active ? 1.025 : 1,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOutCubic,
+        child: SizedBox(
+          width: 322,
+          child: Material(
+            color: const Color(0xFF0C100E),
+            borderRadius: BorderRadius.circular(16),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(16),
+              focusColor: Colors.transparent,
+              hoverColor: Colors.transparent,
+              onFocusChange: (value) => setState(() => _focused = value),
+              onTap: widget.onTap,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: active
+                        ? lime.withValues(alpha: .72)
+                        : Colors.white.withValues(alpha: .10),
+                    width: active ? 1.6 : 1,
+                  ),
+                  boxShadow: active
+                      ? [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: .38),
+                            blurRadius: 20,
+                            offset: const Offset(0, 8),
+                          ),
+                        ]
+                      : const [],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (episode.thumbnail?.trim().isNotEmpty == true)
+                      CachedNetworkImage(
+                        imageUrl: episode.thumbnail!,
+                        fit: BoxFit.cover,
+                        memCacheWidth: 720,
+                        fadeInDuration: Duration.zero,
+                        placeholder: (_, __) =>
+                            const ColoredBox(color: Color(0xFF151916)),
+                        errorWidget: (_, __, ___) =>
+                            const ColoredBox(color: Color(0xFF151916)),
+                      )
+                    else
+                      const ColoredBox(color: Color(0xFF151916)),
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Color(0x08000000),
+                            Color(0x24000000),
+                            Color(0xA6000000),
+                            Color(0xF6090B0A),
+                          ],
+                          stops: [0, .35, .68, 1],
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 11,
+                      left: 12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xB3090B0A),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: .12),
+                          ),
+                        ),
+                        child: Text(
+                          episode.label,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      right: 11,
+                      top: 11,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 120),
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: active
+                              ? lime
+                              : const Color(0xB3090B0A),
+                          border: Border.all(
+                            color: active
+                                ? lime
+                                : Colors.white.withValues(alpha: .14),
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.play_arrow_rounded,
+                          color: active ? Colors.black : Colors.white,
+                          size: 23,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 14,
+                      right: 14,
+                      bottom: 12,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            episode.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 15.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          if (cleanOverview?.trim().isNotEmpty == true) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              cleanOverview!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFFC4CBC6),
+                                fontSize: 11.2,
+                              ),
+                            ),
+                          ],
+                          if (episode.rating != null) ...[
+                            const SizedBox(height: 5),
+                            Text(
+                              '★ ${episode.rating!.toStringAsFixed(1)}',
+                              style: const TextStyle(
+                                color: Color(0xFFD8DED9),
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MetaPill extends StatelessWidget {
+  const _MetaPill(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: .42),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withValues(alpha: .14)),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+      ),
+    );
+  }
+}
+).hasMatch(originalUri.pathSegments.first) &&
+        int.tryParse(originalUri.pathSegments[1]) != null;
 
     LocalMediaBridgeHandle? bridgeHandle;
     var playbackUrl = url;
 
-    // With AI Sinhala enabled on Windows, cloud/debrid media is now owned by
-    // the standalone Orvix media engine from preparation through playback.
-    // Do not build a second proxy chain through the P2P stream-server first.
-    if (useLocalMediaBridge && !windowsCloudAiEngine) {
+    // When Windows AI Sinhala is enabled the standalone media engine owns the
+    // exact source regardless of whether it came from:
+    //   * a direct HTTP addon result,
+    //   * local free-P2P on :11470,
+    //   * TorBox/PikPak/debrid.
+    // The legacy cloud bridge remains only for normal (AI-off) playback.
+    if (useLocalMediaBridge && !windowsAiEngine) {
       var nativeEngineReady = false;
 
       if (Platform.isWindows) {
@@ -3366,7 +4523,2209 @@ class _DetailsScreenState extends State<DetailsScreen> {
     // URL, generated the complete Sinhala SRT and returned its own local media
     // session. This prevents audio/video from starting underneath a loading
     // screen and removes the old player-driven play/pause/seek fallback.
-    if (windowsCloudAiEngine) {
+    if (windowsAiEngine) {
+      aiPreflightAttempted = true;
+      if (mounted) {
+        setState(() {
+          _resolving = true;
+          _resolveProgress = null;
+          _status =
+              'AI Sinhala • starting the Orvix media engine before playback…';
+        });
+      }
+
+      try {
+        final preparation = await OrvixMediaEngineService.instance.prepare(
+          url,
+          onStatus: (message) {
+            if (!mounted) return;
+            setState(() => _status = 'AI Sinhala • $message');
+          },
+        );
+
+        final enginePlaybackUrl = preparation.playbackUrl;
+        if (enginePlaybackUrl == null || enginePlaybackUrl.isEmpty) {
+          throw const AiSubtitleException(
+            'The Orvix media engine did not create a local playback session.',
+          );
+        }
+
+        if (preparation.hasEmbeddedText) {
+          final identity =
+              'orvix-media-engine://${preparation.movieHash ?? 'unknown'}/${preparation.embeddedStreamIndex ?? -1}';
+          preparedAiSubtitleFile = await AiSinhalaSubtitleService
+              .prepareGeneratedSinhalaFromEngineEmbedded(
+            title: title,
+            embeddedSrt: preparation.embeddedSrt!,
+            embeddedIdentity: identity,
+            embeddedLabel:
+                preparation.embeddedLabel ?? 'English embedded',
+            onStatus: (message) {
+              if (!mounted) return;
+              setState(() => _status = 'AI Sinhala • $message');
+            },
+          );
+        } else if (preparation.hasExactFingerprint) {
+          preparedAiSubtitleFile = await AiSinhalaSubtitleService
+              .prepareGeneratedSinhalaFromExactFingerprint(
+            title: title,
+            movieHash: preparation.movieHash!,
+            movieByteSize: preparation.movieByteSize!,
+            onStatus: (message) {
+              if (!mounted) return;
+              setState(() => _status = 'AI Sinhala • $message');
+            },
+          );
+        } else {
+          final detail = [
+            preparation.probeError,
+            preparation.hashError,
+          ]
+              .whereType<String>()
+              .where((value) => value.trim().isNotEmpty)
+              .join(' • ');
+          throw AiSubtitleException(
+            detail.isEmpty
+                ? 'No readable embedded English text subtitle was found and an exact-file OpenSubtitles fingerprint could not be created.'
+                : detail,
+          );
+        }
+
+        playbackUrl = enginePlaybackUrl;
+
+        if (mounted) {
+          setState(() {
+            _status =
+                'AI Sinhala • complete subtitle ready. Opening player…';
+          });
+        }
+      } catch (error) {
+        if (mounted) {
+          setState(() {
+            _resolving = false;
+            _resolveProgress = null;
+            _status = '';
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'AI Sinhala preparation failed before playback: ${error.toString()}',
+              ),
+              duration: const Duration(seconds: 9),
+            ),
+          );
+        }
+        // Do not silently open normal playback when the user explicitly has
+        // AI Sinhala enabled. This is the bug that allowed audio to start
+        // behind the loading surface in beta.18.
+        return;
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _resolving = false;
+        _resolveProgress = null;
+        _status = '';
+      });
+    }
+
+    try {
+      final preference = await PlayerEnginePreferencesService.get();
+      final aiEnabled =
+          Platform.isAndroid && aiSettingEnabled;
+      final engine = PlayerEngineRouter.choose(
+        preference: preference,
+        isAndroid: Platform.isAndroid,
+        isAndroidTv: PlatformProfile.isAndroidTv,
+        url: playbackUrl,
+        releaseHint: releaseHint,
+        aiSinhalaEnabled: aiEnabled,
+      );
+
+      final tvFreeP2pAuto = PlatformProfile.isAndroidTv &&
+          source?.isMagnet == true &&
+          preference == PlayerEnginePreference.auto;
+
+      if (engine == PlayerEngineKind.exoPlayer && Platform.isAndroid) {
+        final result = await _openExoPlayer(
+          playbackUrl,
+          title,
+          item,
+          episode,
+          source: source,
+          autoFallbackToMpv: preference == PlayerEnginePreference.auto,
+        );
+        if (!mounted) return;
+
+        final shouldFallback = result?.switchToMpv == true ||
+            (preference == PlayerEnginePreference.auto &&
+                result?.failed == true);
+        if (!shouldFallback) return;
+
+        if (result?.failed == true) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('ExoPlayer failed — trying MPV…'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 180));
+      }
+
+      await _openMpvPlayer(
+        playbackUrl,
+        title,
+        item,
+        episode,
+        next,
+        source: source,
+        releaseHint: releaseHint,
+        expectedSizeBytes: expectedSizeBytes,
+        expectedVideoHash: expectedVideoHash,
+        preparedAiSubtitleFile: preparedAiSubtitleFile,
+        aiPreflightAttempted: aiPreflightAttempted,
+        aiPreflightFailure: null,
+        fallbackToExo: tvFreeP2pAuto,
+      );
+    } finally {
+      if (bridgeHandle != null) {
+        await LocalMediaBridgeService.instance.release(
+          bridgeHandle.sessionId,
+        );
+      }
+    }
+  }
+
+  Future<AndroidExoPlayerResult?> _openExoPlayer(
+    String url,
+    String title,
+    MediaItem item,
+    EpisodeItem? episode, {
+    SourceResult? source,
+    bool autoFallbackToMpv = false,
+  }) async {
+    if (!mounted || !Platform.isAndroid) return null;
+    final result = await Navigator.of(context).push<AndroidExoPlayerResult>(
+      MaterialPageRoute(
+        builder: (_) => AndroidExoPlayerScreen(
+          url: url,
+          title: title,
+          mediaState: widget.mediaState,
+          item: item,
+          episode: episode,
+          autoFallbackToMpv: autoFallbackToMpv,
+        ),
+      ),
+    );
+    if (!mounted) return result;
+
+    if (source != null && result?.started == true) {
+      unawaited(widget.sources.recordPlaybackOutcome(source, success: true));
+    } else if (source != null && result?.failed == true) {
+      unawaited(
+        widget.sources.recordPlaybackOutcome(
+          source,
+          success: false,
+          reason: result?.error,
+        ),
+      );
+    }
+    return result;
+  }
+
+  Future<void> _recordSourceStartupFailure(
+    SourceResult source,
+    String url,
+    String message,
+  ) async {
+    var reason = message.trim();
+    if (source.isMagnet) {
+      final health = await LocalTorrentService.instance.healthForStreamUrl(url);
+      if (health != null) {
+        reason = '$reason • ${health.summary}';
+      }
+    }
+    await widget.sources.recordPlaybackOutcome(
+      source,
+      success: false,
+      reason: reason,
+    );
+  }
+
+  Future<void> _openMpvPlayer(
+    String url,
+    String title,
+    MediaItem item,
+    EpisodeItem? episode,
+    EpisodeItem? next, {
+    SourceResult? source,
+    String? releaseHint,
+    int? expectedSizeBytes,
+    String? expectedVideoHash,
+    AiGeneratedSubtitleFile? preparedAiSubtitleFile,
+    bool aiPreflightAttempted = false,
+    String? aiPreflightFailure,
+    bool fallbackToExo = false,
+  }) async {
+    if (!mounted) return;
+    final uri = Uri.tryParse(url);
+    final localP2p = uri != null &&
+        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
+        uri.port == 11470 &&
+        uri.pathSegments.length >= 2 &&
+        RegExp(r'^[0-9a-fA-F]{40}$').hasMatch(uri.pathSegments.first) &&
+        int.tryParse(uri.pathSegments[1]) != null;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PlayerScreen(
+          playback: widget.playback,
+          url: url,
+          title: title,
+          mediaState: widget.mediaState,
+          item: item,
+          episode: episode,
+          aiSubtitle: null,
+          preparedAiSubtitleFile: preparedAiSubtitleFile,
+          aiPreflightAttempted: aiPreflightAttempted,
+          aiPreflightFailure: aiPreflightFailure,
+          allowAiSinhala: true,
+          releaseHint: releaseHint,
+          expectedSizeBytes: expectedSizeBytes,
+          expectedVideoHash: expectedVideoHash,
+          nextEpisodeLabel: next == null ? null : '${next.label} ${next.title}',
+          onPlaybackStarted: source == null
+              ? null
+              : () {
+                  unawaited(
+                    widget.sources.recordPlaybackOutcome(
+                      source,
+                      success: true,
+                    ),
+                  );
+                },
+          onStartupFailed: source == null
+              ? null
+              : (message) {
+                  unawaited(
+                    _recordSourceStartupFailure(source, url, message),
+                  );
+                },
+          onStartupFallback: !fallbackToExo
+              ? null
+              : (message) async {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('MPV could not start — trying ExoPlayer…'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                  await _openExoPlayer(
+                    url,
+                    title,
+                    item,
+                    episode,
+                    source: source,
+                    autoFallbackToMpv: false,
+                  );
+                },
+          onNext: next == null
+              ? null
+              : () async {
+                  if (!mounted) return;
+                  await _play(item, episode: next);
+                },
+        ),
+      ),
+    );
+
+    // Only detach after the MPV route and native video surface are fully gone.
+    // Android TV may still need the same P2P URL for its Exo fallback, so that
+    // handoff path deliberately keeps the torrent attached.
+    if (localP2p && !fallbackToExo) {
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      await LocalTorrentService.instance.releaseCurrentStream();
+    }
+  }
+
+  EpisodeItem? _nextEpisode(MediaItem item, EpisodeItem? current) {
+    if (current == null || item.episodes.isEmpty) return null;
+    final episodes = [...item.episodes]..sort((a, b) {
+        final season = a.season.compareTo(b.season);
+        return season != 0 ? season : a.episode.compareTo(b.episode);
+      });
+    final index = episodes.indexWhere(
+      (episode) =>
+          episode.id == current.id ||
+          (episode.season == current.season &&
+              episode.episode == current.episode),
+    );
+    if (index < 0 || index + 1 >= episodes.length) return null;
+    return episodes[index + 1];
+  }
+
+  String? _extractYear(String value) {
+    return RegExp(r'\b(?:19|20)\d{2}\b').firstMatch(value)?.group(0);
+  }
+
+  String _normalize(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+
+  void _showPlayError(Object error) {
+    if (!mounted) return;
+    setState(() {
+      _resolving = false;
+      _resolveProgress = null;
+    });
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('Could not play: $error')));
+  }
+}
+
+class _CastRail extends StatelessWidget {
+  const _CastRail({
+    required this.members,
+    required this.tv,
+  });
+
+  final List<CastMember> members;
+  final bool tv;
+
+  @override
+  Widget build(BuildContext context) {
+    if (members.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Cast',
+          style: TextStyle(
+            fontSize: tv ? 19 : 17,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: tv ? 164 : 150,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: members.length,
+            separatorBuilder: (_, __) => SizedBox(width: tv ? 16 : 12),
+            itemBuilder: (context, index) {
+              final member = members[index];
+              return SizedBox(
+                width: tv ? 92 : 82,
+                child: Column(
+                  children: [
+                    ClipOval(
+                      child: SizedBox(
+                        width: tv ? 82 : 72,
+                        height: tv ? 82 : 72,
+                        child: member.photo?.trim().isNotEmpty == true
+                            ? CachedNetworkImage(
+                                imageUrl: member.photo!,
+                                fit: BoxFit.cover,
+                                memCacheWidth: 220,
+                                fadeInDuration: Duration.zero,
+                                placeholder: (_, __) => const ColoredBox(
+                                  color: Color(0xFF171C18),
+                                ),
+                                errorWidget: (_, __, ___) => const ColoredBox(
+                                  color: Color(0xFF171C18),
+                                  child: Icon(Icons.person_outline_rounded),
+                                ),
+                              )
+                            : const ColoredBox(
+                                color: Color(0xFF171C18),
+                                child: Icon(Icons.person_outline_rounded),
+                              ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      member.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: tv ? 12.5 : 11.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (member.character?.trim().isNotEmpty == true) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        member.character!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xFF8E9990),
+                          fontSize: 10,
+                          height: 1.15,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TvSeasonTile extends StatefulWidget {
+  const _TvSeasonTile({
+    required this.season,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final int season;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  State<_TvSeasonTile> createState() => _TvSeasonTileState();
+}
+
+class _TvSeasonTileState extends State<_TvSeasonTile> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const lime = Color(0xFFB9FF45);
+    final label = widget.season == 0 ? 'Specials' : 'Season ${widget.season}';
+
+    return AnimatedScale(
+      scale: _focused ? 1.04 : 1,
+      duration: const Duration(milliseconds: 110),
+      curve: Curves.easeOutCubic,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          focusColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          onFocusChange: (value) => setState(() => _focused = value),
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOutCubic,
+            height: 48,
+            constraints: const BoxConstraints(minWidth: 118),
+            padding: const EdgeInsets.symmetric(horizontal: 19),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: widget.selected
+                  ? lime
+                  : _focused
+                      ? const Color(0xFF1B211A)
+                      : const Color(0xFF101411),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: widget.selected
+                    ? lime
+                    : _focused
+                        ? lime.withValues(alpha: .92)
+                        : Colors.white.withValues(alpha: .10),
+                width: widget.selected || _focused ? 2 : 1,
+              ),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: widget.selected ? Colors.black : Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -.1,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MobileSeasonTile extends StatefulWidget {
+  const _MobileSeasonTile({
+    required this.season,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final int season;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  State<_MobileSeasonTile> createState() => _MobileSeasonTileState();
+}
+
+class _MobileSeasonTileState extends State<_MobileSeasonTile> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const lime = Color(0xFFB9FF45);
+    final active = widget.selected;
+    final highlighted = _hovered || _focused;
+    final label = widget.season == 0 ? 'Specials' : 'Season ${widget.season}';
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedScale(
+        scale: highlighted ? 1.025 : 1,
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOutCubic,
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            focusColor: Colors.transparent,
+            hoverColor: Colors.transparent,
+            splashColor: Colors.transparent,
+            onFocusChange: (value) => setState(() => _focused = value),
+            onTap: widget.onTap,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              height: 46,
+              constraints: const BoxConstraints(minWidth: 112),
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: active
+                    ? lime
+                    : highlighted
+                        ? const Color(0xFF1B211A)
+                        : const Color(0xFF101411),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: active
+                      ? lime
+                      : highlighted
+                          ? lime.withValues(alpha: .72)
+                          : Colors.white.withValues(alpha: .10),
+                  width: active || highlighted ? 1.6 : 1,
+                ),
+              ),
+              child: Text(
+                label,
+                maxLines: 1,
+                style: TextStyle(
+                  color: active ? Colors.black : Colors.white,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -.1,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TvMetaText extends StatelessWidget {
+  const _TvMetaText(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: const TextStyle(
+        color: Color(0xFFB6C0B8),
+        fontSize: 12.5,
+        fontWeight: FontWeight.w800,
+      ),
+    );
+  }
+}
+
+class _TvEpisodeCard extends StatefulWidget {
+  const _TvEpisodeCard({
+    required this.episode,
+    required this.onPlay,
+  });
+
+  final EpisodeItem episode;
+  final VoidCallback? onPlay;
+
+  @override
+  State<_TvEpisodeCard> createState() => _TvEpisodeCardState();
+}
+
+class _TvEpisodeCardState extends State<_TvEpisodeCard> {
+  bool _focused = false;
+
+  String? _dateLabel(EpisodeItem episode) {
+    final date = episode.releaseDate;
+    if (date == null) return null;
+    const months = <String>[
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${months[date.month - 1]} ${date.day}, ${date.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final episode = widget.episode;
+    final primary = Theme.of(context).colorScheme.primary;
+    final overview = episode.overview?.replaceFirst(
+      RegExp(r'^★\s*\d+(?:\.\d+)?\s*'),
+      '',
+    );
+    final date = _dateLabel(episode);
+
+    return AnimatedScale(
+      scale: _focused ? 1.035 : 1,
+      duration: const Duration(milliseconds: 115),
+      curve: Curves.easeOutCubic,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 115),
+        curve: Curves.easeOutCubic,
+        width: 292,
+        height: 174,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: _focused
+                ? primary.withValues(alpha: .95)
+                : Colors.white.withValues(alpha: .11),
+            width: _focused ? 2.2 : 1,
+          ),
+          boxShadow: _focused
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: .46),
+                    blurRadius: 22,
+                    offset: const Offset(0, 8),
+                  ),
+                ]
+              : const [],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(15),
+          child: Material(
+            color: const Color(0xFF0D0F12),
+            child: InkWell(
+              focusColor: Colors.transparent,
+              splashColor: Colors.transparent,
+              onFocusChange: (value) => setState(() => _focused = value),
+              onTap: widget.onPlay,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (episode.thumbnail?.trim().isNotEmpty == true)
+                    CachedNetworkImage(
+                      imageUrl: episode.thumbnail!,
+                      fit: BoxFit.cover,
+                      memCacheWidth: 620,
+                      fadeInDuration: Duration.zero,
+                      placeholder: (_, __) =>
+                          const ColoredBox(color: Color(0xFF15171B)),
+                      errorWidget: (_, __, ___) =>
+                          const ColoredBox(color: Color(0xFF15171B)),
+                    )
+                  else
+                    const ColoredBox(color: Color(0xFF15171B)),
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0x08000000),
+                          Color(0x26000000),
+                          Color(0xA8000000),
+                          Color(0xF207090B),
+                        ],
+                        stops: [0, .36, .68, 1],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 13,
+                    right: 13,
+                    bottom: 10,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: .64),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: .10),
+                            ),
+                          ),
+                          child: Text(
+                            'EPISODE ${episode.episode}',
+                            style: const TextStyle(
+                              fontSize: 9.8,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: .35,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          episode.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14.7,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -.15,
+                          ),
+                        ),
+                        if (overview != null && overview.trim().isNotEmpty) ...[
+                          const SizedBox(height: 3),
+                          Text(
+                            overview,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFFD0D5D1),
+                              fontSize: 11.1,
+                              height: 1.3,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                        if (episode.rating != null || date != null) ...[
+                          const SizedBox(height: 5),
+                          Row(
+                            children: [
+                              if (episode.rating != null) ...[
+                                const Icon(
+                                  Icons.star_rounded,
+                                  color: Color(0xFFFFD65A),
+                                  size: 13,
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  episode.rating!.toStringAsFixed(1),
+                                  style: const TextStyle(
+                                    color: Color(0xFFE9ECEA),
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
+                              if (episode.rating != null && date != null)
+                                const SizedBox(width: 9),
+                              if (date != null)
+                                Flexible(
+                                  child: Text(
+                                    date,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Color(0xFFAEB5B0),
+                                      fontSize: 10.2,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  Positioned(
+                    top: 9,
+                    right: 9,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 110),
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _focused
+                            ? primary.withValues(alpha: .92)
+                            : Colors.black.withValues(alpha: .55),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: .18),
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.play_arrow_rounded,
+                        color: Colors.white,
+                        size: 21,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopEpisodeCard extends StatefulWidget {
+  const _DesktopEpisodeCard({
+    required this.episode,
+    required this.onTap,
+  });
+
+  final EpisodeItem episode;
+  final VoidCallback? onTap;
+
+  @override
+  State<_DesktopEpisodeCard> createState() => _DesktopEpisodeCardState();
+}
+
+class _DesktopEpisodeCardState extends State<_DesktopEpisodeCard> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const lime = Color(0xFFB9FF45);
+    final active = _hovered || _focused;
+    final episode = widget.episode;
+    final cleanOverview = episode.overview?.replaceFirst(
+      RegExp(r'^★\s*\d+(?:\.\d+)?\s*'),
+      '',
+    );
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedScale(
+        scale: active ? 1.025 : 1,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOutCubic,
+        child: SizedBox(
+          width: 322,
+          child: Material(
+            color: const Color(0xFF0C100E),
+            borderRadius: BorderRadius.circular(16),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(16),
+              focusColor: Colors.transparent,
+              hoverColor: Colors.transparent,
+              onFocusChange: (value) => setState(() => _focused = value),
+              onTap: widget.onTap,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: active
+                        ? lime.withValues(alpha: .72)
+                        : Colors.white.withValues(alpha: .10),
+                    width: active ? 1.6 : 1,
+                  ),
+                  boxShadow: active
+                      ? [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: .38),
+                            blurRadius: 20,
+                            offset: const Offset(0, 8),
+                          ),
+                        ]
+                      : const [],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (episode.thumbnail?.trim().isNotEmpty == true)
+                      CachedNetworkImage(
+                        imageUrl: episode.thumbnail!,
+                        fit: BoxFit.cover,
+                        memCacheWidth: 720,
+                        fadeInDuration: Duration.zero,
+                        placeholder: (_, __) =>
+                            const ColoredBox(color: Color(0xFF151916)),
+                        errorWidget: (_, __, ___) =>
+                            const ColoredBox(color: Color(0xFF151916)),
+                      )
+                    else
+                      const ColoredBox(color: Color(0xFF151916)),
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Color(0x08000000),
+                            Color(0x24000000),
+                            Color(0xA6000000),
+                            Color(0xF6090B0A),
+                          ],
+                          stops: [0, .35, .68, 1],
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 11,
+                      left: 12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xB3090B0A),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: .12),
+                          ),
+                        ),
+                        child: Text(
+                          episode.label,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      right: 11,
+                      top: 11,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 120),
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: active
+                              ? lime
+                              : const Color(0xB3090B0A),
+                          border: Border.all(
+                            color: active
+                                ? lime
+                                : Colors.white.withValues(alpha: .14),
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.play_arrow_rounded,
+                          color: active ? Colors.black : Colors.white,
+                          size: 23,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 14,
+                      right: 14,
+                      bottom: 12,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            episode.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 15.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          if (cleanOverview?.trim().isNotEmpty == true) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              cleanOverview!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFFC4CBC6),
+                                fontSize: 11.2,
+                              ),
+                            ),
+                          ],
+                          if (episode.rating != null) ...[
+                            const SizedBox(height: 5),
+                            Text(
+                              '★ ${episode.rating!.toStringAsFixed(1)}',
+                              style: const TextStyle(
+                                color: Color(0xFFD8DED9),
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MetaPill extends StatelessWidget {
+  const _MetaPill(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: .42),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withValues(alpha: .14)),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+      ),
+    );
+  }
+}
+).hasMatch(expectedVideoHash) &&
+            expectedSizeBytes != null &&
+            expectedSizeBytes > 0) {
+          // Torrent/Stremio addons can provide the canonical OpenSubtitles
+          // videoHash plus the exact playable file size. This is especially
+          // useful for local P2P when the stream server cannot yet serve the
+          // final 64 KiB needed to calculate the hash ourselves.
+          if (mounted) {
+            setState(() {
+              _status =
+                  'AI Sinhala • embedded text was unavailable; using the source exact-file fingerprint…';
+            });
+          }
+          preparedAiSubtitleFile = await AiSinhalaSubtitleService
+              .prepareGeneratedSinhalaFromExactFingerprint(
+            title: title,
+            movieHash: expectedVideoHash.toLowerCase(),
+            movieByteSize: expectedSizeBytes,
+            onStatus: (message) {
+              if (!mounted) return;
+              setState(() => _status = 'AI Sinhala • $message');
+            },
+          );
+        } else {
+          final detail = [
+            preparation.probeError,
+            preparation.hashError,
+          ]
+              .whereType<String>()
+              .where((value) => value.trim().isNotEmpty)
+              .join(' • ');
+          throw AiSubtitleException(
+            detail.isEmpty
+                ? 'No readable embedded English text subtitle was found and an exact-file OpenSubtitles fingerprint could not be created.'
+                : detail,
+          );
+        }
+
+        playbackUrl = enginePlaybackUrl;
+
+        if (mounted) {
+          setState(() {
+            _status =
+                'AI Sinhala • complete subtitle ready. Opening player…';
+          });
+        }
+      } catch (error) {
+        if (mounted) {
+          setState(() {
+            _resolving = false;
+            _resolveProgress = null;
+            _status = '';
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'AI Sinhala preparation failed before playback: ${error.toString()}',
+              ),
+              duration: const Duration(seconds: 9),
+            ),
+          );
+        }
+        // Do not silently open normal playback when the user explicitly has
+        // AI Sinhala enabled. This is the bug that allowed audio to start
+        // behind the loading surface in beta.18.
+        return;
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _resolving = false;
+        _resolveProgress = null;
+        _status = '';
+      });
+    }
+
+    try {
+      final preference = await PlayerEnginePreferencesService.get();
+      final aiEnabled =
+          Platform.isAndroid && aiSettingEnabled;
+      final engine = PlayerEngineRouter.choose(
+        preference: preference,
+        isAndroid: Platform.isAndroid,
+        isAndroidTv: PlatformProfile.isAndroidTv,
+        url: playbackUrl,
+        releaseHint: releaseHint,
+        aiSinhalaEnabled: aiEnabled,
+      );
+
+      final tvFreeP2pAuto = PlatformProfile.isAndroidTv &&
+          source?.isMagnet == true &&
+          preference == PlayerEnginePreference.auto;
+
+      if (engine == PlayerEngineKind.exoPlayer && Platform.isAndroid) {
+        final result = await _openExoPlayer(
+          playbackUrl,
+          title,
+          item,
+          episode,
+          source: source,
+          autoFallbackToMpv: preference == PlayerEnginePreference.auto,
+        );
+        if (!mounted) return;
+
+        final shouldFallback = result?.switchToMpv == true ||
+            (preference == PlayerEnginePreference.auto &&
+                result?.failed == true);
+        if (!shouldFallback) return;
+
+        if (result?.failed == true) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('ExoPlayer failed — trying MPV…'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 180));
+      }
+
+      await _openMpvPlayer(
+        playbackUrl,
+        title,
+        item,
+        episode,
+        next,
+        source: source,
+        releaseHint: releaseHint,
+        expectedSizeBytes: expectedSizeBytes,
+        expectedVideoHash: expectedVideoHash,
+        preparedAiSubtitleFile: preparedAiSubtitleFile,
+        aiPreflightAttempted: aiPreflightAttempted,
+        aiPreflightFailure: null,
+        fallbackToExo: tvFreeP2pAuto,
+      );
+    } finally {
+      if (bridgeHandle != null) {
+        await LocalMediaBridgeService.instance.release(
+          bridgeHandle.sessionId,
+        );
+      }
+    }
+  }
+
+  Future<AndroidExoPlayerResult?> _openExoPlayer(
+    String url,
+    String title,
+    MediaItem item,
+    EpisodeItem? episode, {
+    SourceResult? source,
+    bool autoFallbackToMpv = false,
+  }) async {
+    if (!mounted || !Platform.isAndroid) return null;
+    final result = await Navigator.of(context).push<AndroidExoPlayerResult>(
+      MaterialPageRoute(
+        builder: (_) => AndroidExoPlayerScreen(
+          url: url,
+          title: title,
+          mediaState: widget.mediaState,
+          item: item,
+          episode: episode,
+          autoFallbackToMpv: autoFallbackToMpv,
+        ),
+      ),
+    );
+    if (!mounted) return result;
+
+    if (source != null && result?.started == true) {
+      unawaited(widget.sources.recordPlaybackOutcome(source, success: true));
+    } else if (source != null && result?.failed == true) {
+      unawaited(
+        widget.sources.recordPlaybackOutcome(
+          source,
+          success: false,
+          reason: result?.error,
+        ),
+      );
+    }
+    return result;
+  }
+
+  Future<void> _recordSourceStartupFailure(
+    SourceResult source,
+    String url,
+    String message,
+  ) async {
+    var reason = message.trim();
+    if (source.isMagnet) {
+      final health = await LocalTorrentService.instance.healthForStreamUrl(url);
+      if (health != null) {
+        reason = '$reason • ${health.summary}';
+      }
+    }
+    await widget.sources.recordPlaybackOutcome(
+      source,
+      success: false,
+      reason: reason,
+    );
+  }
+
+  Future<void> _openMpvPlayer(
+    String url,
+    String title,
+    MediaItem item,
+    EpisodeItem? episode,
+    EpisodeItem? next, {
+    SourceResult? source,
+    String? releaseHint,
+    int? expectedSizeBytes,
+    String? expectedVideoHash,
+    AiGeneratedSubtitleFile? preparedAiSubtitleFile,
+    bool aiPreflightAttempted = false,
+    String? aiPreflightFailure,
+    bool fallbackToExo = false,
+  }) async {
+    if (!mounted) return;
+    final uri = Uri.tryParse(url);
+    final localP2p = uri != null &&
+        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
+        uri.port == 11470 &&
+        uri.pathSegments.length >= 2 &&
+        RegExp(r'^[0-9a-fA-F]{40}$').hasMatch(uri.pathSegments.first) &&
+        int.tryParse(uri.pathSegments[1]) != null;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PlayerScreen(
+          playback: widget.playback,
+          url: url,
+          title: title,
+          mediaState: widget.mediaState,
+          item: item,
+          episode: episode,
+          aiSubtitle: null,
+          preparedAiSubtitleFile: preparedAiSubtitleFile,
+          aiPreflightAttempted: aiPreflightAttempted,
+          aiPreflightFailure: aiPreflightFailure,
+          allowAiSinhala: true,
+          releaseHint: releaseHint,
+          expectedSizeBytes: expectedSizeBytes,
+          expectedVideoHash: expectedVideoHash,
+          nextEpisodeLabel: next == null ? null : '${next.label} ${next.title}',
+          onPlaybackStarted: source == null
+              ? null
+              : () {
+                  unawaited(
+                    widget.sources.recordPlaybackOutcome(
+                      source,
+                      success: true,
+                    ),
+                  );
+                },
+          onStartupFailed: source == null
+              ? null
+              : (message) {
+                  unawaited(
+                    _recordSourceStartupFailure(source, url, message),
+                  );
+                },
+          onStartupFallback: !fallbackToExo
+              ? null
+              : (message) async {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('MPV could not start — trying ExoPlayer…'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                  await _openExoPlayer(
+                    url,
+                    title,
+                    item,
+                    episode,
+                    source: source,
+                    autoFallbackToMpv: false,
+                  );
+                },
+          onNext: next == null
+              ? null
+              : () async {
+                  if (!mounted) return;
+                  await _play(item, episode: next);
+                },
+        ),
+      ),
+    );
+
+    // Only detach after the MPV route and native video surface are fully gone.
+    // Android TV may still need the same P2P URL for its Exo fallback, so that
+    // handoff path deliberately keeps the torrent attached.
+    if (localP2p && !fallbackToExo) {
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      await LocalTorrentService.instance.releaseCurrentStream();
+    }
+  }
+
+  EpisodeItem? _nextEpisode(MediaItem item, EpisodeItem? current) {
+    if (current == null || item.episodes.isEmpty) return null;
+    final episodes = [...item.episodes]..sort((a, b) {
+        final season = a.season.compareTo(b.season);
+        return season != 0 ? season : a.episode.compareTo(b.episode);
+      });
+    final index = episodes.indexWhere(
+      (episode) =>
+          episode.id == current.id ||
+          (episode.season == current.season &&
+              episode.episode == current.episode),
+    );
+    if (index < 0 || index + 1 >= episodes.length) return null;
+    return episodes[index + 1];
+  }
+
+  String? _extractYear(String value) {
+    return RegExp(r'\b(?:19|20)\d{2}\b').firstMatch(value)?.group(0);
+  }
+
+  String _normalize(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+
+  void _showPlayError(Object error) {
+    if (!mounted) return;
+    setState(() {
+      _resolving = false;
+      _resolveProgress = null;
+    });
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('Could not play: $error')));
+  }
+}
+
+class _CastRail extends StatelessWidget {
+  const _CastRail({
+    required this.members,
+    required this.tv,
+  });
+
+  final List<CastMember> members;
+  final bool tv;
+
+  @override
+  Widget build(BuildContext context) {
+    if (members.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Cast',
+          style: TextStyle(
+            fontSize: tv ? 19 : 17,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: tv ? 164 : 150,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: members.length,
+            separatorBuilder: (_, __) => SizedBox(width: tv ? 16 : 12),
+            itemBuilder: (context, index) {
+              final member = members[index];
+              return SizedBox(
+                width: tv ? 92 : 82,
+                child: Column(
+                  children: [
+                    ClipOval(
+                      child: SizedBox(
+                        width: tv ? 82 : 72,
+                        height: tv ? 82 : 72,
+                        child: member.photo?.trim().isNotEmpty == true
+                            ? CachedNetworkImage(
+                                imageUrl: member.photo!,
+                                fit: BoxFit.cover,
+                                memCacheWidth: 220,
+                                fadeInDuration: Duration.zero,
+                                placeholder: (_, __) => const ColoredBox(
+                                  color: Color(0xFF171C18),
+                                ),
+                                errorWidget: (_, __, ___) => const ColoredBox(
+                                  color: Color(0xFF171C18),
+                                  child: Icon(Icons.person_outline_rounded),
+                                ),
+                              )
+                            : const ColoredBox(
+                                color: Color(0xFF171C18),
+                                child: Icon(Icons.person_outline_rounded),
+                              ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      member.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: tv ? 12.5 : 11.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (member.character?.trim().isNotEmpty == true) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        member.character!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xFF8E9990),
+                          fontSize: 10,
+                          height: 1.15,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TvSeasonTile extends StatefulWidget {
+  const _TvSeasonTile({
+    required this.season,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final int season;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  State<_TvSeasonTile> createState() => _TvSeasonTileState();
+}
+
+class _TvSeasonTileState extends State<_TvSeasonTile> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const lime = Color(0xFFB9FF45);
+    final label = widget.season == 0 ? 'Specials' : 'Season ${widget.season}';
+
+    return AnimatedScale(
+      scale: _focused ? 1.04 : 1,
+      duration: const Duration(milliseconds: 110),
+      curve: Curves.easeOutCubic,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          focusColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          onFocusChange: (value) => setState(() => _focused = value),
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOutCubic,
+            height: 48,
+            constraints: const BoxConstraints(minWidth: 118),
+            padding: const EdgeInsets.symmetric(horizontal: 19),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: widget.selected
+                  ? lime
+                  : _focused
+                      ? const Color(0xFF1B211A)
+                      : const Color(0xFF101411),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: widget.selected
+                    ? lime
+                    : _focused
+                        ? lime.withValues(alpha: .92)
+                        : Colors.white.withValues(alpha: .10),
+                width: widget.selected || _focused ? 2 : 1,
+              ),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: widget.selected ? Colors.black : Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -.1,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MobileSeasonTile extends StatefulWidget {
+  const _MobileSeasonTile({
+    required this.season,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final int season;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  State<_MobileSeasonTile> createState() => _MobileSeasonTileState();
+}
+
+class _MobileSeasonTileState extends State<_MobileSeasonTile> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const lime = Color(0xFFB9FF45);
+    final active = widget.selected;
+    final highlighted = _hovered || _focused;
+    final label = widget.season == 0 ? 'Specials' : 'Season ${widget.season}';
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedScale(
+        scale: highlighted ? 1.025 : 1,
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOutCubic,
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            focusColor: Colors.transparent,
+            hoverColor: Colors.transparent,
+            splashColor: Colors.transparent,
+            onFocusChange: (value) => setState(() => _focused = value),
+            onTap: widget.onTap,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              height: 46,
+              constraints: const BoxConstraints(minWidth: 112),
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: active
+                    ? lime
+                    : highlighted
+                        ? const Color(0xFF1B211A)
+                        : const Color(0xFF101411),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: active
+                      ? lime
+                      : highlighted
+                          ? lime.withValues(alpha: .72)
+                          : Colors.white.withValues(alpha: .10),
+                  width: active || highlighted ? 1.6 : 1,
+                ),
+              ),
+              child: Text(
+                label,
+                maxLines: 1,
+                style: TextStyle(
+                  color: active ? Colors.black : Colors.white,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -.1,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TvMetaText extends StatelessWidget {
+  const _TvMetaText(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: const TextStyle(
+        color: Color(0xFFB6C0B8),
+        fontSize: 12.5,
+        fontWeight: FontWeight.w800,
+      ),
+    );
+  }
+}
+
+class _TvEpisodeCard extends StatefulWidget {
+  const _TvEpisodeCard({
+    required this.episode,
+    required this.onPlay,
+  });
+
+  final EpisodeItem episode;
+  final VoidCallback? onPlay;
+
+  @override
+  State<_TvEpisodeCard> createState() => _TvEpisodeCardState();
+}
+
+class _TvEpisodeCardState extends State<_TvEpisodeCard> {
+  bool _focused = false;
+
+  String? _dateLabel(EpisodeItem episode) {
+    final date = episode.releaseDate;
+    if (date == null) return null;
+    const months = <String>[
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${months[date.month - 1]} ${date.day}, ${date.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final episode = widget.episode;
+    final primary = Theme.of(context).colorScheme.primary;
+    final overview = episode.overview?.replaceFirst(
+      RegExp(r'^★\s*\d+(?:\.\d+)?\s*'),
+      '',
+    );
+    final date = _dateLabel(episode);
+
+    return AnimatedScale(
+      scale: _focused ? 1.035 : 1,
+      duration: const Duration(milliseconds: 115),
+      curve: Curves.easeOutCubic,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 115),
+        curve: Curves.easeOutCubic,
+        width: 292,
+        height: 174,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: _focused
+                ? primary.withValues(alpha: .95)
+                : Colors.white.withValues(alpha: .11),
+            width: _focused ? 2.2 : 1,
+          ),
+          boxShadow: _focused
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: .46),
+                    blurRadius: 22,
+                    offset: const Offset(0, 8),
+                  ),
+                ]
+              : const [],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(15),
+          child: Material(
+            color: const Color(0xFF0D0F12),
+            child: InkWell(
+              focusColor: Colors.transparent,
+              splashColor: Colors.transparent,
+              onFocusChange: (value) => setState(() => _focused = value),
+              onTap: widget.onPlay,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (episode.thumbnail?.trim().isNotEmpty == true)
+                    CachedNetworkImage(
+                      imageUrl: episode.thumbnail!,
+                      fit: BoxFit.cover,
+                      memCacheWidth: 620,
+                      fadeInDuration: Duration.zero,
+                      placeholder: (_, __) =>
+                          const ColoredBox(color: Color(0xFF15171B)),
+                      errorWidget: (_, __, ___) =>
+                          const ColoredBox(color: Color(0xFF15171B)),
+                    )
+                  else
+                    const ColoredBox(color: Color(0xFF15171B)),
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0x08000000),
+                          Color(0x26000000),
+                          Color(0xA8000000),
+                          Color(0xF207090B),
+                        ],
+                        stops: [0, .36, .68, 1],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 13,
+                    right: 13,
+                    bottom: 10,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: .64),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: .10),
+                            ),
+                          ),
+                          child: Text(
+                            'EPISODE ${episode.episode}',
+                            style: const TextStyle(
+                              fontSize: 9.8,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: .35,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          episode.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14.7,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -.15,
+                          ),
+                        ),
+                        if (overview != null && overview.trim().isNotEmpty) ...[
+                          const SizedBox(height: 3),
+                          Text(
+                            overview,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFFD0D5D1),
+                              fontSize: 11.1,
+                              height: 1.3,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                        if (episode.rating != null || date != null) ...[
+                          const SizedBox(height: 5),
+                          Row(
+                            children: [
+                              if (episode.rating != null) ...[
+                                const Icon(
+                                  Icons.star_rounded,
+                                  color: Color(0xFFFFD65A),
+                                  size: 13,
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  episode.rating!.toStringAsFixed(1),
+                                  style: const TextStyle(
+                                    color: Color(0xFFE9ECEA),
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
+                              if (episode.rating != null && date != null)
+                                const SizedBox(width: 9),
+                              if (date != null)
+                                Flexible(
+                                  child: Text(
+                                    date,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Color(0xFFAEB5B0),
+                                      fontSize: 10.2,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  Positioned(
+                    top: 9,
+                    right: 9,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 110),
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _focused
+                            ? primary.withValues(alpha: .92)
+                            : Colors.black.withValues(alpha: .55),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: .18),
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.play_arrow_rounded,
+                        color: Colors.white,
+                        size: 21,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopEpisodeCard extends StatefulWidget {
+  const _DesktopEpisodeCard({
+    required this.episode,
+    required this.onTap,
+  });
+
+  final EpisodeItem episode;
+  final VoidCallback? onTap;
+
+  @override
+  State<_DesktopEpisodeCard> createState() => _DesktopEpisodeCardState();
+}
+
+class _DesktopEpisodeCardState extends State<_DesktopEpisodeCard> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const lime = Color(0xFFB9FF45);
+    final active = _hovered || _focused;
+    final episode = widget.episode;
+    final cleanOverview = episode.overview?.replaceFirst(
+      RegExp(r'^★\s*\d+(?:\.\d+)?\s*'),
+      '',
+    );
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedScale(
+        scale: active ? 1.025 : 1,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOutCubic,
+        child: SizedBox(
+          width: 322,
+          child: Material(
+            color: const Color(0xFF0C100E),
+            borderRadius: BorderRadius.circular(16),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(16),
+              focusColor: Colors.transparent,
+              hoverColor: Colors.transparent,
+              onFocusChange: (value) => setState(() => _focused = value),
+              onTap: widget.onTap,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: active
+                        ? lime.withValues(alpha: .72)
+                        : Colors.white.withValues(alpha: .10),
+                    width: active ? 1.6 : 1,
+                  ),
+                  boxShadow: active
+                      ? [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: .38),
+                            blurRadius: 20,
+                            offset: const Offset(0, 8),
+                          ),
+                        ]
+                      : const [],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (episode.thumbnail?.trim().isNotEmpty == true)
+                      CachedNetworkImage(
+                        imageUrl: episode.thumbnail!,
+                        fit: BoxFit.cover,
+                        memCacheWidth: 720,
+                        fadeInDuration: Duration.zero,
+                        placeholder: (_, __) =>
+                            const ColoredBox(color: Color(0xFF151916)),
+                        errorWidget: (_, __, ___) =>
+                            const ColoredBox(color: Color(0xFF151916)),
+                      )
+                    else
+                      const ColoredBox(color: Color(0xFF151916)),
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Color(0x08000000),
+                            Color(0x24000000),
+                            Color(0xA6000000),
+                            Color(0xF6090B0A),
+                          ],
+                          stops: [0, .35, .68, 1],
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 11,
+                      left: 12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xB3090B0A),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: .12),
+                          ),
+                        ),
+                        child: Text(
+                          episode.label,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      right: 11,
+                      top: 11,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 120),
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: active
+                              ? lime
+                              : const Color(0xB3090B0A),
+                          border: Border.all(
+                            color: active
+                                ? lime
+                                : Colors.white.withValues(alpha: .14),
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.play_arrow_rounded,
+                          color: active ? Colors.black : Colors.white,
+                          size: 23,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 14,
+                      right: 14,
+                      bottom: 12,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            episode.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 15.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          if (cleanOverview?.trim().isNotEmpty == true) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              cleanOverview!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFFC4CBC6),
+                                fontSize: 11.2,
+                              ),
+                            ),
+                          ],
+                          if (episode.rating != null) ...[
+                            const SizedBox(height: 5),
+                            Text(
+                              '★ ${episode.rating!.toStringAsFixed(1)}',
+                              style: const TextStyle(
+                                color: Color(0xFFD8DED9),
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MetaPill extends StatelessWidget {
+  const _MetaPill(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: .42),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withValues(alpha: .14)),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+      ),
+    );
+  }
+}
+).hasMatch(originalUri.pathSegments.first) &&
+        int.tryParse(originalUri.pathSegments[1]) != null;
+
+    LocalMediaBridgeHandle? bridgeHandle;
+    var playbackUrl = url;
+
+    // When Windows AI Sinhala is enabled the standalone media engine owns the
+    // exact source regardless of whether it came from:
+    //   * a direct HTTP addon result,
+    //   * local free-P2P on :11470,
+    //   * TorBox/PikPak/debrid.
+    // The legacy cloud bridge remains only for normal (AI-off) playback.
+    if (useLocalMediaBridge && !windowsAiEngine) {
+      var nativeEngineReady = false;
+
+      if (Platform.isWindows) {
+        setState(() {
+          _resolving = true;
+          _status = 'Opening through the Orvix stream engine…';
+        });
+        try {
+          playbackUrl = await LocalTorrentService.instance.proxyRemoteUrl(
+            url,
+            fileNameHint: releaseHint,
+          );
+          nativeEngineReady = true;
+        } catch (_) {
+          if (mounted) {
+            setState(() {
+              _status =
+                  'Native stream engine could not read this source; using the local media bridge…';
+            });
+          }
+        }
+      }
+
+      if (!nativeEngineReady) {
+        setState(() {
+          _resolving = true;
+          _status = 'Opening through the Orvix local media bridge…';
+        });
+        bridgeHandle = await LocalMediaBridgeService.instance.bridge(
+          url,
+          fileNameHint: releaseHint,
+        );
+        playbackUrl = bridgeHandle.url;
+      }
+    }
+
+    final title = episode == null
+        ? item.title
+        : '${item.title} • ${episode.label} ${episode.title}';
+    final next = _nextEpisode(item, episode);
+
+    AiGeneratedSubtitleFile? preparedAiSubtitleFile;
+    var aiPreflightAttempted = false;
+
+    // Cloud/debrid AI Sinhala on Windows is fail-closed: the player route does
+    // not exist until the standalone engine has inspected the exact provider
+    // URL, generated the complete Sinhala SRT and returned its own local media
+    // session. This prevents audio/video from starting underneath a loading
+    // screen and removes the old player-driven play/pause/seek fallback.
+    if (windowsAiEngine) {
       aiPreflightAttempted = true;
       if (mounted) {
         setState(() {
