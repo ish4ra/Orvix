@@ -82,13 +82,31 @@ class _HorizontalScrollRailState extends State<HorizontalScrollRail> {
     final dy = event.scrollDelta.dy;
     final delta = dx.abs() > dy.abs() ? dx : dy;
     if (delta.abs() < .5) return;
-    _controller.jumpTo(
-      (_controller.offset + delta)
-          .clamp(
-            _controller.position.minScrollExtent,
-            _controller.position.maxScrollExtent,
-          )
-          .toDouble(),
+
+    // Claim desktop wheel/trackpad signals for this rail before the outer
+    // vertical CustomScrollView can consume them. Without the resolver the
+    // details page can scroll vertically while the episode row appears stuck.
+    GestureBinding.instance.pointerSignalResolver.register(
+      event,
+      (resolvedEvent) {
+        if (resolvedEvent is! PointerScrollEvent ||
+            !_controller.hasClients) {
+          return;
+        }
+        final resolvedDx = resolvedEvent.scrollDelta.dx;
+        final resolvedDy = resolvedEvent.scrollDelta.dy;
+        final resolvedDelta = resolvedDx.abs() > resolvedDy.abs()
+            ? resolvedDx
+            : resolvedDy;
+        _controller.jumpTo(
+          (_controller.offset + resolvedDelta)
+              .clamp(
+                _controller.position.minScrollExtent,
+                _controller.position.maxScrollExtent,
+              )
+              .toDouble(),
+        );
+      },
     );
   }
 
