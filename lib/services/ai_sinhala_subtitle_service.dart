@@ -3259,6 +3259,18 @@ class AiSinhalaSubtitleService {
   static List<AiSubtitleCue> parseSubtitleForTesting(String input) =>
       _parseSubtitle(input);
 
+  static int externalTorrentSubtitleMatchScoreForTesting(
+    String subtitleLabel,
+    String videoFileNameHint,
+  ) =>
+      _externalTorrentSubtitleMatchScore(
+        subtitleLabel,
+        videoFileNameHint,
+      );
+
+  static bool subtitleTextLooksEnglishForTesting(String content) =>
+      _subtitleTextLooksEnglish(content);
+
   static void clearPreparedCache() {
     _preparedCache.clear();
     _translationWork.clear();
