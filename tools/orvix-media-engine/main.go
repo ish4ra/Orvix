@@ -378,7 +378,16 @@ func probeSubtitleStreams(ctx context.Context, videoURL string) ([]byte, error) 
 }
 
 func probeAndExtract(ctx context.Context, videoURL, preferred string) (*subtitleCandidate, string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 75*time.Second)
+	// Remote debrid/CDN URLs should not hold the whole player startup for more
+	// than a minute just to prove that no text subtitle track is available.
+	// Local P2P keeps the longer window because peer-backed random access can
+	// legitimately need more time to expose container metadata.
+	probeTimeout := 35 * time.Second
+	if strings.HasPrefix(videoURL, "http://127.0.0.1:") ||
+		strings.HasPrefix(videoURL, "http://localhost:") {
+		probeTimeout = 75 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 
 	out, err := probeSubtitleStreams(ctx, videoURL)
