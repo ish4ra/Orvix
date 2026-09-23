@@ -45,7 +45,25 @@ documents the modifications in `licenses/stream-server/NOTICE.md`.
 commit, applies the source patch, builds the Windows x64 server with the same
 libtorrent feature direction as the upstream release, smoke-tests the Orvix
 capability endpoint, and publishes a pinned binary under the
-`stream-server-orvix-v0.1.8.1` prerelease tag.
+`stream-server-orvix-v0.1.8.2` prerelease tag.
 
 The Orvix app should only enable exact embedded AI subtitle extraction when the
 capability endpoint and exact-response marker are both present.
+
+
+## Remote/debrid media path
+
+Starting with the v0.1.8.2 Orvix mod, the same localhost stream-server used by
+Free P2P can also be the Windows transport for signed HTTP/debrid media via its
+existing `/proxy/` route. The Orvix extension adds:
+
+- `/orvix/remote/subtitlesTracks?videoUrl=...` to probe text subtitle streams
+  from the exact proxied media URL with the bundled ffprobe;
+- `/orvix/remote/embedded/<trackId>/subtitles.vtt?videoUrl=...` to extract the
+  selected embedded text track with the bundled ffmpeg;
+- capability flags `remoteEmbeddedSubtitles` and
+  `remoteSubtitleRouteVersion` so the app can fail closed on older binaries.
+
+This makes Windows cloud/debrid playback use the same native Orvix stream
+engine family as Free P2P instead of relying on a separate Dart-only media
+bridge for AI subtitle discovery.
