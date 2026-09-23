@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/media_item.dart';
+import 'embedded_subtitle_extractor_service.dart';
 import 'online_subtitle_service.dart';
 
 class AiSubtitleCue {
@@ -1071,6 +1072,52 @@ class AiSinhalaSubtitleService {
   }
 
   static Future<_EmbeddedSubtitleSource?> _fetchEmbeddedEnglishSubtitle(
+    String rawVideoUrl, {
+    String? preferredTrackLabel,
+  }) async {
+    final videoUri = Uri.tryParse(rawVideoUrl);
+    final localP2p = videoUri != null &&
+        (videoUri.host == '127.0.0.1' || videoUri.host == 'localhost') &&
+        videoUri.port == 11470;
+
+    // Windows local P2P has the strongest path: the Orvix-modified server
+    // exposes the exact selected torrent file index and exact embedded track.
+    // Preserve that proven path unchanged whenever it is available.
+    if (localP2p) {
+      final exact = await _fetchLocalP2pEmbeddedEnglishSubtitle(
+        rawVideoUrl,
+        preferredTrackLabel: preferredTrackLabel,
+      );
+      if (exact != null) return exact;
+    }
+
+    // Cross-platform fallback/main path for debrid/direct URLs and for local
+    // P2P engines that do not expose the Orvix extension (Android/macOS).
+    // FFmpegKit reads the actual media URL itself, probes its embedded tracks,
+    // converts a real English text subtitle track to SRT, and keeps the
+    // subtitle's original authored timestamps.
+    try {
+      final extracted =
+          await EmbeddedSubtitleExtractorService.extractEnglishText(
+        videoUrl: rawVideoUrl,
+        preferredTrackLabel: preferredTrackLabel,
+      );
+      if (extracted == null ||
+          extracted.content.trim().isEmpty ||
+          _parseSubtitle(extracted.content).length < 8) {
+        return null;
+      }
+      return _EmbeddedSubtitleSource(
+        content: extracted.content,
+        identity: extracted.identity,
+        label: extracted.label,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<_EmbeddedSubtitleSource?> _fetchLocalP2pEmbeddedEnglishSubtitle(
     String rawVideoUrl, {
     String? preferredTrackLabel,
   }) async {
