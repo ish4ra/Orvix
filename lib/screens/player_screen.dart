@@ -29,6 +29,9 @@ class PlayerScreen extends StatefulWidget {
     this.item,
     this.episode,
     this.aiSubtitle,
+    this.preparedAiSubtitleFile,
+    this.aiPreflightAttempted = false,
+    this.aiPreflightFailure,
     this.allowAiSinhala = true,
     this.releaseHint,
     this.expectedSizeBytes,
@@ -47,6 +50,9 @@ class PlayerScreen extends StatefulWidget {
   final MediaItem? item;
   final EpisodeItem? episode;
   final AiPreparedSubtitle? aiSubtitle;
+  final AiGeneratedSubtitleFile? preparedAiSubtitleFile;
+  final bool aiPreflightAttempted;
+  final String? aiPreflightFailure;
   final bool allowAiSinhala;
   final String? releaseHint;
   final int? expectedSizeBytes;
@@ -272,57 +278,74 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final aiSettingEnabled =
           await AiSinhalaPreferencesService.isEnabled();
       final aiPreferred = widget.allowAiSinhala && aiSettingEnabled;
-      var aiReady = false;
+      final preprepared =
+          aiPreferred ? widget.preparedAiSubtitleFile : null;
+      final usePlayerPreflight = aiPreferred &&
+          !widget.aiPreflightAttempted &&
+          preprepared == null;
+      var aiReady = preprepared != null;
+      var reopenedAfterAiFailure = false;
+
+      if (preprepared != null) {
+        _generatedAiSubtitlePath = preprepared.path;
+        _generatedAiSubtitleLabel = preprepared.label;
+      }
 
       if (mounted && !_subtitleChoiceOverridden) {
         setState(() {
-          _transitionAi(
-            aiPreferred
-                ? AiSinhalaRuntimeMode.preparing
-                : AiSinhalaRuntimeMode.native,
-          );
-          _aiSubtitleUnavailable = false;
+          if (preprepared != null) {
+            _transitionAi(AiSinhalaRuntimeMode.prepared);
+          } else if (usePlayerPreflight) {
+            _transitionAi(AiSinhalaRuntimeMode.preparing);
+          } else if (_aiState.mode != AiSinhalaRuntimeMode.native) {
+            _transitionAi(AiSinhalaRuntimeMode.native);
+          }
+          _aiSubtitleUnavailable =
+              aiPreferred && widget.aiPreflightAttempted && preprepared == null;
           _aiDisplaySubtitle = '';
-          _aiPreflightMessage = aiPreferred
-              ? 'Preparing the complete embedded Sinhala subtitle before playback…'
-              : '';
+          _aiPreflightMessage = preprepared != null
+              ? 'Complete Sinhala subtitle was prepared before the player opened.'
+              : usePlayerPreflight
+                  ? 'Preparing the complete embedded Sinhala subtitle before playback…'
+                  : (widget.aiPreflightFailure ?? '');
         });
       }
 
-      // Complete-file mode: if AI Sinhala is enabled, the media is opened
-      // paused and stays paused until a complete generated Sinhala SRT has
-      // been translated, cached and attached to the player.
+      // Windows beta.18+ receives a complete Sinhala SRT from the standalone
+      // media engine before this route exists. In that path the player is only
+      // opened after subtitle preparation is over, and is opened paused just
+      // long enough to attach the already-generated subtitle track.
+      //
+      // Older/non-Windows paths may still use the legacy in-player preparation
+      // until the standalone engine is packaged there as well.
       await widget.playback.open(
         widget.url,
         title: widget.title,
-        play: !aiPreferred,
+        play: !(aiReady || usePlayerPreflight),
       );
 
-      if (aiPreferred) {
+      if (aiReady && _generatedAiSubtitlePath != null) {
+        await _setNativeSubtitleVisibility(false);
+        await _loadGeneratedAiSubtitleTrack();
+      } else if (usePlayerPreflight) {
         await _setNativeSubtitleVisibility(false);
         aiReady = await _prepareAiSinhalaBeforePlayback();
-      }
-
-      if (aiReady && _generatedAiSubtitlePath != null) {
-        await _loadGeneratedAiSubtitleTrack();
+        if (aiReady && _generatedAiSubtitlePath != null) {
+          await _loadGeneratedAiSubtitleTrack();
+        }
       } else {
-        final currentSubtitle = widget.playback.player.state.track.subtitle;
-        await _setNativeSubtitleVisibility(
-          !_aiSinhalaRequested ||
-              currentSubtitle.id.toLowerCase() != 'no',
-        );
+        await _setNativeSubtitleVisibility(true);
       }
 
-      var reopenedAfterAiFailure = false;
-      if (aiPreferred && !aiReady && mounted && !_closing) {
+      if (aiPreferred &&
+          usePlayerPreflight &&
+          !aiReady &&
+          mounted &&
+          !_closing) {
         final failureMessage = _aiPreflightMessage.trim().isEmpty
-            ? 'AI Sinhala could not generate a complete embedded subtitle. Normal playback will continue.'
+            ? 'AI Sinhala could not generate a complete subtitle. Normal playback will continue.'
             : _aiPreflightMessage.trim();
 
-        // Do not try to recover the same paused AI-preflight media session.
-        // A failed FFmpeg/subtitle probe may leave native player state half
-        // initialized. Reopen the source cleanly in normal subtitle mode so
-        // AI failure can never take down playback.
         _subtitleChoiceOverridden = true;
         _nativeSubtitleClockTimer?.cancel();
         _liveCueClearTimer?.cancel();
@@ -339,16 +362,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
         });
 
         if (_isAiTranslationOnlyFailure(failureMessage)) {
-          // Extraction already succeeded, so the media session itself is
-          // healthy. Do not stop/open/seek the stream just because Gemini
-          // failed a batch: reopening a P2P source can disturb an otherwise
-          // perfectly synchronized embedded subtitle track.
           await _setNativeSubtitleDelayProperty(0);
           _subtitleDelaySeconds = 0;
           await _restoreNativeSubtitleFallback();
         } else {
-          // Keep the defensive reopen only for probe/extraction/source-level
-          // failures where the preflight path itself may be unhealthy.
           try {
             await widget.playback.stop();
           } catch (_) {}
@@ -371,6 +388,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ),
           );
         }
+      } else if (aiPreferred &&
+          widget.aiPreflightAttempted &&
+          preprepared == null &&
+          widget.aiPreflightFailure?.trim().isNotEmpty == true &&
+          mounted &&
+          !_closing) {
+        // Standalone pre-player preparation failed. Do not re-run the old
+        // player-driven play/pause/seek sampler on Windows: normal playback
+        // starts once and the failure is surfaced as a non-fatal message.
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(widget.aiPreflightFailure!.trim()),
+            duration: const Duration(seconds: 7),
+          ),
+        );
       }
 
       Duration? resume;
@@ -384,7 +416,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         }
       }
 
-      if (aiPreferred && !reopenedAfterAiFailure) {
+      if ((aiReady || usePlayerPreflight) && !reopenedAfterAiFailure) {
         await widget.playback.player.play();
       }
 
