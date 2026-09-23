@@ -66,14 +66,19 @@ void main() {
     expect(translate, contains('_translateIndicesResilient('));
   });
 
-  test('automatic startup opens paused and only plays after generated SRT attachment', () {
+  test('automatic Windows startup consumes pre-player SRT and only then plays', () {
+    final details = File('lib/screens/details_screen.dart').readAsStringSync();
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(details, contains('OrvixMediaEngineService.instance.prepare('));
+    expect(details, contains('preparedAiSubtitleFile: preparedAiSubtitleFile'));
 
     final start = player.indexOf('Future<void> _open()');
     final end = player.indexOf('void _onPlaybackError', start);
     final open = player.substring(start, end);
 
-    expect(open, contains('play: !aiPreferred'));
+    expect(open, contains('final preprepared ='));
+    expect(open, contains('play: !(aiReady || usePlayerPreflight)'));
     expect(open, contains('await _loadGeneratedAiSubtitleTrack();'));
     expect(open, contains('await widget.playback.player.play();'));
     expect(
