@@ -58,7 +58,7 @@ void main() {
 
     expect(service, contains("baseUrl = 'http://127.0.0.1:11471'"));
     expect(service, contains("bundledExeName = 'orvix-media-engine.exe'"));
-    expect(service, contains("'/prepare'"));
+    expect(service, contains("Uri.parse('\$baseUrl/prepare')"));
     expect(service, contains("'--idle-timeout'"));
   });
 }
