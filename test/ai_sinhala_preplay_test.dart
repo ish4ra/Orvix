@@ -3,46 +3,28 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('AI Sinhala startup keeps playback paused until the complete SRT is attached', () {
+  test('Windows AI Sinhala finishes complete SRT preparation before PlayerScreen opens', () {
+    final details = File('lib/screens/details_screen.dart').readAsStringSync();
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    final openStart = player.indexOf('Future<void> _open()');
-    final prepareStart =
-        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
-    final open = player.substring(openStart, prepareStart);
+    final engineIndex =
+        details.indexOf('OrvixMediaEngineService.instance.prepare(');
+    final routeIndex = details.indexOf('await _openMpvPlayer(');
+    expect(engineIndex, greaterThanOrEqualTo(0));
+    expect(routeIndex, greaterThan(engineIndex));
+    expect(details, contains('prepareGeneratedSinhalaFromEngineEmbedded('));
+    expect(details, contains('prepareGeneratedSinhalaFromExactFingerprint('));
 
-    expect(open, contains('play: !aiPreferred'));
+    final openStart = player.indexOf('Future<void> _open()');
+    final openEnd = player.indexOf('void _onPlaybackError', openStart);
+    final open = player.substring(openStart, openEnd);
+    expect(open, contains('final preprepared ='));
+    expect(open, contains('play: !(aiReady || usePlayerPreflight)'));
+    expect(open, contains('await _loadGeneratedAiSubtitleTrack();'));
     expect(
-      open.indexOf('await widget.playback.open('),
-      lessThan(open.indexOf('await _prepareAiSinhalaBeforePlayback()')),
-    );
-    expect(
-      open.indexOf('await _prepareAiSinhalaBeforePlayback()'),
-      lessThan(open.indexOf('await _loadGeneratedAiSubtitleTrack()')),
-    );
-    expect(
-      open.indexOf('await _loadGeneratedAiSubtitleTrack()'),
+      open.indexOf('await _loadGeneratedAiSubtitleTrack();'),
       lessThan(open.indexOf('await widget.playback.player.play();')),
     );
-    expect(
-      player,
-      contains('Preparing the complete embedded Sinhala subtitle before playback'),
-    );
-    expect(
-      player,
-      contains('if (_error == null && _aiSubtitleLoading)'),
-    );
-    // The ordinary startup overlay may be gated by both
-    // !AI-loading and !playback-started. What matters here is that the actual
-    // AI preparation overlay itself is still independent of playback state.
-    const aiOverlay = 'if (_error == null && _aiSubtitleLoading)';
-    expect(player, contains(aiOverlay));
-    final aiOverlayIndex = player.indexOf(aiOverlay);
-    final aiOverlayTail = player.substring(
-      aiOverlayIndex,
-      (aiOverlayIndex + 700).clamp(0, player.length),
-    );
-    expect(aiOverlayTail, isNot(contains('&& !_playbackStarted')));
   });
 
   test('automatic preparation translates the complete embedded track, not live cues', () {
