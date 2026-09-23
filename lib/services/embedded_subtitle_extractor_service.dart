@@ -164,14 +164,14 @@ class EmbeddedSubtitleExtractorService {
     try {
       final temp = await getTemporaryDirectory();
       final digest = sha256
-          .convert(utf8.encode('$videoUrl|\${track.index}|\${track.codec}'))
+          .convert(utf8.encode('$videoUrl|${track.index}|${track.codec}'))
           .toString();
       final dir = Directory(
-        '\${temp.path}\${Platform.pathSeparator}orvix-embedded-subtitles',
+        '${temp.path}${Platform.pathSeparator}orvix-embedded-subtitles',
       );
       await dir.create(recursive: true);
       output = File(
-        '\${dir.path}\${Platform.pathSeparator}embedded_$digest.srt',
+        '${dir.path}${Platform.pathSeparator}embedded_$digest.srt',
       );
       if (await output.exists()) await output.delete();
 
@@ -185,7 +185,7 @@ class EmbeddedSubtitleExtractorService {
         '-i',
         videoUrl,
         '-map',
-        '0:\${track.index}',
+        '0:${track.index}',
         '-vn',
         '-an',
         '-dn',
@@ -212,7 +212,7 @@ class EmbeddedSubtitleExtractorService {
       ];
       return ExtractedEmbeddedSubtitle(
         content: content,
-        identity: 'ffmpegkit-embedded://$urlDigest/\${track.index}',
+        identity: 'ffmpegkit-embedded://$urlDigest/${track.index}',
         label: labelParts.isEmpty
             ? 'English embedded'
             : labelParts.join(' • '),
