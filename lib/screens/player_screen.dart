@@ -255,9 +255,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       final aiSettingEnabled =
           await AiSinhalaPreferencesService.isEnabled();
-      final aiPreferred = widget.allowAiSinhala &&
-          !PlatformProfile.isAndroidTv &&
-          aiSettingEnabled;
+      final aiPreferred = widget.allowAiSinhala && aiSettingEnabled;
       var aiReady = false;
 
       if (mounted && !_subtitleChoiceOverridden) {
@@ -2691,7 +2689,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  if (widget.allowAiSinhala && !PlatformProfile.isAndroidTv) ...[
+                  if (widget.allowAiSinhala) ...[
                     _AiSinhalaSwitchTile(
                       value: _aiSinhalaRequested,
                       busy: _aiSubtitleLoading,
