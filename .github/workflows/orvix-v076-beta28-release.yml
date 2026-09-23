@@ -308,7 +308,7 @@ jobs:
 
           # BtbN FFmpeg auto-build published 2026-09-22. Pin the immutable
           # GitHub release asset ID and verify its SHA-256 before extracting.
-          $assetId = '581477900'
+          $assetId = '584020443'
           $archive = Join-Path $env:RUNNER_TEMP 'orvix-ffmpeg-win64-lgpl.zip'
           $headers = @{
             Accept = 'application/octet-stream'
@@ -316,7 +316,7 @@ jobs:
             'X-GitHub-Api-Version' = '2022-11-28'
           }
           Invoke-WebRequest -Uri "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/assets/$assetId" -Headers $headers -OutFile $archive
-          $expected = '5C4069996C8D3750B9DD60F5090C50A9573FEAE28D4783DA2FD6E77331D64029'
+          $expected = '0C193A1B819B74971391B13377CEB6C3419F86CCEDF273BD8FCA11C25F1AF399'
           $actual = (Get-FileHash $archive -Algorithm SHA256).Hash
           if ($actual -ne $expected) { throw "FFmpeg archive checksum mismatch: $actual" }
 
@@ -336,8 +336,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path $licenseDir | Out-Null
           @"
           FFmpeg Windows binaries bundled by Orvix are from BtbN/FFmpeg-Builds,
-          LGPL build asset ID 581477900, verified by SHA-256:
-          5c4069996c8d3750b9dd60f5090c50a9573feae28d4783da2fd6e77331d64029
+          LGPL build asset ID 584020443, verified by SHA-256:
+          0c193a1b819b74971391b13377ceb6c3419f86ccedf273bd8fca11c25f1af399
 
           FFmpeg: https://ffmpeg.org/
           Build source: https://github.com/BtbN/FFmpeg-Builds
