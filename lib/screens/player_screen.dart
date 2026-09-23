@@ -490,7 +490,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
         .toList(growable: false);
 
     final english = tracks.where(_isEnglishTrack).toList(growable: false);
-    if (english.isEmpty) return null;
+    if (english.isEmpty) {
+      // A surprising number of MKV releases tag their real English text
+      // subtitle as "und" (or leave both language/title blank). Do not reject
+      // that source outright when it is the only unlabeled text track.
+      final unknownText =
+          tracks.where(_isUnlabeledTextTrack).toList(growable: false);
+      if (unknownText.length == 1) return unknownText.first;
+      return null;
+    }
 
     int score(mk.SubtitleTrack track) {
       final language = (track.language ?? '').toLowerCase();
@@ -633,7 +641,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final nativeTrack = _bestNativeEnglishTextTrack();
     if (nativeTrack == null) {
       throw const AiSubtitleException(
-        'This debrid/direct video does not expose a readable English text subtitle track.',
+        'This debrid/direct video did not expose an identifiable English text subtitle track.',
       );
     }
 
@@ -1687,9 +1695,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   bool _isUnlabeledTextTrack(dynamic track) {
     if (_isImageSubtitleTrack(track)) return false;
-    final language = (track.language ?? '').toString().trim();
-    final title = (track.title ?? '').toString().trim();
-    return language.isEmpty && title.isEmpty;
+    final language =
+        (track.language ?? '').toString().trim().toLowerCase();
+    final title = (track.title ?? '').toString().trim().toLowerCase();
+    final unknownLanguage = language.isEmpty ||
+        language == 'und' ||
+        language == 'unknown' ||
+        language == 'undefined';
+    final genericTitle = title.isEmpty ||
+        title == 'default' ||
+        title == 'subtitle' ||
+        title == 'subtitles' ||
+        title == 'full';
+    return unknownLanguage && genericTitle;
   }
 
   Future<void> _hideNativeTimingSubtitle() async {
