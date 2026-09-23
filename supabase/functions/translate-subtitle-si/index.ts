@@ -37,21 +37,55 @@ async function callGemini(
     };
   }
 
-  const gemini = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${encodeURIComponent(apiKey)}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig,
-      }),
-    },
-  );
+  const url =
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const requestBody = JSON.stringify({
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig,
+  });
 
-  if (!gemini.ok) {
-    return { ok: false, status: gemini.status, detail: await gemini.text() };
+  // Gemini can temporarily return 429/5xx during demand spikes. Do the retry
+  // here so every Orvix client benefits, rather than making a transient model
+  // availability blip look like a permanent subtitle failure.
+  const retryable = new Set([429, 500, 502, 503, 504]);
+  const delaysMs = [0, 800, 1800];
+  let gemini: Response | null = null;
+  let lastDetail = "";
+
+  for (let attempt = 0; attempt < delaysMs.length; attempt++) {
+    if (delaysMs[attempt] > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]));
+    }
+
+    try {
+      gemini = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: requestBody,
+      });
+    } catch (error) {
+      lastDetail = error instanceof Error ? error.message : String(error);
+      if (attempt + 1 < delaysMs.length) continue;
+      return { ok: false, status: 503, detail: lastDetail || "network_error" };
+    }
+
+    if (gemini.ok) break;
+    lastDetail = await gemini.text();
+    if (!retryable.has(gemini.status) || attempt + 1 >= delaysMs.length) {
+      return { ok: false, status: gemini.status, detail: lastDetail };
+    }
+
+    console.warn(
+      "Gemini transient failure; retrying",
+      gemini.status,
+      `attempt=${attempt + 1}/${delaysMs.length}`,
+    );
   }
+
+  if (gemini == null || !gemini.ok) {
+    return { ok: false, status: 503, detail: lastDetail || "translation_unavailable" };
+  }
+
   const data = await gemini.json();
   const text = data?.candidates?.[0]?.content?.parts
     ?.map((part: { text?: string }) => part?.text ?? "")
