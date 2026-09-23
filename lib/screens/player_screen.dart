@@ -618,6 +618,85 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return samples;
   }
 
+  Future<AiGeneratedSubtitleFile> _prepareRemoteDirectAiFallback() async {
+    if (_localP2pStream || widget.item == null) {
+      throw const AiSubtitleException(
+        'Remote native-track calibration is not available for this source.',
+      );
+    }
+
+    // Debrid/direct URLs do not pass through the Orvix exact-file
+    // stream-server, so the local /subtitlesTracks extraction route cannot
+    // expose their embedded subtitle file. The native player can still see the
+    // embedded English track. Use a few real cues from that track only as an
+    // oracle to identify + calibrate a full online transcript, then generate
+    // one complete Sinhala SRT before playback.
+    await _primeSubtitleTracksForAiPreflight();
+    final nativeTrack = _bestNativeEnglishTextTrack();
+    if (nativeTrack == null) {
+      throw const AiSubtitleException(
+        'This debrid/direct video does not expose a readable English text subtitle track.',
+      );
+    }
+
+    if (mounted && !_closing) {
+      setState(() {
+        _aiPreflightMessage =
+            'Exact OpenSubtitles match was unavailable. Reading a few cues from the video’s own English track…';
+      });
+    }
+
+    final samples = await _captureNativeEnglishSamples();
+    if (samples.length < 3) {
+      throw const AiSubtitleException(
+        'Could not read enough dialogue from the debrid video’s embedded English subtitle track.',
+      );
+    }
+
+    if (mounted && !_closing) {
+      setState(() {
+        _aiPreflightMessage =
+            'Matching the video’s own English cues to a full transcript…';
+      });
+    }
+
+    final candidates = await OnlineSubtitleService.search(
+      item: widget.item!,
+      episode: widget.episode,
+      releaseHint: widget.releaseHint,
+      videoSize: widget.expectedSizeBytes,
+      videoHash: widget.expectedVideoHash,
+      preferredLanguage: 'eng',
+      includeTranscriptFallbacks: true,
+    );
+    if (candidates.isEmpty) {
+      throw const AiSubtitleException(
+        'No English transcript candidates were available to match against the debrid video’s embedded subtitle.',
+      );
+    }
+
+    final episodeIdentity = widget.episode == null
+        ? 'movie'
+        : 's${widget.episode!.season}e${widget.episode!.episode}';
+    final videoIdentity = <Object?>[
+      widget.item!.id,
+      episodeIdentity,
+      widget.releaseHint ?? '',
+      widget.expectedSizeBytes ?? 0,
+    ].join('|');
+
+    return AiSinhalaSubtitleService.prepareGeneratedSinhalaFromNativeCalibration(
+      title: widget.title,
+      videoIdentity: videoIdentity,
+      nativeSamples: samples,
+      candidates: candidates,
+      onStatus: (message) {
+        if (!mounted || _closing) return;
+        setState(() => _aiPreflightMessage = message);
+      },
+    );
+  }
+
   Future<bool> _prepareAiSinhalaBeforePlayback() async {
     if (_closing) return false;
     final enabled = await AiSinhalaPreferencesService.isEnabled();
@@ -677,18 +756,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
           });
         }
 
-        generated = await AiSinhalaSubtitleService.prepareGeneratedSinhalaFile(
-          item: widget.item!,
-          videoUrl: widget.url,
-          episode: widget.episode,
-          releaseHint: widget.releaseHint,
-          expectedSizeBytes: widget.expectedSizeBytes,
-          expectedVideoHash: widget.expectedVideoHash,
-          onStatus: (message) {
-            if (!mounted || _closing) return;
-            setState(() => _aiPreflightMessage = message);
-          },
-        );
+        try {
+          generated = await AiSinhalaSubtitleService.prepareGeneratedSinhalaFile(
+            item: widget.item!,
+            videoUrl: widget.url,
+            episode: widget.episode,
+            releaseHint: widget.releaseHint,
+            expectedSizeBytes: widget.expectedSizeBytes,
+            expectedVideoHash: widget.expectedVideoHash,
+            onStatus: (message) {
+              if (!mounted || _closing) return;
+              setState(() => _aiPreflightMessage = message);
+            },
+          );
+        } on AiSubtitleException {
+          // Preserve the working local-P2P path exactly as-is. Only remote
+          // direct/debrid media gets the native-track calibration fallback.
+          if (_localP2pStream) rethrow;
+          generated = await _prepareRemoteDirectAiFallback();
+        }
       }
 
       if (!mounted || _closing || _subtitleChoiceOverridden) return false;
