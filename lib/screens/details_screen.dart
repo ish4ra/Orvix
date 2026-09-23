@@ -9,6 +9,7 @@ import '../services/ai_sinhala_preferences_service.dart';
 import '../services/catalog_service.dart';
 import '../services/cloud_preferences_service.dart';
 import '../services/free_p2p_live_probe_service.dart';
+import '../services/local_media_bridge_service.dart';
 import '../services/local_torrent_service.dart';
 import '../services/media_state_service.dart';
 import '../services/pikpak_service.dart';
@@ -2963,6 +2964,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
       episode,
       releaseHint: file.name,
       expectedSizeBytes: file.size,
+      useLocalMediaBridge: true,
     );
   }
 
@@ -3101,7 +3103,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
     try {
       final url = await widget.transfer.fetchPlayableUrl(fileId);
       if (url == null || url.isEmpty) return false;
-      await _openPlayerUrl(url, item, episode);
+      await _openPlayerUrl(
+        url,
+        item,
+        episode,
+        useLocalMediaBridge: true,
+      );
       return true;
     } catch (_) {
       return false;
@@ -3125,6 +3132,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
       item,
       episode,
       releaseHint: file.name,
+      useLocalMediaBridge: true,
     );
   }
 
@@ -3136,8 +3144,23 @@ class _DetailsScreenState extends State<DetailsScreen> {
     String? releaseHint,
     int? expectedSizeBytes,
     String? expectedVideoHash,
+    bool useLocalMediaBridge = false,
   }) async {
     if (!mounted) return;
+
+    LocalMediaBridgeHandle? bridgeHandle;
+    var playbackUrl = url;
+    if (useLocalMediaBridge) {
+      setState(() {
+        _resolving = true;
+        _status = 'Opening through the Orvix local media bridge…';
+      });
+      bridgeHandle = await LocalMediaBridgeService.instance.bridge(
+        url,
+        fileNameHint: releaseHint,
+      );
+      playbackUrl = bridgeHandle.url;
+    }
 
     setState(() {
       _resolving = false;
@@ -3157,7 +3180,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
       preference: preference,
       isAndroid: Platform.isAndroid,
       isAndroidTv: PlatformProfile.isAndroidTv,
-      url: url,
+      url: playbackUrl,
       releaseHint: releaseHint,
       aiSinhalaEnabled: aiEnabled,
     );
@@ -3168,7 +3191,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
     if (engine == PlayerEngineKind.exoPlayer && Platform.isAndroid) {
       final result = await _openExoPlayer(
-        url,
+        playbackUrl,
         title,
         item,
         episode,
@@ -3196,7 +3219,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     }
 
     await _openMpvPlayer(
-      url,
+      playbackUrl,
       title,
       item,
       episode,
@@ -3207,6 +3230,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
       expectedVideoHash: expectedVideoHash,
       fallbackToExo: tvFreeP2pAuto,
     );
+
+    if (bridgeHandle != null) {
+      await LocalMediaBridgeService.instance.release(bridgeHandle.sessionId);
+    }
   }
 
   Future<AndroidExoPlayerResult?> _openExoPlayer(
