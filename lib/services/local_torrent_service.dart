@@ -231,6 +231,7 @@ class LocalTorrentService {
   Future<String> resolve(
     SourceResult source, {
     void Function(String message)? onProgress,
+    bool warmForPlayback = true,
   }) async {
     if (!source.isMagnet) return source.resource;
 
@@ -344,17 +345,19 @@ class LocalTorrentService {
     // up on marginal sources. Prime a small HTTP range into the stream-server
     // cache before handing the URL to the player. This mirrors TorrServer's
     // preload idea without changing the player or downloading the whole file.
-    if (Platform.isAndroid && PlatformProfile.isAndroidTv) {
+    if (warmForPlayback &&
+        Platform.isAndroid &&
+        PlatformProfile.isAndroidTv) {
       onProgress?.call('Connecting peers and pre-buffering…');
       await _primeLocalStream(
         streamUrl,
         targetBytes: 1024 * 1024,
         timeout: const Duration(seconds: 10),
       );
-    } else if (Platform.isWindows) {
+    } else if (warmForPlayback && Platform.isWindows) {
       // Windows MPV is much happier when the localhost torrent endpoint has
-      // produced real bytes before libmpv opens it. This is best-effort and
-      // never blocks a viable slow swarm forever.
+      // produced real bytes before libmpv opens it. Subtitle-only probes do
+      // not need a 2 MiB video warm-up, so they skip this delay entirely.
       onProgress?.call('Connecting peers and warming Windows playback…');
       await _primeLocalStream(
         streamUrl,
@@ -363,7 +366,9 @@ class LocalTorrentService {
       );
     }
 
-    onProgress?.call('Opening player…');
+    onProgress?.call(
+      warmForPlayback ? 'Opening player…' : 'Exact torrent file ready…',
+    );
     return streamUrl;
   }
 
