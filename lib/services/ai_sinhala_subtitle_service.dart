@@ -3400,7 +3400,7 @@ class AiSubtitleException implements Exception {
     return 500 +
         overlap * 45 +
         (ratio * 220).round() +
-        math.max(0, _englishTrackScore(subtitleLabel));
+        math.max(0, _englishTrackScore(subtitleLabel)).toInt();
   }
 
   static bool _subtitleTextLooksEnglish(String content) {
