@@ -11,6 +11,7 @@ import 'package:window_manager/window_manager.dart';
 import '../models/media_item.dart';
 import '../services/ai_sinhala_preferences_service.dart';
 import '../services/ai_sinhala_runtime_state.dart';
+import '../services/ai_sinhala_trace_service.dart';
 import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/media_state_service.dart';
 import '../services/online_subtitle_service.dart';
@@ -444,6 +445,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
 
       if ((aiReady || usePlayerPreflight) && !reopenedAfterAiFailure) {
+        unawaited(
+          AiSinhalaTraceService.write(
+            'player-play allowed aiReady=$aiReady '
+            'generated=${_generatedAiSubtitlePath != null}',
+          ),
+        );
         await widget.playback.player.play();
       }
 
@@ -908,7 +915,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _loadGeneratedAiSubtitleTrack() async {
     final path = _generatedAiSubtitlePath;
-    if (path == null || path.isEmpty || _closing) return;
+    if (path == null || path.isEmpty || _closing) {
+      throw const AiSubtitleException(
+        'The prepared Sinhala subtitle file path was missing before player startup.',
+      );
+    }
+
+    final file = File(path);
+    if (!await file.exists() || await file.length() < 128) {
+      throw const AiSubtitleException(
+        'The prepared Sinhala subtitle file was missing or empty before player startup.',
+      );
+    }
 
     _nativeSubtitleClockTimer?.cancel();
     _liveCueClearTimer?.cancel();
@@ -917,16 +935,79 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _timingTrackIsText = false;
     _nativeAiMatchIndex = -1;
 
-    await widget.playback.player.setSubtitleTrack(
-      mk.SubtitleTrack.uri(
-        path,
-        title:
-            'AI Sinhala • ${_generatedAiSubtitleLabel ?? 'embedded exact'}',
-        language: 'si',
+    final player = widget.playback.player;
+    final subtitleUri = Platform.isWindows
+        ? Uri.file(path, windows: true).toString()
+        : Uri.file(path).toString();
+    final subtitleTitle =
+        'AI Sinhala • ${_generatedAiSubtitleLabel ?? 'embedded exact'}';
+    final track = mk.SubtitleTrack.uri(
+      subtitleUri,
+      title: subtitleTitle,
+      language: 'si',
+    );
+
+    if (mounted) {
+      setState(() {
+        _aiPreflightMessage =
+            'Sinhala subtitle is ready. Attaching it to MPV before playback…';
+      });
+    }
+    unawaited(
+      AiSinhalaTraceService.write(
+        'player-attach-start fileExists=true bytes=${await file.length()}',
       ),
     );
-    await _setNativeSubtitleDelayProperty(0);
-    await _setNativeSubtitleVisibility(true);
+
+    Object? lastAttachError;
+    var attached = false;
+
+    // media_kit can resolve player.open() before libmpv has published its
+    // initial track state. Older builds issued setSubtitleTrack exactly once
+    // at that point and then started playback even when the external SRT had
+    // not actually become the selected track. Keep the player paused and
+    // retry until MPV itself confirms the Sinhala track is selected.
+    for (var attempt = 0; attempt < 24 && !_closing; attempt++) {
+      try {
+        await player.setSubtitleTrack(track);
+        await _setNativeSubtitleDelayProperty(0);
+        await _setNativeSubtitleVisibility(true);
+      } catch (error) {
+        lastAttachError = error;
+      }
+
+      await Future<void>.delayed(
+        Duration(milliseconds: attempt < 6 ? 120 : 220),
+      );
+
+      final selected = player.state.track.subtitle;
+      final selectedId = selected.id.toLowerCase();
+      final selectedTitle = (selected.title ?? '').toLowerCase();
+      final selectedLanguage = (selected.language ?? '').toLowerCase();
+
+      attached = selectedId != 'no' &&
+          (selectedLanguage == 'si' ||
+              selectedLanguage == 'sin' ||
+              selectedTitle.contains('ai sinhala') ||
+              selectedId.contains('orvix_si_'));
+      if (attached) break;
+    }
+
+    if (!attached) {
+      unawaited(
+        AiSinhalaTraceService.write(
+          'player-attach-failed error=${lastAttachError?.runtimeType ?? 'none'}',
+        ),
+      );
+      throw AiSubtitleException(
+        'MPV did not confirm the prepared Sinhala subtitle track before playback. '
+        'Playback was kept paused instead of starting without Sinhala subtitles.',
+      );
+    }
+
+    unawaited(
+      AiSinhalaTraceService.write('player-attach-confirmed language=si'),
+    );
 
     if (!mounted) return;
     setState(() {
@@ -935,6 +1016,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
       _aiSubtitleUnavailable = false;
       _aiDisplaySubtitle = '';
+      _aiPreflightMessage =
+          'Sinhala subtitle attached and verified. Starting playback…';
     });
   }
 
