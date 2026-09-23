@@ -1,14 +1,28 @@
+import 'dart:io';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AiSinhalaPreferencesService {
   AiSinhalaPreferencesService._();
 
-  static const _enabledKey = 'orvix_ai_sinhala_enabled_v2';
+  // beta.19-beta.23 could automatically write the old v2 preference to
+  // false after a failed in-player preparation attempt. That means a stored
+  // v2=false cannot be trusted as an intentional user opt-out. Migrate Windows
+  // once to v3 with AI enabled, then preserve every explicit v3 choice.
+  static const _enabledKey = 'orvix_ai_sinhala_enabled_v3';
+  static const _legacyEnabledKey = 'orvix_ai_sinhala_enabled_v2';
   static const _syncPrefix = 'orvix_ai_sinhala_sync_v1_';
 
   static Future<bool> isEnabled() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_enabledKey) ?? false;
+    if (prefs.containsKey(_enabledKey)) {
+      return prefs.getBool(_enabledKey) ?? false;
+    }
+
+    final legacy = prefs.getBool(_legacyEnabledKey);
+    final migrated = Platform.isWindows ? true : (legacy ?? false);
+    await prefs.setBool(_enabledKey, migrated);
+    return migrated;
   }
 
   static Future<void> setEnabled(bool enabled) async {
