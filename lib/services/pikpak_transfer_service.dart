@@ -207,12 +207,16 @@ class PikPakTransferService {
     return status;
   }
 
-  Future<String?> fetchPlayableUrl(String fileId) async {
+  Future<String?> fetchPlayableUrl(
+    String fileId, {
+    bool preferOriginal = false,
+  }) async {
     final selection = _selectionByFileId[fileId];
     return _resolvePlayableUrl(
       fileId,
       selection: selection,
       visited: <String>{},
+      preferOriginal: preferOriginal,
     );
   }
 
@@ -220,18 +224,27 @@ class PikPakTransferService {
     String fileId, {
     required _TorrentSelection? selection,
     required Set<String> visited,
+    required bool preferOriginal,
   }) async {
     if (!visited.add(fileId)) return null;
 
     final info = await _fetchFileInfo(fileId);
     if (info == null) return null;
 
-    final direct = _selectMediaUrl(info);
+    final direct = _selectMediaUrl(
+      info,
+      preferOriginal: preferOriginal,
+    );
     if (direct != null) return direct;
 
     final kind = info['kind']?.toString().toLowerCase() ?? '';
     final isFolder = kind.contains('folder');
-    if (!isFolder) return _fallbackDownloadUrl(info);
+    if (!isFolder) {
+      // For AI Sinhala, the provider's original/download URL is the only safe
+      // fallback. A transcoded rendition may have already stripped embedded
+      // subtitle tracks and its bytes cannot match the original moviehash.
+      return _fallbackDownloadUrl(info);
+    }
 
     final candidate = await _findPlayableDescendant(fileId, selection);
     if (candidate == null) return null;
@@ -243,6 +256,7 @@ class PikPakTransferService {
       candidate.id,
       selection: selection,
       visited: visited,
+      preferOriginal: preferOriginal,
     );
   }
 
@@ -282,7 +296,10 @@ class PikPakTransferService {
   /// Follow PikPak's own rendition choice. The provider's `is_default` media
   /// is the closest match to playback in the official client; forcing a lower
   /// transcode based on file size caused buffering regressions on large remuxes.
-  String? _selectMediaUrl(Map<String, dynamic> decoded) {
+  String? _selectMediaUrl(
+    Map<String, dynamic> decoded, {
+    bool preferOriginal = false,
+  }) {
     final medias = decoded['medias'];
     if (medias is! List || medias.isEmpty) return null;
 
@@ -295,6 +312,19 @@ class PikPakTransferService {
         .toList(growable: false);
     if (entries.isEmpty) return null;
 
+    if (preferOriginal) {
+      // AI Sinhala needs the provider's original container bytes. PikPak's
+      // default rendition is frequently a transcoded MP4/HLS representation;
+      // that representation can lose the MKV's embedded subtitle tracks and
+      // will not have the original OpenSubtitles moviehash.
+      for (final media in entries) {
+        if (media['is_origin'] == true) return _mediaUrl(media);
+      }
+      return null;
+    }
+
+    // Normal playback keeps PikPak's provider-selected default rendition for
+    // smoother playback on huge/high-bitrate originals.
     for (final media in entries) {
       if (media['is_default'] == true) return _mediaUrl(media);
     }
