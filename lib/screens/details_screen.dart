@@ -2310,6 +2310,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         releaseHint: file.name,
         expectedSizeBytes: file.size,
         expectedVideoHash: chosen.videoHash,
+        useLocalMediaBridge: true,
       );
       return;
     }
@@ -3108,7 +3109,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
     MediaItem item,
     EpisodeItem? episode,
   ) async {
-    final file = widget.torbox.choosePlayableFile(cloudItem);
+    final file = widget.torbox.choosePlayableFile(
+      cloudItem,
+      fileNameHint: episode?.label,
+    );
     if (file == null)
       throw const TorBoxException('No playable video file found in TorBox.');
     final url = await widget.torbox.requestDownloadUrl(cloudItem, file);
