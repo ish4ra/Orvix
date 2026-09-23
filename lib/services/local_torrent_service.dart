@@ -367,6 +367,60 @@ class LocalTorrentService {
     return streamUrl;
   }
 
+  Future<String> proxyRemoteUrl(
+    String remoteUrl, {
+    String? fileNameHint,
+  }) async {
+    final remote = Uri.tryParse(remoteUrl);
+    if (remote == null ||
+        !(remote.scheme == 'http' || remote.scheme == 'https')) {
+      throw const LocalTorrentException(
+        'The cloud stream URL is not a valid HTTP/HTTPS media URL.',
+      );
+    }
+
+    // Windows cloud/debrid playback deliberately uses the same modified
+    // localhost stream-server process as Free P2P. This keeps playback,
+    // ffprobe and ffmpeg on one native transport instead of sending AI
+    // subtitle discovery through a separate Dart-only bridge.
+    await ensureRunning();
+
+    final capabilities = await _orvixCapabilities();
+    if (capabilities?['remoteEmbeddedSubtitles'] != true ||
+        _asInt(capabilities?['remoteSubtitleRouteVersion']) != 1) {
+      throw const LocalTorrentException(
+        'The bundled Orvix stream engine does not support remote embedded subtitles.',
+      );
+    }
+
+    final proxy = Uri.parse('$baseUrl/proxy/').replace(
+      queryParameters: <String, String>{
+        'd': remote.toString(),
+      },
+    );
+
+    // A filename hint is intentionally not appended to the target URL: signed
+    // debrid URLs must remain byte-for-byte intact. ffprobe detects the
+    // container from the stream itself.
+    return proxy.toString();
+  }
+
+  Future<Map<String, dynamic>?> _orvixCapabilities() async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/orvix/capabilities'),
+            headers: const {'Accept': 'application/json'},
+          )
+          .timeout(const Duration(seconds: 4));
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    return null;
+  }
+
   String _buildStreamUrl({
     required String infoHash,
     required int fileIndex,
