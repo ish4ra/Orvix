@@ -3151,9 +3151,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final next = _nextEpisode(item, episode);
 
     final preference = await PlayerEnginePreferencesService.get();
-    final aiEnabled = Platform.isAndroid &&
-        !PlatformProfile.isAndroidTv &&
-        await AiSinhalaPreferencesService.isEnabled();
+    final aiEnabled =
+        Platform.isAndroid && await AiSinhalaPreferencesService.isEnabled();
     final engine = PlayerEngineRouter.choose(
       preference: preference,
       isAndroid: Platform.isAndroid,
@@ -3294,7 +3293,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
           item: item,
           episode: episode,
           aiSubtitle: null,
-          allowAiSinhala: !PlatformProfile.isAndroidTv,
+          allowAiSinhala: true,
           releaseHint: releaseHint,
           expectedSizeBytes: expectedSizeBytes,
           expectedVideoHash: expectedVideoHash,
