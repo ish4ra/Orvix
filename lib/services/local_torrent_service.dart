@@ -400,9 +400,37 @@ class LocalTorrentService {
     );
 
     // A filename hint is intentionally not appended to the target URL: signed
-    // debrid URLs must remain byte-for-byte intact. ffprobe detects the
-    // container from the stream itself.
+    // debrid URLs must remain byte-for-byte intact. Require the native proxy
+    // to return actual bytes before handing it to libmpv; capability-only
+    // checks are not enough for provider-specific signed URLs.
+    if (!await _remoteProxyHasMediaBytes(proxy)) {
+      throw const LocalTorrentException(
+        'The Orvix stream engine could not read media bytes from this cloud source.',
+      );
+    }
     return proxy.toString();
+  }
+
+  Future<bool> _remoteProxyHasMediaBytes(Uri proxy) async {
+    final client = http.Client();
+    try {
+      final request = http.Request('GET', proxy)
+        ..headers['Range'] = 'bytes=0-1'
+        ..headers['Accept-Encoding'] = 'identity';
+      final response = await client
+          .send(request)
+          .timeout(const Duration(seconds: 12));
+      if (response.statusCode != 200 && response.statusCode != 206) {
+        return false;
+      }
+      final firstChunk = await response.stream.first
+          .timeout(const Duration(seconds: 8));
+      return firstChunk.isNotEmpty;
+    } catch (_) {
+      return false;
+    } finally {
+      client.close();
+    }
   }
 
   Future<Map<String, dynamic>?> _orvixCapabilities() async {
