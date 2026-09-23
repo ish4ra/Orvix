@@ -1401,6 +1401,9 @@ class SourceProviderService {
           if (sizeBytes != null && sizeBytes > 0) {
             queryParts.add('x-orvix-video-size=$sizeBytes');
           }
+          if (videoHash != null) {
+            queryParts.add('x-orvix-video-hash=$videoHash');
+          }
 
           final suffix = queryParts.isEmpty ? '' : '&${queryParts.join('&')}';
           resource = 'magnet:?xt=urn:btih:$infoHash$suffix';
