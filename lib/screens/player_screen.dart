@@ -106,6 +106,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   int _lastAiPrefetchBucket = -1;
   final List<String> _liveDialogueContext = <String>[];
   bool _aiSubtitleUnavailable = false;
+  bool _aiPreferenceEnabled = false;
   String _aiPreflightMessage = '';
   bool _timingTrackSelected = false;
   bool _timingTrackIsText = false;
@@ -278,6 +279,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       final aiSettingEnabled =
           await AiSinhalaPreferencesService.isEnabled();
+      if (mounted) {
+        setState(() => _aiPreferenceEnabled = aiSettingEnabled);
+      } else {
+        _aiPreferenceEnabled = aiSettingEnabled;
+      }
       final aiPreferred = widget.allowAiSinhala && aiSettingEnabled;
       final preprepared =
           aiPreferred ? widget.preparedAiSubtitleFile : null;
@@ -1134,6 +1140,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _setAiSinhalaEnabledFromPlayer(bool enabled) async {
     await AiSinhalaPreferencesService.setEnabled(enabled);
     if (!mounted || _closing) return;
+    setState(() => _aiPreferenceEnabled = enabled);
 
     final player = widget.playback.player;
 
@@ -1186,7 +1193,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (ready && mounted && !_closing) {
       await _loadGeneratedAiSubtitleTrack();
     } else if (mounted && !_closing) {
-      await AiSinhalaPreferencesService.setEnabled(false);
+      // A failure belongs to this source/playback attempt. Never convert it
+      // into a persistent global opt-out: doing so made every later source
+      // silently bypass the standalone pre-player engine.
       if (_aiState.mode != AiSinhalaRuntimeMode.native) {
         setState(() => _transitionAi(AiSinhalaRuntimeMode.native));
       }
@@ -2897,7 +2906,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   const SizedBox(height: 8),
                   if (widget.allowAiSinhala) ...[
                     _AiSinhalaSwitchTile(
-                      value: _aiSinhalaRequested,
+                      value: _aiPreferenceEnabled,
                       busy: _aiSubtitleLoading,
                       detail: _aiSubtitleLoading
                           ? 'Translating the complete embedded subtitle before playback…'
