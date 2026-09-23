@@ -57,6 +57,14 @@ begin
     ewWaitUntilTerminated,
     ResultCode
   );
+  Exec(
+    ExpandConstant('{sys}\taskkill.exe'),
+    '/F /IM orvix-media-engine.exe',
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  );
   Sleep(350);
   Result := '';
 end;
