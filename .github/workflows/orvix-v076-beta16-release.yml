@@ -800,30 +800,31 @@ jobs:
         run: |
           set -euo pipefail
           cat > /tmp/notes.md <<'EOF'
-          Orvix v0.7.6-beta.16 introduces a local media bridge for debrid/cloud playback and refreshes desktop horizontal navigation.
+          Orvix v0.7.6-beta.16 moves Windows debrid/cloud playback onto the same modified Orvix native stream-server family used by Free P2P, with embedded subtitles kept as the first AI Sinhala source.
 
-          Debrid / cloud subtitle architecture:
-          - TorBox and PikPak playback now goes through an Orvix-owned loopback media bridge instead of handing the signed remote URL directly to the player.
-          - The bridge is range-aware and proxies the exact same video bytes to both playback and subtitle extraction.
-          - Embedded English text subtitles remain first priority.
-          - If the exact media file has no usable embedded English text subtitle, Orvix falls back to the strict OpenSubtitles moviehash + exact-byte-size path.
-          - Bridge sessions do not run the old play/pause/seek native-cue sampling fallback, removing that crash-prone cloud preflight path.
-          - Existing Windows Free P2P still keeps the proven exact-file Orvix stream-server path first and is not replaced by the debrid bridge.
-          - TorBox season-pack playback keeps the selected episode/file hint before opening the bridge.
+          Windows debrid / cloud subtitle architecture:
+          - TorBox and PikPak signed media URLs are proxied through the bundled Orvix stream-server on localhost.
+          - The native engine exposes dedicated remote embedded-subtitle probe and extraction routes.
+          - The exact proxied media file is inspected with bundled ffprobe/ffmpeg; readable embedded English text subtitles are always tried first.
+          - Only when no usable embedded English text subtitle can be extracted does Orvix try the strict OpenSubtitles moviehash + exact-byte-size fallback.
+          - The previous Dart local media bridge remains only as a playback-safe fallback if the required native capability is unavailable.
+          - The old play/pause/seek cue-sampling fallback remains disabled for native Orvix localhost media paths.
 
-          Cross-platform embedded extraction:
-          - Fixed the FFmpegKit extractor path/track interpolation used by Windows, Android Mobile, Android TV and macOS.
-          - Debrid/direct embedded extraction continues to preserve source subtitle timestamps.
-          - Unlabeled/und English text-track detection from beta.14 remains available.
+          Orvix Stream Server v0.1.8.2:
+          - Adds remoteEmbeddedSubtitles capability detection.
+          - Adds /orvix/remote/subtitlesTracks for exact proxied-media subtitle discovery.
+          - Adds /orvix/remote/embedded/<trackId>/subtitles.vtt for native embedded text extraction.
+          - Keeps the existing exact selected-file P2P subtitle routes and OpenSubtitles hash support.
 
-          Desktop navigation:
-          - Home movie/library/watchlist shelves now support mouse-wheel horizontal scrolling, mouse drag scrolling and working left/right arrow controls.
-          - Series episode rails now use the same horizontal navigation so episodes beyond the first visible cards are reachable.
-          - Season tabs also accept horizontal wheel/drag navigation.
+          AI Sinhala:
+          - Complete embedded English subtitle is translated before playback and loaded as a generated Sinhala subtitle file.
+          - Text codecs such as SRT/SubRip, ASS/SSA, WebVTT and mov_text are supported by the embedded path.
+          - Bitmap-only subtitle formats such as PGS/DVD still require a non-bitmap fallback source.
+          - Strict exact-file OpenSubtitles matching is preserved; Orvix does not silently guess another release after an exact-match miss.
 
-          Continue Watching:
-          - Windows Continue Watching now uses compact landscape thumbnails inspired by modern streaming UIs.
-          - Episode artwork is preferred, with title/episode information, remaining time and progress overlaid on the thumbnail.
+          Desktop/UI fixes carried forward:
+          - Home shelves and series episode rails support horizontal mouse-wheel, drag and arrow navigation.
+          - Continue Watching uses compact landscape cards with episode artwork and playback progress.
 
           Platform assets:
           - Windows x64 installer + portable ZIP
@@ -833,6 +834,7 @@ jobs:
 
           Release gates:
           - Full Flutter tests, analyzer, deployed AI backend and OpenSubtitles backend smoke tests must pass.
+          - The bundled Windows stream-server must advertise both exact-file and remote/debrid subtitle capabilities.
           - Windows, Android Mobile, Android TV and macOS builds must all complete before publication.
           EOF
 
