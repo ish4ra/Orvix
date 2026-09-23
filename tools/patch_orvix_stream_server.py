@@ -334,7 +334,247 @@ pub async fn orvix_capabilities() -> impl IntoResponse {
         "name": "orvix-stream-server",
         "exactFileEmbeddedSubtitles": true,
         "exactSubtitleRouteVersion": 1,
+        "remoteEmbeddedSubtitles": true,
+        "remoteSubtitleRouteVersion": 1,
     }))
+}
+
+#[derive(serde::Deserialize)]
+pub struct OrvixRemoteVideoQuery {
+    #[serde(rename = "videoUrl")]
+    pub video_url: String,
+}
+
+async fn probe_remote_embedded_subtitles(
+    video_url: &str,
+) -> Result<Vec<(usize, String, String, String)>, String> {
+    let mut cmd = tokio::process::Command::new("ffprobe");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let output = cmd
+        .args([
+            "-v",
+            "error",
+            "-rw_timeout",
+            "30000000",
+            "-probesize",
+            "12000000",
+            "-analyzeduration",
+            "12000000",
+            "-select_streams",
+            "s",
+            "-show_entries",
+            "stream=codec_name:stream_tags=language,title:stream_disposition=forced,hearing_impaired",
+            "-of",
+            "json",
+            video_url,
+        ])
+        .output()
+        .await
+        .map_err(|error| format!("ffprobe launch failed: {error}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "ffprobe failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let decoded: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())?;
+    let streams = decoded
+        .get("streams")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let text_codecs = ["ass", "ssa", "subrip", "webvtt", "mov_text", "text"];
+    let mut tracks = Vec::new();
+    for (subtitle_index, stream) in streams.iter().enumerate() {
+        let codec = stream
+            .get("codec_name")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if !text_codecs.contains(&codec.as_str()) {
+            continue;
+        }
+
+        let tags = stream.get("tags");
+        let language = tags
+            .and_then(|value| value.get("language"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("und")
+            .to_string();
+        let title = tags
+            .and_then(|value| value.get("title"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let disposition = stream.get("disposition");
+        let forced = disposition
+            .and_then(|value| value.get("forced"))
+            .and_then(|value| value.as_i64())
+            .unwrap_or(0)
+            != 0;
+        let hearing_impaired = disposition
+            .and_then(|value| value.get("hearing_impaired"))
+            .and_then(|value| value.as_i64())
+            .unwrap_or(0)
+            != 0;
+
+        let mut label_parts = Vec::new();
+        if !title.trim().is_empty() {
+            label_parts.push(title.trim().to_string());
+        }
+        label_parts.push(language.clone());
+        label_parts.push(codec.clone());
+        if forced {
+            label_parts.push("forced".to_string());
+        }
+        if hearing_impaired {
+            label_parts.push("hearing impaired".to_string());
+        }
+
+        tracks.push((
+            1000 + subtitle_index,
+            language,
+            label_parts.join(" • "),
+            codec,
+        ));
+    }
+
+    Ok(tracks)
+}
+
+pub async fn orvix_remote_subtitles_tracks(
+    Query(query): Query<OrvixRemoteVideoQuery>,
+) -> impl IntoResponse {
+    match probe_remote_embedded_subtitles(&query.video_url).await {
+        Ok(tracks) => {
+            let result = tracks
+                .into_iter()
+                .map(|(id, language, label, codec)| {
+                    json!({
+                        "id": id,
+                        "lang": language,
+                        "label": label,
+                        "codec": codec,
+                        "embedded": true,
+                        "url": format!("/orvix/remote/embedded/{}/subtitles.vtt", id),
+                    })
+                })
+                .collect::<Vec<_>>();
+            Json(json!({
+                "error": null,
+                "result": result,
+                "orvixRemoteFile": true,
+            }))
+        }
+        Err(error) => Json(json!({
+            "error": error,
+            "result": [],
+            "orvixRemoteFile": true,
+        })),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct OrvixRemoteExtractQuery {
+    #[serde(rename = "videoUrl")]
+    pub video_url: String,
+}
+
+pub async fn get_remote_embedded_subtitles_vtt(
+    Path(track_id): Path<usize>,
+    Query(query): Query<OrvixRemoteExtractQuery>,
+) -> Response {
+    if track_id < 1000 {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(axum::body::Body::from("Invalid embedded subtitle track ID"))
+            .unwrap();
+    }
+
+    let subtitle_index = track_id - 1000;
+    let map_value = format!("0:s:{subtitle_index}");
+    let mut cmd = tokio::process::Command::new("ffmpeg");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let output = match cmd
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-rw_timeout",
+            "30000000",
+            "-i",
+            &query.video_url,
+            "-map",
+            &map_value,
+            "-vn",
+            "-an",
+            "-dn",
+            "-c:s",
+            "webvtt",
+            "-f",
+            "webvtt",
+            "-",
+        ])
+        .output()
+        .await
+    {
+        Ok(output) => output,
+        Err(error) => {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(axum::body::Body::from(format!(
+                    "Remote subtitle extraction launch failed: {error}"
+                )))
+                .unwrap();
+        }
+    };
+
+    if !output.status.success() {
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(axum::body::Body::from(format!(
+                "Remote subtitle extraction failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )))
+            .unwrap();
+    }
+
+    match String::from_utf8(output.stdout) {
+        Ok(content) if content.contains("-->") => Response::builder()
+            .header("content-type", "text/vtt")
+            .header("access-control-allow-origin", "*")
+            .header("x-orvix-remote-file", "1")
+            .body(axum::body::Body::from(content))
+            .unwrap(),
+        Ok(_) => Response::builder()
+            .status(StatusCode::UNPROCESSABLE_ENTITY)
+            .body(axum::body::Body::from(
+                "Remote subtitle extraction produced no timed cues",
+            ))
+            .unwrap(),
+        Err(error) => Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(axum::body::Body::from(format!(
+                "Remote subtitle output was not UTF-8: {error}"
+            )))
+            .unwrap(),
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -462,6 +702,14 @@ def patch_router(root: pathlib.Path) -> None:
             get(routes::subtitles::orvix_resolve_file),
         )
         .route(
+            "/orvix/remote/subtitlesTracks",
+            get(routes::subtitles::orvix_remote_subtitles_tracks),
+        )
+        .route(
+            "/orvix/remote/embedded/{trackId}/subtitles.vtt",
+            get(routes::subtitles::get_remote_embedded_subtitles_vtt),
+        )
+        .route(
             "/{infoHash}/{fileIdx}/embedded/{trackId}/subtitles.vtt",
             get(routes::subtitles::get_exact_embedded_subtitles_vtt),
         )
@@ -494,10 +742,15 @@ def verify(root: pathlib.Path) -> None:
         ("orvix_capabilities", subtitles),
         ("orvix_resolve_file", subtitles),
         ("exactFileEmbeddedSubtitles", subtitles),
+        ("remoteEmbeddedSubtitles", subtitles),
+        ("orvix_remote_subtitles_tracks", subtitles),
+        ("get_remote_embedded_subtitles_vtt", subtitles),
         ("get_exact_embedded_subtitles_vtt", subtitles),
         ("orvixExactFile", subtitles),
         ('"/orvix/capabilities"', lib),
         ('"/orvix/{infoHash}/resolve-file"', lib),
+        ('"/orvix/remote/subtitlesTracks"', lib),
+        ('"/orvix/remote/embedded/{trackId}/subtitles.vtt"', lib),
         ('"/{infoHash}/{fileIdx}/embedded/{trackId}/subtitles.vtt"', lib),
     ]
     missing = [needle for needle, haystack in required if needle not in haystack]
