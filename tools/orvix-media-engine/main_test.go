@@ -92,6 +92,63 @@ func TestEnglishScoringRejectsCommentaryAndBitmap(t *testing.T) {
 	}
 }
 
+func TestPreparedMediaSessionProxiesExactRanges(t *testing.T) {
+	data := []byte("abcdefghijklmnopqrstuvwxyz0123456789")
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+			w.Header().Set("Accept-Ranges", "bytes")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if value := r.Header.Get("Range"); value != "" {
+			var start, end int
+			if _, err := fmt.Sscanf(value, "bytes=%d-%d", &start, &end); err != nil {
+				http.Error(w, "bad range", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Accept-Ranges", "bytes")
+			w.Header().Set(
+				"Content-Range",
+				fmt.Sprintf("bytes %d-%d/%d", start, end, len(data)),
+			)
+			w.Header().Set("Content-Length", strconv.Itoa(end-start+1))
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(data[start : end+1])
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		_, _ = w.Write(data)
+	}))
+	defer origin.Close()
+
+	s := &server{
+		httpClient:  origin.Client(),
+		proxyClient: origin.Client(),
+		sessions:    make(map[string]string),
+		lastRequest: time.Now(),
+	}
+	sessionID, err := s.newSession(origin.URL + "/video.mkv")
+	if err != nil {
+		t.Fatalf("newSession failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/media/"+sessionID, nil)
+	req.Header.Set("Range", "bytes=5-12")
+	rec := httptest.NewRecorder()
+	s.media(rec, req)
+
+	if rec.Code != http.StatusPartialContent {
+		t.Fatalf("status = %d, want 206", rec.Code)
+	}
+	if got, want := rec.Body.String(), string(data[5:13]); got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+	if got := rec.Header().Get("Content-Range"); got == "" {
+		t.Fatal("Content-Range must be forwarded")
+	}
+}
+
 func TestLooksEnglish(t *testing.T) {
 	text := strings.Repeat(
 		"the way you know this is what we have and this is where you are going\n",
