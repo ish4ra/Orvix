@@ -2306,6 +2306,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         url,
         item,
         episode,
+        source: chosen,
         releaseHint: file.name,
         expectedSizeBytes: file.size,
         expectedVideoHash: chosen.videoHash,
