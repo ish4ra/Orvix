@@ -812,7 +812,7 @@ class AiSinhalaSubtitleService {
   }
 
 
-  static const _generatedSubtitleCacheVersion = 'srt-v5-preplayer-engine';
+  static const _generatedSubtitleCacheVersion = 'srt-v6-verified-attach';
 
   static Future<AiGeneratedSubtitleFile>
       prepareGeneratedSinhalaFromEngineEmbedded({
@@ -1608,8 +1608,17 @@ class AiSinhalaSubtitleService {
       if (!await file.exists()) return null;
       final length = await file.length();
       if (length < 128) return null;
-      final head = await file.openRead(0, math.min(length, 4096)).transform(utf8.decoder).join();
-      if (!head.contains('-->')) return null;
+      final sample = await file
+          .openRead(0, math.min(length, 32768))
+          .transform(utf8.decoder)
+          .join();
+      if (!sample.contains('-->')) return null;
+
+      // Older beta builds could leave a syntactically valid SRT in cache even
+      // when the translation result was unusable. A generated Sinhala cache
+      // entry is accepted only when it actually contains Sinhala script.
+      final sinhalaChars = RegExp(r'[\u0D80-\u0DFF]').allMatches(sample).length;
+      if (sinhalaChars < 8) return null;
       return file;
     } catch (_) {
       return null;
@@ -1650,8 +1659,17 @@ class AiSinhalaSubtitleService {
         ..writeln(translated)
         ..writeln();
     }
+    final rendered = buffer.toString();
+    final sinhalaChars =
+        RegExp(r'[\u0D80-\u0DFF]').allMatches(rendered).length;
+    if (sinhalaChars < 8) {
+      throw const AiSubtitleException(
+        'The generated subtitle did not contain enough Sinhala text to be considered valid.',
+      );
+    }
+
     await file.writeAsString(
-      buffer.toString(),
+      rendered,
       encoding: utf8,
       flush: true,
     );
