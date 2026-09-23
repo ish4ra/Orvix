@@ -93,6 +93,23 @@ void main() {
     );
   });
 
+  test('Windows debrid path uses the same Orvix native stream engine family', () {
+    final ai =
+        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+    final details = File('lib/screens/details_screen.dart').readAsStringSync();
+    final torrent =
+        File('lib/services/local_torrent_service.dart').readAsStringSync();
+
+    expect(ai, contains('_fetchOrvixRemoteEmbeddedEnglishSubtitle('));
+    expect(ai, contains('/orvix/remote/subtitlesTracks'));
+    expect(ai, contains('/orvix/remote/embedded/'));
+    expect(ai, contains('remoteEmbeddedSubtitles'));
+    expect(details, contains('LocalTorrentService.instance.proxyRemoteUrl('));
+    expect(details, contains('Opening through the Orvix stream engine'));
+    expect(torrent, contains("Uri.parse('\$baseUrl/proxy/')"));
+    expect(torrent, contains('remoteSubtitleRouteVersion'));
+  });
+
   test('unlabeled extracted dialogue must actually look English', () {
     expect(
       EmbeddedSubtitleExtractorService.looksLikeEnglishSubtitleForTesting(
