@@ -17,7 +17,8 @@ class OrvixUpdateGate extends StatefulWidget {
   State<OrvixUpdateGate> createState() => _OrvixUpdateGateState();
 }
 
-class _OrvixUpdateGateState extends State<OrvixUpdateGate> {
+class _OrvixUpdateGateState extends State<OrvixUpdateGate>
+    with WidgetsBindingObserver {
   final AppUpdateService _updates = AppUpdateService();
 
   AppUpdateInfo? _update;
@@ -26,12 +27,26 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate> {
   bool _applying = false;
   double _progress = 0;
   File? _downloadedFile;
+  Timer? _periodicCheck;
+  bool _checking = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_reportPreviousWindowsUpdate());
     unawaited(_checkSoon());
+    _periodicCheck = Timer.periodic(
+      const Duration(minutes: 3),
+      (_) => unawaited(_checkForUpdate()),
+    );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_checkForUpdate());
+    }
   }
 
   Future<void> _reportPreviousWindowsUpdate() async {
@@ -48,14 +63,35 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate> {
 
   Future<void> _checkSoon() async {
     await Future<void>.delayed(const Duration(milliseconds: 1200));
-    if (!mounted) return;
-    final update = await _updates.checkForUpdate();
-    if (!mounted || update == null) return;
-    setState(() => _update = update);
+    await _checkForUpdate();
+  }
+
+  Future<void> _checkForUpdate() async {
+    if (!mounted || _checking || _installing) return;
+    _checking = true;
+    try {
+      final update = await _updates.checkForUpdate();
+      if (!mounted || update == null) return;
+
+      final changed = _update?.tag != update.tag;
+      if (!changed && _update != null) return;
+
+      setState(() {
+        _update = update;
+        // A dismissal only applies to the version the user dismissed. If a
+        // newer release appears while Orvix stays open, show it automatically.
+        _dismissed = false;
+        _downloadedFile = null;
+      });
+    } finally {
+      _checking = false;
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _periodicCheck?.cancel();
     _updates.dispose();
     super.dispose();
   }
