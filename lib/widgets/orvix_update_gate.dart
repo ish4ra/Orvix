@@ -27,7 +27,6 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
   bool _applying = false;
   double _progress = 0;
   File? _downloadedFile;
-  Timer? _periodicCheck;
   bool _checking = false;
 
   @override
@@ -36,10 +35,6 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
     WidgetsBinding.instance.addObserver(this);
     unawaited(_reportPreviousWindowsUpdate());
     unawaited(_checkSoon());
-    _periodicCheck = Timer.periodic(
-      const Duration(minutes: 3),
-      (_) => unawaited(_checkForUpdate()),
-    );
   }
 
   @override
@@ -78,8 +73,8 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
 
       setState(() {
         _update = update;
-        // A dismissal only applies to the version the user dismissed. If a
-        // newer release appears while Orvix stays open, show it automatically.
+        // A dismissal only applies to the version the user dismissed. A
+        // newer release discovered on the next app resume/startup is shown.
         _dismissed = false;
         _downloadedFile = null;
       });
@@ -91,7 +86,6 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _periodicCheck?.cancel();
     _updates.dispose();
     super.dispose();
   }
