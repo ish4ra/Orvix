@@ -270,6 +270,8 @@ void main() {
       details,
       contains('prepareGeneratedSinhalaFromEmbeddedSubtitle('),
     );
+    expect(details, contains('videoFileNameHint: source.fileNameHint ?? releaseHint'));
+    expect(details, contains('warmForPlayback: false'));
     expect(
       details,
       contains('await LocalTorrentService.instance.releaseCurrentStream();'),
@@ -278,6 +280,43 @@ void main() {
     // The debrid/CDN playback session must remain authoritative. The local
     // torrent is only a subtitle oracle and must never replace playbackUrl.
     expect(details, contains('playbackUrl = enginePlaybackUrl;'));
+  });
+
+  test('remote debrid subtitle probing is bounded while local P2P keeps the long window', () {
+    final engine =
+        File('tools/orvix-media-engine/main.go').readAsStringSync();
+    final localTorrent =
+        File('lib/services/local_torrent_service.dart').readAsStringSync();
+    final ai =
+        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+
+    expect(engine, contains('probeTimeout := 35 * time.Second'));
+    expect(engine, contains('probeTimeout = 75 * time.Second'));
+    expect(localTorrent, contains('bool warmForPlayback = true'));
+    expect(
+      localTorrent,
+      contains("warmForPlayback ? 'Opening player…' : 'Exact torrent file ready…'"),
+    );
+    expect(
+      ai,
+      contains('if (Platform.isWindows) return null;'),
+    );
+  });
+
+  test('local exact torrent subtitle path accepts matching external text files', () {
+    final ai =
+        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+
+    expect(ai, contains('final externalCandidates = <Map<String, dynamic>>[];'));
+    expect(ai, contains('_externalTorrentSubtitleMatchScore('));
+    expect(ai, contains('_subtitleTextLooksEnglish(content)'));
+    expect(ai, contains('Torrent external • $label'));
+    expect(
+      ai,
+      contains(
+        'The exact torrent file had no readable English text subtitle, including matching external subtitle files.',
+      ),
+    );
   });
 
   test('Windows client launches bundled media engine on its own port', () {
