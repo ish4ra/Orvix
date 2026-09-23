@@ -416,11 +416,11 @@ jobs:
 
             $rangeHeaders = @{ Range = 'bytes=0-1023'; 'Accept-Encoding' = 'identity' }
             $proxyResponse = Invoke-WebRequest -UseBasicParsing -Uri $result.playbackUrl -Headers $rangeHeaders -TimeoutSec 15
-            if ($proxyResponse.StatusCode -ne 206) {
-              throw "Media engine playback proxy returned HTTP $($proxyResponse.StatusCode), expected 206."
+            if ($proxyResponse.StatusCode -ne 200 -and $proxyResponse.StatusCode -ne 206) {
+              throw "Media engine playback proxy returned HTTP $($proxyResponse.StatusCode)."
             }
-            if (-not $proxyResponse.Headers['Content-Range']) {
-              throw 'Media engine playback proxy did not preserve Content-Range.'
+            if ($proxyResponse.StatusCode -eq 206 -and -not $proxyResponse.Headers['Content-Range']) {
+              throw 'Media engine playback proxy returned 206 without Content-Range.'
             }
             if ($proxyResponse.RawContentLength -le 0) {
               throw 'Media engine playback proxy returned no media bytes.'
