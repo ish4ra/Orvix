@@ -60,8 +60,8 @@ void main() {
     final end = service.indexOf('static Future<AiPreparedSubtitle?> prepareBuffered', start);
     final translate = service.substring(start, end);
 
-    expect(translate, contains('const batchSize = 28;'));
-    expect(translate, contains('const parallelBatches = 2;'));
+    expect(translate, contains('const batchSize = 96;'));
+    expect(translate, contains('const parallelBatches = 3;'));
     expect(translate, contains('await Future.wait<void>'));
     expect(translate, contains('_translateIndicesResilient('));
   });
