@@ -812,7 +812,163 @@ class AiSinhalaSubtitleService {
   }
 
 
-  static const _generatedSubtitleCacheVersion = 'srt-v4-complete-embedded';
+  static const _generatedSubtitleCacheVersion = 'srt-v5-preplayer-engine';
+
+  static Future<AiGeneratedSubtitleFile>
+      prepareGeneratedSinhalaFromEngineEmbedded({
+    required String title,
+    required String embeddedSrt,
+    required String embeddedIdentity,
+    required String embeddedLabel,
+    void Function(String message)? onStatus,
+  }) async {
+    final cues = _parseSubtitle(embeddedSrt);
+    if (cues.length < 8) {
+      throw const AiSubtitleException(
+        'The standalone media engine returned an embedded subtitle that could not be parsed safely.',
+      );
+    }
+
+    final contentDigest =
+        sha256.convert(utf8.encode(embeddedSrt)).toString();
+    final cacheKey =
+        'engine-embedded|$contentDigest|$_generatedSubtitleCacheVersion';
+    final cached = await _cachedGeneratedFile(cacheKey);
+    if (cached != null) {
+      onStatus?.call(
+        'Cached complete Sinhala subtitle is ready • $embeddedLabel.',
+      );
+      return AiGeneratedSubtitleFile(
+        path: cached.path,
+        source: 'orvix-media-engine-embedded',
+        label: embeddedLabel,
+        cacheHit: true,
+      );
+    }
+
+    final prepared = AiPreparedSubtitle(
+      key: cacheKey,
+      title: title,
+      sourceUrl: embeddedIdentity,
+      cues: cues,
+      sourceMatch: 'preplayer-engine-embedded-exact',
+    );
+
+    onStatus?.call(
+      'Embedded English subtitle extracted before player startup. Translating the complete file to Sinhala…',
+    );
+    await _translateEntireSubtitle(
+      prepared,
+      onProgress: (done, total) {
+        final percent =
+            total <= 0 ? 100 : ((done * 100) / total).round().clamp(0, 100);
+        onStatus?.call(
+          'Translating complete Sinhala subtitle… $percent% ($done/$total)',
+        );
+      },
+    );
+    if (prepared.translatedCount != prepared.cues.length) {
+      throw const AiSubtitleException(
+        'The complete embedded subtitle did not finish translating.',
+      );
+    }
+
+    final file = await _writeGeneratedSrt(cacheKey, prepared);
+    onStatus?.call(
+      'Complete Sinhala subtitle generated before the player opened.',
+    );
+    return AiGeneratedSubtitleFile(
+      path: file.path,
+      source: 'orvix-media-engine-embedded',
+      label: embeddedLabel,
+      cacheHit: false,
+    );
+  }
+
+  static Future<AiGeneratedSubtitleFile>
+      prepareGeneratedSinhalaFromExactFingerprint({
+    required String title,
+    required String movieHash,
+    required int movieByteSize,
+    void Function(String message)? onStatus,
+  }) async {
+    if (movieHash.length != 16 || movieByteSize <= 0) {
+      throw const AiSubtitleException(
+        'The standalone media engine did not return a valid exact-file fingerprint.',
+      );
+    }
+
+    final exactKey =
+        'engine-exact|$movieHash|$movieByteSize|$_generatedSubtitleCacheVersion';
+    final cached = await _cachedGeneratedFile(exactKey);
+    if (cached != null) {
+      onStatus?.call('Cached exact-file Sinhala subtitle is ready.');
+      return AiGeneratedSubtitleFile(
+        path: cached.path,
+        source: 'opensubtitles-rest-exact-engine',
+        label: 'Exact video-file match',
+        cacheHit: true,
+      );
+    }
+
+    onStatus?.call(
+      'No embedded English text track was usable. Checking OpenSubtitles with the media engine’s exact hash + byte size…',
+    );
+    final exactText = await _fetchExactRestSubtitle(
+      movieHash: movieHash,
+      movieByteSize: movieByteSize,
+    );
+    if (exactText == null) {
+      throw const AiSubtitleException(
+        'No usable embedded English text subtitle was found, and OpenSubtitles returned no exact-file subtitle.',
+      );
+    }
+
+    final cues = _parseSubtitle(exactText);
+    if (cues.length < 8) {
+      throw const AiSubtitleException(
+        'The exact-file English subtitle could not be parsed safely.',
+      );
+    }
+
+    final prepared = AiPreparedSubtitle(
+      key: exactKey,
+      title: title,
+      sourceUrl: 'opensubtitles-rest-v1://moviehash/$movieHash',
+      cues: cues,
+      sourceMatch: 'preplayer-engine-rest-moviehash+moviebytesize',
+    );
+
+    onStatus?.call(
+      'Exact-file English subtitle verified. Translating the complete file to Sinhala before playback…',
+    );
+    await _translateEntireSubtitle(
+      prepared,
+      onProgress: (done, total) {
+        final percent =
+            total <= 0 ? 100 : ((done * 100) / total).round().clamp(0, 100);
+        onStatus?.call(
+          'Translating complete Sinhala subtitle… $percent% ($done/$total)',
+        );
+      },
+    );
+    if (prepared.translatedCount != prepared.cues.length) {
+      throw const AiSubtitleException(
+        'The complete exact-file subtitle did not finish translating.',
+      );
+    }
+
+    final file = await _writeGeneratedSrt(exactKey, prepared);
+    onStatus?.call(
+      'Complete exact-file Sinhala subtitle generated before player startup.',
+    );
+    return AiGeneratedSubtitleFile(
+      path: file.path,
+      source: 'opensubtitles-rest-exact-engine',
+      label: 'Exact video-file match',
+      cacheHit: false,
+    );
+  }
 
   static Future<AiGeneratedSubtitleFile>
       prepareGeneratedSinhalaFromEmbeddedSubtitle({
