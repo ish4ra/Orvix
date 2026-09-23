@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test(
-      'automatic AI Sinhala prefers exact embedded text then strict video fingerprint fallback',
+      'automatic AI Sinhala keeps local P2P on exact embedded then strict fingerprint fallback',
       () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
@@ -88,6 +88,37 @@ void main() {
     expect(service, contains("decoded['orvixExactFile'] != true"));
     expect(service, contains("response.headers['x-orvix-exact-file'] != '1'"));
     expect(service, isNot(contains('_guessStreamServerPrimaryVideoIndex(')));
+  });
+
+  test('debrid/direct fallback is isolated from the local P2P exact path', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    final helperStart = player.indexOf(
+      'Future<AiGeneratedSubtitleFile> _prepareRemoteDirectAiFallback()',
+    );
+    final helperEnd = player.indexOf(
+      'Future<bool> _prepareAiSinhalaBeforePlayback()',
+      helperStart,
+    );
+    final helper = player.substring(helperStart, helperEnd);
+
+    expect(helper, contains('if (_localP2pStream || widget.item == null)'));
+    expect(helper, contains('_captureNativeEnglishSamples()'));
+    expect(helper, contains('OnlineSubtitleService.search('));
+    expect(helper, contains('includeTranscriptFallbacks: true'));
+    expect(
+      helper,
+      contains('prepareGeneratedSinhalaFromNativeCalibration('),
+    );
+
+    final prepareStart =
+        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
+    final prepareEnd =
+        player.indexOf('Future<void> _restoreNativeSubtitleFallback()', prepareStart);
+    final prepare = player.substring(prepareStart, prepareEnd);
+
+    expect(prepare, contains('if (_localP2pStream) rethrow;'));
+    expect(prepare, contains('generated = await _prepareRemoteDirectAiFallback();'));
   });
 
 }
