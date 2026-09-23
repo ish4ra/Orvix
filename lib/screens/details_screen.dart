@@ -3719,6 +3719,86 @@ class _DetailsScreenState extends State<DetailsScreen> {
             }
           }
 
+          // Debrid/cloud playback can lose the exact subtitle path even when
+          // the original Torrentio source is a magnet that the proven Free P2P
+          // engine can inspect by exact info-hash + file index. Reuse that
+          // torrent only as a short-lived subtitle oracle: extract/translate
+          // the exact source subtitle locally, then keep video playback on the
+          // fast debrid/CDN session returned by the standalone media engine.
+          //
+          // This deliberately runs after the remote embedded + exact-hash
+          // paths. It never falls back to a different release or an unverified
+          // OpenSubtitles timeline.
+          if (preparedAiSubtitleFile == null &&
+              source != null &&
+              source.isMagnet &&
+              !originalLocalP2p &&
+              (source.torrentFileIndex != null ||
+                  source.fileNameHint?.trim().isNotEmpty == true)) {
+            try {
+              unawaited(
+                AiSinhalaTraceService.write(
+                  'p2p-subtitle-oracle-start provider=${source.provider} '
+                  'fileIdx=${source.torrentFileIndex ?? -1} '
+                  'hasFileHint=${source.fileNameHint?.trim().isNotEmpty == true}',
+                ),
+              );
+              if (mounted) {
+                setState(() {
+                  _status =
+                      'AI Sinhala • exact debrid subtitle was unavailable. '
+                      'Checking the same torrent through the Free P2P subtitle engine…';
+                });
+              }
+
+              final subtitleOracleUrl =
+                  await LocalTorrentService.instance.resolve(
+                source,
+                onProgress: (message) {
+                  if (!mounted) return;
+                  setState(() {
+                    _status = 'AI Sinhala • subtitle check • $message';
+                  });
+                },
+              );
+
+              preparedAiSubtitleFile = await AiSinhalaSubtitleService
+                  .prepareGeneratedSinhalaFromEmbeddedSubtitle(
+                title: title,
+                videoUrl: subtitleOracleUrl,
+                onStatus: (message) {
+                  if (!mounted) return;
+                  setState(() => _status = 'AI Sinhala • $message');
+                },
+              );
+
+              unawaited(
+                AiSinhalaTraceService.write(
+                  'p2p-subtitle-oracle-match provider=${source.provider}',
+                ),
+              );
+            } on AiSubtitleException catch (error) {
+              unawaited(
+                AiSinhalaTraceService.write(
+                  'p2p-subtitle-oracle-miss type=AiSubtitleException '
+                  'detail=${error.message.replaceAll(RegExp(r'\\s+'), ' ').trim()}',
+                ),
+              );
+            } catch (error) {
+              unawaited(
+                AiSinhalaTraceService.write(
+                  'p2p-subtitle-oracle-miss type=${error.runtimeType}',
+                ),
+              );
+            } finally {
+              // The torrent was opened only to recover the exact subtitle. The
+              // actual movie continues through TorBox/PikPak/debrid.
+              try {
+                await LocalTorrentService.instance.releaseCurrentStream();
+              } catch (_) {}
+            }
+          }
+
           if (preparedAiSubtitleFile == null) {
             final detail = [
               preparation.probeError,
