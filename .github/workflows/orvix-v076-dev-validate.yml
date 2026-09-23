@@ -30,6 +30,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -37,6 +41,13 @@ jobs:
 
       - name: Get dependencies
         run: flutter pub get
+
+      - name: Test standalone Orvix media engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd tools/orvix-media-engine
+          go test ./...
 
       - name: Validate build helper syntax
         shell: bash
@@ -200,6 +211,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -210,6 +225,20 @@ jobs:
 
       - name: Build Windows
         run: flutter build windows --release
+
+      - name: Build standalone Orvix media engine
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location 'tools\orvix-media-engine'
+          try {
+            go test ./...
+            go build -trimpath -ldflags '-s -w' -o '..\..\build\windows\x64\runner\Release\orvix-media-engine.exe' .
+          } finally {
+            Pop-Location
+          }
+          $engine = 'build\windows\x64\runner\Release\orvix-media-engine.exe'
+          if (-not (Test-Path $engine)) { throw 'Standalone media engine missing from dev Windows build.' }
 
       - name: Verify committed Windows icon
         shell: pwsh
