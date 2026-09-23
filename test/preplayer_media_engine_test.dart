@@ -234,6 +234,24 @@ void main() {
     );
   });
 
+  test('exact subtitle fallback tries source hash before engine hash', () {
+    final details = File('lib/screens/details_screen.dart').readAsStringSync();
+
+    final sourceAttempt = details.indexOf("label: 'source'");
+    final engineAttempt = details.indexOf("label: 'engine'");
+    final addonFallback =
+        details.indexOf('checking the official hash-scoped subtitle addons');
+
+    expect(sourceAttempt, greaterThanOrEqualTo(0));
+    expect(engineAttempt, greaterThan(sourceAttempt));
+    expect(addonFallback, greaterThan(engineAttempt));
+    expect(details, contains('candidate.score >= 900'));
+    expect(
+      details,
+      contains('No safe subtitle matched this exact file.'),
+    );
+  });
+
   test('Windows client launches bundled media engine on its own port', () {
     final service =
         File('lib/services/orvix_media_engine_service.dart').readAsStringSync();
