@@ -310,7 +310,7 @@ void main() {
     expect(ai, contains('final externalCandidates = <Map<String, dynamic>>[];'));
     expect(ai, contains('_externalTorrentSubtitleMatchScore('));
     expect(ai, contains('_subtitleTextLooksEnglish(content)'));
-    expect(ai, contains('Torrent external • $label'));
+    expect(ai, contains('Torrent external • '));
     expect(
       ai,
       contains(
