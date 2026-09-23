@@ -3305,9 +3305,18 @@ class _DetailsScreenState extends State<DetailsScreen> {
   }) async {
     if (!mounted) return;
 
+    final aiSettingEnabled =
+        await AiSinhalaPreferencesService.isEnabled();
+    final windowsCloudAiEngine =
+        Platform.isWindows && useLocalMediaBridge && aiSettingEnabled;
+
     LocalMediaBridgeHandle? bridgeHandle;
     var playbackUrl = url;
-    if (useLocalMediaBridge) {
+
+    // With AI Sinhala enabled on Windows, cloud/debrid media is now owned by
+    // the standalone Orvix media engine from preparation through playback.
+    // Do not build a second proxy chain through the P2P stream-server first.
+    if (useLocalMediaBridge && !windowsCloudAiEngine) {
       var nativeEngineReady = false;
 
       if (Platform.isWindows) {
@@ -3322,8 +3331,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
           );
           nativeEngineReady = true;
         } catch (_) {
-          // If the native proxy cannot produce real bytes for this signed URL,
-          // fall back before the player opens instead of hanging at 0:00.
           if (mounted) {
             setState(() {
               _status =
@@ -3352,33 +3359,39 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final next = _nextEpisode(item, episode);
 
     AiGeneratedSubtitleFile? preparedAiSubtitleFile;
-    String? aiPreflightFailure;
     var aiPreflightAttempted = false;
 
-    // Windows AI Sinhala is prepared entirely before PlayerScreen exists.
-    // The standalone media engine reads the exact resolved media URL, extracts
-    // embedded English text (or fingerprints the file for an exact
-    // OpenSubtitles lookup), and the complete Sinhala SRT is generated here.
-    // MPV is not opened, played, paused or seeked during this stage.
-    if (Platform.isWindows &&
-        await AiSinhalaPreferencesService.isEnabled()) {
+    // Cloud/debrid AI Sinhala on Windows is fail-closed: the player route does
+    // not exist until the standalone engine has inspected the exact provider
+    // URL, generated the complete Sinhala SRT and returned its own local media
+    // session. This prevents audio/video from starting underneath a loading
+    // screen and removes the old player-driven play/pause/seek fallback.
+    if (windowsCloudAiEngine) {
       aiPreflightAttempted = true;
       if (mounted) {
         setState(() {
           _resolving = true;
+          _resolveProgress = null;
           _status =
-              'AI Sinhala • preparing the exact video before the player opens…';
+              'AI Sinhala • starting the Orvix media engine before playback…';
         });
       }
 
       try {
         final preparation = await OrvixMediaEngineService.instance.prepare(
-          playbackUrl,
+          url,
           onStatus: (message) {
             if (!mounted) return;
             setState(() => _status = 'AI Sinhala • $message');
           },
         );
+
+        final enginePlaybackUrl = preparation.playbackUrl;
+        if (enginePlaybackUrl == null || enginePlaybackUrl.isEmpty) {
+          throw const AiSubtitleException(
+            'The Orvix media engine did not create a local playback session.',
+          );
+        }
 
         if (preparation.hasEmbeddedText) {
           final identity =
@@ -3410,15 +3423,45 @@ class _DetailsScreenState extends State<DetailsScreen> {
           final detail = [
             preparation.probeError,
             preparation.hashError,
-          ].whereType<String>().where((value) => value.trim().isNotEmpty).join(' • ');
+          ]
+              .whereType<String>()
+              .where((value) => value.trim().isNotEmpty)
+              .join(' • ');
           throw AiSubtitleException(
             detail.isEmpty
-                ? 'The standalone media engine found no readable embedded English text subtitle and could not create an exact-file fingerprint.'
+                ? 'No readable embedded English text subtitle was found and an exact-file OpenSubtitles fingerprint could not be created.'
                 : detail,
           );
         }
+
+        playbackUrl = enginePlaybackUrl;
+
+        if (mounted) {
+          setState(() {
+            _status =
+                'AI Sinhala • complete subtitle ready. Opening player…';
+          });
+        }
       } catch (error) {
-        aiPreflightFailure = error.toString().trim();
+        if (mounted) {
+          setState(() {
+            _resolving = false;
+            _resolveProgress = null;
+            _status = '';
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'AI Sinhala preparation failed before playback: ${error.toString()}',
+              ),
+              duration: const Duration(seconds: 9),
+            ),
+          );
+        }
+        // Do not silently open normal playback when the user explicitly has
+        // AI Sinhala enabled. This is the bug that allowed audio to start
+        // behind the loading surface in beta.18.
+        return;
       }
     }
 
@@ -3433,7 +3476,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     try {
       final preference = await PlayerEnginePreferencesService.get();
       final aiEnabled =
-          Platform.isAndroid && await AiSinhalaPreferencesService.isEnabled();
+          Platform.isAndroid && aiSettingEnabled;
       final engine = PlayerEngineRouter.choose(
         preference: preference,
         isAndroid: Platform.isAndroid,
@@ -3448,33 +3491,31 @@ class _DetailsScreenState extends State<DetailsScreen> {
           preference == PlayerEnginePreference.auto;
 
       if (engine == PlayerEngineKind.exoPlayer && Platform.isAndroid) {
-      final result = await _openExoPlayer(
-        playbackUrl,
-        title,
-        item,
-        episode,
-        source: source,
-        autoFallbackToMpv: preference == PlayerEnginePreference.auto,
-      );
-      if (!mounted) return;
-
-      final shouldFallback = result?.switchToMpv == true ||
-          (preference == PlayerEnginePreference.auto &&
-              result?.failed == true);
-      if (!shouldFallback) return;
-
-      if (result?.failed == true) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('ExoPlayer failed — trying MPV…'),
-            duration: Duration(seconds: 2),
-          ),
+        final result = await _openExoPlayer(
+          playbackUrl,
+          title,
+          item,
+          episode,
+          source: source,
+          autoFallbackToMpv: preference == PlayerEnginePreference.auto,
         );
+        if (!mounted) return;
+
+        final shouldFallback = result?.switchToMpv == true ||
+            (preference == PlayerEnginePreference.auto &&
+                result?.failed == true);
+        if (!shouldFallback) return;
+
+        if (result?.failed == true) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('ExoPlayer failed — trying MPV…'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 180));
       }
-      // Exo owns native decoder/surface resources. Give its fully-awaited
-      // teardown one frame before starting MPV to avoid Android TV races.
-      await Future<void>.delayed(const Duration(milliseconds: 180));
-    }
 
       await _openMpvPlayer(
         playbackUrl,
@@ -3488,7 +3529,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         expectedVideoHash: expectedVideoHash,
         preparedAiSubtitleFile: preparedAiSubtitleFile,
         aiPreflightAttempted: aiPreflightAttempted,
-        aiPreflightFailure: aiPreflightFailure,
+        aiPreflightFailure: null,
         fallbackToExo: tvFreeP2pAuto,
       );
     } finally {
