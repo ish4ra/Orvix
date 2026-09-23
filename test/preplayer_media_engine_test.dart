@@ -191,10 +191,14 @@ void main() {
       contains('Playback was kept paused instead of starting without Sinhala subtitles.'),
     );
 
-    final attach = player.indexOf('player-attach-confirmed language=si');
-    final play = player.indexOf('player-play allowed aiReady=');
-    expect(attach, greaterThanOrEqualTo(0));
-    expect(play, greaterThan(attach));
+    final openStart = player.indexOf('Future<void> _open() async');
+    final attachCall =
+        player.indexOf('await _loadGeneratedAiSubtitleTrack();', openStart);
+    final play = player.indexOf('player-play allowed aiReady=', openStart);
+    expect(openStart, greaterThanOrEqualTo(0));
+    expect(attachCall, greaterThan(openStart));
+    expect(play, greaterThan(attachCall));
+    expect(player, contains('player-attach-confirmed language=si'));
   });
 
   test('generated Sinhala cache rejects stale non-Sinhala SRT files', () {
