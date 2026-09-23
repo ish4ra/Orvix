@@ -280,7 +280,34 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final aiPreferred = widget.allowAiSinhala && aiSettingEnabled;
       final preprepared =
           aiPreferred ? widget.preparedAiSubtitleFile : null;
+
+      // Windows must never fall back to the old player-driven subtitle
+      // discovery path. DetailsScreen is responsible for running the
+      // standalone media engine and preparing the complete Sinhala SRT first.
+      // Keep this guard here as a second line of defence so a future caller
+      // cannot accidentally reintroduce "video starts immediately" behavior.
+      final missingWindowsPreflight = Platform.isWindows &&
+          aiPreferred &&
+          !widget.aiPreflightAttempted &&
+          preprepared == null;
+      if (missingWindowsPreflight) {
+        try {
+          await widget.playback.stop();
+        } catch (_) {}
+        const message =
+            'AI Sinhala startup was blocked because Windows pre-player preparation was bypassed.';
+        if (mounted) {
+          setState(() {
+            _aiSubtitleUnavailable = true;
+            _aiPreflightMessage = message;
+            _error = message;
+          });
+        }
+        return;
+      }
+
       final usePlayerPreflight = aiPreferred &&
+          !Platform.isWindows &&
           !widget.aiPreflightAttempted &&
           preprepared == null;
       var aiReady = preprepared != null;
