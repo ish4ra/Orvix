@@ -72,9 +72,8 @@ void main() {
     expect(update, contains("raw['assets_url']"));
     expect(update, contains('_fetchReleaseAssets('));
     expect(update, contains("'Cache-Control': 'no-cache'"));
-    expect(gate, contains('Timer.periodic('));
-    expect(gate, contains('Duration(minutes: 3)'));
     expect(gate, contains('AppLifecycleState.resumed'));
+    expect(gate, isNot(contains('Timer.periodic(')));
     expect(
       gate,
       contains('Orvix will close; finish setup in the Windows installer'),
