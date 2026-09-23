@@ -1791,13 +1791,15 @@ class AiSinhalaSubtitleService {
       return;
     }
 
-    // Full-file mode must stay below the provider's practical response-size
-    // limit, not merely the Edge Function's 80-cue request cap. Large 60-cue
-    // waves can overflow/truncate an 8192-token JSON response and surface as
-    // "Could not translate subtitle buffer." Keep requests smaller and avoid
-    // hammering the provider with three large generations at once.
-    const batchSize = 28;
-    const parallelBatches = 2;
+    // Full-file preparation used to translate only 28 cues in two parallel
+    // requests. A ~700-cue TV episode therefore needed 13 serialized waves,
+    // which is why complete pre-playback translation could take 15+ minutes.
+    // The Edge Function now allows a much larger structured response and the
+    // resilient splitter below automatically halves only a batch that fails.
+    // 96 x 3 turns a 700-cue episode into three waves without sacrificing the
+    // fail-closed complete-SRT rule.
+    const batchSize = 96;
+    const parallelBatches = 3;
     final batches = <List<int>>[
       for (var cursor = 0; cursor < missing.length; cursor += batchSize)
         missing.sublist(
@@ -2453,10 +2455,8 @@ class AiSinhalaSubtitleService {
     ];
     if (indices.isEmpty) return;
 
-    // The translation Edge Function deliberately caps a single batch at
-    // 80 subtitle cues. Opening preflight currently translates up to 96 cues,
-    // so sending the whole range in one request made normal TV episodes fail
-    // with invalid_segments every time. Reuse the chunked path here.
+    // Incremental/opening-buffer translation stays conservative even though
+    // complete-file preparation can use larger 96-cue batches.
     await _translateMissingIndices(prepared, indices);
   }
 
@@ -2490,8 +2490,13 @@ class AiSinhalaSubtitleService {
             );
             continue;
           }
-          throw const AiSubtitleException(
-            'Could not translate subtitle buffer.',
+          final backendError =
+              data is Map ? data['error']?.toString().trim() : null;
+          final detail = backendError == null || backendError.isEmpty
+              ? 'HTTP ${response.status}'
+              : 'HTTP ${response.status}, $backendError';
+          throw AiSubtitleException(
+            'Could not translate subtitle buffer ($detail).',
           );
         }
 
@@ -3143,7 +3148,11 @@ class AiSinhalaSubtitleService {
           },
           body: jsonEncode(body),
         )
-        .timeout(const Duration(seconds: 25));
+        .timeout(
+          body['segments'] is List
+              ? const Duration(seconds: 120)
+              : const Duration(seconds: 25),
+        );
 
     dynamic data;
     try {
