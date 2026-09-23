@@ -214,6 +214,26 @@ void main() {
     );
   });
 
+  test('failed playback can never persistently disable AI Sinhala again', () {
+    final preferences =
+        File('lib/services/ai_sinhala_preferences_service.dart').readAsStringSync();
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(preferences, contains("orvix_ai_sinhala_enabled_v3"));
+    expect(preferences, contains("orvix_ai_sinhala_enabled_v2"));
+    expect(preferences, contains('final migrated = Platform.isWindows ? true'));
+    expect(
+      player,
+      isNot(contains('await AiSinhalaPreferencesService.setEnabled(false);')),
+    );
+    expect(player, contains('bool _aiPreferenceEnabled = false;'));
+    expect(player, contains('value: _aiPreferenceEnabled'));
+    expect(
+      player,
+      contains('Never convert it\n      // into a persistent global opt-out'),
+    );
+  });
+
   test('Windows client launches bundled media engine on its own port', () {
     final service =
         File('lib/services/orvix_media_engine_service.dart').readAsStringSync();
