@@ -15,6 +15,7 @@ class OrvixMediaPreparation {
     required this.movieByteSize,
     required this.probeError,
     required this.hashError,
+    required this.playbackUrl,
   });
 
   final bool embeddedFound;
@@ -26,6 +27,7 @@ class OrvixMediaPreparation {
   final int? movieByteSize;
   final String? probeError;
   final String? hashError;
+  final String? playbackUrl;
 
   bool get hasEmbeddedText =>
       embeddedFound &&
@@ -116,6 +118,14 @@ class OrvixMediaEngineService {
       final movieHash = map['movieHash']?.toString().trim();
       final movieByteSize = _asInt(map['movieByteSize']);
 
+      final playbackUrl = _clean(map['playbackUrl']);
+      if (playbackUrl == null ||
+          !playbackUrl.startsWith('$baseUrl/media/')) {
+        throw const OrvixMediaEngineException(
+          'The Orvix media engine did not return a valid local playback session.',
+        );
+      }
+
       return OrvixMediaPreparation(
         embeddedFound: map['embeddedFound'] == true,
         embeddedSrt: embeddedSrt,
@@ -127,6 +137,7 @@ class OrvixMediaEngineService {
         movieByteSize: movieByteSize,
         probeError: _clean(map['probeError']),
         hashError: _clean(map['hashError']),
+        playbackUrl: playbackUrl,
       );
     } on TimeoutException {
       throw const OrvixMediaEngineException(
