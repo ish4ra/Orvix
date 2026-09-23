@@ -52,6 +52,29 @@ void main() {
     expect(engine, contains('openSubtitlesFingerprint('));
   });
 
+  test('Windows cloud AI playback stays inside the standalone media engine', () {
+    final details = File('lib/screens/details_screen.dart').readAsStringSync();
+    final engine =
+        File('tools/orvix-media-engine/main.go').readAsStringSync();
+
+    expect(details, contains('final windowsCloudAiEngine ='));
+    expect(
+      details,
+      contains('playbackUrl = enginePlaybackUrl;'),
+    );
+    expect(
+      details,
+      contains('AI Sinhala preparation failed before playback:'),
+    );
+    expect(
+      details,
+      contains('Do not silently open normal playback'),
+    );
+    expect(engine, contains('mux.HandleFunc("/media/"'));
+    expect(engine, contains('"playbackProxy"'));
+    expect(engine, contains('s.activeStreams++'));
+  });
+
   test('Windows client launches bundled media engine on its own port', () {
     final service =
         File('lib/services/orvix_media_engine_service.dart').readAsStringSync();
