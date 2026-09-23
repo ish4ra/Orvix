@@ -57,6 +57,7 @@ class EmbeddedSubtitleExtractorService {
 
     final candidates = tracks
         .where((track) => !_imageSubtitleCodecs.contains(track.codec))
+        .where((track) => !_knownNonEnglish(track))
         .map(
           (track) => (
             track: track,
@@ -66,7 +67,10 @@ class EmbeddedSubtitleExtractorService {
             ),
           ),
         )
-        .where((entry) => entry.score > 0)
+        .where(
+          (entry) =>
+              entry.score > 0 || _isSafelyUnlabeled(entry.track),
+        )
         .toList(growable: false)
       ..sort((a, b) => b.score.compareTo(a.score));
 
@@ -75,7 +79,16 @@ class EmbeddedSubtitleExtractorService {
         videoUrl,
         candidate.track,
       );
-      if (extracted != null) return extracted;
+      if (extracted == null) continue;
+
+      // Metadata alone is not trustworthy: many releases label the English
+      // text track as "und". For unlabeled tracks, inspect the extracted
+      // dialogue itself before using it as the AI Sinhala source.
+      if (candidate.score <= 0 &&
+          !_looksLikeEnglishSubtitle(extracted.content)) {
+        continue;
+      }
+      return extracted;
     }
     return null;
   }
@@ -217,6 +230,84 @@ class EmbeddedSubtitleExtractorService {
     }
   }
 
+  static bool _knownNonEnglish(_SubtitleTrackInfo track) {
+    final language = track.language.trim().toLowerCase();
+    if (language.isEmpty ||
+        language == 'und' ||
+        language == 'unknown' ||
+        language == 'undefined') {
+      return false;
+    }
+    return language != 'eng' &&
+        language != 'en' &&
+        language != 'english' &&
+        !language.startsWith('en-');
+  }
+
+  static bool _isSafelyUnlabeled(_SubtitleTrackInfo track) {
+    final language = track.language.trim().toLowerCase();
+    final title = track.title.trim().toLowerCase();
+    final unknownLanguage = language.isEmpty ||
+        language == 'und' ||
+        language == 'unknown' ||
+        language == 'undefined';
+    final genericTitle = title.isEmpty ||
+        title == 'default' ||
+        title == 'subtitle' ||
+        title == 'subtitles' ||
+        title == 'full';
+    return unknownLanguage && genericTitle && !track.forced;
+  }
+
+  static bool _looksLikeEnglishSubtitle(String raw) {
+    var text = raw
+        .replaceAll(RegExp(r'<[^>]+>'), ' ')
+        .replaceAll(RegExp(r'\{\\[^}]+\}'), ' ')
+        .replaceAll(RegExp(r'\d{1,2}:\d{2}:\d{2}[,.]\d{3}\s*-->[^\n]+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .toLowerCase();
+
+    final words = RegExp(r"[a-z][a-z'’-]{1,}")
+        .allMatches(text)
+        .map((match) => match.group(0) ?? '')
+        .where((word) => word.isNotEmpty)
+        .take(500)
+        .toList(growable: false);
+    if (words.length < 12) return false;
+
+    const common = <String>{
+      'the',
+      'and',
+      'you',
+      'that',
+      'this',
+      'with',
+      'have',
+      'what',
+      'for',
+      'not',
+      'are',
+      'your',
+      'but',
+      'from',
+      'they',
+      'will',
+      'just',
+      'can',
+      'was',
+      'there',
+      'here',
+      'about',
+      'know',
+      'like',
+      'want',
+      'get',
+      'got',
+    };
+    final commonHits = words.where(common.contains).take(8).length;
+    return commonHits >= 3;
+  }
+
   static int _englishScore(
     _SubtitleTrackInfo track, {
     String? preferredTrackLabel,
@@ -270,7 +361,27 @@ class EmbeddedSubtitleExtractorService {
       value == 1 ||
       value?.toString().toLowerCase() == 'true';
 
-  // Pure regression-test hook. Native FFmpegKit is never invoked by unit tests.
+  // Pure regression-test hooks. Native FFmpegKit is never invoked by unit tests.
+  static bool looksLikeEnglishSubtitleForTesting(String text) =>
+      _looksLikeEnglishSubtitle(text);
+
+  static bool safelyUnlabeledTrackForTesting({
+    required String codec,
+    String language = '',
+    String title = '',
+    bool forced = false,
+  }) =>
+      _isSafelyUnlabeled(
+        _SubtitleTrackInfo(
+          index: 0,
+          codec: codec.toLowerCase(),
+          language: language.toLowerCase(),
+          title: title,
+          forced: forced,
+          hearingImpaired: false,
+        ),
+      );
+
   static int scoreTrackForTesting({
     required int index,
     required String codec,
