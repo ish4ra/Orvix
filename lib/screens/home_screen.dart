@@ -10,6 +10,7 @@ import '../services/home_preferences_service.dart';
 import '../services/media_state_service.dart';
 import '../services/platform_profile.dart';
 import '../services/source_provider_service.dart';
+import '../widgets/horizontal_scroll_rail.dart';
 import '../widgets/media_card.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -650,53 +651,40 @@ class _DesktopPosterShelf extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 46),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -.35,
-                    ),
-                  ),
-                ),
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  color: Color(0xFF8F9891),
-                ),
-              ],
+            child: Text(
+              title,
+              style: const TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -.35,
+              ),
             ),
           ),
           const SizedBox(height: 13),
-          SizedBox(
+          HorizontalScrollRail(
             height: 315,
-            child: ListView.separated(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 46,
-                vertical: 7,
-              ),
-              scrollDirection: Axis.horizontal,
-              cacheExtent: 1800,
-              itemCount: items.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 15),
-              itemBuilder: (context, index) {
-                final item = items[index];
-                return RepaintBoundary(
-                  child: MediaCard(
-                    item: item,
-                    width: 158,
-                    focusScale: 1.045,
-                    onFocusChanged: (focused) {
-                      if (focused) onPrefetch(item);
-                    },
-                    onPreview: () => onPrefetch(item),
-                    onTap: () => onOpen(item),
-                  ),
-                );
-              },
+            padding: const EdgeInsets.symmetric(
+              horizontal: 46,
+              vertical: 7,
             ),
+            separatorWidth: 15,
+            scrollStep: 690,
+            itemCount: items.length,
+            itemBuilder: (context, index) {
+              final item = items[index];
+              return RepaintBoundary(
+                child: MediaCard(
+                  item: item,
+                  width: 158,
+                  focusScale: 1.045,
+                  onFocusChanged: (focused) {
+                    if (focused) onPrefetch(item);
+                  },
+                  onPreview: () => onPrefetch(item),
+                  onTap: () => onOpen(item),
+                ),
+              );
+            },
           ),
         ],
       ),
@@ -735,28 +723,215 @@ class _DesktopContinueRail extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 13),
-          SizedBox(
-            height: 172,
-            child: ListView.separated(
-              padding: const EdgeInsets.symmetric(horizontal: 46, vertical: 6),
-              scrollDirection: Axis.horizontal,
-              cacheExtent: 1400,
-              itemCount: items.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 16),
-              itemBuilder: (context, index) {
-                final entry = items[index];
-                return _ContinueWideCard(
-                  entry: entry,
-                  width: 400,
-                  height: 160,
-                  imageWidth: 104,
-                  onTap: () => onOpen(entry),
-                  onPreview: () => onPrefetch(entry),
-                );
-              },
-            ),
+          HorizontalScrollRail(
+            height: 198,
+            padding: const EdgeInsets.symmetric(horizontal: 46, vertical: 6),
+            separatorWidth: 16,
+            scrollStep: 720,
+            itemCount: items.length,
+            itemBuilder: (context, index) {
+              final entry = items[index];
+              return _ContinueLandscapeCard(
+                entry: entry,
+                width: 330,
+                height: 186,
+                onTap: () => onOpen(entry),
+                onPreview: () => onPrefetch(entry),
+              );
+            },
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ContinueLandscapeCard extends StatefulWidget {
+  const _ContinueLandscapeCard({
+    required this.entry,
+    required this.width,
+    required this.height,
+    required this.onTap,
+    this.onPreview,
+  });
+
+  final ContinueWatchingEntry entry;
+  final double width;
+  final double height;
+  final VoidCallback onTap;
+  final VoidCallback? onPreview;
+
+  @override
+  State<_ContinueLandscapeCard> createState() =>
+      _ContinueLandscapeCardState();
+}
+
+class _ContinueLandscapeCardState extends State<_ContinueLandscapeCard> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const lime = Color(0xFFB9FF45);
+    final active = _hovered || _focused;
+    final entry = widget.entry;
+    final episode = entry.episode;
+    final image = episode?.thumbnail ??
+        entry.item.background ??
+        entry.item.poster;
+    final remaining =
+        (entry.duration - entry.position).inMinutes.clamp(0, 9999);
+    final episodeLabel = episode == null
+        ? entry.item.typeLabel
+        : [
+            episode.label,
+            if (episode.title.trim().isNotEmpty) episode.title.trim(),
+          ].join('  •  ');
+
+    return MouseRegion(
+      onEnter: (_) {
+        setState(() => _hovered = true);
+        widget.onPreview?.call();
+      },
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedScale(
+        scale: active ? 1.018 : 1,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOutCubic,
+        child: SizedBox(
+          width: widget.width,
+          height: widget.height,
+          child: Material(
+            color: const Color(0xFF101411),
+            borderRadius: BorderRadius.circular(13),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: widget.onTap,
+              hoverColor: Colors.transparent,
+              splashColor: Colors.transparent,
+              focusColor: Colors.transparent,
+              onFocusChange: (focused) {
+                setState(() => _focused = focused);
+                if (focused) widget.onPreview?.call();
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(13),
+                  border: Border.all(
+                    color: active
+                        ? lime.withValues(alpha: .92)
+                        : const Color(0xFF2D342F),
+                    width: active ? 1.7 : 1,
+                  ),
+                ),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (image?.trim().isNotEmpty == true)
+                      CachedNetworkImage(
+                        imageUrl: image!,
+                        fit: BoxFit.cover,
+                        memCacheWidth: 720,
+                        fadeInDuration: Duration.zero,
+                        placeholder: (_, __) =>
+                            const ColoredBox(color: Color(0xFF151A16)),
+                        errorWidget: (_, __, ___) =>
+                            const ColoredBox(color: Color(0xFF151A16)),
+                      )
+                    else
+                      const ColoredBox(color: Color(0xFF151A16)),
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Color(0x25000000),
+                            Color(0x08000000),
+                            Color(0xE8000000),
+                          ],
+                          stops: [0, .42, 1],
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 9,
+                      right: 9,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xD9161917),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          remaining > 0 ? '${remaining}m left' : 'Resume',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: 12,
+                      right: 12,
+                      bottom: 13,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            entry.item.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                              shadows: [
+                                Shadow(
+                                  color: Colors.black87,
+                                  blurRadius: 7,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            episodeLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFFD0D6D1),
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(99),
+                            child: LinearProgressIndicator(
+                              minHeight: 4,
+                              value: entry.progress,
+                              backgroundColor:
+                                  Colors.white.withValues(alpha: .22),
+                              valueColor:
+                                  const AlwaysStoppedAnimation<Color>(lime),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
