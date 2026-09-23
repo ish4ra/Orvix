@@ -22,6 +22,7 @@ import '../services/torbox_service.dart';
 import 'android_exo_player_screen.dart';
 import 'player_screen.dart';
 import 'sources_screen.dart';
+import '../widgets/horizontal_scroll_rail.dart';
 import 'tv_source_browser_screen.dart';
 
 class DetailsScreen extends StatefulWidget {
@@ -1362,21 +1363,20 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 ?.copyWith(fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 12),
-          SizedBox(
+          HorizontalScrollRail(
             height: 58,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: seasons.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 10),
-              itemBuilder: (context, index) {
-                final season = seasons[index];
-                return _MobileSeasonTile(
-                  season: season,
-                  selected: season == selected,
-                  onTap: () => _selectSeason(item, season),
-                );
-              },
-            ),
+            showArrows: false,
+            separatorWidth: 10,
+            scrollStep: 420,
+            itemCount: seasons.length,
+            itemBuilder: (context, index) {
+              final season = seasons[index];
+              return _MobileSeasonTile(
+                season: season,
+                selected: season == selected,
+                onTap: () => _selectSeason(item, season),
+              );
+            },
           ),
           const SizedBox(height: 18),
           Text(
@@ -1387,8 +1387,162 @@ class _DetailsScreenState extends State<DetailsScreen> {
                 ?.copyWith(fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 14),
-          ...episodes.map((episode) => _episodeTile(item, episode)),
+          if (compact)
+            ...episodes.map((episode) => _episodeTile(item, episode))
+          else
+            HorizontalScrollRail(
+              height: 190,
+              separatorWidth: 14,
+              scrollStep: 690,
+              itemCount: episodes.length,
+              itemBuilder: (context, index) =>
+                  _desktopEpisodeCard(item, episodes[index]),
+            ),
         ],
+      ),
+    );
+  }
+
+  Widget _desktopEpisodeCard(MediaItem item, EpisodeItem episode) {
+    final image = episode.thumbnail ?? item.background ?? item.poster;
+    return SizedBox(
+      width: 285,
+      height: 178,
+      child: Material(
+        color: const Color(0xFF0D120F),
+        borderRadius: BorderRadius.circular(14),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: _resolving ? null : () => _play(item, episode: episode),
+          hoverColor: Colors.white.withValues(alpha: .035),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (image?.trim().isNotEmpty == true)
+                CachedNetworkImage(
+                  imageUrl: image!,
+                  fit: BoxFit.cover,
+                  memCacheWidth: 650,
+                  fadeInDuration: Duration.zero,
+                  placeholder: (_, __) =>
+                      const ColoredBox(color: Color(0xFF141A16)),
+                  errorWidget: (_, __, ___) =>
+                      const ColoredBox(color: Color(0xFF141A16)),
+                )
+              else
+                const ColoredBox(color: Color(0xFF141A16)),
+              const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Color(0x18000000),
+                      Color(0x10000000),
+                      Color(0xE9000000),
+                    ],
+                    stops: [0, .42, 1],
+                  ),
+                ),
+              ),
+              Positioned(
+                top: 9,
+                left: 10,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xC9171C18),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    episode.label,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                top: 7,
+                right: 7,
+                child: Row(
+                  children: [
+                    IconButton.filledTonal(
+                      tooltip: 'Sources',
+                      onPressed: _resolving
+                          ? null
+                          : () => _findSourcesAndPlay(
+                                item,
+                                episode: episode,
+                              ),
+                      style: IconButton.styleFrom(
+                        backgroundColor: const Color(0xCC151A17),
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size(34, 34),
+                        padding: EdgeInsets.zero,
+                      ),
+                      icon: const Icon(
+                        Icons.travel_explore_rounded,
+                        size: 17,
+                      ),
+                    ),
+                    const SizedBox(width: 5),
+                    IconButton.filled(
+                      tooltip: 'Play',
+                      onPressed:
+                          _resolving ? null : () => _play(item, episode: episode),
+                      style: IconButton.styleFrom(
+                        backgroundColor: const Color(0xE6B9FF45),
+                        foregroundColor: Colors.black,
+                        minimumSize: const Size(34, 34),
+                        padding: EdgeInsets.zero,
+                      ),
+                      icon: const Icon(Icons.play_arrow_rounded, size: 20),
+                    ),
+                  ],
+                ),
+              ),
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: 12,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      episode.title.trim().isEmpty
+                          ? episode.label
+                          : episode.title.trim(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    if (episode.overview?.trim().isNotEmpty == true) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        episode.overview!.trim(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFFC5CEC8),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
