@@ -135,6 +135,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
         uri.port == 11470;
   }
 
+  bool get _localMediaBridgeStream {
+    final uri = Uri.tryParse(widget.url);
+    return uri != null &&
+        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
+        uri.port != 11470 &&
+        uri.pathSegments.isNotEmpty &&
+        uri.pathSegments.first == 'media';
+  }
+
   bool get _aiSinhalaRequested => _aiState.requested;
   bool get _aiSinhalaEnabled => _aiState.enabled;
   bool get _liveAiFallback => _aiState.liveEmbedded;
@@ -778,7 +787,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
         } on AiSubtitleException {
           // Preserve the working local-P2P path exactly as-is. Only remote
           // direct/debrid media gets the native-track calibration fallback.
-          if (_localP2pStream) rethrow;
+          // Local media-bridge sessions already gave us the exact debrid file.
+          // If embedded extraction and exact hash matching both fail, stop
+          // here and restore normal playback. Do not run the old play/pause/
+          // seek cue-sampling fallback, which can destabilize cloud playback.
+          if (_localP2pStream || _localMediaBridgeStream) rethrow;
           generated = await _prepareRemoteDirectAiFallback();
         }
       }
