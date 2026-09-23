@@ -168,6 +168,48 @@ void main() {
     );
   });
 
+  test('Windows AI cannot autoplay before verified Sinhala attach', () {
+    final playback =
+        File('lib/services/playback_service.dart').readAsStringSync();
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(
+      playback,
+      contains('Platform.isWindows &&\n        play &&\n        await AiSinhalaPreferencesService.isEnabled()'),
+    );
+    expect(
+      playback,
+      contains('Windows AI Sinhala blocked unprepared autoplay at PlaybackService.'),
+    );
+
+    expect(player, contains('Sinhala subtitle is ready. Attaching it to MPV before playback…'));
+    expect(player, contains('for (var attempt = 0; attempt < 24 && !_closing; attempt++)'));
+    expect(player, contains("selectedLanguage == 'si'"));
+    expect(player, contains("selectedTitle.contains('ai sinhala')"));
+    expect(
+      player,
+      contains('Playback was kept paused instead of starting without Sinhala subtitles.'),
+    );
+
+    final attach = player.indexOf('player-attach-confirmed language=si');
+    final play = player.indexOf('player-play allowed aiReady=');
+    expect(attach, greaterThanOrEqualTo(0));
+    expect(play, greaterThan(attach));
+  });
+
+  test('generated Sinhala cache rejects stale non-Sinhala SRT files', () {
+    final service =
+        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+
+    expect(service, contains("srt-v6-verified-attach"));
+    expect(service, contains("RegExp(r'[\\u0D80-\\u0DFF]')"));
+    expect(service, contains('if (sinhalaChars < 8) return null;'));
+    expect(
+      service,
+      contains('The generated subtitle did not contain enough Sinhala text'),
+    );
+  });
+
   test('Windows client launches bundled media engine on its own port', () {
     final service =
         File('lib/services/orvix_media_engine_service.dart').readAsStringSync();
