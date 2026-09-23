@@ -69,6 +69,12 @@ void main() {
     expect(windowsMain, contains('SetForegroundWindow(existing)'));
     expect(gate, contains('View what changed'));
     expect(gate, contains("label: const Text('Update')"));
+    expect(update, contains("raw['assets_url']"));
+    expect(update, contains('_fetchReleaseAssets('));
+    expect(update, contains("'Cache-Control': 'no-cache'"));
+    expect(gate, contains('Timer.periodic('));
+    expect(gate, contains('Duration(minutes: 3)'));
+    expect(gate, contains('AppLifecycleState.resumed'));
     expect(
       gate,
       contains('Orvix will close; finish setup in the Windows installer'),
