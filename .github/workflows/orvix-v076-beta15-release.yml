@@ -1,0 +1,837 @@
+name: Release Orvix v0.7.6-beta.15
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.6-dev
+    paths:
+      - '.github/workflows/orvix-v076-beta15-release.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+
+concurrency:
+  group: orvix-v076-beta15-release
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate Dart + regressions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Validate build helper syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/configure_android_build.py \
+            tools/configure_android_mobile_compat.py \
+            tools/configure_android_signing.py
+
+      - name: Analyze
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Run complete Flutter test suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter test
+
+      - name: Smoke test deployed AI Sinhala backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="$(python3 - <<'PY'
+          import re
+          text = open("lib/services/ai_sinhala_subtitle_service.dart", encoding="utf-8").read()
+          match = re.search(r"static const _guestFunctionJwt\s*=\s*'([^']+)'", text, re.S)
+          if not match:
+              raise SystemExit("guest function JWT not found")
+          print(match.group(1))
+          PY
+          )"
+          RESPONSE="$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            --url 'https://kpjuisxofwqxhbnnsyzf.supabase.co/functions/v1/translate-subtitle-si' \
+            --header "Authorization: Bearer $TOKEN" \
+            --header "apikey: $TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data '{"title":"Orvix CI","text":"You are telling me you are just going to walk out of here","context":[]}')"
+          printf '%s' "$RESPONSE" | python3 -c '
+          import json, re, sys
+          data = json.load(sys.stdin)
+          text = str(data.get("translation", "")).strip()
+          if not re.search(r"[\u0D80-\u0DFF]", text):
+              raise SystemExit(f"AI backend did not return Sinhala: {data}")
+          '
+
+      - name: Smoke test OpenSubtitles REST backend wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="$(python3 - <<'PY'
+          import re
+          text = open("lib/services/ai_sinhala_subtitle_service.dart", encoding="utf-8").read()
+          match = re.search(r"static const _guestFunctionJwt\s*=\s*'([^']+)'", text, re.S)
+          if not match:
+              raise SystemExit("guest function JWT not found")
+          print(match.group(1))
+          PY
+          )"
+          STATUS="$(curl --silent --show-error \
+            --output /tmp/opensubtitles-smoke.json \
+            --write-out '%{http_code}' \
+            --request POST \
+            --url 'https://kpjuisxofwqxhbnnsyzf.supabase.co/functions/v1/opensubtitles-exact' \
+            --header "Authorization: Bearer $TOKEN" \
+            --header "apikey: $TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data '{"moviehash":"0000000000000000","moviebytesize":1000000000,"language":"en"}')"
+          # 404 means the deliberately fake fingerprint had no exact match.
+          # 200 is also acceptable in the extremely unlikely event it matches.
+          if [ "$STATUS" != "200" ] && [ "$STATUS" != "404" ]; then
+            cat /tmp/opensubtitles-smoke.json
+            echo "Unexpected OpenSubtitles backend status: $STATUS" >&2
+            exit 1
+          fi
+
+  android-native:
+    name: Prepare Android P2P engine
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download pinned native stream-server builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p native/jniLibs/{armeabi-v7a,arm64-v8a,x86,x86_64} native/libs tmp
+          extract_native() {
+            abi="$1"
+            file="$2"
+            sha="$3"
+            curl --fail --location --retry 4 --retry-delay 2               "https://github.com/stremio-native/stremio-android/releases/download/v1.2.4/$file"               -o "tmp/$file"
+            echo "$sha  tmp/$file" | sha256sum -c -
+            unzip -p "tmp/$file" "lib/$abi/libstream_server.so" > "native/jniLibs/$abi/libstream_server.so"
+            unzip -p "tmp/$file" "lib/$abi/libc++_shared.so" > "native/jniLibs/$abi/libc++_shared.so"
+            test -s "native/jniLibs/$abi/libstream_server.so"
+            test -s "native/jniLibs/$abi/libc++_shared.so"
+          }
+          extract_native arm64-v8a StremioMobile-v1.2.4-arm64-v8a-release.apk 3ffd96e6c6f0b23845f7ee6ab721d52ba1534055304959ed84c9589aac8bc97e
+          extract_native armeabi-v7a StremioMobile-v1.2.4-armeabi-v7a-release.apk 519ab54a8a57e93c5a2f2a70cced18673063cffcb88cfdcd0ec6c9a7e5f5570e
+          extract_native x86 StremioMobile-v1.2.4-x86-release.apk 201012b229914b533665f4c477140f174d7b933fdc27c1fae6a2fb3a1f232058
+          extract_native x86_64 StremioMobile-v1.2.4-x86_64-release.apk bee94497864d46a3b7c1905848e161da03179ca4ff85c6808710cdd435cafc94
+          curl --fail --location --retry 4             "https://raw.githubusercontent.com/stremio-native/stremio-android/4bdef3b6be1186d9aa22acd8b3ec391c22f0e083/app/libs/rustls-platform-verifier-0.1.1.aar"             -o native/libs/rustls-platform-verifier-0.1.1.aar
+          test -s native/libs/rustls-platform-verifier-0.1.1.aar
+
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-native-engine
+          path: native/
+          if-no-files-found: error
+
+
+  macos:
+    name: Build macOS
+    needs: validate
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate macOS platform
+        run: flutter create --platforms=macos --org com.orvix --project-name orvix .
+
+      - name: Require macOS 10.15+
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          podfile = Path("macos/Podfile")
+          if podfile.exists():
+              text = podfile.read_text()
+              if "platform :osx" in text:
+                  text = re.sub(
+                      r"#?\s*platform :osx, ['\"][^'\"]+['\"]",
+                      "platform :osx, '10.15'",
+                      text,
+                      count=1,
+                  )
+              else:
+                  text = "platform :osx, '10.15'\n" + text
+              podfile.write_text(text)
+          PY
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build macOS
+        run: flutter build macos --release
+
+      - name: Verify macOS app
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d build/macos/Build/Products/Release/orvix.app
+
+      - name: Pack macOS app
+        shell: bash
+        run: |
+          set -euo pipefail
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/macos/Build/Products/Release/orvix.app \
+            Orvix-v0.7.6-beta.15-macOS.zip
+          test -s Orvix-v0.7.6-beta.15-macOS.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          if-no-files-found: error
+          path: Orvix-v0.7.6-beta.15-macOS.zip
+
+  windows:
+    needs: validate
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Windows
+        run: flutter build windows --release
+
+      - name: Verify committed Windows icon
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'windows\runner\resources\app_icon.ico')) { throw 'Windows app icon missing' }
+          if ((Get-Item 'windows\runner\resources\app_icon.ico').Length -lt 10000) { throw 'Windows app icon looks invalid' }
+
+      - name: Bundle pinned FFmpeg tools
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseDir = Resolve-Path 'build\windows\x64\runner\Release'
+          $ffmpegBin = Join-Path $releaseDir 'tools\ffmpeg\bin'
+          New-Item -ItemType Directory -Force -Path $ffmpegBin | Out-Null
+
+          # BtbN FFmpeg auto-build published 2026-09-22. Pin the immutable
+          # GitHub release asset ID and verify its SHA-256 before extracting.
+          $assetId = '581477900'
+          $archive = Join-Path $env:RUNNER_TEMP 'orvix-ffmpeg-win64-lgpl.zip'
+          $headers = @{
+            Accept = 'application/octet-stream'
+            Authorization = "Bearer $env:GH_TOKEN"
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          Invoke-WebRequest -Uri "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/assets/$assetId" -Headers $headers -OutFile $archive
+          $expected = '5C4069996C8D3750B9DD60F5090C50A9573FEAE28D4783DA2FD6E77331D64029'
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash
+          if ($actual -ne $expected) { throw "FFmpeg archive checksum mismatch: $actual" }
+
+          $extract = Join-Path $env:RUNNER_TEMP 'orvix-ffmpeg-extract'
+          if (Test-Path $extract) { Remove-Item $extract -Recurse -Force }
+          Expand-Archive -Path $archive -DestinationPath $extract -Force
+
+          $ffmpegSource = Get-ChildItem -Path $extract -Recurse -Filter 'ffmpeg.exe' -File | Select-Object -First 1
+          $ffprobeSource = Get-ChildItem -Path $extract -Recurse -Filter 'ffprobe.exe' -File | Select-Object -First 1
+          if (-not $ffmpegSource) { throw 'Pinned FFmpeg archive does not contain ffmpeg.exe' }
+          if (-not $ffprobeSource) { throw 'Pinned FFmpeg archive does not contain ffprobe.exe' }
+
+          Copy-Item $ffmpegSource.FullName (Join-Path $ffmpegBin 'ffmpeg.exe') -Force
+          Copy-Item $ffprobeSource.FullName (Join-Path $ffmpegBin 'ffprobe.exe') -Force
+
+          $licenseDir = Join-Path $releaseDir 'licenses\ffmpeg'
+          New-Item -ItemType Directory -Force -Path $licenseDir | Out-Null
+          @"
+          FFmpeg Windows binaries bundled by Orvix are from BtbN/FFmpeg-Builds,
+          LGPL build asset ID 581477900, verified by SHA-256:
+          5c4069996c8d3750b9dd60f5090c50a9573feae28d4783da2fd6e77331d64029
+
+          FFmpeg: https://ffmpeg.org/
+          Build source: https://github.com/BtbN/FFmpeg-Builds
+          "@ | Set-Content (Join-Path $licenseDir 'NOTICE.txt')
+
+      - name: Verify bundled FFmpeg tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseDir = Resolve-Path 'build\windows\x64\runner\Release'
+          $ffmpegBin = Join-Path $releaseDir 'tools\ffmpeg\bin'
+          $ffmpeg = Join-Path $ffmpegBin 'ffmpeg.exe'
+          $ffprobe = Join-Path $ffmpegBin 'ffprobe.exe'
+          if (-not (Test-Path $ffmpeg)) { throw "Bundled ffmpeg.exe is missing: $ffmpeg" }
+          if (-not (Test-Path $ffprobe)) { throw "Bundled ffprobe.exe is missing: $ffprobe" }
+          if ((Get-Item $ffmpeg).Length -lt 1000000) { throw 'Bundled ffmpeg.exe looks invalid' }
+          if ((Get-Item $ffprobe).Length -lt 1000000) { throw 'Bundled ffprobe.exe looks invalid' }
+          # Do not pipe the process directly into Select-Object -First 1:
+          # closing stdout early can make FFmpeg exit non-zero even though the
+          # executable itself started correctly. Capture first, then inspect.
+          $ffmpegOutput = & $ffmpeg -version 2>&1
+          $ffmpegExit = $LASTEXITCODE
+          $ffmpegOutput | Select-Object -First 1
+          if ($ffmpegExit -ne 0) { throw "Bundled ffmpeg.exe did not run successfully (exit $ffmpegExit)" }
+
+          $ffprobeOutput = & $ffprobe -version 2>&1
+          $ffprobeExit = $LASTEXITCODE
+          $ffprobeOutput | Select-Object -First 1
+          if ($ffprobeExit -ne 0) { throw "Bundled ffprobe.exe did not run successfully (exit $ffprobeExit)" }
+
+      - name: Bundle local P2P engine
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseDir = 'build\windows\x64\runner\Release'
+          $url = 'https://github.com/ish4ra/Orvix/releases/download/stream-server-orvix-v0.1.8.1/orvix-stream-server-windows-amd64.exe'
+          $dest = Join-Path $releaseDir 'orvix-stream-server.exe'
+          Invoke-WebRequest -Uri $url -OutFile $dest
+          $expected = '68A08824DE2FBB29C336927F65A25B7EF4FAB8DF427030DC051F9D4E210813BC'
+          $actual = (Get-FileHash $dest -Algorithm SHA256).Hash
+          if ($actual -ne $expected) { throw "stream-server checksum mismatch: $actual" }
+          $licenseDir = Join-Path $releaseDir 'licenses\stream-server'
+          New-Item -ItemType Directory -Force -Path $licenseDir | Out-Null
+          Copy-Item 'licenses\stream-server\LICENSE' (Join-Path $licenseDir 'LICENSE.txt')
+          Copy-Item 'licenses\stream-server\NOTICE.md' (Join-Path $licenseDir 'NOTICE.md')
+
+      - name: Smoke test Windows P2P engine
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Resolve-Path 'build\windows\x64\runner\Release\orvix-stream-server.exe'
+          $work = Join-Path $env:RUNNER_TEMP 'orvix-stream-server-smoke'
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          $proc = Start-Process -FilePath $exe -ArgumentList '--no-tray' -WorkingDirectory $work -PassThru
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 90; $i++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:11470/heartbeat' -TimeoutSec 2
+                if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 300) { $ready = $true; break }
+              } catch {}
+              if ($proc.HasExited) { throw "stream-server exited early with code $($proc.ExitCode)" }
+            }
+            if (-not $ready) { throw 'stream-server heartbeat did not become ready' }
+
+            $caps = Invoke-RestMethod -Uri 'http://127.0.0.1:11470/orvix/capabilities' -TimeoutSec 5
+            if ($caps.name -ne 'orvix-stream-server') { throw "Unexpected stream-server capability name: $($caps.name)" }
+            if ($caps.exactFileEmbeddedSubtitles -ne $true) { throw 'Bundled stream-server is missing exact-file embedded subtitle support' }
+            if ($caps.exactSubtitleRouteVersion -ne 1) { throw "Unsupported exact subtitle route version: $($caps.exactSubtitleRouteVersion)" }
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
+
+      - name: Pack portable build
+        shell: pwsh
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath 'Orvix-v0.7.6-beta.15-Windows-x64.zip' -Force
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
+          & $iscc '/DMyAppVersion=0.7.6-beta.15' 'installer\orvix.iss'
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+
+      - name: Smoke test Windows installer package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.6-beta.15-Windows-x64.exe'
+          $installerLog = Join-Path $env:RUNNER_TEMP 'orvix-installer-smoke.log'
+          $run = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/LOG=$installerLog" -Wait -PassThru
+          if ($run.ExitCode -ne 0) {
+            if (Test-Path $installerLog) { Get-Content $installerLog }
+            throw "Installer smoke test failed with exit code $($run.ExitCode)"
+          }
+          $installed = Join-Path $env:LOCALAPPDATA 'Programs\\Orvix\\orvix.exe'
+          if (-not (Test-Path $installed)) {
+            throw "Installed Orvix is missing: $installed"
+          }
+
+      - name: Smoke test updater handoff over a running Orvix
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installed = Join-Path $env:LOCALAPPDATA 'Programs\\Orvix\\orvix.exe'
+          $installer = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.6-beta.15-Windows-x64.exe'
+          $upgradeLog = Join-Path $env:RUNNER_TEMP 'orvix-installer-running-app.log'
+
+          $running = Start-Process -FilePath $installed -PassThru
+          Start-Sleep -Seconds 3
+          if ($running.HasExited) {
+            throw 'Installed Orvix exited before the updater handoff test.'
+          }
+
+          # Match the real in-app updater: Setup is started first, then Orvix
+          # releases its own file locks and exits shortly afterwards. Never
+          # leave a CI runner waiting indefinitely on a hidden installer UI.
+          $args = @(
+            '/VERYSILENT',
+            '/SUPPRESSMSGBOXES',
+            '/NORESTART',
+            '/SP-',
+            '/CLOSEAPPLICATIONS',
+            '/FORCECLOSEAPPLICATIONS',
+            '/LOGCLOSEAPPLICATIONS',
+            "/LOG=$upgradeLog"
+          )
+          $upgrade = Start-Process -FilePath $installer -ArgumentList $args -PassThru
+
+          Start-Sleep -Milliseconds 900
+          $running.Refresh()
+          if (-not $running.HasExited) {
+            Stop-Process -Id $running.Id -Force -ErrorAction SilentlyContinue
+          }
+
+          if (-not $upgrade.WaitForExit(180000)) {
+            if (Test-Path $upgradeLog) { Get-Content $upgradeLog }
+            Stop-Process -Id $upgrade.Id -Force -ErrorAction SilentlyContinue
+            throw 'Installer did not finish within 180 seconds after Orvix released its file locks.'
+          }
+
+          if ($upgrade.ExitCode -ne 0) {
+            if (Test-Path $upgradeLog) { Get-Content $upgradeLog }
+            throw "Installer updater handoff failed with exit code $($upgrade.ExitCode)"
+          }
+
+          $running.Refresh()
+          if (-not $running.HasExited) {
+            Stop-Process -Id $running.Id -Force -ErrorAction SilentlyContinue
+            throw 'Old Orvix process was still running after updater handoff.'
+          }
+
+          if (-not (Test-Path $installed)) {
+            throw 'Updated Orvix executable is missing after updater handoff.'
+          }
+
+      - name: Compatibility test beta.2 in-app updater to new installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $currentInstaller = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.6-beta.15-Windows-x64.exe'
+          $installedDir = Join-Path $env:LOCALAPPDATA 'Programs\\Orvix'
+          $uninstaller = Join-Path $installedDir 'unins000.exe'
+
+          # Reset to the exact public beta.2 package the user is running.
+          if (Test-Path $uninstaller) {
+            $cleanup = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+            if ($cleanup.ExitCode -ne 0) { throw "Pre-migration cleanup failed: $($cleanup.ExitCode)" }
+          }
+
+          $beta2 = Join-Path $env:RUNNER_TEMP 'Orvix-Setup-v0.7.6-beta.2-Windows-x64.exe'
+          Invoke-WebRequest -Uri 'https://github.com/ish4ra/Orvix/releases/download/v0.7.6-beta.2/Orvix-Setup-v0.7.6-beta.2-Windows-x64.exe' -OutFile $beta2
+          if ((Get-Item $beta2).Length -lt 70000000) { throw 'Downloaded beta.2 installer looks incomplete.' }
+
+          $installBeta2 = Start-Process -FilePath $beta2 -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Wait -PassThru
+          if ($installBeta2.ExitCode -ne 0) { throw "beta.2 setup failed: $($installBeta2.ExitCode)" }
+
+          $beta2Exe = Join-Path $installedDir 'orvix.exe'
+          $beta2Helper = Join-Path $installedDir 'orvix_updater_helper.exe'
+          $beta2Stream = Join-Path $installedDir 'orvix-stream-server.exe'
+          foreach ($required in @($beta2Exe, $beta2Helper, $beta2Stream)) {
+            if (-not (Test-Path $required)) { throw "beta.2 migration fixture missing: $required" }
+          }
+
+          # Reproduce the old bug class: beta.2 UI + an orphanable P2P engine
+          # are alive when the old updater helper takes over.
+          $oldApp = Start-Process -FilePath $beta2Exe -PassThru
+          $streamWork = Join-Path $env:RUNNER_TEMP 'beta2-stream-server'
+          New-Item -ItemType Directory -Force -Path $streamWork | Out-Null
+          $oldStream = Start-Process -FilePath $beta2Stream -ArgumentList '--no-tray' -WorkingDirectory $streamWork -PassThru
+          Start-Sleep -Seconds 3
+          if ($oldApp.HasExited) { throw 'beta.2 app exited before migration test.' }
+          if ($oldStream.HasExited) { throw 'beta.2 stream-server exited before migration test.' }
+
+          $helperCopy = Join-Path $env:RUNNER_TEMP 'beta2-updater-helper.exe'
+          Copy-Item $beta2Helper $helperCopy -Force
+          $status = Join-Path $env:RUNNER_TEMP 'beta2-to-next-status.txt'
+          $helperLog = Join-Path $env:RUNNER_TEMP 'beta2-to-next-helper.log'
+          $installerLog = Join-Path $env:RUNNER_TEMP 'beta2-to-next-installer.log'
+          foreach ($path in @($status, $helperLog, $installerLog)) {
+            if (Test-Path $path) { Remove-Item $path -Force }
+          }
+
+          $helperArgs = @(
+            '--parent-pid', "$($oldApp.Id)",
+            '--installer', "$currentInstaller",
+            '--restart-exe', '',
+            '--target-version', '0.7.6-beta.15',
+            '--log', "$helperLog",
+            '--installer-log', "$installerLog",
+            '--status', "$status",
+            '--no-restart'
+          )
+          $helper = Start-Process -FilePath $helperCopy -ArgumentList $helperArgs -PassThru
+          Start-Sleep -Milliseconds 700
+
+          # beta.2 itself used exit(0) after handing off. Force-stopping the
+          # fixture reproduces that abrupt parent disappearance.
+          Stop-Process -Id $oldApp.Id -Force -ErrorAction SilentlyContinue
+
+          if (-not $helper.WaitForExit(90000)) {
+            Stop-Process -Id $helper.Id -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $oldStream.Id -Force -ErrorAction SilentlyContinue
+            throw 'beta.2 updater helper timed out while applying the new installer.'
+          }
+          if ($helper.ExitCode -ne 0) {
+            if (Test-Path $helperLog) { Get-Content $helperLog }
+            if (Test-Path $installerLog) { Get-Content $installerLog }
+            Stop-Process -Id $oldStream.Id -Force -ErrorAction SilentlyContinue
+            throw "beta.2 updater helper failed with exit code $($helper.ExitCode)"
+          }
+
+          if (-not (Test-Path $status)) { throw 'beta.2 helper did not write migration status.' }
+          $value = (Get-Content -Raw $status).Trim()
+          if ($value -ne 'success|0|0.7.6-beta.15') {
+            if (Test-Path $helperLog) { Get-Content $helperLog }
+            if (Test-Path $installerLog) { Get-Content $installerLog }
+            throw "Unexpected beta.2 migration status: $value"
+          }
+
+          # The new installer must have killed the stale old P2P process before
+          # replacing its executable.
+          $oldStream.Refresh()
+          if (-not $oldStream.HasExited) {
+            Stop-Process -Id $oldStream.Id -Force -ErrorAction SilentlyContinue
+            throw 'Old beta.2 stream-server survived the upgrade.'
+          }
+          if (-not (Test-Path (Join-Path $installedDir 'orvix.exe'))) {
+            throw 'Orvix is missing after beta.2 migration.'
+          }
+
+      - name: Smoke test Windows single-instance guard
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installed = Join-Path $env:LOCALAPPDATA 'Programs\\Orvix\\orvix.exe'
+          $first = Start-Process -FilePath $installed -PassThru
+          Start-Sleep -Seconds 3
+          $second = Start-Process -FilePath $installed -PassThru
+          if (-not $second.WaitForExit(5000)) {
+            Stop-Process -Id $second.Id -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $first.Id -Force -ErrorAction SilentlyContinue
+            throw 'Second Orvix instance stayed alive instead of handing off to the existing window.'
+          }
+          $live = @(Get-Process -Name 'orvix' -ErrorAction SilentlyContinue)
+          if ($live.Count -ne 1) {
+            $live | Format-Table Id, ProcessName, Path -AutoSize
+            Stop-Process -Name 'orvix' -Force -ErrorAction SilentlyContinue
+            throw "Expected exactly one Orvix process, found $($live.Count)."
+          }
+          Stop-Process -Id $first.Id -Force -ErrorAction SilentlyContinue
+
+          $uninstaller = Join-Path $env:LOCALAPPDATA 'Programs\\Orvix\\unins000.exe'
+          if (Test-Path $uninstaller) {
+            $cleanup = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+            if ($cleanup.ExitCode -ne 0) {
+              Write-Warning "Orvix test uninstall returned $($cleanup.ExitCode)"
+            }
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          if-no-files-found: error
+          path: |
+            Orvix-v0.7.6-beta.15-Windows-x64.zip
+            installer-output/Orvix-Setup-v0.7.6-beta.15-Windows-x64.exe
+
+  android-mobile:
+    runs-on: ubuntu-latest
+    needs: [validate, android-native]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform
+        run: flutter create --platforms=android --org com.orvix --project-name orvix .
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-native-engine
+          path: android-native
+
+      - name: Configure Android mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check pillow
+          mkdir -p android/app/src/main/jniLibs android/app/libs
+          cp -R android-native/jniLibs/. android/app/src/main/jniLibs/
+          cp android-native/libs/rustls-platform-verifier-0.1.1.aar android/app/libs/
+          python3 tools/configure_android_build.py
+          python3 tools/configure_android_mobile_compat.py
+          grep -q 'android:extractNativeLibs="true"' android/app/src/main/AndroidManifest.xml
+          grep -q 'useLegacyPackaging = true' android/app/build.gradle.kts
+          grep -q 'orvix/torrent_engine' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
+
+      - name: Configure release signing
+        env:
+          ORVIX_ANDROID_KEYSTORE_B64: ${{ secrets.ORVIX_ANDROID_KEYSTORE_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ORVIX_ANDROID_KEYSTORE_B64:-}"
+          printf '%s' "$ORVIX_ANDROID_KEYSTORE_B64" | base64 --decode > android/app/orvix-release.jks
+          test -s android/app/orvix-release.jks
+          python3 tools/configure_android_signing.py
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Android mobile APKs
+        run: |
+          flutter build apk --release
+          flutter build apk --release --split-per-abi
+
+      - name: Verify Android mobile APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          unzip -l "$APK" > /tmp/orvix-apk-list.txt
+          grep -q 'lib/arm64-v8a/libstream_server.so' /tmp/orvix-apk-list.txt
+          grep -q 'lib/armeabi-v7a/libstream_server.so' /tmp/orvix-apk-list.txt
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          "$APKSIGNER" verify --verbose "$APK"
+
+      - name: Rename APKs
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.6-beta.15-Android-Mobile.apk
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk Orvix-v0.7.6-beta.15-Android-Mobile-arm64-v8a.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk Orvix-v0.7.6-beta.15-Android-Mobile-armeabi-v7a.apk
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk Orvix-v0.7.6-beta.15-Android-Mobile-x86_64.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-mobile
+          path: |
+            Orvix-v0.7.6-beta.15-Android-Mobile.apk
+            Orvix-v0.7.6-beta.15-Android-Mobile-arm64-v8a.apk
+            Orvix-v0.7.6-beta.15-Android-Mobile-armeabi-v7a.apk
+            Orvix-v0.7.6-beta.15-Android-Mobile-x86_64.apk
+
+  android-tv:
+    runs-on: ubuntu-latest
+    needs: [validate, android-native]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform
+        run: flutter create --platforms=android --org com.orvix --project-name orvix .
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-native-engine
+          path: android-native
+
+      - name: Configure Android TV
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check pillow
+          mkdir -p android/app/src/main/jniLibs android/app/libs
+          cp -R android-native/jniLibs/. android/app/src/main/jniLibs/
+          cp android-native/libs/rustls-platform-verifier-0.1.1.aar android/app/libs/
+          python3 tools/configure_android_build.py --tv
+          python3 tools/configure_android_mobile_compat.py
+          grep -q 'android.intent.category.LEANBACK_LAUNCHER' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:screenOrientation="landscape"' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:extractNativeLibs="true"' android/app/src/main/AndroidManifest.xml
+          grep -q 'orvix/torrent_engine' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
+          grep -q 'JniStreamingServerController.start' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
+          test ! -f android/app/src/main/kotlin/com/orvix/orvix/TorrentEngineService.kt
+          if grep -q 'orvix/tv_native_player' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt; then
+            echo 'Experimental native TV player bridge is still present.' >&2
+            exit 1
+          fi
+          test ! -f android/app/src/main/kotlin/com/orvix/orvix/TvNativePlayerActivity.kt
+
+      - name: Verify Android TV banner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s android/app/src/main/res/drawable-xhdpi/tv_banner.png
+          python3 - <<'PY'
+          from PIL import Image
+          image = Image.open("android/app/src/main/res/drawable-xhdpi/tv_banner.png")
+          if image.size != (320, 180):
+              raise SystemExit(f"Wrong TV banner size: {image.size}")
+          PY
+
+      - name: Configure release signing
+        env:
+          ORVIX_ANDROID_KEYSTORE_B64: ${{ secrets.ORVIX_ANDROID_KEYSTORE_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ORVIX_ANDROID_KEYSTORE_B64:-}"
+          printf '%s' "$ORVIX_ANDROID_KEYSTORE_B64" | base64 --decode > android/app/orvix-release.jks
+          test -s android/app/orvix-release.jks
+          python3 tools/configure_android_signing.py
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Android TV APK
+        run: flutter build apk --release --dart-define=ORVIX_TV=true
+
+      - name: Verify Android TV APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          unzip -l "$APK" > /tmp/orvix-apk-list.txt
+          grep -q 'lib/arm64-v8a/libstream_server.so' /tmp/orvix-apk-list.txt
+          grep -q 'lib/armeabi-v7a/libstream_server.so' /tmp/orvix-apk-list.txt
+          grep -q 'lib/arm64-v8a/libc++_shared.so' /tmp/orvix-apk-list.txt
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          "$APKSIGNER" verify --verbose "$APK"
+
+      - name: Rename APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.6-beta.15-Android-TV.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-tv
+          path: Orvix-v0.7.6-beta.15-Android-TV.apk
+
+  release:
+    name: Publish v0.7.6-beta.15
+    needs: [validate, windows, macos, android-mobile, android-tv]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows
+          path: dist/windows
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-mobile
+          path: dist/mobile
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-tv
+          path: dist/tv
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos
+          path: dist/macos
+
+      - name: Verify release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/windows/Orvix-v0.7.6-beta.15-Windows-x64.zip
+          test -s dist/windows/installer-output/Orvix-Setup-v0.7.6-beta.15-Windows-x64.exe
+          test -s dist/mobile/Orvix-v0.7.6-beta.15-Android-Mobile.apk
+          test -s dist/mobile/Orvix-v0.7.6-beta.15-Android-Mobile-arm64-v8a.apk
+          test -s dist/mobile/Orvix-v0.7.6-beta.15-Android-Mobile-armeabi-v7a.apk
+          test -s dist/mobile/Orvix-v0.7.6-beta.15-Android-Mobile-x86_64.apk
+          test -s dist/tv/Orvix-v0.7.6-beta.15-Android-TV.apk
+          test -s dist/macos/Orvix-v0.7.6-beta.15-macOS.zip
+
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/notes.md <<'EOF'
+          Orvix v0.7.6-beta.15 introduces a local media bridge for debrid/cloud playback and refreshes desktop horizontal navigation.
+
+          Debrid / cloud subtitle architecture:
+          - TorBox and PikPak playback now goes through an Orvix-owned loopback media bridge instead of handing the signed remote URL directly to the player.
+          - The bridge is range-aware and proxies the exact same video bytes to both playback and subtitle extraction.
+          - Embedded English text subtitles remain first priority.
+          - If the exact media file has no usable embedded English text subtitle, Orvix falls back to the strict OpenSubtitles moviehash + exact-byte-size path.
+          - Bridge sessions do not run the old play/pause/seek native-cue sampling fallback, removing that crash-prone cloud preflight path.
+          - Existing Windows Free P2P still keeps the proven exact-file Orvix stream-server path first and is not replaced by the debrid bridge.
+          - TorBox season-pack playback keeps the selected episode/file hint before opening the bridge.
+
+          Cross-platform embedded extraction:
+          - Fixed the FFmpegKit extractor path/track interpolation used by Windows, Android Mobile, Android TV and macOS.
+          - Debrid/direct embedded extraction continues to preserve source subtitle timestamps.
+          - Unlabeled/und English text-track detection from beta.14 remains available.
+
+          Desktop navigation:
+          - Home movie/library/watchlist shelves now support mouse-wheel horizontal scrolling, mouse drag scrolling and working left/right arrow controls.
+          - Series episode rails now use the same horizontal navigation so episodes beyond the first visible cards are reachable.
+          - Season tabs also accept horizontal wheel/drag navigation.
+
+          Continue Watching:
+          - Windows Continue Watching now uses compact landscape thumbnails inspired by modern streaming UIs.
+          - Episode artwork is preferred, with title/episode information, remaining time and progress overlaid on the thumbnail.
+
+          Platform assets:
+          - Windows x64 installer + portable ZIP
+          - Android Mobile universal + ABI APKs
+          - Android TV APK
+          - macOS ZIP
+
+          Release gates:
+          - Full Flutter tests, analyzer, deployed AI backend and OpenSubtitles backend smoke tests must pass.
+          - Windows, Android Mobile, Android TV and macOS builds must all complete before publication.
+          EOF
+
+          gh release create v0.7.6-beta.15             --target "${{ github.sha }}"             --title 'Orvix v0.7.6-beta.15'             --prerelease             --notes-file /tmp/notes.md             dist/windows/Orvix-v0.7.6-beta.15-Windows-x64.zip             dist/windows/installer-output/Orvix-Setup-v0.7.6-beta.15-Windows-x64.exe             dist/mobile/Orvix-v0.7.6-beta.15-Android-Mobile.apk             dist/mobile/Orvix-v0.7.6-beta.15-Android-Mobile-arm64-v8a.apk             dist/mobile/Orvix-v0.7.6-beta.15-Android-Mobile-armeabi-v7a.apk             dist/mobile/Orvix-v0.7.6-beta.15-Android-Mobile-x86_64.apk             dist/tv/Orvix-v0.7.6-beta.15-Android-TV.apk             dist/macos/Orvix-v0.7.6-beta.15-macOS.zip
