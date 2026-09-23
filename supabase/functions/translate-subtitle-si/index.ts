@@ -20,9 +20,14 @@ async function callGemini(
   batch: boolean,
 ): Promise<{ ok: true; text: string } | { ok: false; status: number; detail: string }> {
   const generationConfig: Record<string, unknown> = {
-    temperature: 0.15,
-    topP: 0.9,
-    maxOutputTokens: batch ? 8192 : 220,
+    // Gemini 3.1 Flash-Lite is optimized for its default temperature. Keep
+    // thinking explicitly minimal because subtitle translation is instruction
+    // following, not a reasoning task, and reserve enough output space for
+    // large structured subtitle batches.
+    maxOutputTokens: batch ? 32768 : 512,
+    thinkingConfig: {
+      thinkingLevel: "minimal",
+    },
   };
   if (batch) {
     generationConfig.responseMimeType = "application/json";
@@ -82,14 +87,14 @@ Deno.serve(async (req: Request) => {
       const segments = rawSegments
         .filter((value): value is string => typeof value === "string")
         .map((value) => value.trim());
-      if (segments.length === 0 || segments.length !== rawSegments.length || segments.length > 80) {
+      if (segments.length === 0 || segments.length !== rawSegments.length || segments.length > 120) {
         return reply(400, { error: "invalid_segments" });
       }
       if (segments.some((value) => value.length > 1200)) {
         return reply(400, { error: "segment_too_large" });
       }
       const totalChars = segments.reduce((sum, value) => sum + value.length, 0);
-      if (totalChars > 32000) return reply(400, { error: "batch_too_large" });
+      if (totalChars > 48000) return reply(400, { error: "batch_too_large" });
 
       const prompt = `You are the Sinhala subtitle translator for Orvix, a movie and TV player used in Sri Lanka.\n\nTranslate every subtitle cue in the JSON array below into natural, concise Sri Lankan Sinhala suitable for on-screen subtitles.\n\nRules:\n- Return a JSON array of strings with EXACTLY the same number of entries and in the same order.\n- Preserve meaning, emotion, slang, jokes, profanity level, and character tone.\n- Prefer natural spoken Sinhala over literal or formal textbook Sinhala.\n- Do not translate proper names unless Sinhala audiences normally do so.\n- For ordinary English dialogue, use Sinhala Unicode script for the translated words. Never return an English sentence unchanged. Latin letters are allowed only for proper names/acronyms that should stay untranslated.\n- Keep each result concise enough for subtitles.\n- Preserve useful line breaks inside each cue where possible.\n- Do not add explanations, labels, romanization, notes, or extra entries.\n- Use neighboring cues as dialogue context so pronouns and tone remain coherent.\n\nTITLE: ${title || "Unknown"}\nSUBTITLE CUES JSON:\n${JSON.stringify(segments)}`;
 
