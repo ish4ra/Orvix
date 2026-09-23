@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOpenSubtitlesFingerprintUsesFirstAndLast64KiB(t *testing.T) {
