@@ -1076,15 +1076,27 @@ class AiSinhalaSubtitleService {
     String? preferredTrackLabel,
   }) async {
     final videoUri = Uri.tryParse(rawVideoUrl);
-    final localP2p = videoUri != null &&
-        (videoUri.host == '127.0.0.1' || videoUri.host == 'localhost') &&
-        videoUri.port == 11470;
+    final localP2p =
+        videoUri != null && _parseLocalP2pFileIdentity(videoUri) != null;
+    final remoteEngineProxy =
+        videoUri != null && _isOrvixRemoteProxy(videoUri);
 
     // Windows local P2P has the strongest path: the Orvix-modified server
     // exposes the exact selected torrent file index and exact embedded track.
     // Preserve that proven path unchanged whenever it is available.
     if (localP2p) {
       final exact = await _fetchLocalP2pEmbeddedEnglishSubtitle(
+        rawVideoUrl,
+        preferredTrackLabel: preferredTrackLabel,
+      );
+      if (exact != null) return exact;
+    }
+
+    // Windows cloud/debrid uses the same modified stream-server process as
+    // Free P2P. Ask that native engine to probe and extract the exact proxied
+    // file before falling back to the cross-platform FFmpegKit path.
+    if (remoteEngineProxy) {
+      final exact = await _fetchOrvixRemoteEmbeddedEnglishSubtitle(
         rawVideoUrl,
         preferredTrackLabel: preferredTrackLabel,
       );
@@ -1115,6 +1127,137 @@ class AiSinhalaSubtitleService {
     } catch (_) {
       return null;
     }
+  }
+
+  static bool _isOrvixRemoteProxy(Uri uri) {
+    return (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
+        uri.port == 11470 &&
+        uri.pathSegments.isNotEmpty &&
+        uri.pathSegments.first == 'proxy';
+  }
+
+  static Future<_EmbeddedSubtitleSource?>
+      _fetchOrvixRemoteEmbeddedEnglishSubtitle(
+    String rawVideoUrl, {
+    String? preferredTrackLabel,
+  }) async {
+    final videoUri = Uri.tryParse(rawVideoUrl);
+    if (videoUri == null || !_isOrvixRemoteProxy(videoUri)) return null;
+
+    final capabilitiesUri = videoUri.replace(
+      path: '/orvix/capabilities',
+      query: '',
+      fragment: '',
+    );
+    try {
+      final response = await http
+          .get(capabilitiesUri)
+          .timeout(const Duration(seconds: 4));
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+      final decoded =
+          jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
+      if (decoded is! Map ||
+          decoded['remoteEmbeddedSubtitles'] != true ||
+          decoded['remoteSubtitleRouteVersion'] != 1) {
+        return null;
+      }
+    } catch (_) {
+      return null;
+    }
+
+    final tracksUri = videoUri.replace(
+      path: '/orvix/remote/subtitlesTracks',
+      queryParameters: <String, String>{'videoUrl': rawVideoUrl},
+      fragment: '',
+    );
+
+    dynamic decoded;
+    try {
+      final response = await http
+          .get(tracksUri)
+          .timeout(const Duration(seconds: 45));
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+      decoded =
+          jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
+    } catch (_) {
+      return null;
+    }
+
+    final raw = decoded is Map ? decoded['result'] : null;
+    if (decoded is! Map ||
+        decoded['orvixRemoteFile'] != true ||
+        raw is! List ||
+        raw.isEmpty) {
+      return null;
+    }
+
+    final candidates = <Map<String, dynamic>>[];
+    for (final entry in raw) {
+      if (entry is! Map) continue;
+      final map = Map<String, dynamic>.from(entry);
+      final id = map['id'] is num
+          ? (map['id'] as num).toInt()
+          : int.tryParse(map['id']?.toString() ?? '');
+      if (id == null || id < 1000 || map['embedded'] != true) continue;
+
+      final language = map['lang']?.toString().trim() ?? '';
+      final label = map['label']?.toString().trim() ?? '';
+      final score = _embeddedEnglishTrackScore(
+        '$language $label',
+        preferredTrackLabel: preferredTrackLabel,
+      );
+      map['_score'] = score;
+      candidates.add(map);
+    }
+
+    candidates.sort(
+      (a, b) => (b['_score'] as int).compareTo(a['_score'] as int),
+    );
+
+    // If metadata is completely unlabeled, a single text subtitle stream is a
+    // safe candidate. Its content is still required to parse as a real timed
+    // subtitle before it can be translated.
+    final hasPositive = candidates.any((entry) => (entry['_score'] as int) > 0);
+    final usable = hasPositive
+        ? candidates.where((entry) => (entry['_score'] as int) > 0).toList()
+        : candidates.length == 1
+            ? candidates
+            : const <Map<String, dynamic>>[];
+
+    for (final candidate in usable) {
+      final id = candidate['id'] is num
+          ? (candidate['id'] as num).toInt()
+          : int.tryParse(candidate['id']?.toString() ?? '');
+      if (id == null) continue;
+      final label = candidate['label']?.toString().trim();
+      final subtitleUri = videoUri.replace(
+        path: '/orvix/remote/embedded/$id/subtitles.vtt',
+        queryParameters: <String, String>{'videoUrl': rawVideoUrl},
+        fragment: '',
+      );
+      try {
+        final response = await http
+            .get(subtitleUri)
+            .timeout(const Duration(minutes: 3));
+        if (response.statusCode < 200 || response.statusCode >= 300) continue;
+        if (response.headers['x-orvix-remote-file'] != '1') continue;
+        final content =
+            utf8.decode(response.bodyBytes, allowMalformed: true).trim();
+        if (content.isEmpty || _parseSubtitle(content).length < 8) continue;
+        final digest = sha256.convert(utf8.encode(rawVideoUrl)).toString();
+        return _EmbeddedSubtitleSource(
+          content: content,
+          identity: 'orvix-remote-embedded://$digest/$id',
+          label: label?.isNotEmpty == true
+              ? label!
+              : 'English embedded • Orvix stream engine',
+        );
+      } catch (_) {
+        continue;
+      }
+    }
+
+    return null;
   }
 
   static Future<_EmbeddedSubtitleSource?> _fetchLocalP2pEmbeddedEnglishSubtitle(
@@ -2327,9 +2470,7 @@ class AiSinhalaSubtitleService {
       );
     }
 
-    final localP2p =
-        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
-            uri.port == 11470;
+    final localP2p = _parseLocalP2pFileIdentity(uri) != null;
 
     if (localP2p) {
       // stream-server v0.1.8 exposes /opensubHash and computes the canonical
