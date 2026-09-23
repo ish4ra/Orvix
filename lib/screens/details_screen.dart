@@ -3327,23 +3327,24 @@ class _DetailsScreenState extends State<DetailsScreen> {
         : '${item.title} • ${episode.label} ${episode.title}';
     final next = _nextEpisode(item, episode);
 
-    final preference = await PlayerEnginePreferencesService.get();
-    final aiEnabled =
-        Platform.isAndroid && await AiSinhalaPreferencesService.isEnabled();
-    final engine = PlayerEngineRouter.choose(
-      preference: preference,
-      isAndroid: Platform.isAndroid,
-      isAndroidTv: PlatformProfile.isAndroidTv,
-      url: playbackUrl,
-      releaseHint: releaseHint,
-      aiSinhalaEnabled: aiEnabled,
-    );
+    try {
+      final preference = await PlayerEnginePreferencesService.get();
+      final aiEnabled =
+          Platform.isAndroid && await AiSinhalaPreferencesService.isEnabled();
+      final engine = PlayerEngineRouter.choose(
+        preference: preference,
+        isAndroid: Platform.isAndroid,
+        isAndroidTv: PlatformProfile.isAndroidTv,
+        url: playbackUrl,
+        releaseHint: releaseHint,
+        aiSinhalaEnabled: aiEnabled,
+      );
 
-    final tvFreeP2pAuto = PlatformProfile.isAndroidTv &&
-        source?.isMagnet == true &&
-        preference == PlayerEnginePreference.auto;
+      final tvFreeP2pAuto = PlatformProfile.isAndroidTv &&
+          source?.isMagnet == true &&
+          preference == PlayerEnginePreference.auto;
 
-    if (engine == PlayerEngineKind.exoPlayer && Platform.isAndroid) {
+      if (engine == PlayerEngineKind.exoPlayer && Platform.isAndroid) {
       final result = await _openExoPlayer(
         playbackUrl,
         title,
@@ -3372,21 +3373,24 @@ class _DetailsScreenState extends State<DetailsScreen> {
       await Future<void>.delayed(const Duration(milliseconds: 180));
     }
 
-    await _openMpvPlayer(
-      playbackUrl,
-      title,
-      item,
-      episode,
-      next,
-      source: source,
-      releaseHint: releaseHint,
-      expectedSizeBytes: expectedSizeBytes,
-      expectedVideoHash: expectedVideoHash,
-      fallbackToExo: tvFreeP2pAuto,
-    );
-
-    if (bridgeHandle != null) {
-      await LocalMediaBridgeService.instance.release(bridgeHandle.sessionId);
+      await _openMpvPlayer(
+        playbackUrl,
+        title,
+        item,
+        episode,
+        next,
+        source: source,
+        releaseHint: releaseHint,
+        expectedSizeBytes: expectedSizeBytes,
+        expectedVideoHash: expectedVideoHash,
+        fallbackToExo: tvFreeP2pAuto,
+      );
+    } finally {
+      if (bridgeHandle != null) {
+        await LocalMediaBridgeService.instance.release(
+          bridgeHandle.sessionId,
+        );
+      }
     }
   }
 
