@@ -972,6 +972,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
     Object? lastAttachError;
     var attached = false;
 
+    // Wait for the newly opened media to publish at least basic metadata.
+    // This is still fully paused. Attaching an external subtitle before this
+    // point can be overwritten when libmpv finishes replacing the previous
+    // file's track list.
+    for (var attempt = 0; attempt < 30 && !_closing; attempt++) {
+      final state = player.state;
+      final hasAudio = state.tracks.audio
+          .any((track) => track.id.toLowerCase() != 'no');
+      final hasSubtitleMetadata = state.tracks.subtitle
+          .any((track) => track.id.toLowerCase() != 'no');
+      if (state.duration > Duration.zero || hasAudio || hasSubtitleMetadata) {
+        break;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+
     // media_kit can resolve player.open() before libmpv has published its
     // initial track state. Older builds issued setSubtitleTrack exactly once
     // at that point and then started playback even when the external SRT had
