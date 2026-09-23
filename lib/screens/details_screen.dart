@@ -3309,15 +3309,38 @@ class _DetailsScreenState extends State<DetailsScreen> {
     LocalMediaBridgeHandle? bridgeHandle;
     var playbackUrl = url;
     if (useLocalMediaBridge) {
-      setState(() {
-        _resolving = true;
-        _status = 'Opening through the Orvix local media bridge…';
-      });
-      bridgeHandle = await LocalMediaBridgeService.instance.bridge(
-        url,
-        fileNameHint: releaseHint,
-      );
-      playbackUrl = bridgeHandle.url;
+      var nativeEngineReady = false;
+
+      if (Platform.isWindows) {
+        setState(() {
+          _resolving = true;
+          _status = 'Opening through the Orvix stream engine…';
+        });
+        try {
+          playbackUrl = await LocalTorrentService.instance.proxyRemoteUrl(
+            url,
+            fileNameHint: releaseHint,
+          );
+          nativeEngineReady = true;
+        } catch (_) {
+          // Keep cloud playback usable if an older/missing native engine is
+          // still running during an update. The Dart bridge remains a safe
+          // transport fallback, but beta.16+ Windows builds should normally
+          // take the native stream-engine path above.
+        }
+      }
+
+      if (!nativeEngineReady) {
+        setState(() {
+          _resolving = true;
+          _status = 'Opening through the Orvix local media bridge…';
+        });
+        bridgeHandle = await LocalMediaBridgeService.instance.bridge(
+          url,
+          fileNameHint: releaseHint,
+        );
+        playbackUrl = bridgeHandle.url;
+      }
     }
 
     setState(() {
