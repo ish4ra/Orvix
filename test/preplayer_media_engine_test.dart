@@ -245,7 +245,9 @@ void main() {
     expect(sourceAttempt, greaterThanOrEqualTo(0));
     expect(engineAttempt, greaterThan(sourceAttempt));
     expect(addonFallback, greaterThan(engineAttempt));
-    expect(details, contains('candidate.score >= 900'));
+    expect(details, contains('candidate.exactHashPath'));
+    expect(details, contains('candidate.strongReleaseMatchCount > 0'));
+    expect(details, contains('hash-addon-rejected'));
     expect(
       details,
       contains('No safe subtitle matched this exact file.'),
