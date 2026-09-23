@@ -91,6 +91,8 @@ class AppUpdateService {
               'Accept': 'application/vnd.github+json',
               'User-Agent': 'Orvix-Updater',
               'X-GitHub-Api-Version': '2022-11-28',
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache',
             },
           )
           .timeout(const Duration(seconds: 12));
@@ -106,7 +108,19 @@ class AppUpdateService {
         final tag = raw['tag_name']?.toString().trim() ?? '';
         if (tag.isEmpty || !isVersionNewer(tag, currentVersion)) continue;
 
-        final asset = _selectAsset(raw['assets']);
+        var asset = _selectAsset(raw['assets']);
+        // GitHub can briefly publish a new release in the collection response
+        // with an empty inline assets array even though the dedicated
+        // /releases/{id}/assets endpoint already contains the uploaded files.
+        // beta.19 -> beta.20 exposed this exact race: the updater saw the
+        // newer tag, found no Windows asset, skipped it, and never retried.
+        if (asset == null) {
+          final assetsUrl = raw['assets_url']?.toString().trim() ?? '';
+          if (assetsUrl.isNotEmpty) {
+            final assets = await _fetchReleaseAssets(assetsUrl);
+            asset = _selectAsset(assets);
+          }
+        }
         if (asset == null) continue;
 
         final candidate = AppUpdateInfo(
@@ -130,6 +144,33 @@ class AppUpdateService {
       return best;
     } catch (_) {
       return null;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchReleaseAssets(
+    String assetsUrl,
+  ) async {
+    try {
+      final response = await _client
+          .get(
+            Uri.parse(assetsUrl),
+            headers: const {
+              'Accept': 'application/vnd.github+json',
+              'User-Agent': 'Orvix-Updater',
+              'X-GitHub-Api-Version': '2022-11-28',
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache',
+            },
+          )
+          .timeout(const Duration(seconds: 12));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return const [];
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! List) return const [];
+      return decoded.whereType<Map<String, dynamic>>().toList();
+    } catch (_) {
+      return const [];
     }
   }
 
