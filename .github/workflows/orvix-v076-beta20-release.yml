@@ -1,4 +1,5 @@
 name: Release Orvix v0.7.6-beta.20
+# retry-after-fixture-origin-readiness-and-ffprobe-retry
 
 on:
   push:
@@ -386,6 +387,19 @@ jobs:
           $http = Start-Process -FilePath 'python' -ArgumentList @('-m', 'http.server', '18080', '--bind', '127.0.0.1', '--directory', $fixtureDir) -PassThru
           $media = Start-Process -FilePath $engine -ArgumentList @('--port', '11471', '--idle-timeout', '10m') -PassThru
           try {
+            $originReady = $false
+            for ($i = 0; $i -lt 40; $i++) {
+              Start-Sleep -Milliseconds 250
+              try {
+                $origin = Invoke-WebRequest -UseBasicParsing -Method Head -Uri 'http://127.0.0.1:18080/fixture.mkv' -TimeoutSec 2
+                if ($origin.StatusCode -eq 200 -and $origin.Headers['Content-Length']) {
+                  $originReady = $true
+                  break
+                }
+              } catch {}
+            }
+            if (-not $originReady) { throw 'Fixture HTTP origin did not become ready.' }
+
             $ready = $false
             for ($i = 0; $i -lt 60; $i++) {
               Start-Sleep -Milliseconds 250
