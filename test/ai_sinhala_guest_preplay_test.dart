@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('guest AI Sinhala can translate the complete embedded subtitle before playback', () {
+  test('guest AI Sinhala supports progressive native cue translation', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
     final details = File('lib/screens/details_screen.dart').readAsStringSync();
@@ -19,13 +19,13 @@ void main() {
     expect(service, contains('_translateEntireSubtitle('));
     expect(service, contains('_writeGeneratedSrt('));
 
-    expect(details, contains('OrvixMediaEngineService.instance.prepare('));
     expect(
       details,
-      contains('prepareGeneratedSinhalaFromEngineEmbedded('),
+      contains('_legacyCompleteFileAiPreflightEnabled => false'),
     );
-    expect(details, contains('preparedAiSubtitleFile: preparedAiSubtitleFile'));
-    expect(player, contains('await _loadGeneratedAiSubtitleTrack();'));
-    expect(player, contains('play: !(aiReady || usePlayerPreflight)'));
+    expect(player, contains('_activateProgressiveNativeCueAi('));
+    expect(player, contains('_enableEmbeddedLiveAiFallback('));
+    expect(player, contains('translateCue('));
+    expect(player, contains('play: !(aiReady || useProgressiveNativeCueAi)'));
   });
 }
