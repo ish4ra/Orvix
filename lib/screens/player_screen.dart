@@ -346,37 +346,114 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _discoverNativeCueAiAfterPlayback() async {
-    // Some remote containers publish subtitle metadata only after demuxing has
-    // begun. Keep normal playback running with the source subtitle visible and
-    // retry briefly in the background; never pause/seek the video just to make
-    // AI Sinhala discover a track.
-    for (var attempt = 0;
-        attempt < 40 &&
-            mounted &&
-            !_closing &&
-            _aiPreferenceEnabled &&
-            !_subtitleChoiceOverridden &&
-            !_liveAiFallback;
-        attempt++) {
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-      if (_bestNativeEnglishTextTrack() == null) continue;
-      final activated = await _activateProgressiveNativeCueAi(
-        maxWait: Duration.zero,
-        phase: 'late',
+    // Some remote containers do not publish concrete subtitle-track metadata
+    // immediately. The regular MPV player may still auto-select an embedded
+    // text subtitle and emit real cues. Observe BOTH signals for a short
+    // window: explicit track metadata and actual subtitle text. This keeps the
+    // path provider-independent and avoids ever treating media_kit's "auto"
+    // selector itself as a subtitle track.
+    var activated = false;
+    StreamSubscription<List<String>>? cueProbe;
+
+    Future<void> activateFromCue(List<String> lines) async {
+      if (activated ||
+          !mounted ||
+          _closing ||
+          !_aiPreferenceEnabled ||
+          _subtitleChoiceOverridden ||
+          _liveAiFallback) {
+        return;
+      }
+
+      final source = lines
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty)
+          .join('\n')
+          .trim();
+      if (!_looksLikeEnglishNativeCue(source)) return;
+
+      final current = widget.playback.player.state.track.subtitle;
+      if (_isImageSubtitleTrack(current)) return;
+
+      _timingTrackSelected = true;
+      _timingTrackIsText = true;
+      _nativeAiMatchIndex = -1;
+
+      final title =
+          (current.title ?? '').replaceAll(RegExp(r'[\r\n]+'), ' ').trim();
+      final language = (current.language ?? '').trim();
+      final codec = (current.codec ?? '').trim();
+      unawaited(
+        AiSinhalaTraceService.write(
+          'native-cue-ai-ready phase=cue-probe id=${current.id} '
+          'language=$language codec=$codec title="$title" '
+          'chars=${source.length}',
+        ),
       );
-      if (activated) return;
+
+      final ready = await _enableEmbeddedLiveAiFallback(
+        'Using real English subtitle cues emitted by the active player.',
+      );
+      if (!ready || !mounted || _closing) return;
+      activated = true;
+
+      // The cue that proved the track is real arrived before the permanent AI
+      // listener was installed. Translate it immediately so the first visible
+      // Sinhala line is not lost.
+      await _handleEmbeddedSubtitleCue(lines);
+    }
+
+    cueProbe = widget.playback.player.stream.subtitle.listen(
+      (lines) => unawaited(activateFromCue(lines)),
+    );
+
+    try {
+      for (var attempt = 0;
+          attempt < 40 &&
+              mounted &&
+              !_closing &&
+              _aiPreferenceEnabled &&
+              !_subtitleChoiceOverridden &&
+              !_liveAiFallback &&
+              !activated;
+          attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        if (_bestNativeEnglishTextTrack() == null) continue;
+        final ready = await _activateProgressiveNativeCueAi(
+          maxWait: Duration.zero,
+          phase: 'late',
+        );
+        if (ready) {
+          activated = true;
+          return;
+        }
+      }
+    } finally {
+      await cueProbe.cancel();
     }
 
     if (!mounted ||
         _closing ||
         !_aiPreferenceEnabled ||
         _subtitleChoiceOverridden ||
-        _liveAiFallback) {
+        _liveAiFallback ||
+        activated) {
       return;
     }
+
+    final trackSummary = widget.playback.player.state.tracks.subtitle
+        .take(10)
+        .map((track) {
+          final title =
+              (track.title ?? '').replaceAll(RegExp(r'[\r\n|]+'), ' ').trim();
+          final language = (track.language ?? '').trim();
+          final codec = (track.codec ?? '').trim();
+          return '${track.id}:$language:$codec:$title';
+        })
+        .join(' | ');
     unawaited(
       AiSinhalaTraceService.write(
-        'native-cue-ai-final-miss '
+        'native-cue-ai-final-miss detail="$trackSummary" '
         'host=${AiSinhalaTraceService.safeHost(widget.url)}',
       ),
     );
@@ -583,7 +660,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   bool _hasTextSubtitleTrack() {
     return widget.playback.player.state.tracks.subtitle.any(
-      (track) => track.id.toLowerCase() != 'no' && !_isImageSubtitleTrack(track),
+      (track) =>
+          _isRealSubtitleTrack(track) && !_isImageSubtitleTrack(track),
     );
   }
 
@@ -637,7 +715,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   mk.SubtitleTrack? _bestNativeEnglishTextTrack() {
     final tracks = widget.playback.player.state.tracks.subtitle
-        .where((track) => track.id.toLowerCase() != 'no')
+        .where(_isRealSubtitleTrack)
         .where((track) => !_isImageSubtitleTrack(track))
         .toList(growable: false);
 
@@ -1123,7 +1201,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     final player = widget.playback.player;
     final current = player.state.track.subtitle;
-    if (current.id.toLowerCase() != 'no' &&
+    if (_isRealSubtitleTrack(current) &&
         (_isEnglishTrack(current) || _isUnlabeledTextTrack(current))) {
       await _setNativeSubtitleVisibility(true);
       await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
@@ -1134,7 +1212,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // because network/P2P containers can publish track metadata asynchronously.
     for (var attempt = 0; attempt < 12 && mounted && !_closing; attempt++) {
       final tracks = player.state.tracks.subtitle
-          .where((track) => track.id.toLowerCase() != 'no')
+          .where(_isRealSubtitleTrack)
           .toList(growable: false);
       final englishText =
           tracks.where(_isEnglishTextTrack).toList(growable: false);
@@ -1160,7 +1238,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // No English-labelled track was discoverable. Preserve the player's
     // current native choice as a last-resort fallback instead of leaving
     // subtitles blank.
-    if (current.id.toLowerCase() != 'no') {
+    if ((current.id ?? '').toString().trim().toLowerCase() != 'no') {
       await _setNativeSubtitleVisibility(true);
       await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
     }
@@ -1870,11 +1948,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     for (var attempt = 0; attempt < 12 && mounted && !_closing; attempt++) {
       final current = player.state.track.subtitle;
       dynamic chosen;
-      if (current.id.toLowerCase() != 'no' && _isEnglishTrack(current)) {
+      if (_isRealSubtitleTrack(current) && _isEnglishTrack(current)) {
         chosen = current;
       } else {
         final allTracks = player.state.tracks.subtitle
-            .where((track) => track.id.toLowerCase() != 'no')
+            .where(_isRealSubtitleTrack)
             .toList(growable: false);
         final tracks = allTracks.where(_isEnglishTrack).toList(growable: false)
           ..sort((a, b) {
@@ -1916,6 +1994,36 @@ class _PlayerScreenState extends State<PlayerScreen> {
         .join(' • ');
   }
 
+  bool _isRealSubtitleTrack(dynamic track) {
+    final id = (track.id ?? '').toString().trim().toLowerCase();
+    // media_kit always injects pseudo tracks named "auto" and "no". They are
+    // selectors, not actual subtitle streams, and therefore have no language,
+    // codec or title metadata. Treating "auto" as the one unlabeled text track
+    // caused beta.30 to report AI-ready without ever receiving a subtitle cue.
+    return id.isNotEmpty && id != 'auto' && id != 'no';
+  }
+
+  bool _looksLikeEnglishNativeCue(String raw) {
+    final text = raw
+        .replaceAll(RegExp(r'<[^>]+>'), ' ')
+        .replaceAll(RegExp(r'\{\\[^}]+\}'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (text.isEmpty) return false;
+
+    final words = RegExp(r"[A-Za-z][A-Za-z'’\-]*")
+        .allMatches(text)
+        .map((match) => match.group(0) ?? '')
+        .where((word) => word.length > 1)
+        .toList(growable: false);
+    if (words.length < 2) return false;
+
+    final letters = RegExp(r'[A-Za-z]').allMatches(text).length;
+    final otherLetters =
+        RegExp(r'[\u0080-\uFFFF]').allMatches(text).length;
+    return letters >= 4 && letters >= otherLetters * 2;
+  }
+
   bool _isEnglishTrack(dynamic track) {
     final language = (track.language ?? '').toString().trim().toLowerCase();
     final title = (track.title ?? '').toString().trim().toLowerCase();
@@ -1937,10 +2045,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   bool _isEnglishTextTrack(dynamic track) =>
-      _isEnglishTrack(track) && !_isImageSubtitleTrack(track);
+      _isRealSubtitleTrack(track) &&
+      _isEnglishTrack(track) &&
+      !_isImageSubtitleTrack(track);
 
   bool _isUnlabeledTextTrack(dynamic track) {
-    if (_isImageSubtitleTrack(track)) return false;
+    if (!_isRealSubtitleTrack(track) || _isImageSubtitleTrack(track)) {
+      return false;
+    }
     final language =
         (track.language ?? '').toString().trim().toLowerCase();
     final title = (track.title ?? '').toString().trim().toLowerCase();
