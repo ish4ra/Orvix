@@ -3538,11 +3538,14 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final aiSettingEnabled =
         await AiSinhalaPreferencesService.isEnabled();
 
-    // AI Sinhala is a Windows playback invariant, not a cloud-only feature.
-    // Direct HTTP sources are intentionally ranked first in free-stream mode,
-    // while free P2P resolves to localhost:11470. Both must enter the same
-    // standalone pre-player engine before PlayerScreen can exist.
-    final windowsAiEngine = Platform.isWindows && aiSettingEnabled;
+    // AI Sinhala no longer blocks Windows behind a complete-file preflight.
+    // The cross-platform MPV player now opens the exact source first, discovers
+    // the subtitle tracks the real player can actually see, and progressively
+    // translates those native English cues. Keep the old complete-file engine
+    // code below as a dormant recovery path while the new architecture is
+    // validated; it must not delay normal startup.
+    final windowsAiEngine = false;
+    final nativeCueAi = aiSettingEnabled;
     final originalUri = Uri.tryParse(url);
     final originalLocalP2p = originalUri != null &&
         (originalUri.host == '127.0.0.1' || originalUri.host == 'localhost') &&
@@ -3557,6 +3560,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         'provider=${source?.provider ?? 'unknown'} '
         'cloudBridge=$useLocalMediaBridge localP2p=$originalLocalP2p '
         'torBoxTree=${torBoxItem != null && torBoxVideoFile != null} '
+        'nativeCueAi=$nativeCueAi '
         'host=${AiSinhalaTraceService.safeHost(url)}',
       ),
     );
