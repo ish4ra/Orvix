@@ -108,7 +108,7 @@ void main() {
     expect(
       player,
       contains(
-        'never pause/seek the video just to make',
+        'Do not stop/reopen/pause/seek the media.',
       ),
     );
   });
@@ -213,7 +213,7 @@ void main() {
     expect(
       player,
       contains(
-        'never pause/seek the video just to make',
+        'Do not stop/reopen/pause/seek the media.',
       ),
     );
   });
