@@ -401,6 +401,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
     if (_audioAiActive && _preparedAiSubtitle != null) return true;
 
+    final embeddedEnglishBitmap = widget
+        .playback.player.state.tracks.subtitle
+        .any((track) =>
+            _isRealSubtitleTrack(track) &&
+            _isEnglishTrack(track) &&
+            _isImageSubtitleTrack(track));
+    final audioReason = embeddedEnglishBitmap
+        ? 'Embedded English subtitle found, but it is image-based (PGS/VobSub), so Orvix is listening to the video audio for Sinhala dialogue…'
+        : 'No readable English text subtitle was exposed by this source. Listening to the video audio for Sinhala dialogue…';
+
     if (_aiState.mode != AiSinhalaRuntimeMode.preparing) {
       setState(() {
         if (_aiState.mode != AiSinhalaRuntimeMode.native) {
@@ -409,15 +419,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _transitionAi(AiSinhalaRuntimeMode.preparing);
         _aiSubtitleUnavailable = false;
         _aiDisplaySubtitle = '';
-        _aiPreflightMessage =
-            'No readable English text subtitle found. Listening to the video audio for Sinhala dialogue…';
+        _aiPreflightMessage = audioReason;
       });
     } else {
       setState(() {
         _aiSubtitleUnavailable = false;
         _aiDisplaySubtitle = '';
-        _aiPreflightMessage =
-            'No readable English text subtitle found. Listening to the video audio for Sinhala dialogue…';
+        _aiPreflightMessage = audioReason;
       });
     }
 
