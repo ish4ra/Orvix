@@ -200,6 +200,24 @@ void main() {
     );
   });
 
+  test('automatic native-cue discovery never warms by play-pause-seek', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    final start = player.indexOf('Future<void> _open() async');
+    final end = player.indexOf('void _onPlaybackError', start);
+    final open = player.substring(start, end);
+
+    expect(open, isNot(contains('_primeSubtitleTracksForAiPreflight()')));
+    expect(open, isNot(contains('_prepareAiSinhalaBeforePlayback()')));
+    expect(open, isNot(contains('await widget.playback.player.pause();')));
+    expect(
+      player,
+      contains(
+        'never pause/seek the video just to make',
+      ),
+    );
+  });
+
   test('generated Sinhala cache rejects stale non-Sinhala SRT files', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
