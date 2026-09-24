@@ -28,6 +28,8 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
   double _progress = 0;
   File? _downloadedFile;
   bool _checking = false;
+  Timer? _releaseWarmupRetry;
+  Timer? _periodicUpdateCheck;
 
   @override
   void initState() {
@@ -35,6 +37,17 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
     WidgetsBinding.instance.addObserver(this);
     unawaited(_reportPreviousWindowsUpdate());
     unawaited(_checkSoon());
+
+    // Releases can become visible while Orvix is already open. Do not make
+    // update discovery depend on an app restart/resume event.
+    _releaseWarmupRetry = Timer(
+      const Duration(seconds: 20),
+      () => unawaited(_checkForUpdate()),
+    );
+    _periodicUpdateCheck = Timer.periodic(
+      const Duration(minutes: 5),
+      (_) => unawaited(_checkForUpdate()),
+    );
   }
 
   @override
@@ -86,6 +99,8 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _releaseWarmupRetry?.cancel();
+    _periodicUpdateCheck?.cancel();
     _updates.dispose();
     super.dispose();
   }
