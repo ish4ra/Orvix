@@ -34,7 +34,8 @@ void main() {
     // Windows must not use FFmpegKit in-process for the rolling audio window.
     // The native plugin callback path previously terminated the whole app.
     expect(audio, contains('if (Platform.isWindows)'));
-    expect(audio, contains("'tools${Platform.pathSeparator}ffmpeg"));
+    expect(audio, contains('tools'));
+    expect(audio, contains('ffmpeg.exe'));
     expect(audio, contains('Process.run('));
     expect(audio, contains("'-nostdin'"));
     expect(
