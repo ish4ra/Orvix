@@ -25,6 +25,8 @@ void main() {
     final windowsMain =
         File('windows/runner/main.cpp').readAsStringSync();
     final installer = File('installer/orvix.iss').readAsStringSync();
+    final releasePublisher =
+        File('tools/publish_orvix_release.sh').readAsStringSync();
     final runnerCmake =
         File('windows/runner/CMakeLists.txt').readAsStringSync();
     final windowsCmake =
@@ -62,6 +64,13 @@ void main() {
     expect(installer, contains('orvix-stream-server.exe'));
     expect(installer, contains('taskkill.exe'));
     expect(installer, isNot(contains('powershell.exe')));
+    expect(releasePublisher, contains('gh release create'));
+    expect(releasePublisher, contains('--draft'));
+    expect(releasePublisher, contains('gh release upload'));
+    expect(releasePublisher, contains('gh release edit'));
+    expect(releasePublisher, contains('--draft=false'));
+    expect(releasePublisher, contains('expected_count='));
+    expect(releasePublisher, contains('.size > 0'));
     expect(windowsMain, contains('CreateMutexW'));
     expect(windowsMain, contains('OrvixDesktopSingleInstanceV1'));
     expect(windowsMain, contains('ERROR_ALREADY_EXISTS'));
@@ -73,7 +82,13 @@ void main() {
     expect(update, contains('_fetchReleaseAssets('));
     expect(update, contains("'Cache-Control': 'no-cache'"));
     expect(gate, contains('AppLifecycleState.resumed'));
-    expect(gate, isNot(contains('Timer.periodic(')));
+    expect(gate, contains('Timer.periodic('));
+    expect(gate, contains('Duration(minutes: 5)'));
+    expect(gate, contains('Duration(seconds: 20)'));
+    expect(update, contains('_releaseAssetFetchAttempts = 5'));
+    expect(update, contains("'_orvix_check'"));
+    expect(update, contains("'_orvix_asset_check'"));
+    expect(update, contains("'per_page': '30'"));
     expect(
       gate,
       contains('Orvix will close; finish setup in the Windows installer'),
