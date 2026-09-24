@@ -242,6 +242,18 @@ void main() {
       player,
       contains('_looksLikeEnglishNativeCue(source)'),
     );
+    expect(
+      player,
+      contains("'sub-text'"),
+    );
+    expect(
+      player,
+      contains("'sid'"),
+    );
+    expect(
+      player,
+      contains('nativeSid='),
+    );
   });
 
   test('generated Sinhala cache rejects stale non-Sinhala SRT files', () {
