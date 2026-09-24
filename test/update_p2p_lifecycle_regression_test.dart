@@ -80,7 +80,10 @@ void main() {
     expect(gate, contains("label: const Text('Update')"));
     expect(update, contains("raw['assets_url']"));
     expect(update, contains('_fetchReleaseAssets('));
-    expect(update, contains("'Cache-Control': 'no-cache'"));
+    expect(
+      update,
+      contains("'Cache-Control': 'no-cache, no-store, max-age=0'"),
+    );
     expect(gate, contains('AppLifecycleState.resumed'));
     expect(gate, contains('Timer.periodic('));
     expect(gate, contains('Duration(minutes: 5)'));
