@@ -34,7 +34,7 @@ done
 
 release_id="$(
   gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-    --jq --arg tag "$tag" '.[] | select(.tag_name == $tag) | .id' \
+    | jq -r --arg tag "$tag" '.[] | select(.tag_name == $tag) | .id' \
     | head -n 1
 )"
 
@@ -54,7 +54,7 @@ else
 
   release_id="$(
     gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-      --jq --arg tag "$tag" '.[] | select(.tag_name == $tag) | .id' \
+      | jq -r --arg tag "$tag" '.[] | select(.tag_name == $tag) | .id' \
       | head -n 1
   )"
   if [[ -z "$release_id" ]]; then
@@ -81,7 +81,7 @@ fi
 for asset in "${assets[@]}"; do
   name="$(basename "$asset")"
   found="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-    --jq --arg name "$name" '[.assets[] | select(.name == $name and .size > 0)] | length')"
+    | jq -r --arg name "$name" '[.assets[] | select(.name == $name and .size > 0)] | length')"
   if [[ "$found" -ne 1 ]]; then
     echo "release asset was not published exactly once or is empty: $name" >&2
     exit 1
