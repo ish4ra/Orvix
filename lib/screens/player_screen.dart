@@ -389,23 +389,33 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
 
     final remainingMs = _audioAiCoverageEndMs - position.inMilliseconds;
-    if (remainingMs > 12000 || _audioAiWindowWork != null) return;
-
-    final nextStart = _audioWindowStartFor(
-      Duration(
-        milliseconds: _audioAiCoverageEndMs <= 0
-            ? position.inMilliseconds
-            : _audioAiCoverageEndMs - 7000,
-      ),
-    );
-    final startMs = nextStart.inMilliseconds;
-    if (_audioAiWindowStarts.contains(startMs)) {
-      final later = nextStart + AiAudioSttService.windowStride;
-      if (_audioAiWindowStarts.contains(later.inMilliseconds)) return;
-      _queueAudioAiWindow(later);
+    final jumpedBeyondCoverage = position.inMilliseconds >
+        _audioAiCoverageEndMs + AiAudioSttService.windowDuration.inMilliseconds;
+    if (!jumpedBeyondCoverage &&
+        (remainingMs > 12000 || _audioAiWindowWork != null)) {
       return;
     }
-    _queueAudioAiWindow(nextStart);
+    if (_audioAiWindowWork != null) return;
+
+    final anchorMs = jumpedBeyondCoverage
+        ? position.inMilliseconds
+        : (_audioAiCoverageEndMs <= 0
+            ? position.inMilliseconds
+            : _audioAiCoverageEndMs - 7000);
+    var candidate = _audioWindowStartFor(
+      Duration(milliseconds: anchorMs < 0 ? 0 : anchorMs),
+    );
+
+    // Silent windows are still marked attempted. Walk forward until the first
+    // untried window so a quiet scene cannot permanently stop subtitle
+    // generation, and a seek can jump straight to the new playback region.
+    for (var i = 0; i < 6; i++) {
+      if (!_audioAiWindowStarts.contains(candidate.inMilliseconds)) {
+        _queueAudioAiWindow(candidate);
+        return;
+      }
+      candidate += AiAudioSttService.windowStride;
+    }
   }
 
   void _queueAudioAiWindow(Duration start) {
