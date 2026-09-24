@@ -254,6 +254,41 @@ void main() {
     );
   });
 
+  test('TorBox AI inspects the same cloud torrent file tree before P2P fallback', () {
+    final details = File('lib/screens/details_screen.dart').readAsStringSync();
+    final torbox = File('lib/services/torbox_service.dart').readAsStringSync();
+    final ai =
+        File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
+
+    expect(details, contains('torBoxItem: cloudItem'));
+    expect(details, contains('torBoxVideoFile: file'));
+    expect(details, contains('torbox-subtitle-scan'));
+    expect(details, contains('torbox-subtitle-candidate'));
+    expect(details, contains('torbox-subtitle-selected'));
+    expect(
+      details,
+      contains('prepareGeneratedSinhalaFromVerifiedExternalSubtitle('),
+    );
+    expect(torbox, contains('rankSubtitleCandidatesForVideo('));
+    expect(torbox, contains('final String? path;'));
+    expect(torbox, contains('bool get isTextSubtitle'));
+    expect(
+      ai,
+      contains('same-cloud-torrent-sibling-exact-release'),
+    );
+
+    final torBoxAttempt = details.indexOf(
+      'preparedAiSubtitleFile = await _tryTorBoxSiblingSubtitle(',
+    );
+    final exactAttempt = details.indexOf(
+      'Future<AiGeneratedSubtitleFile?> tryExact(',
+    );
+    final p2pAttempt = details.indexOf('p2p-subtitle-oracle-start');
+    expect(torBoxAttempt, greaterThanOrEqualTo(0));
+    expect(exactAttempt, greaterThan(torBoxAttempt));
+    expect(p2pAttempt, greaterThan(exactAttempt));
+  });
+
   test('debrid AI can reuse the exact Free P2P subtitle path without switching video playback', () {
     final details = File('lib/screens/details_screen.dart').readAsStringSync();
 
