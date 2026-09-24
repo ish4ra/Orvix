@@ -91,7 +91,7 @@ jobs:
               --header 'Content-Type: application/json' \
               --data '{"title":"Orvix CI","text":"You are telling me you are just going to walk out of here","context":[]}' \
               --output /tmp/orvix-ai-smoke.json \
-              --write-out '%{http_code}')"
+              --write-out '%{http_code}' || true)"
 
             if [ "$STATUS" = "200" ]; then
               if python3 - <<'PY'
@@ -108,7 +108,7 @@ jobs:
               exit 1
             fi
 
-            if [ "$STATUS" = "429" ] || [ "$STATUS" = "502" ] || [ "$STATUS" = "503" ] || [ "$STATUS" = "504" ]; then
+            if [ -z "$STATUS" ] || [ "$STATUS" = "000" ] || [ "$STATUS" = "429" ] || [ "$STATUS" = "502" ] || [ "$STATUS" = "503" ] || [ "$STATUS" = "504" ]; then
               echo "AI Sinhala smoke got transient HTTP $STATUS on attempt $attempt/5." >&2
               cat /tmp/orvix-ai-smoke.json >&2 || true
               if [ "$attempt" -lt 5 ]; then
