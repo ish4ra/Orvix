@@ -70,6 +70,25 @@ void main() {
     expect(engine, PlayerEngineKind.mpv);
   });
 
+  test('AI Sinhala forces MPV on Android mobile and TV', () {
+    final mobile = PlayerEngineRouter.choose(
+      preference: PlayerEnginePreference.exoPlayer,
+      isAndroid: true,
+      url: 'https://cdn.example.com/video.mp4',
+      aiSinhalaEnabled: true,
+    );
+    final tv = PlayerEngineRouter.choose(
+      preference: PlayerEnginePreference.exoPlayer,
+      isAndroid: true,
+      isAndroidTv: true,
+      url: 'https://cdn.example.com/video.mp4',
+      aiSinhalaEnabled: true,
+    );
+
+    expect(mobile, PlayerEngineKind.mpv);
+    expect(tv, PlayerEngineKind.mpv);
+  });
+
   test('Manual engine preference overrides Auto rules on Android', () {
     final forcedExo = PlayerEngineRouter.choose(
       preference: PlayerEnginePreference.exoPlayer,
