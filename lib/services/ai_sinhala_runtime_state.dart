@@ -33,7 +33,8 @@ class AiSinhalaRuntimeState {
     return switch (from) {
       AiSinhalaRuntimeMode.native =>
         to == AiSinhalaRuntimeMode.preparing ||
-            to == AiSinhalaRuntimeMode.prepared,
+            to == AiSinhalaRuntimeMode.prepared ||
+            to == AiSinhalaRuntimeMode.liveEmbedded,
       AiSinhalaRuntimeMode.preparing =>
         to == AiSinhalaRuntimeMode.prepared ||
             to == AiSinhalaRuntimeMode.liveEmbedded ||
