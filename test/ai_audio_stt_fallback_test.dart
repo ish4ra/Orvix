@@ -43,5 +43,16 @@ void main() {
         'Embedded English subtitle found, but it is image-based (PGS/VobSub)',
       ),
     );
+
+    // A real native English text track on Windows must never trigger the old
+    // multi-minute full-file embedded subtitle rescan.
+    expect(player, contains('if (Platform.isWindows)'));
+    expect(player, contains('native-cue-ai-live phase='));
+    expect(
+      player,
+      contains(
+        'Using the detected English text track directly; full-file rescanning is skipped on Windows.',
+      ),
+    );
   });
 }
