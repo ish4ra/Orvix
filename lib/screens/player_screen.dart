@@ -992,6 +992,26 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
 
       await _setNativeSubtitleVisibility(true);
+
+      if (Platform.isWindows) {
+        // MPV has already exposed a real English text track. Re-opening the
+        // entire remote MKV with FFmpeg just to reconstruct that same subtitle
+        // can take minutes because FFmpeg must walk the file. On Windows, use
+        // the native cue text that MPV is already decoding and translate those
+        // cues live. This keeps startup bounded to track discovery instead of
+        // blocking at 0:00 on a full-file scan.
+        final liveReady = await _enableEmbeddedLiveAiFallback(
+          'Using the detected English text track directly; full-file rescanning is skipped on Windows.',
+        );
+        unawaited(
+          AiSinhalaTraceService.write(
+            'native-cue-ai-live phase=$phase id=${track.id} '
+            'language=$language codec=$codec',
+          ),
+        );
+        return liveReady;
+      }
+
       final bufferedReady = await _prepareBufferedNativeCueAi(
         preferredTrackLabel: _subtitleTrackPreferenceLabel(track),
         phase: phase,
