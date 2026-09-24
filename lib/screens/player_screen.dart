@@ -9,6 +9,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../models/media_item.dart';
+import '../services/ai_audio_stt_service.dart';
 import '../services/ai_sinhala_preferences_service.dart';
 import '../services/ai_sinhala_runtime_state.dart';
 import '../services/ai_sinhala_trace_service.dart';
@@ -126,6 +127,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   int _liveCueTraceCount = 0;
   int _preparedTranslationFailures = 0;
   Future<bool>? _bufferedNativeAiPreparation;
+  bool _audioAiActive = false;
+  Future<void>? _audioAiWindowWork;
+  final Set<int> _audioAiWindowStarts = <int>{};
+  int _audioAiCoverageEndMs = 0;
   int _nativeAiMatchIndex = -1;
   double _subtitleFontSize = SubtitlePreferencesService.defaultFontSize;
   bool _subtitleBackground = SubtitlePreferencesService.defaultBackground;
@@ -169,6 +174,256 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _transitionAi(AiSinhalaRuntimeMode next) {
     _aiState = _aiState.transition(next);
+  }
+
+  String get _aiMediaSourceUrl =>
+      widget.aiSourceUrl?.trim().isNotEmpty == true
+          ? widget.aiSourceUrl!.trim()
+          : widget.url;
+
+  Duration _audioWindowStartFor(Duration position) {
+    final strideMs = AiAudioSttService.windowStride.inMilliseconds;
+    final safeMs = position.inMilliseconds < 0 ? 0 : position.inMilliseconds;
+    return Duration(milliseconds: (safeMs ~/ strideMs) * strideMs);
+  }
+
+  String _normalizeAudioCueText(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+      .trim();
+
+  void _mergeAudioAiCues(List<AiAudioSinhalaCue> incoming) {
+    final prepared = _preparedAiSubtitle;
+    if (prepared == null || incoming.isEmpty) return;
+
+    for (final cue in incoming) {
+      final normalized = _normalizeAudioCueText(cue.english);
+      final duplicate = prepared.cues.any((existing) {
+        final delta =
+            (existing.start.inMilliseconds - cue.start.inMilliseconds).abs();
+        return delta <= 1600 &&
+            _normalizeAudioCueText(existing.source) == normalized;
+      });
+      if (duplicate) continue;
+      prepared.cues.add(
+        AiSubtitleCue(
+          start: cue.start,
+          end: cue.end,
+          source: cue.english,
+          translation: cue.sinhala,
+        ),
+      );
+      if (cue.end.inMilliseconds > _audioAiCoverageEndMs) {
+        _audioAiCoverageEndMs = cue.end.inMilliseconds;
+      }
+    }
+    prepared.cues.sort((a, b) => a.start.compareTo(b.start));
+  }
+
+  Future<List<AiAudioSinhalaCue>> _loadAudioAiWindow(
+    Duration start, {
+    required String phase,
+  }) async {
+    final startMs = start.inMilliseconds < 0 ? 0 : start.inMilliseconds;
+    if (_audioAiWindowStarts.contains(startMs)) {
+      return const <AiAudioSinhalaCue>[];
+    }
+    _audioAiWindowStarts.add(startMs);
+    unawaited(
+      AiSinhalaTraceService.write(
+        'audio-ai-window-start phase=$phase startMs=$startMs '
+        'sourceHost=${AiSinhalaTraceService.safeHost(_aiMediaSourceUrl)}',
+      ),
+    );
+    try {
+      final cues = await AiAudioSttService.transcribeWindow(
+        title: widget.title,
+        videoUrl: _aiMediaSourceUrl,
+        start: Duration(milliseconds: startMs),
+      );
+      unawaited(
+        AiSinhalaTraceService.write(
+          'audio-ai-window-result phase=$phase startMs=$startMs cues=${cues.length}',
+        ),
+      );
+      return cues;
+    } catch (error) {
+      unawaited(
+        AiSinhalaTraceService.write(
+          'audio-ai-window-error phase=$phase startMs=$startMs '
+          'type=${error.runtimeType} detail="${error.toString().replaceAll(RegExp(r'[\\r\\n|]+'), ' ')}"',
+        ),
+      );
+      return const <AiAudioSinhalaCue>[];
+    }
+  }
+
+  Future<bool> _activateAudioAiFallback({
+    required String phase,
+    Duration? around,
+  }) async {
+    if (!mounted ||
+        _closing ||
+        !_aiPreferenceEnabled ||
+        _subtitleChoiceOverridden) {
+      return false;
+    }
+    if (_audioAiActive && _preparedAiSubtitle != null) return true;
+
+    if (_aiState.mode != AiSinhalaRuntimeMode.preparing) {
+      setState(() {
+        if (_aiState.mode != AiSinhalaRuntimeMode.native) {
+          _transitionAi(AiSinhalaRuntimeMode.native);
+        }
+        _transitionAi(AiSinhalaRuntimeMode.preparing);
+        _aiSubtitleUnavailable = false;
+        _aiDisplaySubtitle = '';
+        _aiPreflightMessage =
+            'No readable English text subtitle found. Listening to the video audio for Sinhala dialogue…';
+      });
+    } else {
+      setState(() {
+        _aiSubtitleUnavailable = false;
+        _aiDisplaySubtitle = '';
+        _aiPreflightMessage =
+            'No readable English text subtitle found. Listening to the video audio for Sinhala dialogue…';
+      });
+    }
+
+    await _setNativeSubtitleVisibility(true);
+    final firstStart =
+        _audioWindowStartFor(around ?? widget.playback.player.state.position);
+    var cues = await _loadAudioAiWindow(firstStart, phase: phase);
+
+    // Movie/episode openings can contain logos or music. One silent opening
+    // window must not make the whole audio fallback look unavailable.
+    if (cues.isEmpty && mounted && !_closing) {
+      final secondStart = firstStart + AiAudioSttService.windowStride;
+      if (mounted) {
+        setState(() {
+          _aiPreflightMessage =
+              'The first audio window was quiet. Checking the next dialogue window…';
+        });
+      }
+      cues = await _loadAudioAiWindow(secondStart, phase: '$phase-retry');
+    }
+
+    if (!mounted ||
+        _closing ||
+        !_aiPreferenceEnabled ||
+        _subtitleChoiceOverridden) {
+      return false;
+    }
+
+    if (cues.isEmpty) {
+      setState(() {
+        _transitionAi(AiSinhalaRuntimeMode.native);
+        _aiSubtitleUnavailable = true;
+        _aiPreflightMessage =
+            'AI Sinhala could not derive dialogue from this source, so Orvix will play the available native subtitles.';
+      });
+      await _setNativeSubtitleVisibility(true);
+      return false;
+    }
+
+    final converted = cues
+        .map(
+          (cue) => AiSubtitleCue(
+            start: cue.start,
+            end: cue.end,
+            source: cue.english,
+            translation: cue.sinhala,
+          ),
+        )
+        .toList()
+      ..sort((a, b) => a.start.compareTo(b.start));
+
+    _preparedAiSubtitle = AiPreparedSubtitle(
+      key: 'audio-stt-v1:${widget.title}:${_aiMediaSourceUrl.hashCode}',
+      title: widget.title,
+      sourceUrl: _aiMediaSourceUrl,
+      cues: converted,
+      sourceMatch: 'audio-stt',
+    );
+    _audioAiCoverageEndMs = converted.fold<int>(
+      0,
+      (best, cue) =>
+          cue.end.inMilliseconds > best ? cue.end.inMilliseconds : best,
+    );
+    _audioAiActive = true;
+    _timingTrackSelected = false;
+    _timingTrackIsText = false;
+    _nativeAiMatchIndex = -1;
+    _lastAiPrefetchBucket = -1;
+    _nativeSubtitleClockTimer?.cancel();
+    _liveCueClearTimer?.cancel();
+
+    setState(() {
+      _transitionAi(AiSinhalaRuntimeMode.prepared);
+      _aiSubtitleUnavailable = false;
+      _aiDisplaySubtitle = '';
+      _aiPreflightMessage =
+          'AI Sinhala audio subtitles are ready. Orvix will keep generating them ahead of playback.';
+    });
+
+    _positionSubscription ??=
+        widget.playback.player.stream.position.listen(_onPosition);
+    await _setNativeSubtitleVisibility(false);
+    _refreshAiSubtitle();
+    unawaited(
+      AiSinhalaTraceService.write(
+        'audio-ai-ready phase=$phase cues=${converted.length} '
+        'coverageEndMs=$_audioAiCoverageEndMs',
+      ),
+    );
+    return true;
+  }
+
+  void _ensureAudioAiAhead(Duration position) {
+    if (!_audioAiActive ||
+        !_aiSinhalaEnabled ||
+        _closing ||
+        _subtitleChoiceOverridden ||
+        _preparedAiSubtitle == null) {
+      return;
+    }
+
+    final remainingMs = _audioAiCoverageEndMs - position.inMilliseconds;
+    if (remainingMs > 12000 || _audioAiWindowWork != null) return;
+
+    final nextStart = _audioWindowStartFor(
+      Duration(
+        milliseconds: _audioAiCoverageEndMs <= 0
+            ? position.inMilliseconds
+            : _audioAiCoverageEndMs - 7000,
+      ),
+    );
+    final startMs = nextStart.inMilliseconds;
+    if (_audioAiWindowStarts.contains(startMs)) {
+      final later = nextStart + AiAudioSttService.windowStride;
+      if (_audioAiWindowStarts.contains(later.inMilliseconds)) return;
+      _queueAudioAiWindow(later);
+      return;
+    }
+    _queueAudioAiWindow(nextStart);
+  }
+
+  void _queueAudioAiWindow(Duration start) {
+    if (_audioAiWindowWork != null || _closing || !_audioAiActive) return;
+    final work = () async {
+      final cues = await _loadAudioAiWindow(start, phase: 'prefetch');
+      if (!mounted || _closing || !_audioAiActive || cues.isEmpty) return;
+      _mergeAudioAiCues(cues);
+      _refreshAiSubtitle();
+    }();
+    _audioAiWindowWork = work;
+    unawaited(
+      work.whenComplete(() {
+        if (identical(_audioAiWindowWork, work)) {
+          _audioAiWindowWork = null;
+        }
+      }),
+    );
   }
 
   @override
@@ -553,6 +808,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
           'host=${AiSinhalaTraceService.safeHost(widget.url)}',
         ),
       );
+      if (maxWait > Duration.zero) {
+        return _activateAudioAiFallback(phase: '$phase-no-text');
+      }
       return false;
     }
 
@@ -574,10 +832,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
 
       await _setNativeSubtitleVisibility(true);
-      return await _prepareBufferedNativeCueAi(
+      final bufferedReady = await _prepareBufferedNativeCueAi(
         preferredTrackLabel: _subtitleTrackPreferenceLabel(track),
         phase: phase,
       );
+      if (bufferedReady) return true;
+      if (maxWait > Duration.zero) {
+        return _activateAudioAiFallback(phase: '$phase-transcript-miss');
+      }
+      return false;
     } catch (error) {
       _timingTrackSelected = false;
       _timingTrackIsText = false;
@@ -873,11 +1136,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
         }
       }
 
-      if ((aiReady || !useProgressiveNativeCueAi) &&
-          !reopenedAfterAiFailure) {
+      if (!reopenedAfterAiFailure) {
+        // AI startup opens the player paused. Whether Sinhala preparation
+        // succeeds or falls back to native subtitles, playback must always be
+        // released exactly once after that preparation attempt completes.
         unawaited(
           AiSinhalaTraceService.write(
             'player-play allowed aiReady=$aiReady '
+            'audioAi=$_audioAiActive '
             'generated=${_generatedAiSubtitlePath != null}',
           ),
         );
@@ -1569,6 +1835,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _preparedAiSubtitle = null;
       _generatedAiSubtitlePath = null;
       _generatedAiSubtitleLabel = null;
+      _audioAiActive = false;
+      _audioAiWindowWork = null;
+      _audioAiWindowStarts.clear();
+      _audioAiCoverageEndMs = 0;
       setState(() {
         if (_aiState.mode != AiSinhalaRuntimeMode.native) {
           _transitionAi(AiSinhalaRuntimeMode.native);
@@ -1876,7 +2146,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
       setState(() => _aiDisplaySubtitle = '');
     }
 
-    if (_aiSinhalaEnabled &&
+    if (_audioAiActive && _preparedAiSubtitle != null) {
+      _onPosition(target);
+      _ensureAudioAiAhead(target);
+    } else if (_aiSinhalaEnabled &&
         _timingTrackSelected &&
         _timingTrackIsText &&
         _preparedAiSubtitle != null) {
@@ -2156,6 +2429,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _liveAiFallback ||
         prepared == null ||
         !mounted) {
+      return;
+    }
+
+    if (_audioAiActive) {
+      var adjustedMs = position.inMilliseconds - _effectiveSyncOffsetMs;
+      if (adjustedMs < 0) adjustedMs = 0;
+      final adjusted = Duration(milliseconds: adjustedMs);
+      final next = prepared.subtitleAt(adjusted);
+      if (next != _aiDisplaySubtitle) {
+        setState(() => _aiDisplaySubtitle = next);
+      }
+      _ensureAudioAiAhead(adjusted);
       return;
     }
 
