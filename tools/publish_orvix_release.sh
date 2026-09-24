@@ -32,22 +32,47 @@ for asset in "${assets[@]}"; do
   fi
 done
 
-if gh release view "$tag" >/dev/null 2>&1; then
-  echo "release already exists: $tag" >&2
-  exit 1
-fi
+release_id="$(
+  gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+    --jq --arg tag "$tag" '.[] | select(.tag_name == $tag) | .id' \
+    | head -n 1
+)"
 
-gh release create "$tag"   --draft   --target "$target_sha"   --title "$title"   --notes-file "$notes_file"
+if [[ -n "$release_id" ]]; then
+  is_draft="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '.draft')"
+  if [[ "$is_draft" != "true" ]]; then
+    echo "non-draft release already exists: $tag" >&2
+    exit 1
+  fi
+  echo "reusing existing private draft $tag (release id $release_id)"
+else
+  gh release create "$tag" \
+    --draft \
+    --target "$target_sha" \
+    --title "$title" \
+    --notes-file "$notes_file"
+
+  release_id="$(
+    gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+      --jq --arg tag "$tag" '.[] | select(.tag_name == $tag) | .id' \
+      | head -n 1
+  )"
+  if [[ -z "$release_id" ]]; then
+    echo "could not resolve draft release id for $tag" >&2
+    exit 1
+  fi
+fi
 
 cleanup_draft() {
   echo "release publication failed; $tag remains a private draft" >&2
 }
 trap cleanup_draft ERR
 
-gh release upload "$tag" "${assets[@]}"
+# Re-running a failed publication is safe: replace any same-named draft assets.
+gh release upload "$tag" --clobber "${assets[@]}"
 
 expected_count="${#assets[@]}"
-actual_count="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.assets | length')"
+actual_count="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '.assets | length')"
 if [[ "$actual_count" -ne "$expected_count" ]]; then
   echo "expected $expected_count uploaded assets, found $actual_count" >&2
   exit 1
@@ -55,15 +80,22 @@ fi
 
 for asset in "${assets[@]}"; do
   name="$(basename "$asset")"
-  found="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag"     --jq --arg name "$name" '[.assets[] | select(.name == $name and .size > 0)] | length')"
+  found="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+    --jq --arg name "$name" '[.assets[] | select(.name == $name and .size > 0)] | length')"
   if [[ "$found" -ne 1 ]]; then
     echo "release asset was not published exactly once or is empty: $name" >&2
     exit 1
   fi
 done
 
-# Public visibility happens only after the updater assets are complete.
-gh release edit "$tag" --draft=false --prerelease
+# Draft releases are not available through /releases/tags/{tag}. Publish by
+# concrete release ID only after every updater asset has been verified.
+gh api \
+  --method PATCH \
+  "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+  -F draft=false \
+  -F prerelease=true \
+  >/dev/null
 
 trap - ERR
 echo "published $tag with $expected_count verified assets"
