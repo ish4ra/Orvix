@@ -77,20 +77,51 @@ jobs:
           print(match.group(1))
           PY
           )"
-          RESPONSE="$(curl --fail-with-body --silent --show-error \
-            --request POST \
-            --url 'https://kpjuisxofwqxhbnnsyzf.supabase.co/functions/v1/translate-subtitle-si' \
-            --header "Authorization: Bearer $TOKEN" \
-            --header "apikey: $TOKEN" \
-            --header 'Content-Type: application/json' \
-            --data '{"title":"Orvix CI","text":"You are telling me you are just going to walk out of here","context":[]}')"
-          printf '%s' "$RESPONSE" | python3 -c '
-          import json, re, sys
-          data = json.load(sys.stdin)
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            STATUS="$(curl --silent --show-error --max-time 90 \
+              --request POST \
+              --url 'https://kpjuisxofwqxhbnnsyzf.supabase.co/functions/v1/translate-subtitle-si' \
+              --header "Authorization: Bearer $TOKEN" \
+              --header "apikey: $TOKEN" \
+              --header 'Content-Type: application/json' \
+              --data '{"title":"Orvix CI","text":"You are telling me you are just going to walk out of here","context":[]}' \
+              --output /tmp/orvix-ai-smoke.json \
+              --write-out '%{http_code}')"
+
+            if [ "$STATUS" = "200" ]; then
+              if python3 - <<'PY'
+          import json, re
+          data = json.load(open("/tmp/orvix-ai-smoke.json", encoding="utf-8"))
           text = str(data.get("translation", "")).strip()
           if not re.search(r"[\u0D80-\u0DFF]", text):
               raise SystemExit(f"AI backend did not return Sinhala: {data}")
-          '
+          PY
+              then
+                ok=1
+                break
+              fi
+              exit 1
+            fi
+
+            if [ "$STATUS" = "429" ] || [ "$STATUS" = "502" ] || [ "$STATUS" = "503" ] || [ "$STATUS" = "504" ]; then
+              echo "AI Sinhala smoke got transient HTTP $STATUS on attempt $attempt/5." >&2
+              cat /tmp/orvix-ai-smoke.json >&2 || true
+              if [ "$attempt" -lt 5 ]; then
+                sleep $((attempt * 6))
+                continue
+              fi
+            fi
+
+            echo "AI Sinhala smoke failed with HTTP $STATUS." >&2
+            cat /tmp/orvix-ai-smoke.json >&2 || true
+            exit 1
+          done
+
+          if [ "$ok" -ne 1 ]; then
+            echo "AI Sinhala backend remained unavailable after retries." >&2
+            exit 1
+          fi
 
       - name: Smoke test 96-cue AI Sinhala batch
         shell: bash
