@@ -47,8 +47,9 @@ class AppUpdateService {
   AppUpdateService({http.Client? client}) : _client = client ?? http.Client();
 
   static const currentVersion = '0.7.6-beta.31';
-  static const _releasesUrl =
-      'https://api.github.com/repos/ish4ra/Orvix/releases?per_page=12';
+  static const _releasesBaseUrl =
+      'https://api.github.com/repos/ish4ra/Orvix/releases';
+  static const _releaseAssetFetchAttempts = 5;
   static const MethodChannel _androidUpdateChannel =
       MethodChannel('orvix/app_update');
 
@@ -84,14 +85,23 @@ class AppUpdateService {
 
   Future<AppUpdateInfo?> checkForUpdate() async {
     try {
+      final releasesUri = Uri.parse(_releasesBaseUrl).replace(
+        queryParameters: <String, String>{
+          'per_page': '30',
+          // GitHub already receives no-cache headers, but a unique query also
+          // prevents an intermediary/CDN from replaying a just-before-release
+          // collection response during rapid release publication.
+          '_orvix_check': DateTime.now().millisecondsSinceEpoch.toString(),
+        },
+      );
       final response = await _client
           .get(
-            Uri.parse(_releasesUrl),
+            releasesUri,
             headers: const {
               'Accept': 'application/vnd.github+json',
               'User-Agent': 'Orvix-Updater',
               'X-GitHub-Api-Version': '2022-11-28',
-              'Cache-Control': 'no-cache',
+              'Cache-Control': 'no-cache, no-store, max-age=0',
               'Pragma': 'no-cache',
             },
           )
@@ -117,7 +127,10 @@ class AppUpdateService {
         if (asset == null) {
           final assetsUrl = raw['assets_url']?.toString().trim() ?? '';
           if (assetsUrl.isNotEmpty) {
-            final assets = await _fetchReleaseAssets(assetsUrl);
+            final assets = await _fetchReleaseAssets(
+              assetsUrl,
+              attempts: _releaseAssetFetchAttempts,
+            );
             asset = _selectAsset(assets);
           }
         }
@@ -148,30 +161,56 @@ class AppUpdateService {
   }
 
   Future<List<Map<String, dynamic>>> _fetchReleaseAssets(
-    String assetsUrl,
-  ) async {
-    try {
-      final response = await _client
-          .get(
-            Uri.parse(assetsUrl),
-            headers: const {
-              'Accept': 'application/vnd.github+json',
-              'User-Agent': 'Orvix-Updater',
-              'X-GitHub-Api-Version': '2022-11-28',
-              'Cache-Control': 'no-cache',
-              'Pragma': 'no-cache',
-            },
-          )
-          .timeout(const Duration(seconds: 12));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        return const [];
+    String assetsUrl, {
+    int attempts = 1,
+  }) async {
+    final totalAttempts = attempts.clamp(1, 8);
+    for (var attempt = 0; attempt < totalAttempts; attempt++) {
+      try {
+        final base = Uri.parse(assetsUrl);
+        final uri = base.replace(
+          queryParameters: <String, String>{
+            ...base.queryParameters,
+            'per_page': '100',
+            '_orvix_asset_check':
+                DateTime.now().millisecondsSinceEpoch.toString(),
+          },
+        );
+        final response = await _client
+            .get(
+              uri,
+              headers: const {
+                'Accept': 'application/vnd.github+json',
+                'User-Agent': 'Orvix-Updater',
+                'X-GitHub-Api-Version': '2022-11-28',
+                'Cache-Control': 'no-cache, no-store, max-age=0',
+                'Pragma': 'no-cache',
+              },
+            )
+            .timeout(const Duration(seconds: 12));
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          final decoded = jsonDecode(response.body);
+          if (decoded is List) {
+            final assets =
+                decoded.whereType<Map<String, dynamic>>().toList();
+            if (_selectAsset(assets) != null || attempt + 1 >= totalAttempts) {
+              return assets;
+            }
+          }
+        }
+      } catch (_) {
+        if (attempt + 1 >= totalAttempts) return const [];
       }
-      final decoded = jsonDecode(response.body);
-      if (decoded is! List) return const [];
-      return decoded.whereType<Map<String, dynamic>>().toList();
-    } catch (_) {
-      return const [];
+
+      // A GitHub release is created before gh finishes uploading every asset.
+      // Retry the dedicated asset endpoint while that publication window is
+      // still open instead of permanently missing this version.
+      if (attempt + 1 < totalAttempts) {
+        final seconds = attempt < 2 ? 2 : 4;
+        await Future<void>.delayed(Duration(seconds: seconds));
+      }
     }
+    return const [];
   }
 
   Map<String, dynamic>? _selectAsset(Object? rawAssets) {
