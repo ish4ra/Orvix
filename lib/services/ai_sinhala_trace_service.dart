@@ -8,8 +8,17 @@ import 'dart:io';
 class AiSinhalaTraceService {
   const AiSinhalaTraceService._();
 
-  static Future<void> write(String message) async {
-    if (!Platform.isWindows) return;
+  static Future<void> _writeTail = Future<void>.value();
+
+  static Future<void> write(String message) {
+    if (!Platform.isWindows) return Future<void>.value();
+
+    final next = _writeTail.then((_) => _writeNow(message));
+    _writeTail = next.catchError((_) {});
+    return next;
+  }
+
+  static Future<void> _writeNow(String message) async {
     try {
       final localAppData = Platform.environment['LOCALAPPDATA'];
       if (localAppData == null || localAppData.trim().isEmpty) return;
