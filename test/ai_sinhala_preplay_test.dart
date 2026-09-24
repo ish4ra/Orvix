@@ -3,31 +3,29 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('Windows AI Sinhala finishes complete SRT preparation before PlayerScreen opens', () {
+  test('automatic AI Sinhala starts from native player cues without full-SRT blocking', () {
     final details = File('lib/screens/details_screen.dart').readAsStringSync();
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    final engineIndex =
-        details.indexOf('OrvixMediaEngineService.instance.prepare(');
-    final routeIndex = details.indexOf('await _openMpvPlayer(');
-    expect(engineIndex, greaterThanOrEqualTo(0));
-    expect(routeIndex, greaterThan(engineIndex));
-    expect(details, contains('prepareGeneratedSinhalaFromEngineEmbedded('));
-    expect(details, contains('prepareGeneratedSinhalaFromExactFingerprint('));
+    expect(
+      details,
+      contains('_legacyCompleteFileAiPreflightEnabled => false'),
+    );
 
     final openStart = player.indexOf('Future<void> _open()');
     final openEnd = player.indexOf('void _onPlaybackError', openStart);
     final open = player.substring(openStart, openEnd);
-    expect(open, contains('final preprepared ='));
-    expect(open, contains('play: !(aiReady || usePlayerPreflight)'));
-    expect(open, contains('await _loadGeneratedAiSubtitleTrack();'));
+    expect(open, contains('final useProgressiveNativeCueAi ='));
+    expect(open, contains('play: !(aiReady || useProgressiveNativeCueAi)'));
+    expect(open, contains('await _activateProgressiveNativeCueAi();'));
+    expect(open, contains('await widget.playback.player.play();'));
     expect(
-      open.indexOf('await _loadGeneratedAiSubtitleTrack();'),
-      lessThan(open.indexOf('await widget.playback.player.play();')),
+      open,
+      isNot(contains('await _prepareAiSinhalaBeforePlayback();')),
     );
   });
 
-  test('automatic preparation translates the complete embedded track, not live cues', () {
+  test('legacy complete-file helper remains available outside automatic startup', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final start =
@@ -46,7 +44,7 @@ void main() {
     expect(prepare, isNot(contains('ensureTranslatedAround(')));
   });
 
-  test('turning AI Sinhala on pauses, generates, attaches, then resumes', () {
+  test('turning AI Sinhala on is progressive and does not pause playback', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final start =
@@ -55,17 +53,22 @@ void main() {
         player.indexOf('Future<void> _loadSubtitlePreferences()', start);
     final toggle = player.substring(start, end);
 
-    expect(toggle, contains('await player.pause();'));
-    expect(toggle, contains('await _prepareAiSinhalaBeforePlayback();'));
-    expect(toggle, contains('await _loadGeneratedAiSubtitleTrack();'));
-    expect(toggle, contains('await player.play();'));
     expect(
-      toggle.indexOf('await player.pause();'),
-      lessThan(toggle.indexOf('await _prepareAiSinhalaBeforePlayback();')),
+      toggle,
+      contains('await _activateProgressiveNativeCueAi('),
     );
     expect(
-      toggle.indexOf('await _loadGeneratedAiSubtitleTrack();'),
-      lessThan(toggle.lastIndexOf('await player.play();')),
+      toggle,
+      contains('unawaited(_discoverNativeCueAiAfterPlayback());'),
+    );
+    expect(toggle, isNot(contains('await player.pause();')));
+    expect(
+      toggle,
+      isNot(contains('await _prepareAiSinhalaBeforePlayback();')),
+    );
+    expect(
+      toggle,
+      isNot(contains('await _loadGeneratedAiSubtitleTrack();')),
     );
   });
 }
