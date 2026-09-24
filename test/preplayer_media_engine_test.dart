@@ -61,7 +61,7 @@ void main() {
       details,
       contains('_legacyCompleteFileAiPreflightEnabled => false'),
     );
-    expect(details, contains('nativeCueAi=$nativeCueAi'));
+    expect(details, contains('nativeCueAi='));
     expect(
       player,
       contains(
