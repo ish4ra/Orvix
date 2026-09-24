@@ -290,10 +290,23 @@ class _PlayerScreenState extends State<PlayerScreen> {
     } while (mounted && !_closing && DateTime.now().isBefore(deadline));
 
     if (track == null) {
+      final trackSummary = player.state.tracks.subtitle
+          .where((candidate) => candidate.id.toLowerCase() != 'no')
+          .take(8)
+          .map((candidate) {
+            final title = (candidate.title ?? '')
+                .replaceAll(RegExp(r'[\\r\\n|]+'), ' ')
+                .trim();
+            final language = (candidate.language ?? '').trim();
+            final codec = (candidate.codec ?? '').trim();
+            return '${candidate.id}:$language:$codec:$title';
+          })
+          .join(' | ');
       unawaited(
         AiSinhalaTraceService.write(
           'native-cue-ai-miss phase=$phase '
           'tracks=${player.state.tracks.subtitle.length} '
+          'detail="$trackSummary" '
           'host=${AiSinhalaTraceService.safeHost(widget.url)}',
         ),
       );
