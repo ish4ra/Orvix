@@ -3532,6 +3532,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     MediaItem item,
     EpisodeItem? episode, {
     SourceResult? source,
+    String? aiSourceUrl,
     String? releaseHint,
     int? expectedSizeBytes,
     String? expectedVideoHash,
@@ -4079,6 +4080,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         episode,
         next,
         source: source,
+        aiSourceUrl: url,
         releaseHint: releaseHint,
         expectedSizeBytes: expectedSizeBytes,
         expectedVideoHash: expectedVideoHash,
@@ -4183,6 +4185,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         builder: (_) => PlayerScreen(
           playback: widget.playback,
           url: url,
+          aiSourceUrl: aiSourceUrl,
           title: title,
           mediaState: widget.mediaState,
           item: item,
