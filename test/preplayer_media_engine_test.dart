@@ -3,42 +3,42 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('Windows AI Sinhala prepares before PlayerScreen is opened', () {
+  test('Windows AI Sinhala no longer blocks on complete-file preflight', () {
     final details = File('lib/screens/details_screen.dart').readAsStringSync();
-    final mediaEngine =
-        details.indexOf('OrvixMediaEngineService.instance.prepare(');
-    final openPlayer = details.indexOf('await _openMpvPlayer(');
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    expect(mediaEngine, greaterThanOrEqualTo(0));
-    expect(openPlayer, greaterThan(mediaEngine));
     expect(
       details,
-      contains('prepareGeneratedSinhalaFromEngineEmbedded('),
+      contains('_legacyCompleteFileAiPreflightEnabled => false'),
     );
     expect(
       details,
-      contains('prepareGeneratedSinhalaFromExactFingerprint('),
+      contains('final nativeCueAi = aiSettingEnabled;'),
+    );
+    expect(
+      player,
+      contains('final useProgressiveNativeCueAi ='),
+    );
+    expect(
+      player,
+      contains('await _activateProgressiveNativeCueAi();'),
     );
   });
 
-  test('pre-player result disables player-driven sampling fallback', () {
+  test('native player cue discovery is the universal automatic AI path', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    expect(player, contains('preparedAiSubtitleFile'));
-    expect(player, contains('aiPreflightAttempted'));
+    expect(player, contains('_activateProgressiveNativeCueAi('));
+    expect(player, contains('_discoverNativeCueAiAfterPlayback()'));
+    expect(player, contains('native-cue-ai-ready'));
+    expect(player, contains('native-cue-ai-miss'));
     expect(
       player,
-      contains(
-        'final usePlayerPreflight = aiPreferred &&\n'
-        '          !Platform.isWindows &&\n'
-        '          !widget.aiPreflightAttempted',
-      ),
+      isNot(contains('final missingWindowsPreflight = Platform.isWindows')),
     );
     expect(
       player,
-      contains(
-        'Standalone pre-player preparation failed. Do not re-run the old',
-      ),
+      isNot(contains('final usePlayerPreflight = aiPreferred')),
     );
   });
 
@@ -53,60 +53,63 @@ void main() {
     expect(engine, contains('openSubtitlesFingerprint('));
   });
 
-  test('every Windows AI source stays inside the standalone media engine', () {
+  test('Windows AI source opens through the player-native cue architecture', () {
     final details = File('lib/screens/details_screen.dart').readAsStringSync();
-    final engine =
-        File('tools/orvix-media-engine/main.go').readAsStringSync();
-
-    // The gate must NOT depend on useLocalMediaBridge. Direct HTTP is ranked
-    // first by free-stream ordering and local free-P2P arrives on :11470.
-    expect(
-      details,
-      contains('final windowsAiEngine = Platform.isWindows && aiSettingEnabled;'),
-    );
-    expect(details, isNot(contains('Platform.isWindows && useLocalMediaBridge && aiSettingEnabled')));
-    expect(details, contains('if (windowsAiEngine) {'));
-    expect(details, contains('playbackUrl = enginePlaybackUrl;'));
-    expect(details, contains('releaseLocalP2pOnExit: originalLocalP2p'));
-    expect(
-      details,
-      contains('AI Sinhala preparation failed before playback:'),
-    );
-    expect(engine, contains('mux.HandleFunc("/media/"'));
-    expect(engine, contains('"playbackProxy"'));
-    expect(engine, contains('s.activeStreams++'));
-  });
-
-  test('Windows PlayerScreen refuses legacy in-player AI fallback', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    expect(player, contains('final missingWindowsPreflight = Platform.isWindows'));
+    expect(
+      details,
+      contains('_legacyCompleteFileAiPreflightEnabled => false'),
+    );
+    expect(details, contains('nativeCueAi=$nativeCueAi'));
     expect(
       player,
-      contains('AI Sinhala startup was blocked because Windows pre-player preparation was bypassed.'),
+      contains(
+        'subtitle tracks that the active demuxer reports',
+      ),
     );
     expect(
       player,
-      contains('final usePlayerPreflight = aiPreferred &&\n'
-          '          !Platform.isWindows &&'),
+      contains(
+        'Using the English subtitle track reported by the active player.',
+      ),
     );
   });
 
-  test('direct HTTP and local P2P enter the same Windows AI preflight', () {
-    final details = File('lib/screens/details_screen.dart').readAsStringSync();
+  test('Windows PlayerScreen accepts progressive native cue AI without preflight', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+    final runtime =
+        File('lib/services/ai_sinhala_runtime_state.dart').readAsStringSync();
 
-    final directOpen = details.indexOf("_status = 'Opening direct stream…';");
-    final aiGate = details.indexOf('final windowsAiEngine =');
-    final enginePrepare =
-        details.indexOf('OrvixMediaEngineService.instance.prepare(');
-    expect(directOpen, greaterThanOrEqualTo(0));
-    expect(aiGate, greaterThan(directOpen));
-    expect(enginePrepare, greaterThan(aiGate));
+    expect(
+      player,
+      isNot(contains(
+        'AI Sinhala startup was blocked because Windows pre-player preparation was bypassed.',
+      )),
+    );
+    expect(
+      player,
+      contains('aiPreferred && preprepared == null'),
+    );
+    expect(
+      runtime,
+      contains('to == AiSinhalaRuntimeMode.liveEmbedded'),
+    );
+  });
+
+  test('direct HTTP and local P2P share the same player-native AI path', () {
+    final details = File('lib/screens/details_screen.dart').readAsStringSync();
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(details, contains('originalUri.port == 11470'));
+    expect(details, contains('final nativeCueAi = aiSettingEnabled;'));
+    expect(player, contains('_bestNativeEnglishTextTrack()'));
+    expect(player, contains('_enableEmbeddedLiveAiFallback('));
     expect(
-      details,
-      contains('await LocalTorrentService.instance.releaseCurrentStream();'),
+      player,
+      contains(
+        'never pause/seek the video just to make',
+      ),
     );
   });
 
@@ -168,37 +171,33 @@ void main() {
     );
   });
 
-  test('Windows AI cannot autoplay before verified Sinhala attach', () {
-    final playback =
-        File('lib/services/playback_service.dart').readAsStringSync();
+  test('progressive AI bounds startup wait and keeps playback available', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(
-      playback,
-      contains('Platform.isWindows &&\n        play &&\n        await AiSinhalaPreferencesService.isEnabled()'),
+      player,
+      contains(
+        'Duration maxWait = const Duration(milliseconds: 2200)',
+      ),
     );
-    expect(
-      playback,
-      contains('Windows AI Sinhala blocked unprepared autoplay at PlaybackService.'),
-    );
-
-    expect(player, contains('Sinhala subtitle is ready. Attaching it to MPV before playback…'));
-    expect(player, contains('for (var attempt = 0; attempt < 24 && !_closing; attempt++)'));
-    expect(player, contains("selectedLanguage == 'si'"));
-    expect(player, contains("selectedTitle.contains('ai sinhala')"));
     expect(
       player,
-      contains('Playback was kept paused instead of starting without Sinhala subtitles.'),
+      contains('play: !(aiReady || useProgressiveNativeCueAi)'),
     );
-
-    final openStart = player.indexOf('Future<void> _open() async');
-    final attachCall =
-        player.indexOf('await _loadGeneratedAiSubtitleTrack();', openStart);
-    final play = player.indexOf('player-play allowed aiReady=', openStart);
-    expect(openStart, greaterThanOrEqualTo(0));
-    expect(attachCall, greaterThan(openStart));
-    expect(play, greaterThan(attachCall));
-    expect(player, contains('player-attach-confirmed language=si'));
+    expect(
+      player,
+      contains(
+        'Playing normally while Orvix waits briefly for a native English subtitle track',
+      ),
+    );
+    expect(
+      player,
+      contains('unawaited(_discoverNativeCueAiAfterPlayback());'),
+    );
+    expect(
+      player,
+      contains('await widget.playback.player.play();'),
+    );
   });
 
   test('generated Sinhala cache rejects stale non-Sinhala SRT files', () {
