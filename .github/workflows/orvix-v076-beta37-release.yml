@@ -111,6 +111,7 @@ jobs:
                 sleep $((attempt * 6))
                 continue
               fi
+              break
             fi
 
             echo "AI Sinhala smoke failed with HTTP $STATUS." >&2
@@ -182,6 +183,7 @@ jobs:
                 sleep $((attempt * 8))
                 continue
               fi
+              break
             fi
 
             echo "96-cue AI smoke failed with HTTP $STATUS." >&2
