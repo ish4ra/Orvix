@@ -1131,6 +1131,95 @@ class AiSinhalaSubtitleService {
     );
   }
 
+  static Future<AiGeneratedSubtitleFile>
+      prepareGeneratedSinhalaFromVerifiedExternalSubtitle({
+    required String title,
+    required String subtitleUrl,
+    required String subtitleIdentity,
+    required String subtitleLabel,
+    String sourceName = 'verified-external-subtitle',
+    void Function(String message)? onStatus,
+  }) async {
+    final cleanUrl = subtitleUrl.trim();
+    if (!cleanUrl.startsWith(RegExp(r'https?://'))) {
+      throw const AiSubtitleException(
+        'The exact sibling subtitle has no downloadable URL.',
+      );
+    }
+
+    // TorBox/PikPak signed URLs rotate, so cache by stable provider item/file
+    // identity instead of the temporary CDN URL.
+    final cacheKey =
+        'verified-external|$subtitleIdentity|$_generatedSubtitleCacheVersion';
+    final cached = await _cachedGeneratedFile(cacheKey);
+    if (cached != null) {
+      onStatus?.call(
+        'Cached Sinhala subtitle is ready • $subtitleLabel.',
+      );
+      return AiGeneratedSubtitleFile(
+        path: cached.path,
+        source: sourceName,
+        label: subtitleLabel,
+        cacheHit: true,
+      );
+    }
+
+    onStatus?.call(
+      'Downloading the exact sibling subtitle from the cloud torrent…',
+    );
+    final text = await _downloadSubtitle(cleanUrl);
+    final cues = _parseSubtitle(text);
+    if (cues.length < 8) {
+      throw const AiSubtitleException(
+        'The exact sibling subtitle could not be parsed safely.',
+      );
+    }
+    if (!_subtitleTextLooksEnglish(text)) {
+      throw const AiSubtitleException(
+        'The exact sibling subtitle was not verified as English text.',
+      );
+    }
+
+    final prepared = AiPreparedSubtitle(
+      key: cacheKey,
+      title: title,
+      sourceUrl: subtitleIdentity,
+      cues: cues,
+      sourceMatch: 'same-cloud-torrent-sibling-exact-release',
+    );
+
+    onStatus?.call(
+      'Exact same-torrent English subtitle verified. Translating the complete file to Sinhala…',
+    );
+    await _translateEntireSubtitle(
+      prepared,
+      onProgress: (done, total) {
+        final percent =
+            total <= 0 ? 100 : ((done * 100) / total).round().clamp(0, 100);
+        onStatus?.call(
+          'Translating complete Sinhala subtitle… $percent% ($done/$total)',
+        );
+      },
+    );
+
+    if (prepared.translatedCount != prepared.cues.length) {
+      throw const AiSubtitleException(
+        'The complete same-torrent subtitle did not finish translating.',
+      );
+    }
+
+    final file = await _writeGeneratedSrt(cacheKey, prepared);
+    onStatus?.call(
+      'Complete Sinhala subtitle generated from the exact cloud torrent.',
+    );
+    return AiGeneratedSubtitleFile(
+      path: file.path,
+      source: sourceName,
+      label: subtitleLabel,
+      cacheHit: false,
+    );
+  }
+
   static Future<AiGeneratedSubtitleFile> prepareGeneratedSinhalaFile({
     required MediaItem item,
     required String videoUrl,
