@@ -118,6 +118,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   final Map<int, int> _bitmapOffsetVotes = <int, int>{};
   int _embeddedMismatchCount = 0;
   int _liveTranslationFailures = 0;
+  int _liveCueTraceCount = 0;
   int _preparedTranslationFailures = 0;
   int _nativeAiMatchIndex = -1;
   double _subtitleFontSize = SubtitlePreferencesService.defaultFontSize;
@@ -2347,6 +2348,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _translateLiveSubtitleCue(String source) async {
     final generation = ++_liveCueGeneration;
     final requestStartedAt = DateTime.now();
+    final traceCue = _liveCueTraceCount < 8;
+    if (traceCue) {
+      _liveCueTraceCount++;
+      unawaited(
+        AiSinhalaTraceService.write(
+          'live-cue-start index=$_liveCueTraceCount chars=${source.length}',
+        ),
+      );
+    }
     _liveCueClearTimer?.cancel();
     _liveCueClearTimer = null;
 
@@ -2387,10 +2397,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
       // functioning subtitle path. Count it as a delivery failure and recover
       // to English instead of leaving the user with a permanently blank overlay.
       if (remainingMs < 700) {
+        if (traceCue) {
+          unawaited(
+            AiSinhalaTraceService.write(
+              'live-cue-late index=$_liveCueTraceCount '
+              'elapsedMs=$elapsedMs remainingMs=$remainingMs',
+            ),
+          );
+        }
         await _registerLiveTranslationFailure('translation arrived too late');
         return;
       }
 
+      if (traceCue) {
+        unawaited(
+          AiSinhalaTraceService.write(
+            'live-cue-ok index=$_liveCueTraceCount '
+            'elapsedMs=$elapsedMs remainingMs=$remainingMs '
+            'translatedChars=${translation.length}',
+          ),
+        );
+      }
       _liveTranslationFailures = 0;
       await _setNativeSubtitleVisibility(false);
       if (!mounted || generation != _liveCueGeneration) return;
@@ -2412,7 +2439,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
           setState(() => _aiDisplaySubtitle = '');
         },
       );
-    } catch (_) {
+    } catch (error) {
+      if (traceCue) {
+        unawaited(
+          AiSinhalaTraceService.write(
+            'live-cue-error index=$_liveCueTraceCount '
+            'type=${error.runtimeType}',
+          ),
+        );
+      }
       await _registerLiveTranslationFailure('translation service failed');
     }
   }
