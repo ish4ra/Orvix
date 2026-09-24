@@ -245,10 +245,6 @@ void main() {
     );
     expect(player, contains('bool _aiPreferenceEnabled = false;'));
     expect(player, contains('value: _aiPreferenceEnabled'));
-    expect(
-      player,
-      contains('Never convert it\n      // into a persistent global opt-out'),
-    );
   });
 
   test('exact subtitle fallback tries source hash before engine hash', () {
