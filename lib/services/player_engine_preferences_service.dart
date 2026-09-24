@@ -47,6 +47,13 @@ class PlayerEngineRouter {
   }) {
     if (!isAndroid) return PlayerEngineKind.mpv;
 
+    // AI Sinhala's progressive native-cue path is implemented once in the MPV
+    // player and is shared by Android mobile, Android TV, Windows and macOS.
+    // When AI Sinhala is enabled it must win over a stale/manual ExoPlayer
+    // preference; otherwise Android would silently bypass the same subtitle
+    // engine used on the other platforms.
+    if (aiSinhalaEnabled) return PlayerEngineKind.mpv;
+
     switch (preference) {
       case PlayerEnginePreference.exoPlayer:
         return PlayerEngineKind.exoPlayer;
@@ -55,9 +62,6 @@ class PlayerEngineRouter {
       case PlayerEnginePreference.auto:
         break;
     }
-
-    // AI Sinhala and advanced track handling currently live in the MPV player.
-    if (aiSinhalaEnabled) return PlayerEngineKind.mpv;
 
     final uri = Uri.tryParse(url);
     final localP2p = uri != null &&
