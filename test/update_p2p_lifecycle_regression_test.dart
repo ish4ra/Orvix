@@ -115,4 +115,27 @@ void main() {
     expect(windows, contains('TerminateOwnedTorrentServers'));
     expect(windows, contains('orvix-stream-server.exe'));
   });
+
+  test('future v0.7.6 beta releases must use atomic draft-first publishing', () {
+    final workflows = Directory('.github/workflows')
+        .listSync()
+        .whereType<File>();
+
+    final pattern = RegExp(r'orvix-v076-beta(\d+)-release\.yml$');
+    for (final file in workflows) {
+      final match = pattern.firstMatch(file.path.replaceAll('\\', '/'));
+      if (match == null) continue;
+      final beta = int.parse(match.group(1)!);
+      if (beta < 32) continue;
+
+      final workflow = file.readAsStringSync();
+      expect(
+        workflow,
+        contains('tools/publish_orvix_release.sh'),
+        reason:
+            'beta.$beta must keep the release private until every asset is uploaded',
+      );
+    }
+  });
+
 }
