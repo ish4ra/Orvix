@@ -375,6 +375,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final current = widget.playback.player.state.track.subtitle;
       if (_isImageSubtitleTrack(current)) return;
 
+      var nativeSid = '';
+      final platform = widget.playback.player.platform;
+      if (platform is mk.NativePlayer) {
+        try {
+          nativeSid = (await platform.getProperty(
+            'sid',
+            waitForInitialization: false,
+          ))
+              .trim();
+        } catch (_) {}
+      }
+
       _timingTrackSelected = true;
       _timingTrackIsText = true;
       _nativeAiMatchIndex = -1;
@@ -386,7 +398,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       unawaited(
         AiSinhalaTraceService.write(
           'native-cue-ai-ready phase=cue-probe id=${current.id} '
-          'language=$language codec=$codec title="$title" '
+          'nativeSid=$nativeSid language=$language codec=$codec title="$title" '
           'chars=${source.length}',
         ),
       );
@@ -418,6 +430,26 @@ class _PlayerScreenState extends State<PlayerScreen> {
               !activated;
           attempt++) {
         await Future<void>.delayed(const Duration(milliseconds: 250));
+
+        // The native renderer is the strongest proof that the regular player
+        // really has a text subtitle, even when media_kit still reports only
+        // its synthetic "auto" selector. Read the exact text MPV is currently
+        // rendering and feed that first real cue into the AI path.
+        final platform = widget.playback.player.platform;
+        if (platform is mk.NativePlayer) {
+          try {
+            final text = (await platform.getProperty(
+              'sub-text',
+              waitForInitialization: false,
+            ))
+                .trim();
+            if (text.isNotEmpty) {
+              await activateFromCue(<String>[text]);
+              if (activated || _liveAiFallback) return;
+            }
+          } catch (_) {}
+        }
+
         if (_bestNativeEnglishTextTrack() == null) continue;
         final ready = await _activateProgressiveNativeCueAi(
           maxWait: Duration.zero,
