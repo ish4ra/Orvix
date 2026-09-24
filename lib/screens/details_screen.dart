@@ -2309,10 +2309,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
         item,
         episode,
         source: chosen,
-        releaseHint: file.name,
+        releaseHint: file.identityPath,
         expectedSizeBytes: file.size,
         expectedVideoHash: chosen.videoHash,
         useLocalMediaBridge: true,
+        torBoxItem: cloudItem,
+        torBoxVideoFile: file,
       );
       return;
     }
@@ -3150,9 +3152,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
       url,
       item,
       episode,
-      releaseHint: file.name,
+      releaseHint: file.identityPath,
       expectedSizeBytes: file.size,
       useLocalMediaBridge: true,
+      torBoxItem: cloudItem,
+      torBoxVideoFile: file,
     );
   }
 
@@ -3400,6 +3404,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
     int? expectedSizeBytes,
     String? expectedVideoHash,
     bool useLocalMediaBridge = false,
+    TorBoxItem? torBoxItem,
+    TorBoxFile? torBoxVideoFile,
   }) async {
     if (!mounted) return;
 
