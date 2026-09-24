@@ -367,29 +367,44 @@ jobs:
           if (-not (Test-Path 'windows\runner\resources\app_icon.ico')) { throw 'Windows app icon missing' }
           if ((Get-Item 'windows\runner\resources\app_icon.ico').Length -lt 10000) { throw 'Windows app icon looks invalid' }
 
-      - name: Bundle pinned FFmpeg tools
+      - name: Bundle verified FFmpeg tools
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           $releaseDir = Resolve-Path 'build\windows\x64\runner\Release'
           $ffmpegBin = Join-Path $releaseDir 'tools\ffmpeg\bin'
           New-Item -ItemType Directory -Force -Path $ffmpegBin | Out-Null
 
-          # BtbN FFmpeg auto-build published 2026-09-22. Pin the immutable
-          # GitHub release asset ID and verify its SHA-256 before extracting.
-          $assetId = '584020443'
-          $archive = Join-Path $env:RUNNER_TEMP 'orvix-ffmpeg-win64-lgpl.zip'
-          $headers = @{
-            Accept = 'application/octet-stream'
-            Authorization = "Bearer $env:GH_TOKEN"
+          # BtbN's "latest" release is replaced frequently, so hard-coding one
+          # rolling asset ID eventually returns 404. Resolve the current LGPL
+          # static Win64 asset at build time and verify the SHA-256 digest that
+          # GitHub publishes for that exact asset before extracting it.
+          $assetName = 'ffmpeg-master-latest-win64-lgpl.zip'
+          $apiHeaders = @{
+            Accept = 'application/vnd.github+json'
+            'User-Agent' = 'Orvix-CI'
             'X-GitHub-Api-Version' = '2022-11-28'
           }
-          Invoke-WebRequest -Uri "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/assets/$assetId" -Headers $headers -OutFile $archive
-          $expected = '0C193A1B819B74971391B13377CEB6C3419F86CCEDF273BD8FCA11C25F1AF399'
-          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash
-          if ($actual -ne $expected) { throw "FFmpeg archive checksum mismatch: $actual" }
+          $latest = Invoke-RestMethod -Uri 'https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest' -Headers $apiHeaders
+          $asset = $latest.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
+          if (-not $asset) { throw "Current BtbN release does not contain $assetName" }
+          if (-not $asset.digest -or -not ([string]$asset.digest).StartsWith('sha256:')) {
+            throw "GitHub did not provide a SHA-256 digest for $assetName"
+          }
+
+          $archive = Join-Path $env:RUNNER_TEMP 'orvix-ffmpeg-win64-lgpl.zip'
+          $downloadHeaders = @{
+            Accept = 'application/octet-stream'
+            'User-Agent' = 'Orvix-CI'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          Invoke-WebRequest -Uri $asset.url -Headers $downloadHeaders -OutFile $archive
+
+          $expected = ([string]$asset.digest).Substring(7).ToUpperInvariant()
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToUpperInvariant()
+          if ($actual -ne $expected) {
+            throw "FFmpeg archive checksum mismatch. expected=$expected actual=$actual"
+          }
 
           $extract = Join-Path $env:RUNNER_TEMP 'orvix-ffmpeg-extract'
           if (Test-Path $extract) { Remove-Item $extract -Recurse -Force }
@@ -397,8 +412,8 @@ jobs:
 
           $ffmpegSource = Get-ChildItem -Path $extract -Recurse -Filter 'ffmpeg.exe' -File | Select-Object -First 1
           $ffprobeSource = Get-ChildItem -Path $extract -Recurse -Filter 'ffprobe.exe' -File | Select-Object -First 1
-          if (-not $ffmpegSource) { throw 'Pinned FFmpeg archive does not contain ffmpeg.exe' }
-          if (-not $ffprobeSource) { throw 'Pinned FFmpeg archive does not contain ffprobe.exe' }
+          if (-not $ffmpegSource) { throw 'Verified FFmpeg archive does not contain ffmpeg.exe' }
+          if (-not $ffprobeSource) { throw 'Verified FFmpeg archive does not contain ffprobe.exe' }
 
           Copy-Item $ffmpegSource.FullName (Join-Path $ffmpegBin 'ffmpeg.exe') -Force
           Copy-Item $ffprobeSource.FullName (Join-Path $ffmpegBin 'ffprobe.exe') -Force
@@ -406,9 +421,11 @@ jobs:
           $licenseDir = Join-Path $releaseDir 'licenses\ffmpeg'
           New-Item -ItemType Directory -Force -Path $licenseDir | Out-Null
           @"
-          FFmpeg Windows binaries bundled by Orvix are from BtbN/FFmpeg-Builds,
-          LGPL build asset ID 584020443, verified by SHA-256:
-          0c193a1b819b74971391b13377ceb6c3419f86ccedf273bd8fca11c25f1af399
+          FFmpeg Windows binaries bundled by Orvix are from BtbN/FFmpeg-Builds.
+          Release: $($latest.name)
+          Asset: $assetName
+          GitHub asset ID: $($asset.id)
+          Verified SHA-256: $($actual.ToLowerInvariant())
 
           FFmpeg: https://ffmpeg.org/
           Build source: https://github.com/BtbN/FFmpeg-Builds
