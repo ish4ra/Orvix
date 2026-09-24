@@ -13,7 +13,7 @@ void main() {
     expect(RegExp(r'_aiSinhalaEnabled\s*=(?![=>])').allMatches(player), isEmpty);
   });
 
-  test('automatic AI Sinhala uses the exact embedded subtitle as the source of truth', () {
+  test('legacy complete-file helper still supports exact embedded subtitle extraction', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final start =
@@ -66,38 +66,39 @@ void main() {
     expect(translate, contains('_translateIndicesResilient('));
   });
 
-  test('automatic Windows startup consumes pre-player SRT and only then plays', () {
+  test('automatic startup uses progressive native player cues before playback', () {
     final details = File('lib/screens/details_screen.dart').readAsStringSync();
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    expect(details, contains('OrvixMediaEngineService.instance.prepare('));
-    expect(details, contains('preparedAiSubtitleFile: preparedAiSubtitleFile'));
+    expect(
+      details,
+      contains('_legacyCompleteFileAiPreflightEnabled => false'),
+    );
 
     final start = player.indexOf('Future<void> _open()');
     final end = player.indexOf('void _onPlaybackError', start);
     final open = player.substring(start, end);
 
-    expect(open, contains('final preprepared ='));
-    expect(open, contains('play: !(aiReady || usePlayerPreflight)'));
-    expect(open, contains('await _loadGeneratedAiSubtitleTrack();'));
+    expect(open, contains('final useProgressiveNativeCueAi ='));
+    expect(open, contains('play: !(aiReady || useProgressiveNativeCueAi)'));
+    expect(open, contains('await _activateProgressiveNativeCueAi();'));
     expect(open, contains('await widget.playback.player.play();'));
     expect(
-      open.indexOf('await _loadGeneratedAiSubtitleTrack();'),
-      lessThan(open.indexOf('await widget.playback.player.play();')),
+      open,
+      isNot(contains('await _prepareAiSinhalaBeforePlayback();')),
     );
   });
 
-  test('automatic path does not invoke the old live cue fallback', () {
+  test('automatic path intentionally uses the live native cue translator', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    final start =
-        player.indexOf('Future<bool> _prepareAiSinhalaBeforePlayback()');
-    final end =
-        player.indexOf('Future<void> _restoreNativeSubtitleFallback()', start);
-    final startup = player.substring(start, end);
-
-    expect(startup, isNot(contains('_enableEmbeddedLiveAiFallback(')));
-    expect(startup, isNot(contains('_translateLiveSubtitleCue(')));
-    expect(startup, isNot(contains('_ensureAiTranslationNear(')));
+    expect(player, contains('_activateProgressiveNativeCueAi('));
+    expect(player, contains('_enableEmbeddedLiveAiFallback('));
+    expect(player, contains('_translateLiveSubtitleCue('));
+    expect(player, contains('native-cue-ai-ready'));
+    expect(
+      player,
+      contains('Using the English subtitle track reported by the active player.'),
+    );
   });
 }
