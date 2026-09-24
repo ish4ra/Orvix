@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -133,6 +134,7 @@ class AiAudioSttService {
             _endpoint,
             headers: <String, String>{
               'Authorization': 'Bearer $token',
+              'apikey': _guestFunctionJwt,
               'Content-Type': 'application/json',
               'Cache-Control': 'no-store',
             },
