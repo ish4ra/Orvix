@@ -1,0 +1,77 @@
+name: Publish verified Orvix v0.7.6-beta.32 draft
+
+on:
+  push:
+    branches:
+      - orvix-v0.7.6-dev
+    paths:
+      - '.github/workflows/publish-beta32-draft.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify successful clean build and publish existing draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo="$GITHUB_REPOSITORY"
+          tag='v0.7.6-beta.32'
+          source_run='35953315438'
+
+          # The source workflow's validate + all four platform build jobs must
+          # have succeeded. Its only failure was the old draft-by-tag publish
+          # lookup, after all release assets had already been uploaded.
+          jobs_json="$(gh api "repos/$repo/actions/runs/$source_run/jobs?per_page=100")"
+          for job in             'Validate Dart + regressions'             'windows'             'Build macOS'             'android-mobile'             'android-tv'; do
+            conclusion="$(printf '%s' "$jobs_json" | jq -r --arg job "$job"               '.jobs[] | select(.name == $job) | .conclusion' | head -n 1)"
+            if [[ "$conclusion" != 'success' ]]; then
+              echo "source clean-build job did not pass: $job => $conclusion" >&2
+              exit 1
+            fi
+          done
+
+          release_id="$(
+            gh api "repos/$repo/releases?per_page=100"               --jq --arg tag "$tag" '.[] | select(.tag_name == $tag and .draft == true) | .id'               | head -n 1
+          )"
+          if [[ -z "$release_id" ]]; then
+            echo "private beta.32 draft was not found" >&2
+            exit 1
+          fi
+
+          expected=(
+            'Orvix-v0.7.6-beta.32-Windows-x64.zip'
+            'Orvix-Setup-v0.7.6-beta.32-Windows-x64.exe'
+            'Orvix-v0.7.6-beta.32-Android-Mobile.apk'
+            'Orvix-v0.7.6-beta.32-Android-Mobile-arm64-v8a.apk'
+            'Orvix-v0.7.6-beta.32-Android-Mobile-armeabi-v7a.apk'
+            'Orvix-v0.7.6-beta.32-Android-Mobile-x86_64.apk'
+            'Orvix-v0.7.6-beta.32-Android-TV.apk'
+            'Orvix-v0.7.6-beta.32-macOS.zip'
+          )
+
+          release_json="$(gh api "repos/$repo/releases/$release_id")"
+          asset_count="$(printf '%s' "$release_json" | jq '.assets | length')"
+          if [[ "$asset_count" -ne "${#expected[@]}" ]]; then
+            echo "expected ${#expected[@]} assets, found $asset_count" >&2
+            exit 1
+          fi
+
+          for name in "${expected[@]}"; do
+            found="$(printf '%s' "$release_json" | jq -r --arg name "$name"               '[.assets[] | select(.name == $name and .size > 0)] | length')"
+            if [[ "$found" -ne 1 ]]; then
+              echo "missing/empty/duplicate release asset: $name" >&2
+              exit 1
+            fi
+          done
+
+          gh api             --method PATCH             "repos/$repo/releases/$release_id"             -F draft=false             -F prerelease=true             >/dev/null
+
+          echo "Published $tag from verified clean-build assets."
