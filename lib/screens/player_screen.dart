@@ -120,6 +120,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   int _liveTranslationFailures = 0;
   int _liveCueTraceCount = 0;
   int _preparedTranslationFailures = 0;
+  Future<void>? _bufferedNativeAiPreparation;
   int _nativeAiMatchIndex = -1;
   double _subtitleFontSize = SubtitlePreferencesService.defaultFontSize;
   bool _subtitleBackground = SubtitlePreferencesService.defaultBackground;
@@ -220,19 +221,23 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _markPlaybackStarted() {
     if (_closing || _preflightWarmup) return;
     final firstStart = !_playbackStarted;
-    _playbackStarted = true;
     _startupTimer?.cancel();
+
+    if (mounted) {
+      setState(() {
+        _playbackStarted = true;
+        if (_startupFailureVisible) {
+          _startupFailureVisible = false;
+          _error = null;
+        }
+      });
+    } else {
+      _playbackStarted = true;
+    }
 
     if (firstStart && !_successReported) {
       _successReported = true;
       widget.onPlaybackStarted?.call();
-    }
-
-    if (mounted && _startupFailureVisible) {
-      setState(() {
-        _startupFailureVisible = false;
-        _error = null;
-      });
     }
   }
 
@@ -269,6 +274,147 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await fallback(message);
   }
 
+  void _scheduleBufferedNativeCueAi({
+    String? preferredTrackLabel,
+    String phase = 'native-track',
+  }) {
+    if (_bufferedNativeAiPreparation != null ||
+        !mounted ||
+        _closing ||
+        !_aiPreferenceEnabled ||
+        _subtitleChoiceOverridden) {
+      return;
+    }
+
+    final work = _prepareBufferedNativeCueAi(
+      preferredTrackLabel: preferredTrackLabel,
+      phase: phase,
+    );
+    _bufferedNativeAiPreparation = work;
+    unawaited(
+      work.whenComplete(() {
+        if (identical(_bufferedNativeAiPreparation, work)) {
+          _bufferedNativeAiPreparation = null;
+        }
+      }),
+    );
+  }
+
+  Future<void> _prepareBufferedNativeCueAi({
+    String? preferredTrackLabel,
+    required String phase,
+  }) async {
+    if (!mounted ||
+        _closing ||
+        !_aiPreferenceEnabled ||
+        _subtitleChoiceOverridden) {
+      return;
+    }
+
+    if (_aiState.mode != AiSinhalaRuntimeMode.native) {
+      setState(() {
+        _transitionAi(AiSinhalaRuntimeMode.native);
+        _aiSubtitleUnavailable = false;
+        _aiDisplaySubtitle = '';
+        _aiPreflightMessage =
+            'English timing track found. Building a Sinhala buffer in the background…';
+      });
+    }
+    await _setNativeSubtitleVisibility(true);
+
+    unawaited(
+      AiSinhalaTraceService.write(
+        'buffered-native-ai-start phase=$phase '
+        'host=${AiSinhalaTraceService.safeHost(widget.url)}',
+      ),
+    );
+
+    AiPreparedSubtitle? prepared;
+    try {
+      prepared =
+          await AiSinhalaSubtitleService.prepareTrustedTranscriptForNativeClock(
+        title: widget.title,
+        videoUrl: widget.url,
+        releaseHint: widget.releaseHint,
+        expectedSizeBytes: widget.expectedSizeBytes,
+        expectedVideoHash: widget.expectedVideoHash,
+        preferredTrackLabel: preferredTrackLabel,
+        onStatus: (message) {
+          if (!mounted || _closing) return;
+          _aiPreflightMessage = message;
+        },
+      );
+    } catch (error) {
+      unawaited(
+        AiSinhalaTraceService.write(
+          'buffered-native-ai-error phase=$phase type=${error.runtimeType}',
+        ),
+      );
+      return;
+    }
+
+    if (!mounted ||
+        _closing ||
+        !_aiPreferenceEnabled ||
+        _subtitleChoiceOverridden) {
+      return;
+    }
+    if (prepared == null) {
+      unawaited(
+        AiSinhalaTraceService.write(
+          'buffered-native-ai-miss phase=$phase',
+        ),
+      );
+      return;
+    }
+
+    _nativeSubtitleClockTimer?.cancel();
+    _liveCueClearTimer?.cancel();
+    _liveCueGeneration++;
+    _preparedAiSubtitle = prepared;
+    _generatedAiSubtitlePath = null;
+    _generatedAiSubtitleLabel = null;
+    _nativeAiMatchIndex = -1;
+    _lastAiPrefetchBucket = -1;
+    _timingTrackSelected = true;
+    _timingTrackIsText = true;
+
+    setState(() {
+      if (_aiState.mode != AiSinhalaRuntimeMode.prepared) {
+        _transitionAi(AiSinhalaRuntimeMode.prepared);
+      }
+      _aiSubtitleUnavailable = false;
+      _aiDisplaySubtitle = '';
+      _aiPreflightMessage =
+          'Exact English transcript locked. Sinhala is buffering ahead in the background.';
+    });
+
+    _positionSubscription ??=
+        widget.playback.player.stream.position.listen(_onPosition);
+    if (widget.playback.player.platform is! mk.NativePlayer) {
+      _subtitleTimingSubscription ??=
+          widget.playback.player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
+    }
+
+    await _setNativeSubtitleDelayProperty(0);
+    await _setNativeSubtitleVisibility(true);
+    _startNativeSubtitleClock();
+    await _loadManualSync();
+    if (!mounted || _closing) return;
+
+    final position = widget.playback.player.state.position;
+    final bucket = position.inSeconds ~/ 30;
+    _lastAiPrefetchBucket = bucket;
+    unawaited(_ensureAiTranslationNear(position, bucket: bucket));
+    unawaited(_refreshNativeCueAfterSeek());
+
+    unawaited(
+      AiSinhalaTraceService.write(
+        'buffered-native-ai-ready phase=$phase '
+        'cues=${prepared.cues.length} source=${prepared.sourceMatch}',
+      ),
+    );
+  }
   Future<bool> _activateProgressiveNativeCueAi({
     Duration maxWait = const Duration(milliseconds: 2200),
     String phase = 'initial',
@@ -331,9 +477,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ),
       );
 
-      return await _enableEmbeddedLiveAiFallback(
-        'Using the English subtitle track reported by the active player.',
+      if (_aiState.mode != AiSinhalaRuntimeMode.native && mounted) {
+        setState(() {
+          _transitionAi(AiSinhalaRuntimeMode.native);
+          _aiSubtitleUnavailable = false;
+          _aiDisplaySubtitle = '';
+        });
+      }
+      await _setNativeSubtitleVisibility(true);
+      _scheduleBufferedNativeCueAi(
+        preferredTrackLabel: _subtitleTrackPreferenceLabel(track),
+        phase: phase,
       );
+      return true;
     } catch (error) {
       _timingTrackSelected = false;
       _timingTrackIsText = false;
@@ -404,16 +560,23 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ),
       );
 
-      final ready = await _enableEmbeddedLiveAiFallback(
-        'Using real English subtitle cues emitted by the active player.',
+      if (_aiState.mode != AiSinhalaRuntimeMode.native && mounted) {
+        setState(() {
+          _transitionAi(AiSinhalaRuntimeMode.native);
+          _aiSubtitleUnavailable = false;
+          _aiDisplaySubtitle = '';
+        });
+      }
+      await _setNativeSubtitleVisibility(true);
+      _scheduleBufferedNativeCueAi(
+        preferredTrackLabel: <String>[
+          title,
+          language,
+          codec,
+        ].where((value) => value.isNotEmpty).join(' • '),
+        phase: 'cue-probe',
       );
-      if (!ready || !mounted || _closing) return;
       activated = true;
-
-      // The cue that proved the track is real arrived before the permanent AI
-      // listener was installed. Translate it immediately so the first visible
-      // Sinhala line is not lost.
-      await _handleEmbeddedSubtitleCue(lines);
     }
 
     cueProbe = widget.playback.player.stream.subtitle.listen(
@@ -469,7 +632,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _closing ||
         !_aiPreferenceEnabled ||
         _subtitleChoiceOverridden ||
-        _liveAiFallback ||
         activated) {
       return;
     }
