@@ -57,6 +57,7 @@ jobs:
             tools/configure_android_build.py \
             tools/configure_android_mobile_compat.py \
             tools/configure_android_signing.py
+          bash -n tools/publish_orvix_release.sh
 
       - name: Analyze
         run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
