@@ -355,7 +355,6 @@ class TorBoxService {
         continue;
       }
       if (targetEpisode == null && subtitleEpisode != null) {
-        // A movie should never inherit a TV episode subtitle from a mixed pack.
         continue;
       }
 
@@ -394,17 +393,12 @@ class TorBoxService {
         reasons.add('english-name');
       }
 
-      // A TV subtitle without an explicit episode marker is only safe when its
-      // directory uniquely belongs to this video or the release stem is very
-      // strong. This keeps bare pack-level "English.srt" out.
       if (targetEpisode != null && subtitleEpisode == null) {
         final safeByDirectory = sameDirectory && sameDirectoryVideoCount == 1;
         final safeByStem = overlap >= 3 && ratio >= .55;
         if (!safeByDirectory && !safeByStem) continue;
       }
 
-      // Movies need either unique-directory evidence or strong filename
-      // affinity; merely being in the same multi-video torrent is insufficient.
       if (targetEpisode == null) {
         final safeByDirectory = sameDirectory && sameDirectoryVideoCount == 1;
         final safeByStem = overlap >= 3 && ratio >= .55;
@@ -438,18 +432,18 @@ class TorBoxService {
         RegExp(r's(\d{1,2})[ ._-]*e(\d{1,3})', caseSensitive: false)
             .firstMatch(raw);
     if (standard != null) {
-      final s = int.tryParse(standard.group(1) ?? '');
-      final e = int.tryParse(standard.group(2) ?? '');
-      if (s != null && e != null) return 's$s-e$e';
+      final season = int.tryParse(standard.group(1) ?? '');
+      final episode = int.tryParse(standard.group(2) ?? '');
+      if (season != null && episode != null) return 's$season-e$episode';
     }
 
     final compact =
         RegExp(r'(^|[^0-9])(\d{1,2})x(\d{1,3})([^0-9]|$)')
             .firstMatch(raw);
     if (compact != null) {
-      final s = int.tryParse(compact.group(2) ?? '');
-      final e = int.tryParse(compact.group(3) ?? '');
-      if (s != null && e != null) return 's$s-e$e';
+      final season = int.tryParse(compact.group(2) ?? '');
+      final episode = int.tryParse(compact.group(3) ?? '');
+      if (season != null && episode != null) return 's$season-e$episode';
     }
     return null;
   }
@@ -458,136 +452,7 @@ class TorBoxService {
     final clean = raw
         .replaceAll(
           RegExp(
-            r'\.(?:srt|ass|ssa|vtt|mkv|mp4|m4v|avi|mov|webm|ts|m2ts)
-    final token = await _requireToken();
-    final scope = item.kind == TorBoxTransferKind.torrent ? 'torrents' : 'webdl';
-    final idKey = item.kind == TorBoxTransferKind.torrent ? 'torrent_id' : 'web_id';
-    final uri = Uri.parse('$_base/$scope/requestdl').replace(queryParameters: {
-      'token': token,
-      idKey: '${item.id}',
-      'file_id': '${file.id}',
-      'redirect': 'false',
-      'append_name': 'true',
-    });
-    final response = await _client.get(uri, headers: const {'Accept': 'application/json'}).timeout(const Duration(seconds: 30));
-    final data = _unwrap(response);
-    final url = data?.toString();
-    if (url == null || !url.startsWith('http')) {
-      throw const TorBoxException('TorBox did not return a playable download URL.');
-    }
-    return url;
-  }
-
-  Future<void> logout() => _storage.delete(key: _tokenKey);
-  void dispose() => _client.close();
-
-  TorBoxItem _parseItem(Map<String, dynamic> raw, TorBoxTransferKind kind) {
-    final filesRaw = raw['files'];
-    final files = <TorBoxFile>[];
-    if (filesRaw is List) {
-      for (var i = 0; i < filesRaw.length; i++) {
-        final value = filesRaw[i];
-        if (value is! Map) continue;
-        final map = Map<String, dynamic>.from(value);
-        final id = _int(map['id'] ?? map['file_id']) ?? i;
-        final name =
-            _firstString(map, ['name', 'short_name', 'path', 'absolute_path']) ??
-                'File ${i + 1}';
-        final fullPath = _firstString(
-          map,
-          ['path', 'absolute_path', 'name'],
-        );
-        files.add(TorBoxFile(
-          id: id,
-          name: name,
-          size: _int(map['size'] ?? map['bytes']) ?? 0,
-          mimeType: _firstString(map, ['mimetype', 'mime_type', 'mime']),
-          path: fullPath,
-        ));
-      }
-    }
-    final rawProgress = raw['progress'];
-    double progress = rawProgress is num ? rawProgress.toDouble() : double.tryParse(rawProgress?.toString() ?? '') ?? 0;
-    if (progress > 0 && progress <= 1) progress *= 100;
-    final cached = raw['cached'] == true || raw['cached']?.toString().toLowerCase() == 'true';
-    final finished = raw['download_finished'] == true || raw['download_finished']?.toString().toLowerCase() == 'true';
-    return TorBoxItem(
-      id: _int(raw['id'] ?? raw[kind == TorBoxTransferKind.torrent ? 'torrent_id' : 'webdownload_id']) ?? 0,
-      name: _firstString(raw, ['name', 'title', 'filename']) ?? 'TorBox item',
-      progress: progress.clamp(0, 100).toDouble(),
-      size: _int(raw['size'] ?? raw['total_size']) ?? 0,
-      state: _firstString(raw, ['download_state', 'state', 'status']) ?? '',
-      cached: cached,
-      downloadFinished: finished,
-      files: files,
-      kind: kind,
-    );
-  }
-
-  Future<String?> _token() async {
-    final value = (await _storage.read(key: _tokenKey))?.trim();
-    return value == null || value.isEmpty ? null : value;
-  }
-
-  Future<String> _requireToken() async {
-    final token = await _token();
-    if (token == null) throw const TorBoxException('Connect TorBox first.');
-    return token;
-  }
-
-  Map<String, String> _headers(String token, {bool json = true}) => {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-        if (json) 'Content-Type': 'application/json',
-      };
-
-  dynamic _unwrap(http.Response response) {
-    dynamic decoded;
-    try {
-      decoded = jsonDecode(response.body);
-    } catch (_) {
-      if (response.statusCode >= 200 && response.statusCode < 300) return response.body;
-      throw TorBoxException('TorBox request failed (${response.statusCode}).');
-    }
-    if (response.statusCode < 200 || response.statusCode >= 300 ||
-        (decoded is Map && decoded['success'] == false)) {
-      String message = 'TorBox request failed (${response.statusCode}).';
-      if (decoded is Map) {
-        message = (decoded['detail'] ?? decoded['error'] ?? decoded['message'] ?? message).toString();
-      }
-      throw TorBoxException(message);
-    }
-    if (decoded is Map && decoded.containsKey('data')) return decoded['data'];
-    return decoded;
-  }
-
-  String _stripOrvixMetadata(String resource) {
-    if (!resource.toLowerCase().startsWith('magnet:')) return resource.trim();
-    final uri = Uri.tryParse(resource.trim());
-    if (uri == null) return resource.trim();
-    final kept = <String>[];
-    for (final part in uri.query.split('&')) {
-      if (part.toLowerCase().startsWith('x-pikora-') || part.toLowerCase().startsWith('x-orvix-')) continue;
-      if (part.trim().isNotEmpty) kept.add(part);
-    }
-    return '${uri.scheme}:${uri.path}?${kept.join('&')}';
-  }
-
-  static int? _int(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    return int.tryParse(value?.toString() ?? '');
-  }
-
-  static String? _firstString(Map<String, dynamic> map, List<String> keys) {
-    for (final key in keys) {
-      final v = map[key]?.toString().trim();
-      if (v != null && v.isNotEmpty && v != 'null') return v;
-    }
-    return null;
-  }
-}
-,
+            r'\.(?:srt|ass|ssa|vtt|mkv|mp4|m4v|avi|mov|webm|ts|m2ts)$',
             caseSensitive: false,
           ),
           '',
@@ -646,12 +511,19 @@ class TorBoxService {
         if (value is! Map) continue;
         final map = Map<String, dynamic>.from(value);
         final id = _int(map['id'] ?? map['file_id']) ?? i;
-        final name = _firstString(map, ['name', 'short_name', 'path', 'absolute_path']) ?? 'File ${i + 1}';
+        final name =
+            _firstString(map, ['name', 'short_name', 'path', 'absolute_path']) ??
+                'File ${i + 1}';
+        final fullPath = _firstString(
+          map,
+          ['path', 'absolute_path', 'name'],
+        );
         files.add(TorBoxFile(
           id: id,
           name: name,
           size: _int(map['size'] ?? map['bytes']) ?? 0,
           mimeType: _firstString(map, ['mimetype', 'mime_type', 'mime']),
+          path: fullPath,
         ));
       }
     }
