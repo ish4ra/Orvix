@@ -60,15 +60,17 @@ void main() {
       contains('if (!_surfaceFocus.hasPrimaryFocus) return KeyEventResult.ignored;'),
     );
 
-    // Windows AI Sinhala now prepares outside the player. The standalone
-    // media engine runs from DetailsScreen before PlayerScreen is pushed, and
-    // PlayerScreen only attaches the already-generated Sinhala SRT.
-    expect(details, contains('OrvixMediaEngineService.instance.prepare('));
-    expect(details, contains('prepareGeneratedSinhalaFromEngineEmbedded('));
-    expect(details, contains('preparedAiSubtitleFile: preparedAiSubtitleFile'));
-    expect(player, contains('final preprepared ='));
-    expect(player, contains('play: !(aiReady || usePlayerPreflight)'));
-    expect(player, contains('await _loadGeneratedAiSubtitleTrack();'));
+    // Automatic AI Sinhala now opens the real player first and translates
+    // the exact native English cue stream progressively. Complete-file helpers
+    // remain available, but they no longer gate normal startup.
+    expect(
+      details,
+      contains('_legacyCompleteFileAiPreflightEnabled => false'),
+    );
+    expect(player, contains('final useProgressiveNativeCueAi ='));
+    expect(player, contains('play: !(aiReady || useProgressiveNativeCueAi)'));
+    expect(player, contains('await _activateProgressiveNativeCueAi();'));
+    expect(player, contains('native-cue-ai-ready'));
     expect(player, isNot(contains('deferAiForLocalP2p')));
 
     // The native torrent endpoint should be warmed with real bytes before MPV
