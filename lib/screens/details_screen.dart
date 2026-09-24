@@ -3395,6 +3395,132 @@ class _DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
+  Future<AiGeneratedSubtitleFile?> _tryTorBoxSiblingSubtitle({
+    required TorBoxItem cloudItem,
+    required TorBoxFile videoFile,
+    required String title,
+    EpisodeItem? episode,
+  }) async {
+    final textSubtitleCount =
+        cloudItem.files.where((file) => file.isTextSubtitle).length;
+    final candidates = TorBoxService.rankSubtitleCandidatesForVideo(
+      cloudItem,
+      videoFile,
+      season: episode?.season,
+      episode: episode?.episode,
+    );
+
+    String safeName(String raw) {
+      final clean = raw.replaceAll(RegExp(r'[\r\n\t]+'), ' ').trim();
+      return clean.length <= 180 ? clean : clean.substring(0, 180);
+    }
+
+    unawaited(
+      AiSinhalaTraceService.write(
+        'torbox-subtitle-scan itemId=${cloudItem.id} '
+        'files=${cloudItem.files.length} textSubs=$textSubtitleCount '
+        'video="${safeName(videoFile.identityPath)}" '
+        'candidates=${candidates.length}',
+      ),
+    );
+
+    if (textSubtitleCount == 0) {
+      unawaited(
+        AiSinhalaTraceService.write(
+          'torbox-subtitle-miss reason=no-text-subtitle-files',
+        ),
+      );
+      return null;
+    }
+
+    if (candidates.isEmpty) {
+      final names = cloudItem.files
+          .where((file) => file.isTextSubtitle)
+          .take(8)
+          .map((file) => safeName(file.identityPath))
+          .join(' | ');
+      unawaited(
+        AiSinhalaTraceService.write(
+          'torbox-subtitle-miss reason=no-safe-video-match '
+          'available="$names"',
+        ),
+      );
+      return null;
+    }
+
+    for (final candidate in candidates.take(5)) {
+      final subtitle = candidate.file;
+      final candidateName = safeName(subtitle.identityPath);
+      unawaited(
+        AiSinhalaTraceService.write(
+          'torbox-subtitle-candidate id=${subtitle.id} '
+          'score=${candidate.score} reason=${candidate.reason} '
+          'name="$candidateName"',
+        ),
+      );
+
+      if (mounted) {
+        setState(() {
+          _status =
+              'AI Sinhala • checking TorBox subtitle • $candidateName';
+        });
+      }
+
+      try {
+        final subtitleUrl =
+            await widget.torbox.requestDownloadUrl(cloudItem, subtitle);
+        final generated = await AiSinhalaSubtitleService
+            .prepareGeneratedSinhalaFromVerifiedExternalSubtitle(
+          title: title,
+          subtitleUrl: subtitleUrl,
+          subtitleIdentity:
+              'torbox://${cloudItem.kind.name}/${cloudItem.id}/${subtitle.id}',
+          subtitleLabel: 'TorBox exact torrent • ${subtitle.name}',
+          sourceName: 'torbox-same-torrent-subtitle',
+          onStatus: (message) {
+            if (!mounted) return;
+            setState(() => _status = 'AI Sinhala • $message');
+          },
+        );
+
+        unawaited(
+          AiSinhalaTraceService.write(
+            'torbox-subtitle-selected id=${subtitle.id} '
+            'score=${candidate.score} name="$candidateName"',
+          ),
+        );
+        return generated;
+      } on AiSubtitleException catch (error) {
+        final lower = error.message.toLowerCase();
+        final candidateSpecific =
+            lower.contains('not verified as english') ||
+            lower.contains('could not be parsed safely');
+        unawaited(
+          AiSinhalaTraceService.write(
+            'torbox-subtitle-rejected id=${subtitle.id} '
+            'candidateSpecific=$candidateSpecific '
+            'detail="${safeName(error.message)}"',
+          ),
+        );
+        if (!candidateSpecific) rethrow;
+      } on TorBoxException catch (error) {
+        unawaited(
+          AiSinhalaTraceService.write(
+            'torbox-subtitle-fetch-failed id=${subtitle.id} '
+            'detail="${safeName(error.message)}"',
+          ),
+        );
+      }
+    }
+
+    unawaited(
+      AiSinhalaTraceService.write(
+        'torbox-subtitle-miss reason=candidates-not-usable',
+      ),
+    );
+    return null;
+  }
+
   Future<void> _openPlayerUrl(
     String url,
     MediaItem item,
@@ -3430,6 +3556,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         'open-player ai=$aiSettingEnabled windows=${Platform.isWindows} '
         'provider=${source?.provider ?? 'unknown'} '
         'cloudBridge=$useLocalMediaBridge localP2p=$originalLocalP2p '
+        'torBoxTree=${torBoxItem != null && torBoxVideoFile != null} '
         'host=${AiSinhalaTraceService.safeHost(url)}',
       ),
     );
@@ -3570,6 +3697,24 @@ class _DetailsScreenState extends State<DetailsScreen> {
             ),
           );
 
+          // TorBox already owns the full torrent file tree. Before searching
+          // another subtitle service or waking the P2P engine, inspect sibling
+          // .srt/.ass/.ssa/.vtt files from this exact cloud torrent.
+          if (torBoxItem != null && torBoxVideoFile != null) {
+            if (mounted) {
+              setState(() {
+                _status =
+                    'AI Sinhala • checking subtitles inside this exact TorBox torrent…';
+              });
+            }
+            preparedAiSubtitleFile = await _tryTorBoxSiblingSubtitle(
+              cloudItem: torBoxItem,
+              videoFile: torBoxVideoFile,
+              title: title,
+              episode: episode,
+            );
+          }
+
           Future<AiGeneratedSubtitleFile?> tryExact({
             required String hash,
             required int size,
@@ -3609,7 +3754,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
             }
           }
 
-          if (sourceHashValid) {
+          if (preparedAiSubtitleFile == null && sourceHashValid) {
             preparedAiSubtitleFile = await tryExact(
               hash: sourceHash!,
               size: expectedSizeBytes!,
