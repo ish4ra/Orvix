@@ -339,7 +339,11 @@ class TorBoxService {
         season != null && episode != null ? 's$season-e$episode' : null;
     final videoEpisode = _episodeKey(videoIdentity);
     final targetEpisode = requestedEpisode ?? videoEpisode;
-    final videoTokens = _releaseTokens(videoIdentity);
+    // Release affinity must come from the actual filenames, not a shared pack
+    // directory such as "Prison.Break.S01". Otherwise a bare pack-level
+    // English.srt inherits title/season tokens from its parent folder and can
+    // look falsely release-specific.
+    final videoTokens = _releaseTokens(_basenameOf(videoIdentity));
 
     final ranked = <TorBoxSubtitleCandidate>[];
     for (final subtitle in subtitles) {
@@ -347,7 +351,7 @@ class TorBoxService {
       final subtitleEpisode = _episodeKey(identity);
       final subtitleDirectory = _directoryOf(identity);
       final sameDirectory = subtitleDirectory == videoDirectory;
-      final subtitleTokens = _releaseTokens(identity);
+      final subtitleTokens = _releaseTokens(_basenameOf(identity));
 
       if (targetEpisode != null &&
           subtitleEpisode != null &&
@@ -425,6 +429,11 @@ class TorBoxService {
   static String _directoryOf(String normalizedPath) {
     final slash = normalizedPath.lastIndexOf('/');
     return slash <= 0 ? '' : normalizedPath.substring(0, slash);
+  }
+
+  static String _basenameOf(String normalizedPath) {
+    final slash = normalizedPath.lastIndexOf('/');
+    return slash < 0 ? normalizedPath : normalizedPath.substring(slash + 1);
   }
 
   static String? _episodeKey(String raw) {
