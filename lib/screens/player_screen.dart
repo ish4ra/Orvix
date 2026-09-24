@@ -268,6 +268,107 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await fallback(message);
   }
 
+  Future<bool> _activateProgressiveNativeCueAi({
+    Duration maxWait = const Duration(milliseconds: 2200),
+    String phase = 'initial',
+  }) async {
+    if (!mounted ||
+        _closing ||
+        !_aiPreferenceEnabled ||
+        _subtitleChoiceOverridden) {
+      return false;
+    }
+
+    final player = widget.playback.player;
+    final deadline = DateTime.now().add(maxWait);
+    mk.SubtitleTrack? track;
+
+    do {
+      track = _bestNativeEnglishTextTrack();
+      if (track != null) break;
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+    } while (mounted && !_closing && DateTime.now().isBefore(deadline));
+
+    if (track == null) {
+      unawaited(
+        AiSinhalaTraceService.write(
+          'native-cue-ai-miss phase=$phase '
+          'tracks=${player.state.tracks.subtitle.length} '
+          'host=${AiSinhalaTraceService.safeHost(widget.url)}',
+        ),
+      );
+      return false;
+    }
+
+    try {
+      await player.setSubtitleTrack(track);
+      _timingTrackSelected = true;
+      _timingTrackIsText = true;
+      _nativeAiMatchIndex = -1;
+
+      final title =
+          (track.title ?? '').replaceAll(RegExp(r'[\\r\\n]+'), ' ').trim();
+      final language = (track.language ?? '').trim();
+      final codec = (track.codec ?? '').trim();
+      unawaited(
+        AiSinhalaTraceService.write(
+          'native-cue-ai-ready phase=$phase id=${track.id} '
+          'language=$language codec=$codec title="$title"',
+        ),
+      );
+
+      return await _enableEmbeddedLiveAiFallback(
+        'Using the English subtitle track reported by the active player.',
+      );
+    } catch (error) {
+      _timingTrackSelected = false;
+      _timingTrackIsText = false;
+      unawaited(
+        AiSinhalaTraceService.write(
+          'native-cue-ai-failed phase=$phase type=${error.runtimeType}',
+        ),
+      );
+      return false;
+    }
+  }
+
+  Future<void> _discoverNativeCueAiAfterPlayback() async {
+    // Some remote containers publish subtitle metadata only after demuxing has
+    // begun. Keep normal playback running with the source subtitle visible and
+    // retry briefly in the background; never pause/seek the video just to make
+    // AI Sinhala discover a track.
+    for (var attempt = 0;
+        attempt < 40 &&
+            mounted &&
+            !_closing &&
+            _aiPreferenceEnabled &&
+            !_subtitleChoiceOverridden &&
+            !_liveAiFallback;
+        attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (_bestNativeEnglishTextTrack() == null) continue;
+      final activated = await _activateProgressiveNativeCueAi(
+        maxWait: Duration.zero,
+        phase: 'late',
+      );
+      if (activated) return;
+    }
+
+    if (!mounted ||
+        _closing ||
+        !_aiPreferenceEnabled ||
+        _subtitleChoiceOverridden ||
+        _liveAiFallback) {
+      return;
+    }
+    unawaited(
+      AiSinhalaTraceService.write(
+        'native-cue-ai-final-miss '
+        'host=${AiSinhalaTraceService.safeHost(widget.url)}',
+      ),
+    );
+  }
+
   Future<void> _open() async {
     try {
       _playbackStarted = false;
@@ -298,35 +399,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ),
       );
 
-      // Windows must never fall back to the old player-driven subtitle
-      // discovery path. DetailsScreen is responsible for running the
-      // standalone media engine and preparing the complete Sinhala SRT first.
-      // Keep this guard here as a second line of defence so a future caller
-      // cannot accidentally reintroduce "video starts immediately" behavior.
-      final missingWindowsPreflight = Platform.isWindows &&
-          aiPreferred &&
-          !widget.aiPreflightAttempted &&
-          preprepared == null;
-      if (missingWindowsPreflight) {
-        try {
-          await widget.playback.stop();
-        } catch (_) {}
-        const message =
-            'AI Sinhala startup was blocked because Windows pre-player preparation was bypassed.';
-        if (mounted) {
-          setState(() {
-            _aiSubtitleUnavailable = true;
-            _aiPreflightMessage = message;
-            _error = message;
-          });
-        }
-        return;
-      }
-
-      final usePlayerPreflight = aiPreferred &&
-          !Platform.isWindows &&
-          !widget.aiPreflightAttempted &&
-          preprepared == null;
+      // Universal startup path: open the actual player first, then use the
+      // subtitle tracks that the active demuxer reports. This is provider
+      // independent and shared by Windows, macOS, Android mobile and Android TV.
+      // Complete-file extraction remains available for manual/verified subtitle
+      // flows, but it no longer blocks startup.
+      final useProgressiveNativeCueAi =
+          aiPreferred && preprepared == null;
       var aiReady = preprepared != null;
       var reopenedAfterAiFailure = false;
 
@@ -339,7 +418,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         setState(() {
           if (preprepared != null) {
             _transitionAi(AiSinhalaRuntimeMode.prepared);
-          } else if (usePlayerPreflight) {
+          } else if (useProgressiveNativeCueAi) {
             _transitionAi(AiSinhalaRuntimeMode.preparing);
           } else if (_aiState.mode != AiSinhalaRuntimeMode.native) {
             _transitionAi(AiSinhalaRuntimeMode.native);
@@ -349,89 +428,50 @@ class _PlayerScreenState extends State<PlayerScreen> {
           _aiDisplaySubtitle = '';
           _aiPreflightMessage = preprepared != null
               ? 'Complete Sinhala subtitle was prepared before the player opened.'
-              : usePlayerPreflight
-                  ? 'Preparing the complete embedded Sinhala subtitle before playback…'
+              : useProgressiveNativeCueAi
+                  ? 'Opening the selected source and detecting its native English subtitle track…'
                   : (widget.aiPreflightFailure ?? '');
         });
       }
 
-      // Windows beta.18+ receives a complete Sinhala SRT from the standalone
-      // media engine before this route exists. In that path the player is only
-      // opened after subtitle preparation is over, and is opened paused just
-      // long enough to attach the already-generated subtitle track.
-      //
-      // Older/non-Windows paths may still use the legacy in-player preparation
-      // until the standalone engine is packaged there as well.
+      // Keep the player paused for at most a couple of seconds while MPV
+      // publishes its real track list. Unlike the old architecture, this does
+      // not download/translate the entire episode before playback.
       await widget.playback.open(
         widget.url,
         title: widget.title,
-        play: !(aiReady || usePlayerPreflight),
+        play: !(aiReady || useProgressiveNativeCueAi),
       );
 
       if (aiReady && _generatedAiSubtitlePath != null) {
         await _setNativeSubtitleVisibility(false);
         await _loadGeneratedAiSubtitleTrack();
-      } else if (usePlayerPreflight) {
-        await _setNativeSubtitleVisibility(false);
-        aiReady = await _prepareAiSinhalaBeforePlayback();
-        if (aiReady && _generatedAiSubtitlePath != null) {
-          await _loadGeneratedAiSubtitleTrack();
+      } else if (useProgressiveNativeCueAi) {
+        await _setNativeSubtitleVisibility(true);
+        aiReady = await _activateProgressiveNativeCueAi();
+        if (!aiReady && mounted && !_closing) {
+          setState(() {
+            if (_aiState.mode != AiSinhalaRuntimeMode.native) {
+              _transitionAi(AiSinhalaRuntimeMode.native);
+            }
+            _aiSubtitleUnavailable = false;
+            _aiDisplaySubtitle = '';
+            _aiPreflightMessage =
+                'Playing normally while Orvix waits briefly for a native English subtitle track…';
+          });
         }
       } else {
         await _setNativeSubtitleVisibility(true);
       }
 
       if (aiPreferred &&
-          usePlayerPreflight &&
+          useProgressiveNativeCueAi &&
           !aiReady &&
           mounted &&
           !_closing) {
-        final failureMessage = _aiPreflightMessage.trim().isEmpty
-            ? 'AI Sinhala could not generate a complete subtitle. Normal playback will continue.'
-            : _aiPreflightMessage.trim();
-
-        _subtitleChoiceOverridden = true;
-        _nativeSubtitleClockTimer?.cancel();
-        _liveCueClearTimer?.cancel();
-        _generatedAiSubtitlePath = null;
-        _generatedAiSubtitleLabel = null;
-        _preparedAiSubtitle = null;
-        setState(() {
-          if (_aiState.mode != AiSinhalaRuntimeMode.native) {
-            _transitionAi(AiSinhalaRuntimeMode.native);
-          }
-          _aiSubtitleUnavailable = true;
-          _aiDisplaySubtitle = '';
-          _aiPreflightMessage = failureMessage;
-        });
-
-        if (_isAiTranslationOnlyFailure(failureMessage)) {
-          await _setNativeSubtitleDelayProperty(0);
-          _subtitleDelaySeconds = 0;
-          await _restoreNativeSubtitleFallback();
-        } else {
-          try {
-            await widget.playback.stop();
-          } catch (_) {}
-          await widget.playback.open(
-            widget.url,
-            title: widget.title,
-            play: true,
-          );
-          reopenedAfterAiFailure = true;
-          _subtitleDelaySeconds = 0;
-          await _setNativeSubtitleDelayProperty(0);
-          await _setNativeSubtitleVisibility(true);
-        }
-
-        if (mounted && !_closing) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(failureMessage),
-              duration: const Duration(seconds: 7),
-            ),
-          );
-        }
+        // Do not stop/reopen/pause/seek the media. Start normal playback now
+        // and keep looking for native subtitle metadata in the background.
+        unawaited(_discoverNativeCueAiAfterPlayback());
       } else if (aiPreferred &&
           widget.aiPreflightAttempted &&
           preprepared == null &&
@@ -460,7 +500,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
         }
       }
 
-      if ((aiReady || usePlayerPreflight) && !reopenedAfterAiFailure) {
+      if ((aiReady || useProgressiveNativeCueAi) &&
+          !reopenedAfterAiFailure) {
         unawaited(
           AiSinhalaTraceService.write(
             'player-play allowed aiReady=$aiReady '
