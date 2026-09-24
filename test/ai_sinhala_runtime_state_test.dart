@@ -57,13 +57,13 @@ void main() {
     expect(state.mode, AiSinhalaRuntimeMode.prepared);
   });
 
-  test('live fallback is not directly reachable from native', () {
+  test('live native-cue AI is directly reachable from native', () {
     expect(
       AiSinhalaRuntimeState.canTransition(
         AiSinhalaRuntimeMode.native,
         AiSinhalaRuntimeMode.liveEmbedded,
       ),
-      isFalse,
+      isTrue,
     );
     expect(
       AiSinhalaRuntimeState.canTransition(
