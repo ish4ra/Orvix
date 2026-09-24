@@ -67,8 +67,9 @@ void main() {
     expect(releasePublisher, contains('gh release create'));
     expect(releasePublisher, contains('--draft'));
     expect(releasePublisher, contains('gh release upload'));
-    expect(releasePublisher, contains('gh release edit'));
-    expect(releasePublisher, contains('--draft=false'));
+    expect(releasePublisher, contains('--method PATCH'));
+    expect(releasePublisher, contains('-F draft=false'));
+    expect(releasePublisher, contains('-F prerelease=true'));
     expect(releasePublisher, contains('expected_count='));
     expect(releasePublisher, contains('.size > 0'));
     expect(windowsMain, contains('CreateMutexW'));
