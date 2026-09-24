@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test(
-      'automatic AI Sinhala keeps local P2P on exact embedded then strict fingerprint fallback',
+      'legacy complete-file helper keeps local P2P on exact embedded then strict fingerprint fallback',
       () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
@@ -63,7 +63,7 @@ void main() {
     expect(generated, contains('_cachedGeneratedFile(cacheKey)'));
   });
 
-  test('manual AI enable reuses the same strict full-file preparation path', () {
+  test('manual AI enable uses the same progressive native-cue path', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     final start = player.indexOf(
@@ -73,9 +73,10 @@ void main() {
         player.indexOf('Future<void> _loadSubtitlePreferences()', start);
     final toggle = player.substring(start, end);
 
-    expect(toggle, contains('await _prepareAiSinhalaBeforePlayback();'));
-    expect(toggle, contains('await _loadGeneratedAiSubtitleTrack();'));
-    expect(toggle, isNot(contains('_enableEmbeddedLiveAiFallback(')));
+    expect(toggle, contains('await _activateProgressiveNativeCueAi('));
+    expect(toggle, contains('unawaited(_discoverNativeCueAiAfterPlayback());'));
+    expect(toggle, isNot(contains('await _prepareAiSinhalaBeforePlayback();')));
+    expect(toggle, isNot(contains('await _loadGeneratedAiSubtitleTrack();')));
   });
 
   test('embedded extraction requires the Orvix exact-file server capability', () {
