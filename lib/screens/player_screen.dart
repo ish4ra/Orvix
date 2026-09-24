@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart' as mk;
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../models/media_item.dart';
@@ -131,6 +132,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void>? _audioAiWindowWork;
   final Set<int> _audioAiWindowStarts = <int>{};
   int _audioAiCoverageEndMs = 0;
+  File? _audioAiSrtFile;
+  bool _audioAiNativeAttached = false;
   int _nativeAiMatchIndex = -1;
   double _subtitleFontSize = SubtitlePreferencesService.defaultFontSize;
   bool _subtitleBackground = SubtitlePreferencesService.defaultBackground;
@@ -191,6 +194,134 @@ class _PlayerScreenState extends State<PlayerScreen> {
       .toLowerCase()
       .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
       .trim();
+
+  String _srtTimestamp(Duration value) {
+    final ms = value.inMilliseconds < 0 ? 0 : value.inMilliseconds;
+    final hours = ms ~/ 3600000;
+    final minutes = (ms ~/ 60000) % 60;
+    final seconds = (ms ~/ 1000) % 60;
+    final millis = ms % 1000;
+    return '${hours.toString().padLeft(2, '0')}:'
+        '${minutes.toString().padLeft(2, '0')}:'
+        '${seconds.toString().padLeft(2, '0')},'
+        '${millis.toString().padLeft(3, '0')}';
+  }
+
+  String _buildAudioAiSrt(AiPreparedSubtitle prepared) {
+    final out = StringBuffer();
+    var index = 1;
+    for (final cue in prepared.cues) {
+      final translation = cue.translation?.trim() ?? '';
+      if (translation.isEmpty || cue.end <= cue.start) continue;
+      out.writeln(index++);
+      out.writeln('${_srtTimestamp(cue.start)} --> ${_srtTimestamp(cue.end)}');
+      out.writeln(translation);
+      out.writeln();
+    }
+    return out.toString();
+  }
+
+  Future<bool> _syncAudioAiNativeTrack({required bool initial}) async {
+    final prepared = _preparedAiSubtitle;
+    final platform = widget.playback.player.platform;
+    if (prepared == null ||
+        prepared.cues.isEmpty ||
+        platform is! mk.NativePlayer ||
+        _closing) {
+      return false;
+    }
+
+    try {
+      final srt = _buildAudioAiSrt(prepared);
+      if (srt.trim().isEmpty) return false;
+
+      var file = _audioAiSrtFile;
+      if (file == null) {
+        final temp = await getTemporaryDirectory();
+        final dir = Directory(
+          '${temp.path}${Platform.pathSeparator}orvix-ai-subs',
+        );
+        await dir.create(recursive: true);
+        file = File(
+          '${dir.path}${Platform.pathSeparator}'
+          'audio_si_${DateTime.now().microsecondsSinceEpoch}.srt',
+        );
+        _audioAiSrtFile = file;
+      }
+
+      await file.writeAsString(srt, flush: true);
+      final uri = Platform.isWindows
+          ? Uri.file(file.path, windows: true).toString()
+          : Uri.file(file.path).toString();
+
+      if (!_audioAiNativeAttached || initial) {
+        // Bypass Flutter's subtitle overlay entirely. The latest beta.34 log
+        // proves Sinhala cues are produced; let libmpv render those timed cues
+        // through the same native subtitle path that already renders normal SRT.
+        await platform.command(
+          <String>['sub-add', uri, 'select', 'AI Sinhala • audio', 'si'],
+          waitForInitialization: false,
+          throwOnError: true,
+        );
+        _audioAiNativeAttached = true;
+        await _setNativeSubtitleDelayProperty(0);
+        await _setNativeSubtitleVisibility(true);
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        var sid = '';
+        try {
+          sid = (await platform.getProperty(
+            'sid',
+            waitForInitialization: false,
+          ))
+              .trim();
+        } catch (_) {}
+        unawaited(
+          AiSinhalaTraceService.write(
+            'audio-ai-native-attach cues=${prepared.cues.length} '
+            'bytes=${await file.length()} sid=$sid',
+          ),
+        );
+      } else {
+        await platform.command(
+          const <String>['sub-reload'],
+          waitForInitialization: false,
+          throwOnError: true,
+        );
+        await _setNativeSubtitleVisibility(true);
+        unawaited(
+          AiSinhalaTraceService.write(
+            'audio-ai-native-reload cues=${prepared.cues.length} '
+            'bytes=${await file.length()}',
+          ),
+        );
+      }
+      return true;
+    } catch (error) {
+      _audioAiNativeAttached = false;
+      unawaited(
+        AiSinhalaTraceService.write(
+          'audio-ai-native-error initial=$initial '
+          'type=${error.runtimeType} '
+          'detail="${error.toString().replaceAll(RegExp(r'[\\r\\n|]+'), ' ')}"',
+        ),
+      );
+      return false;
+    }
+  }
+
+  Future<void> _removeAudioAiNativeTrack() async {
+    if (!_audioAiNativeAttached) return;
+    final platform = widget.playback.player.platform;
+    if (platform is mk.NativePlayer) {
+      try {
+        await platform.command(
+          const <String>['sub-remove'],
+          waitForInitialization: false,
+        );
+      } catch (_) {}
+    }
+    _audioAiNativeAttached = false;
+  }
 
   void _mergeAudioAiCues(List<AiAudioSinhalaCue> incoming) {
     final prepared = _preparedAiSubtitle;
@@ -368,8 +499,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     _positionSubscription ??=
         widget.playback.player.stream.position.listen(_onPosition);
-    await _setNativeSubtitleVisibility(false);
-    _refreshAiSubtitle();
+    final nativeAttached =
+        await _syncAudioAiNativeTrack(initial: true);
+    if (!nativeAttached) {
+      // Non-native platforms retain the Flutter overlay as a fallback.
+      await _setNativeSubtitleVisibility(false);
+      _refreshAiSubtitle();
+    } else if (mounted && _aiDisplaySubtitle.isNotEmpty) {
+      setState(() => _aiDisplaySubtitle = '');
+    }
     unawaited(
       AiSinhalaTraceService.write(
         'audio-ai-ready phase=$phase cues=${converted.length} '
@@ -424,7 +562,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final cues = await _loadAudioAiWindow(start, phase: 'prefetch');
       if (!mounted || _closing || !_audioAiActive || cues.isEmpty) return;
       _mergeAudioAiCues(cues);
-      _refreshAiSubtitle();
+      final nativeUpdated =
+          await _syncAudioAiNativeTrack(initial: false);
+      if (!nativeUpdated) {
+        _refreshAiSubtitle();
+      }
     }();
     _audioAiWindowWork = work;
     unawaited(
@@ -1745,6 +1887,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _restoreNativeSubtitleFallback() async {
+    await _removeAudioAiNativeTrack();
     _nativeSubtitleClockTimer?.cancel();
     _timingTrackSelected = false;
     _timingTrackIsText = false;
@@ -1834,6 +1977,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     setState(() => _aiPreferenceEnabled = enabled);
 
     if (!enabled) {
+      await _removeAudioAiNativeTrack();
       _subtitleChoiceOverridden = false;
       _nativeSubtitleClockTimer?.cancel();
       _liveCueClearTimer?.cancel();
@@ -1849,6 +1993,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _audioAiWindowWork = null;
       _audioAiWindowStarts.clear();
       _audioAiCoverageEndMs = 0;
+      _audioAiNativeAttached = false;
+      final audioSrt = _audioAiSrtFile;
+      _audioAiSrtFile = null;
+      if (audioSrt != null) {
+        try {
+          if (await audioSrt.exists()) await audioSrt.delete();
+        } catch (_) {}
+      }
       setState(() {
         if (_aiState.mode != AiSinhalaRuntimeMode.native) {
           _transitionAi(AiSinhalaRuntimeMode.native);
@@ -2137,10 +2289,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _afterSeek(Duration target) {
     if (!_aiSinhalaRequested) return;
 
-    // Complete-file AI Sinhala is a normal native SRT track. libmpv owns its
-    // seek/timing behavior, so never hide the native renderer after a jump.
+    // Complete-file and rolling audio AI Sinhala both use native SRT tracks.
+    // libmpv owns seek/timing for them; never hide the renderer after a jump.
     if (_generatedAiSubtitlePath != null) {
       unawaited(_setNativeSubtitleVisibility(true));
+      return;
+    }
+    if (_audioAiActive && _audioAiNativeAttached) {
+      unawaited(_setNativeSubtitleVisibility(true));
+      _ensureAudioAiAhead(target);
       return;
     }
 
@@ -2276,6 +2433,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     try {
       await widget.playback.stop();
     } catch (_) {}
+    final audioSrt = _audioAiSrtFile;
+    _audioAiSrtFile = null;
+    _audioAiNativeAttached = false;
+    if (audioSrt != null) {
+      try {
+        if (await audioSrt.exists()) await audioSrt.delete();
+      } catch (_) {}
+    }
     if (Platform.isWindows && _localP2pStream) {
       await Future<void>.delayed(const Duration(milliseconds: 180));
     }
@@ -2446,6 +2611,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       var adjustedMs = position.inMilliseconds - _effectiveSyncOffsetMs;
       if (adjustedMs < 0) adjustedMs = 0;
       final adjusted = Duration(milliseconds: adjustedMs);
+      if (_audioAiNativeAttached) {
+        // Native SRT owns display timing. Position is now only the prefetch
+        // clock; this removes the Flutter overlay from the critical path.
+        _ensureAudioAiAhead(adjusted);
+        return;
+      }
       final next = prepared.subtitleAt(adjusted);
       if (next != _aiDisplaySubtitle) {
         setState(() => _aiDisplaySubtitle = next);
@@ -3978,7 +4149,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         ? 'Detecting the source’s native English subtitle track…'
                         : _aiPreflightMessage,
                   ),
-                if (_aiSinhalaEnabled && _aiDisplaySubtitle.isNotEmpty)
+                if (_aiSinhalaEnabled &&
+                    !_audioAiNativeAttached &&
+                    _aiDisplaySubtitle.isNotEmpty)
                   _aiSubtitleOverlay(),
                 AnimatedOpacity(
                   opacity: _controlsVisible ? 1 : 0,
