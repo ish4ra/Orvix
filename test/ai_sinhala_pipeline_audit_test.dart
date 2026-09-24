@@ -89,16 +89,21 @@ void main() {
     );
   });
 
-  test('automatic path intentionally uses the live native cue translator', () {
+  test('automatic path buffers exact transcript instead of per-cue cloud translation', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(player, contains('_activateProgressiveNativeCueAi('));
-    expect(player, contains('_enableEmbeddedLiveAiFallback('));
-    expect(player, contains('_translateLiveSubtitleCue('));
-    expect(player, contains('native-cue-ai-ready'));
+    expect(player, contains('_scheduleBufferedNativeCueAi('));
+    expect(player, contains('_prepareBufferedNativeCueAi('));
     expect(
       player,
-      contains('Using the English subtitle track reported by the active player.'),
+      contains('prepareTrustedTranscriptForNativeClock('),
+    );
+    expect(player, contains('ensureTranslatedAround('));
+    expect(player, contains('buffered-native-ai-ready'));
+    expect(
+      player,
+      contains('widget.playback.player.platform is! mk.NativePlayer'),
     );
   });
 }
