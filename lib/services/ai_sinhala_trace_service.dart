@@ -49,6 +49,30 @@ class AiSinhalaTraceService {
     }
   }
 
+  static void writeCrashSync(String message) {
+    if (!Platform.isWindows) return;
+    try {
+      final localAppData = Platform.environment['LOCALAPPDATA'];
+      if (localAppData == null || localAppData.trim().isEmpty) return;
+      final directory = Directory(
+        '${localAppData.trim()}${Platform.pathSeparator}Orvix'
+        '${Platform.pathSeparator}logs',
+      );
+      if (!directory.existsSync()) {
+        directory.createSync(recursive: true);
+      }
+      final file = File(
+        '${directory.path}${Platform.pathSeparator}ai-sinhala.log',
+      );
+      final now = DateTime.now().toIso8601String();
+      file.writeAsStringSync(
+        '[$now] $message\n',
+        mode: FileMode.append,
+        flush: true,
+      );
+    } catch (_) {}
+  }
+
   static String safeHost(String? rawUrl) {
     final uri = Uri.tryParse(rawUrl ?? '');
     if (uri == null) return 'invalid';
