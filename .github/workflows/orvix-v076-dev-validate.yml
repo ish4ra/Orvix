@@ -115,6 +115,7 @@ jobs:
                 sleep $((attempt * 6))
                 continue
               fi
+              break
             fi
 
             echo "AI Sinhala smoke failed with HTTP $STATUS." >&2
