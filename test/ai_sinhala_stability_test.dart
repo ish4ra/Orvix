@@ -12,25 +12,24 @@ void main() {
     expect(player, contains('_setAiSinhalaEnabledFromPlayer(value)'));
   });
 
-  test('Windows AI startup cannot begin playback before standalone translation finishes', () {
+  test('Windows AI startup is bounded and native-cue driven', () {
     final details = File('lib/screens/details_screen.dart').readAsStringSync();
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    final engineIndex =
-        details.indexOf('OrvixMediaEngineService.instance.prepare(');
-    final routeIndex = details.indexOf('await _openMpvPlayer(');
-    expect(engineIndex, greaterThanOrEqualTo(0));
-    expect(routeIndex, greaterThan(engineIndex));
-    expect(details, contains('prepareGeneratedSinhalaFromEngineEmbedded('));
+    expect(
+      details,
+      contains('_legacyCompleteFileAiPreflightEnabled => false'),
+    );
 
     final start = player.indexOf('Future<void> _open()');
     final end = player.indexOf('void _onPlaybackError', start);
     final open = player.substring(start, end);
-    expect(open, contains('final preprepared ='));
-    expect(open, contains('await _loadGeneratedAiSubtitleTrack();'));
+    expect(open, contains('final useProgressiveNativeCueAi ='));
+    expect(open, contains('await _activateProgressiveNativeCueAi();'));
+    expect(open, contains('await widget.playback.player.play();'));
     expect(
-      open.indexOf('await _loadGeneratedAiSubtitleTrack();'),
-      lessThan(open.indexOf('await widget.playback.player.play();')),
+      player,
+      contains('Duration maxWait = const Duration(milliseconds: 2200)'),
     );
   });
 
@@ -64,7 +63,7 @@ void main() {
     expect(toggle, contains('await _restoreNativeSubtitleFallback();'));
   });
 
-  test('AI preparation overlay remains visible even when toggled during playback', () {
+  test('AI preparation overlay remains available for legacy complete-file operations', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(player, contains('if (_error == null && _aiSubtitleLoading)'));
