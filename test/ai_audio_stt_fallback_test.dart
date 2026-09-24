@@ -30,5 +30,18 @@ void main() {
     expect(audio, contains("'apikey': _guestFunctionJwt"));
     expect(audio, contains('windowStride = Duration(seconds: 20)'));
     expect(audio, contains('transcribe-audio-si'));
+
+    // Windows must not use FFmpegKit in-process for the rolling audio window.
+    // The native plugin callback path previously terminated the whole app.
+    expect(audio, contains('if (Platform.isWindows)'));
+    expect(audio, contains("'tools${Platform.pathSeparator}ffmpeg"));
+    expect(audio, contains('Process.run('));
+    expect(audio, contains("'-nostdin'"));
+    expect(
+      player,
+      contains(
+        'Embedded English subtitle found, but it is image-based (PGS/VobSub)',
+      ),
+    );
   });
 }
