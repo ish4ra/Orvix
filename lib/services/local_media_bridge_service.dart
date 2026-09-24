@@ -89,7 +89,12 @@ class LocalMediaBridgeService {
 
   Future<void> _serve(HttpServer server) async {
     await for (final request in server) {
-      unawaited(_handle(request));
+      unawaited(
+        _handle(request).catchError((_) {
+          // A cancelled libmpv range request must never become an unhandled
+          // Future error on Flutter's root zone.
+        }),
+      );
     }
   }
 
@@ -126,6 +131,7 @@ class LocalMediaBridgeService {
     _copyRequestHeader(request, upstream, HttpHeaders.acceptHeader);
     _copyRequestHeader(request, upstream, HttpHeaders.userAgentHeader);
 
+    var responseStarted = false;
     try {
       final response =
           await _client.send(upstream).timeout(const Duration(seconds: 35));
@@ -143,15 +149,27 @@ class LocalMediaBridgeService {
         _copyResponseHeader(response, request, name);
       }
 
+      responseStarted = true;
       if (request.method == 'HEAD') {
         await response.stream.drain<void>();
       } else {
         await request.response.addStream(response.stream);
       }
     } on TimeoutException {
-      request.response.statusCode = HttpStatus.gatewayTimeout;
+      if (!responseStarted) {
+        try {
+          request.response.statusCode = HttpStatus.gatewayTimeout;
+        } catch (_) {}
+      }
     } catch (_) {
-      request.response.statusCode = HttpStatus.badGateway;
+      // libmpv routinely cancels/replaces range requests during demuxing.
+      // Once response headers have been sent, changing statusCode throws a
+      // second exception. Swallow the disconnect and just close the socket.
+      if (!responseStarted) {
+        try {
+          request.response.statusCode = HttpStatus.badGateway;
+        } catch (_) {}
+      }
     } finally {
       try {
         await request.response.close();
