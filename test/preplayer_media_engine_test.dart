@@ -218,6 +218,32 @@ void main() {
     );
   });
 
+  test('media_kit auto pseudo-track cannot masquerade as embedded English', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(player, contains("id != 'auto' && id != 'no'"));
+    expect(
+      player,
+      contains('if (!_isRealSubtitleTrack(track) || _isImageSubtitleTrack(track))'),
+    );
+    expect(
+      player,
+      contains('.where(_isRealSubtitleTrack)'),
+    );
+    expect(
+      player,
+      contains('phase=cue-probe'),
+    );
+    expect(
+      player,
+      contains('Using real English subtitle cues emitted by the active player.'),
+    );
+    expect(
+      player,
+      contains('_looksLikeEnglishNativeCue(source)'),
+    );
+  });
+
   test('generated Sinhala cache rejects stale non-Sinhala SRT files', () {
     final service =
         File('lib/services/ai_sinhala_subtitle_service.dart').readAsStringSync();
