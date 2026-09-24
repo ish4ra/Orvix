@@ -32,14 +32,13 @@ for asset in "${assets[@]}"; do
   fi
 done
 
-release_id="$(
-  gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-    | jq -r --arg tag "$tag" '.[] | select(.tag_name == $tag) | .id' \
-    | head -n 1
-)"
+resolve_release_id() {
+  gh release view "$tag" --json databaseId --jq '.databaseId' 2>/dev/null || true
+}
 
+release_id="$(resolve_release_id)"
 if [[ -n "$release_id" ]]; then
-  is_draft="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '.draft')"
+  is_draft="$(gh release view "$tag" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
   if [[ "$is_draft" != "true" ]]; then
     echo "non-draft release already exists: $tag" >&2
     exit 1
@@ -52,11 +51,14 @@ else
     --title "$title" \
     --notes-file "$notes_file"
 
-  release_id="$(
-    gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-      | jq -r --arg tag "$tag" '.[] | select(.tag_name == $tag) | .id' \
-      | head -n 1
-  )"
+  # Draft releases are not served by the REST /releases/tags/{tag} endpoint.
+  # Resolve them with gh release view, retrying briefly for GitHub's release
+  # index to observe the newly-created draft.
+  for _ in 1 2 3 4 5 6; do
+    release_id="$(resolve_release_id)"
+    [[ -n "$release_id" ]] && break
+    sleep 2
+  done
   if [[ -z "$release_id" ]]; then
     echo "could not resolve draft release id for $tag" >&2
     exit 1
