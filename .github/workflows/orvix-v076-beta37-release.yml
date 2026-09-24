@@ -109,15 +109,24 @@ jobs:
           segments = [f"Subtitle line {i}: we need to leave this place now." for i in range(1, 97)]
           print(json.dumps({"title": "Orvix CI batch", "segments": segments}))
           PY
-          curl --fail-with-body --silent --show-error --max-time 150 \
-            --request POST \
-            --url 'https://kpjuisxofwqxhbnnsyzf.supabase.co/functions/v1/translate-subtitle-si' \
-            --header "Authorization: Bearer $TOKEN" \
-            --header "apikey: $TOKEN" \
-            --header 'Content-Type: application/json' \
-            --data-binary @/tmp/orvix-ai-batch.json \
-            -o /tmp/orvix-ai-batch-response.json
-          python3 - <<'PY'
+          # Large Gemini batches can occasionally hit a temporary 503
+          # ("model is currently experiencing high demand"). Keep this as a
+          # real release gate, but retry transient upstream availability
+          # failures instead of treating one demand spike as a code regression.
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            STATUS="$(curl --silent --show-error --max-time 150 \
+              --request POST \
+              --url 'https://kpjuisxofwqxhbnnsyzf.supabase.co/functions/v1/translate-subtitle-si' \
+              --header "Authorization: Bearer $TOKEN" \
+              --header "apikey: $TOKEN" \
+              --header 'Content-Type: application/json' \
+              --data-binary @/tmp/orvix-ai-batch.json \
+              --output /tmp/orvix-ai-batch-response.json \
+              --write-out '%{http_code}')"
+
+            if [ "$STATUS" = "200" ]; then
+              if python3 - <<'PY'
           import json, re
           data = json.load(open("/tmp/orvix-ai-batch-response.json", encoding="utf-8"))
           values = data.get("translations")
@@ -126,6 +135,33 @@ jobs:
           if not all(re.search(r"[\u0D80-\u0DFF]", str(value)) for value in values):
               raise SystemExit("Batch response contains a non-Sinhala translation.")
           PY
+              then
+                ok=1
+                break
+              fi
+              echo "96-cue response was HTTP 200 but failed validation." >&2
+              cat /tmp/orvix-ai-batch-response.json >&2 || true
+              exit 1
+            fi
+
+            if [ "$STATUS" = "429" ] || [ "$STATUS" = "502" ] || [ "$STATUS" = "503" ] || [ "$STATUS" = "504" ]; then
+              echo "96-cue AI smoke got transient HTTP $STATUS on attempt $attempt/5." >&2
+              cat /tmp/orvix-ai-batch-response.json >&2 || true
+              if [ "$attempt" -lt 5 ]; then
+                sleep $((attempt * 8))
+                continue
+              fi
+            fi
+
+            echo "96-cue AI smoke failed with HTTP $STATUS." >&2
+            cat /tmp/orvix-ai-batch-response.json >&2 || true
+            exit 1
+          done
+
+          if [ "$ok" -ne 1 ]; then
+            echo "96-cue AI Sinhala backend remained unavailable after retries." >&2
+            exit 1
+          fi
 
       - name: Smoke test OpenSubtitles REST backend wiring
         shell: bash
