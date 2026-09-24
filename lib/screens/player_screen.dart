@@ -3241,9 +3241,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   PlayerLoadingOverlay(
                     item: widget.item,
                     title: widget.title,
-                    message: 'Preparing complete AI Sinhala subtitle',
+                    message: 'Preparing AI Sinhala',
                     detail: _aiPreflightMessage.trim().isEmpty
-                        ? 'Translating the embedded subtitle before playback…'
+                        ? 'Detecting the source’s native English subtitle track…'
                         : _aiPreflightMessage,
                   ),
                 if (_aiSinhalaEnabled && _aiDisplaySubtitle.isNotEmpty)
