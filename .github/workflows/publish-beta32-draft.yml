@@ -39,7 +39,9 @@ jobs:
           done
 
           release_id="$(
-            gh api "repos/$repo/releases?per_page=100"               --jq --arg tag "$tag" '.[] | select(.tag_name == $tag and .draft == true) | .id'               | head -n 1
+            gh api "repos/$repo/releases?per_page=100" \
+              | jq -r --arg tag "$tag" '.[] | select(.tag_name == $tag and .draft == true) | .id' \
+              | head -n 1
           )"
           if [[ -z "$release_id" ]]; then
             echo "private beta.32 draft was not found" >&2
