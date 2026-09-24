@@ -75,39 +75,109 @@ class AiAudioSttService {
     try {
       final startSeconds = (safeStartMs / 1000).toStringAsFixed(3);
       final durationSeconds = (durationMs / 1000).toStringAsFixed(3);
-      final session = await FFmpegKit.executeWithArguments(<String>[
-        '-hide_banner',
-        '-loglevel',
-        'error',
-        '-y',
-        '-ss',
-        startSeconds,
-        '-t',
-        durationSeconds,
-        '-i',
-        videoUrl,
-        '-map',
-        '0:a:0?',
-        '-vn',
-        '-sn',
-        '-dn',
-        '-ac',
-        '1',
-        '-ar',
-        '16000',
-        '-c:a',
-        'aac',
-        '-b:a',
-        '32k',
-        '-f',
-        'adts',
-        file.path,
-      ]).timeout(const Duration(seconds: 45));
 
-      final code = await session.getReturnCode();
-      if (!ReturnCode.isSuccess(code) ||
-          !await file.exists() ||
-          await file.length() < 256) {
+      if (Platform.isWindows) {
+        // The FFmpegKit Windows callback path has crashed the Flutter process
+        // on real remote-MKV runs before Dart can catch an exception. Release
+        // builds already bundle a pinned ffmpeg.exe beside Orvix, so use that
+        // isolated child process instead of loading FFmpegKit in-process.
+        final executableDir = File(Platform.resolvedExecutable).parent;
+        final bundled = File(
+          '${executableDir.path}${Platform.pathSeparator}'
+          'tools${Platform.pathSeparator}ffmpeg${Platform.pathSeparator}'
+          'bin${Platform.pathSeparator}ffmpeg.exe',
+        );
+        if (!await bundled.exists()) {
+          throw const AiAudioSttException(
+            'Bundled Windows FFmpeg tool was missing.',
+          );
+        }
+
+        final result = await Process.run(
+          bundled.path,
+          <String>[
+            '-hide_banner',
+            '-loglevel',
+            'error',
+            '-nostdin',
+            '-y',
+            '-rw_timeout',
+            '30000000',
+            '-ss',
+            startSeconds,
+            '-t',
+            durationSeconds,
+            '-i',
+            videoUrl,
+            '-map',
+            '0:a:0?',
+            '-vn',
+            '-sn',
+            '-dn',
+            '-ac',
+            '1',
+            '-ar',
+            '16000',
+            '-c:a',
+            'aac',
+            '-b:a',
+            '32k',
+            '-f',
+            'adts',
+            file.path,
+          ],
+          workingDirectory: executableDir.path,
+          runInShell: false,
+        ).timeout(const Duration(seconds: 45));
+
+        if (result.exitCode != 0) {
+          final detail = result.stderr.toString().trim();
+          throw AiAudioSttException(
+            detail.isEmpty
+                ? 'Bundled FFmpeg could not extract the audio window.'
+                : 'Bundled FFmpeg audio extraction failed: '
+                    '${detail.length > 280 ? detail.substring(0, 280) : detail}',
+          );
+        }
+      } else {
+        final session = await FFmpegKit.executeWithArguments(<String>[
+          '-hide_banner',
+          '-loglevel',
+          'error',
+          '-y',
+          '-ss',
+          startSeconds,
+          '-t',
+          durationSeconds,
+          '-i',
+          videoUrl,
+          '-map',
+          '0:a:0?',
+          '-vn',
+          '-sn',
+          '-dn',
+          '-ac',
+          '1',
+          '-ar',
+          '16000',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '32k',
+          '-f',
+          'adts',
+          file.path,
+        ]).timeout(const Duration(seconds: 45));
+
+        final code = await session.getReturnCode();
+        if (!ReturnCode.isSuccess(code)) {
+          throw const AiAudioSttException(
+            'Could not extract a short audio window from this video.',
+          );
+        }
+      }
+
+      if (!await file.exists() || await file.length() < 256) {
         throw const AiAudioSttException(
           'Could not extract a short audio window from this video.',
         );
