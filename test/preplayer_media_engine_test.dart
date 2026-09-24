@@ -68,11 +68,10 @@ void main() {
         'subtitle tracks that the active demuxer reports',
       ),
     );
+    expect(player, contains('_scheduleBufferedNativeCueAi('));
     expect(
       player,
-      contains(
-        'Using the English subtitle track reported by the active player.',
-      ),
+      contains('prepareTrustedTranscriptForNativeClock('),
     );
   });
 
@@ -104,7 +103,7 @@ void main() {
     expect(details, contains('originalUri.port == 11470'));
     expect(details, contains('final nativeCueAi = aiSettingEnabled;'));
     expect(player, contains('_bestNativeEnglishTextTrack()'));
-    expect(player, contains('_enableEmbeddedLiveAiFallback('));
+    expect(player, contains('_scheduleBufferedNativeCueAi('));
     expect(
       player,
       contains(
@@ -236,7 +235,7 @@ void main() {
     );
     expect(
       player,
-      contains('Using real English subtitle cues emitted by the active player.'),
+      contains("phase: 'cue-probe'"),
     );
     expect(
       player,
