@@ -297,7 +297,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
     _bufferedNativeAiPreparation = work;
     unawaited(
-      work.whenComplete(() {
+      work.then<void>((_) {}).whenComplete(() {
         if (identical(_bufferedNativeAiPreparation, work)) {
           _bufferedNativeAiPreparation = null;
         }
