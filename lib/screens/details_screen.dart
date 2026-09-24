@@ -4080,7 +4080,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         episode,
         next,
         source: source,
-        aiSourceUrl: url,
+        aiSourceUrl: aiSourceUrl ?? url,
         releaseHint: releaseHint,
         expectedSizeBytes: expectedSizeBytes,
         expectedVideoHash: expectedVideoHash,
@@ -4162,6 +4162,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     EpisodeItem? episode,
     EpisodeItem? next, {
     SourceResult? source,
+    String? aiSourceUrl,
     String? releaseHint,
     int? expectedSizeBytes,
     String? expectedVideoHash,
