@@ -26,6 +26,7 @@ class PlayerScreen extends StatefulWidget {
     required this.playback,
     required this.url,
     required this.title,
+    this.aiSourceUrl,
     this.mediaState,
     this.item,
     this.episode,
@@ -46,6 +47,10 @@ class PlayerScreen extends StatefulWidget {
 
   final PlaybackService playback;
   final String url;
+  // Original/direct media URL used only for AI subtitle inspection. Playback
+  // may be wrapped by a localhost bridge; re-reading that bridge with FFmpeg
+  // caused the beta.32/33 preparation stall.
+  final String? aiSourceUrl;
   final String title;
   final MediaStateService? mediaState;
   final MediaItem? item;
@@ -120,7 +125,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   int _liveTranslationFailures = 0;
   int _liveCueTraceCount = 0;
   int _preparedTranslationFailures = 0;
-  Future<void>? _bufferedNativeAiPreparation;
+  Future<bool>? _bufferedNativeAiPreparation;
   int _nativeAiMatchIndex = -1;
   double _subtitleFontSize = SubtitlePreferencesService.defaultFontSize;
   bool _subtitleBackground = SubtitlePreferencesService.defaultBackground;
@@ -300,7 +305,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  Future<void> _prepareBufferedNativeCueAi({
+  Future<bool> _prepareBufferedNativeCueAi({
     String? preferredTrackLabel,
     required String phase,
   }) async {
@@ -308,24 +313,42 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _closing ||
         !_aiPreferenceEnabled ||
         _subtitleChoiceOverridden) {
-      return;
+      return false;
     }
 
-    if (_aiState.mode != AiSinhalaRuntimeMode.native) {
+    // A text track being detected is NOT the same thing as Sinhala being
+    // ready. beta.33 returned true here immediately, which made _open() start
+    // playback and remove the loading overlay before any translated cue
+    // existed. Stay in PREPARING until both a trusted transcript and the first
+    // Sinhala buffer are actually ready.
+    if (_aiState.mode != AiSinhalaRuntimeMode.preparing) {
       setState(() {
-        _transitionAi(AiSinhalaRuntimeMode.native);
+        _transitionAi(AiSinhalaRuntimeMode.preparing);
         _aiSubtitleUnavailable = false;
         _aiDisplaySubtitle = '';
         _aiPreflightMessage =
-            'English timing track found. Building a Sinhala buffer in the background…';
+            'English subtitle track found. Preparing the first Sinhala buffer…';
+      });
+    } else if (mounted) {
+      setState(() {
+        _aiSubtitleUnavailable = false;
+        _aiDisplaySubtitle = '';
+        _aiPreflightMessage =
+            'English subtitle track found. Preparing the first Sinhala buffer…';
       });
     }
+
     await _setNativeSubtitleVisibility(true);
+
+    final sourceUrl = widget.aiSourceUrl?.trim().isNotEmpty == true
+        ? widget.aiSourceUrl!.trim()
+        : widget.url;
 
     unawaited(
       AiSinhalaTraceService.write(
         'buffered-native-ai-start phase=$phase '
-        'host=${AiSinhalaTraceService.safeHost(widget.url)}',
+        'playbackHost=${AiSinhalaTraceService.safeHost(widget.url)} '
+        'sourceHost=${AiSinhalaTraceService.safeHost(sourceUrl)}',
       ),
     );
 
@@ -334,14 +357,18 @@ class _PlayerScreenState extends State<PlayerScreen> {
       prepared =
           await AiSinhalaSubtitleService.prepareTrustedTranscriptForNativeClock(
         title: widget.title,
-        videoUrl: widget.url,
+        // IMPORTANT: inspect the original provider/debrid URL, never the
+        // localhost playback bridge. FFmpegKit re-reading the localhost bridge
+        // was the reason preparation sat for minutes while MPV already had the
+        // real SubRip track open.
+        videoUrl: sourceUrl,
         releaseHint: widget.releaseHint,
         expectedSizeBytes: widget.expectedSizeBytes,
         expectedVideoHash: widget.expectedVideoHash,
         preferredTrackLabel: preferredTrackLabel,
         onStatus: (message) {
           if (!mounted || _closing) return;
-          _aiPreflightMessage = message;
+          setState(() => _aiPreflightMessage = message);
         },
       );
     } catch (error) {
@@ -350,22 +377,89 @@ class _PlayerScreenState extends State<PlayerScreen> {
           'buffered-native-ai-error phase=$phase type=${error.runtimeType}',
         ),
       );
-      return;
+      if (mounted && !_closing) {
+        setState(() {
+          _transitionAi(AiSinhalaRuntimeMode.native);
+          _aiSubtitleUnavailable = true;
+          _aiPreflightMessage =
+              'Could not prepare a trusted English transcript for this source.';
+        });
+      }
+      return false;
     }
 
     if (!mounted ||
         _closing ||
         !_aiPreferenceEnabled ||
         _subtitleChoiceOverridden) {
-      return;
+      return false;
     }
+
     if (prepared == null) {
       unawaited(
         AiSinhalaTraceService.write(
-          'buffered-native-ai-miss phase=$phase',
+          'buffered-native-ai-miss phase=$phase '
+          'sourceHost=${AiSinhalaTraceService.safeHost(sourceUrl)}',
         ),
       );
-      return;
+      setState(() {
+        _transitionAi(AiSinhalaRuntimeMode.native);
+        _aiSubtitleUnavailable = true;
+        _aiPreflightMessage =
+            'No trusted text transcript could be prepared for this exact video.';
+      });
+      return false;
+    }
+
+    // Do not call this "ready" until actual Sinhala text exists. Translate the
+    // first window while the player remains paused and the loading overlay is
+    // visible. Later windows continue in the background.
+    try {
+      if (mounted) {
+        setState(() {
+          _aiPreflightMessage =
+              'English transcript locked. Translating the first Sinhala lines…';
+        });
+      }
+      await AiSinhalaSubtitleService.ensureTranslatedAround(
+        prepared,
+        Duration.zero,
+        lookBehind: 0,
+        lookAhead: 36,
+      );
+    } catch (error) {
+      unawaited(
+        AiSinhalaTraceService.write(
+          'buffered-native-ai-first-buffer-error phase=$phase '
+          'type=${error.runtimeType}',
+        ),
+      );
+      if (mounted && !_closing) {
+        setState(() {
+          _transitionAi(AiSinhalaRuntimeMode.native);
+          _aiSubtitleUnavailable = true;
+          _aiPreflightMessage =
+              'The first Sinhala subtitle buffer could not be translated.';
+        });
+      }
+      return false;
+    }
+
+    if (prepared.translatedCount <= 0) {
+      unawaited(
+        AiSinhalaTraceService.write(
+          'buffered-native-ai-first-buffer-empty phase=$phase',
+        ),
+      );
+      if (mounted && !_closing) {
+        setState(() {
+          _transitionAi(AiSinhalaRuntimeMode.native);
+          _aiSubtitleUnavailable = true;
+          _aiPreflightMessage =
+              'No Sinhala subtitle lines were produced for the opening buffer.';
+        });
+      }
+      return false;
     }
 
     _nativeSubtitleClockTimer?.cancel();
@@ -380,13 +474,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _timingTrackIsText = true;
 
     setState(() {
-      if (_aiState.mode != AiSinhalaRuntimeMode.prepared) {
-        _transitionAi(AiSinhalaRuntimeMode.prepared);
-      }
+      _transitionAi(AiSinhalaRuntimeMode.prepared);
       _aiSubtitleUnavailable = false;
       _aiDisplaySubtitle = '';
       _aiPreflightMessage =
-          'Exact English transcript locked. Sinhala is buffering ahead in the background.';
+          'Sinhala opening buffer ready. Translating ahead during playback.';
     });
 
     _positionSubscription ??=
@@ -400,7 +492,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await _setNativeSubtitleVisibility(true);
     _startNativeSubtitleClock();
     await _loadManualSync();
-    if (!mounted || _closing) return;
+    if (!mounted || _closing) return false;
 
     final position = widget.playback.player.state.position;
     final bucket = position.inSeconds ~/ 30;
@@ -411,10 +503,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     unawaited(
       AiSinhalaTraceService.write(
         'buffered-native-ai-ready phase=$phase '
-        'cues=${prepared.cues.length} source=${prepared.sourceMatch}',
+        'cues=${prepared.cues.length} translated=${prepared.translatedCount} '
+        'source=${prepared.sourceMatch} '
+        'sourceHost=${AiSinhalaTraceService.safeHost(sourceUrl)}',
       ),
     );
+    return true;
   }
+
   Future<bool> _activateProgressiveNativeCueAi({
     Duration maxWait = const Duration(milliseconds: 2200),
     String phase = 'initial',
@@ -477,19 +573,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ),
       );
 
-      if (_aiState.mode != AiSinhalaRuntimeMode.native && mounted) {
-        setState(() {
-          _transitionAi(AiSinhalaRuntimeMode.native);
-          _aiSubtitleUnavailable = false;
-          _aiDisplaySubtitle = '';
-        });
-      }
       await _setNativeSubtitleVisibility(true);
-      _scheduleBufferedNativeCueAi(
+      return await _prepareBufferedNativeCueAi(
         preferredTrackLabel: _subtitleTrackPreferenceLabel(track),
         phase: phase,
       );
-      return true;
     } catch (error) {
       _timingTrackSelected = false;
       _timingTrackIsText = false;
@@ -785,7 +873,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         }
       }
 
-      if ((aiReady || useProgressiveNativeCueAi) &&
+      if ((aiReady || !useProgressiveNativeCueAi) &&
           !reopenedAfterAiFailure) {
         unawaited(
           AiSinhalaTraceService.write(
