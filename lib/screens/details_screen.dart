@@ -95,6 +95,12 @@ class _DetailsScreenState extends State<DetailsScreen> {
   double? _resolveProgress;
   int? _selectedSeason;
 
+  // Legacy complete-file pre-player AI is intentionally disabled while the
+  // progressive native-cue architecture is validated. Keep this as a runtime
+  // getter so the old recovery code can remain compiled without becoming an
+  // analyzer-level dead branch.
+  bool get _legacyCompleteFileAiPreflightEnabled => false;
+
   @override
   void initState() {
     super.initState();
@@ -3544,7 +3550,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
     // translates those native English cues. Keep the old complete-file engine
     // code below as a dormant recovery path while the new architecture is
     // validated; it must not delay normal startup.
-    final windowsAiEngine = false;
+    final windowsAiEngine = Platform.isWindows &&
+        aiSettingEnabled &&
+        _legacyCompleteFileAiPreflightEnabled;
     final nativeCueAi = aiSettingEnabled;
     final originalUri = Uri.tryParse(url);
     final originalLocalP2p = originalUri != null &&
