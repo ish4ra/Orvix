@@ -1196,8 +1196,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (!mounted || _closing) return;
     setState(() => _aiPreferenceEnabled = enabled);
 
-    final player = widget.playback.player;
-
     if (!enabled) {
       _subtitleChoiceOverridden = false;
       _nativeSubtitleClockTimer?.cancel();
@@ -1222,44 +1220,41 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return;
     }
 
+    // Enabling AI in an already-open player must use the same non-blocking
+    // architecture as automatic startup. Never pause a movie for a full-file
+    // translation: detect the active player's exact English text track and
+    // translate its cues progressively while playback continues.
     _subtitleChoiceOverridden = false;
-    final resumePlaybackAfterToggle = player.state.playing;
-
-    try {
-      await player.pause();
-    } catch (_) {}
-    await _setNativeSubtitleVisibility(false);
+    _generatedAiSubtitlePath = null;
+    _generatedAiSubtitleLabel = null;
+    _preparedAiSubtitle = null;
 
     if (mounted) {
       setState(() {
-        if (_aiState.mode == AiSinhalaRuntimeMode.native) {
-          _transitionAi(AiSinhalaRuntimeMode.preparing);
+        if (_aiState.mode != AiSinhalaRuntimeMode.native) {
+          _transitionAi(AiSinhalaRuntimeMode.native);
         }
         _aiSubtitleUnavailable = false;
         _aiDisplaySubtitle = '';
         _aiPreflightMessage =
-            'Pausing playback while the complete embedded subtitle is translated…';
+            'Detecting the active player’s native English subtitle track…';
       });
     }
 
-    final ready = await _prepareAiSinhalaBeforePlayback();
+    await _setNativeSubtitleVisibility(true);
+    final activated = await _activateProgressiveNativeCueAi(
+      maxWait: const Duration(milliseconds: 1200),
+      phase: 'toggle',
+    );
 
-    if (ready && mounted && !_closing) {
-      await _loadGeneratedAiSubtitleTrack();
-    } else if (mounted && !_closing) {
-      // A failure belongs to this source/playback attempt. Never convert it
-      // into a persistent global opt-out: doing so made every later source
-      // silently bypass the standalone pre-player engine.
-      if (_aiState.mode != AiSinhalaRuntimeMode.native) {
-        setState(() => _transitionAi(AiSinhalaRuntimeMode.native));
-      }
-      await _restoreNativeSubtitleFallback();
-    }
-
-    if (resumePlaybackAfterToggle && !_closing) {
-      try {
-        await player.play();
-      } catch (_) {}
+    if (!activated && mounted && !_closing) {
+      setState(() {
+        _aiSubtitleUnavailable = false;
+        _aiDisplaySubtitle = '';
+        _aiPreflightMessage =
+            'Playing normally while Orvix waits for a native English subtitle track…';
+      });
+      unawaited(_discoverNativeCueAiAfterPlayback());
     }
   }
 
