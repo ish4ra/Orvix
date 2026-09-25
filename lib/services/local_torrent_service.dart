@@ -925,10 +925,28 @@ class LocalTorrentService {
 
   Future<void> ensureRunning() async {
     if (await _heartbeat()) {
-      if (Platform.isAndroid) {
-        await _configureAndroidSafeProfile();
+      if (Platform.isWindows) {
+        final capabilities = await _orvixCapabilities();
+        final currentEngine =
+            capabilities?['exactFileEmbeddedSubtitles'] == true &&
+            _asInt(capabilities?['exactSubtitleRouteVersion']) == 1 &&
+            capabilities?['remoteEmbeddedSubtitles'] == true &&
+            _asInt(capabilities?['remoteSubtitleRouteVersion']) == 1 &&
+            capabilities?['audioWindowExtraction'] == true &&
+            _asInt(capabilities?['audioWindowRouteVersion']) == 1;
+        if (currentEngine) return;
+
+        // A previous Orvix/portable run can leave the old localhost helper
+        // alive. A plain heartbeat is not enough: beta.37's helper would answer
+        // on 11470 but does not implement beta.38's unified audio endpoint.
+        // Stop only Orvix's private binary, then launch the bundled version.
+        await _stopStaleWindowsEngine();
+      } else {
+        if (Platform.isAndroid) {
+          await _configureAndroidSafeProfile();
+        }
+        return;
       }
-      return;
     }
 
     final existing = _starting;
@@ -1078,6 +1096,23 @@ class LocalTorrentService {
     }
   }
 
+  Future<void> _stopStaleWindowsEngine() async {
+    if (!Platform.isWindows) return;
+    try {
+      await Process.run(
+        'taskkill.exe',
+        const <String>['/F', '/IM', bundledExeName],
+        runInShell: false,
+      ).timeout(const Duration(seconds: 4));
+    } catch (_) {
+      // The process may already have exited between heartbeat and replacement.
+    }
+    for (var attempt = 0; attempt < 12; attempt++) {
+      if (!await _heartbeat()) return;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+  }
+
   Future<bool> _heartbeat() async {
     try {
       final response = await http
@@ -1115,23 +1150,33 @@ class LocalTorrentService {
   Future<void> dispose() async {
     _probeCleanupTimer?.cancel();
     _probeCleanupTimer = null;
+
+    // Desktop app teardown must terminate the private native server before the
+    // first await. Flutter cannot await State.dispose(), and the previous order
+    // awaited HTTP torrent cleanup before process.kill(), allowing the UI to
+    // exit while orvix-stream-server.exe survived on port 11470. That stale
+    // process could then fool the next build's heartbeat and serve old routes.
+    if (Platform.isWindows || Platform.isMacOS) {
+      final process = _process;
+      final ownsProcess = _ownsProcess;
+      _process = null;
+      _ownsProcess = false;
+      _currentInfoHash = null;
+      _retainedProbeInfoHashes.clear();
+
+      if (ownsProcess && process != null) {
+        process.kill();
+        try {
+          await process.exitCode.timeout(const Duration(seconds: 3));
+        } catch (_) {}
+      }
+      return;
+    }
+
     await releaseRetainedProbeSessions();
     await releaseCurrentStream();
 
-    final process = _process;
     _process = null;
-    if (_ownsProcess && process != null) {
-      process.kill();
-      if (Platform.isWindows) {
-        try {
-          // Updating Orvix replaces the bundled stream-server executable.
-          // Do not return until Windows has actually released that file.
-          await process.exitCode.timeout(const Duration(seconds: 3));
-        } catch (_) {
-          // Native window teardown has a second process-cleanup guard.
-        }
-      }
-    }
     _ownsProcess = false;
     if (Platform.isAndroid) {
       try {
@@ -1141,4 +1186,5 @@ class LocalTorrentService {
       }
     }
   }
+
 }
