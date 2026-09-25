@@ -1319,6 +1319,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
         });
       }
       await _setNativeSubtitleVisibility(true);
+      _windowsAiTextOnlyHeld = false;
+      if (Platform.isWindows) {
+        activated = await _enableEmbeddedLiveAiFallback(
+          'A readable English text cue appeared after startup; switching to the exact native cue timeline.',
+        );
+        return;
+      }
       _scheduleBufferedNativeCueAi(
         preferredTrackLabel: <String>[
           title,
@@ -2285,6 +2292,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _lastAiPrefetchBucket = -1;
       _lastLiveCueKey = null;
       _liveCueGeneration++;
+      _liveExactCues.clear();
+      _liveExactInFlight.clear();
+      _liveDialogueContext.clear();
+      _liveExactTraceCount = 0;
+      _windowsAiTextOnlyHeld = false;
       _preparedAiSubtitle = null;
       _generatedAiSubtitlePath = null;
       _generatedAiSubtitleLabel = null;
@@ -2605,6 +2617,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _ensureAudioAiAhead(target);
       return;
     }
+    if (_liveAiFallback) {
+      _lastNativeSubtitleStartMs = null;
+      _lastLiveCueKey = null;
+      _refreshLiveExactSubtitle(target);
+      unawaited(_pollLiveExactTextEvents());
+      return;
+    }
 
     _lastNativeSubtitleStartMs = null;
     _lastAiPrefetchBucket = -1;
@@ -2712,6 +2731,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _nativeSubtitleClockTimer?.cancel();
     _liveCueClearTimer?.cancel();
     _liveCueGeneration++;
+    _liveExactCues.clear();
+    _liveExactInFlight.clear();
+    _liveDialogueContext.clear();
 
     // Stop async player callbacks before tearing down libmpv. This prevents
     // completed/error/subtitle events from mutating UI or launching "next"
