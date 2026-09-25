@@ -30,6 +30,12 @@ type prepareRequest struct {
 	PreferredTrackLabel string `json:"preferredTrackLabel,omitempty"`
 }
 
+type audioWindowRequest struct {
+	VideoURL   string `json:"videoUrl"`
+	StartMS    int64  `json:"startMs"`
+	DurationMS int64  `json:"durationMs"`
+}
+
 type prepareResponse struct {
 	OK             bool   `json:"ok"`
 	Engine         string `json:"engine"`
@@ -111,6 +117,7 @@ func main() {
 	mux.HandleFunc("/heartbeat", s.touch(s.heartbeat))
 	mux.HandleFunc("/capabilities", s.touch(s.capabilities))
 	mux.HandleFunc("/prepare", s.touch(s.prepare))
+	mux.HandleFunc("/audio-window", s.touch(s.audioWindow))
 	mux.HandleFunc("/media/", s.touch(s.media))
 
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(*port))
@@ -182,8 +189,89 @@ func (s *server) capabilities(w http.ResponseWriter, r *http.Request) {
 		"embeddedTextExtraction":     true,
 		"openSubtitlesFingerprint":   true,
 		"playbackProxy":              true,
+		"audioWindowExtraction":      true,
 		"requiresPlayerForDiscovery": false,
 	})
+}
+
+func (s *server) audioWindow(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	defer r.Body.Close()
+
+	var req audioWindowRequest
+	dec := json.NewDecoder(io.LimitReader(r.Body, 64*1024))
+	if err := dec.Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	req.VideoURL = strings.TrimSpace(req.VideoURL)
+	if !strings.HasPrefix(req.VideoURL, "http://") && !strings.HasPrefix(req.VideoURL, "https://") {
+		http.Error(w, "videoUrl must be HTTP/HTTPS", http.StatusBadRequest)
+		return
+	}
+	if req.StartMS < 0 {
+		req.StartMS = 0
+	}
+	if req.DurationMS < 1000 || req.DurationMS > 30000 {
+		http.Error(w, "durationMs must be between 1000 and 30000", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+
+	startSeconds := fmt.Sprintf("%.3f", float64(req.StartMS)/1000.0)
+	durationSeconds := fmt.Sprintf("%.3f", float64(req.DurationMS)/1000.0)
+	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+		"-rw_timeout", "30000000",
+		"-ss", startSeconds,
+		"-t", durationSeconds,
+		"-i", req.VideoURL,
+		"-map", "0:a:0?",
+		"-vn", "-sn", "-dn",
+		"-ac", "1",
+		"-ar", "16000",
+		"-c:a", "aac",
+		"-b:a", "32k",
+		"-f", "adts",
+		"-",
+	)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	data, err := cmd.Output()
+	if err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			http.Error(w, "ffmpeg audio extraction timed out", http.StatusGatewayTimeout)
+			return
+		}
+		if len(detail) > 600 {
+			detail = detail[:600]
+		}
+		if detail == "" {
+			detail = err.Error()
+		}
+		http.Error(w, "ffmpeg audio extraction failed: "+detail, http.StatusBadGateway)
+		return
+	}
+	if len(data) < 256 {
+		http.Error(w, "ffmpeg returned an empty audio window", http.StatusBadGateway)
+		return
+	}
+	if len(data) > 850000 {
+		http.Error(w, "ffmpeg returned an unexpectedly large audio window", http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "audio/aac")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 func (s *server) prepare(w http.ResponseWriter, r *http.Request) {
