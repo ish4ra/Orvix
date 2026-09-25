@@ -2236,46 +2236,54 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
   Future<CloudProvider?> _chooseCloudProvider() async {
     final preferred = await widget.cloudPreferences.getPreferred();
-    final pikpak = await widget.pikpak.isSignedIn;
-    final torbox = await widget.torbox.isConnected;
-    if (!pikpak && !torbox) {
+    final connected = <CloudProvider>[];
+    if (await widget.pikpak.isSignedIn) connected.add(CloudProvider.pikpak);
+    if (await widget.torbox.isConnected) connected.add(CloudProvider.torbox);
+    if (await RealDebridService.instance.isConnected) connected.add(CloudProvider.realDebrid);
+    if (await PremiumizeService.instance.isConnected) connected.add(CloudProvider.premiumize);
+    if (connected.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'This torrent source needs PikPak or TorBox. Direct / Free sources play without a debrid account.',
-            ),
-          ),
+          const SnackBar(content: Text('Connect PikPak, TorBox, Real-Debrid or Premiumize first. Direct / Free sources play without a debrid account.')),
         );
       }
       return null;
     }
-    if (pikpak && !torbox) return CloudProvider.pikpak;
-    if (torbox && !pikpak) return CloudProvider.torbox;
-    if (!mounted) return preferred;
+    if (connected.length == 1) return connected.first;
+    if (!mounted) return connected.contains(preferred) ? preferred : connected.first;
     final chosen = await showDialog<CloudProvider>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Send source to'),
-        content: const Text(
-          'Both cloud services are connected. Choose where Orvix should prepare this source.',
-        ),
+        content: const Text('Choose the connected cloud/debrid service Orvix should use for this source.'),
         actions: [
-          OutlinedButton.icon(
-            onPressed: () => Navigator.pop(context, CloudProvider.pikpak),
-            icon: const Icon(Icons.cloud_outlined),
-            label: const Text('PikPak'),
-          ),
-          FilledButton.icon(
-            onPressed: () => Navigator.pop(context, CloudProvider.torbox),
-            icon: const Icon(Icons.bolt_rounded),
-            label: const Text('TorBox'),
-          ),
+          for (final provider in connected)
+            OutlinedButton.icon(
+              onPressed: () => Navigator.pop(context, provider),
+              icon: Icon(provider == CloudProvider.torbox ? Icons.bolt_rounded : Icons.cloud_outlined),
+              label: Text(provider.label),
+            ),
         ],
       ),
     );
     if (chosen != null) await widget.cloudPreferences.setPreferred(chosen);
     return chosen;
+  }
+
+  Future<void> _sendSourceToRealDebrid(SourceResult chosen, MediaItem item, EpisodeItem? episode) async {
+    if (!mounted) return;
+    setState(() { _resolving=true; _resolveProgress=null; _status='Preparing source with Real-Debrid…'; });
+    final url=await RealDebridService.instance.resolveMagnet(chosen.resource,fileIndex:chosen.torrentFileIndex,fileNameHint:chosen.fileNameHint);
+    if (!mounted) return;
+    await _openPlayerUrl(url,item,episode,source:chosen,releaseHint:_sourceReleaseHint(chosen),expectedSizeBytes:chosen.sizeBytes,expectedVideoHash:chosen.videoHash,useLocalMediaBridge:true);
+  }
+
+  Future<void> _sendSourceToPremiumize(SourceResult chosen, MediaItem item, EpisodeItem? episode) async {
+    if (!mounted) return;
+    setState(() { _resolving=true; _resolveProgress=null; _status='Preparing source with Premiumize…'; });
+    final url=await PremiumizeService.instance.resolveMagnet(chosen.resource,fileIndex:chosen.torrentFileIndex,fileNameHint:chosen.fileNameHint);
+    if (!mounted) return;
+    await _openPlayerUrl(url,item,episode,source:chosen,releaseHint:_sourceReleaseHint(chosen),expectedSizeBytes:chosen.sizeBytes,expectedVideoHash:chosen.videoHash,useLocalMediaBridge:true);
   }
 
   Future<void> _sendSourceToTorBox(
