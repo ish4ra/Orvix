@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:orvix/services/local_torrent_service.dart';
 
@@ -32,6 +34,27 @@ void main() {
         r'C:\Apps\Orvix\tools\ffmpeg\bin;C:\Windows\System32;C:\Windows',
       );
       expect(environment['TEMP'], r'C:\Temp');
+    });
+
+    test('rejects stale Windows helper before trusting localhost heartbeat', () {
+      final source =
+          File('lib/services/local_torrent_service.dart').readAsStringSync();
+
+      expect(source, contains("capabilities?['audioWindowExtraction'] == true"));
+      expect(source, contains("_asInt(capabilities?['audioWindowRouteVersion']) == 1"));
+      expect(source, contains('await _stopStaleWindowsEngine();'));
+      expect(source, contains("'taskkill.exe'"));
+      expect(source, contains("const <String>['/F', '/IM', bundledExeName]"));
+
+      final disposeIndex = source.indexOf('Future<void> dispose() async');
+      final desktopBranch =
+          source.indexOf('if (Platform.isWindows || Platform.isMacOS)', disposeIndex);
+      final killIndex = source.indexOf('process.kill();', desktopBranch);
+      final cleanupAwait =
+          source.indexOf('await releaseRetainedProbeSessions();', disposeIndex);
+      expect(desktopBranch, greaterThan(disposeIndex));
+      expect(killIndex, greaterThan(desktopBranch));
+      expect(cleanupAwait, greaterThan(killIndex));
     });
 
     test('keeps provider tracker and adds fallback trackers without duplicates', () {
