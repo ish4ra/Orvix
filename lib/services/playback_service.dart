@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
-import 'ai_sinhala_preferences_service.dart';
 
 class PlaybackService {
   PlaybackService()
@@ -68,18 +67,6 @@ class PlaybackService {
     Map<String, String>? httpHeaders,
     bool play = true,
   }) async {
-    // Final safety barrier: no caller anywhere in the Windows app may start
-    // media with audio/video while AI Sinhala is enabled. The pre-player
-    // pipeline must open paused, attach a verified Sinhala subtitle, and only
-    // then call Player.play().
-    if (Platform.isWindows &&
-        play &&
-        await AiSinhalaPreferencesService.isEnabled()) {
-      throw StateError(
-        'Windows AI Sinhala blocked unprepared autoplay at PlaybackService.',
-      );
-    }
-
     await _applySmartStreamingProfile(url);
     await player.open(
       Media(
