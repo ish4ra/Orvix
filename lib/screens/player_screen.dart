@@ -303,9 +303,23 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _audioAiNativeAttached = true;
       } else {
         var reloaded = false;
+        var currentSid = '';
         try {
+          currentSid = (await platform.getProperty(
+            'sid',
+            waitForInitialization: false,
+          ))
+              .trim();
+        } catch (_) {}
+
+        try {
+          final command = currentSid.isNotEmpty &&
+                  currentSid != 'no' &&
+                  currentSid != 'auto'
+              ? <String>['sub-reload', currentSid]
+              : const <String>['sub-reload'];
           await platform.command(
-            const <String>['sub-reload'],
+            command,
             waitForInitialization: false,
             throwOnError: true,
           );
@@ -315,10 +329,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
           reloaded = false;
         }
 
-        // Some libmpv builds do not reload the selected external subtitle when
-        // sub-reload is issued without an explicit sid. Recover through the
-        // same verified high-level attach path rather than silently leaving the
-        // old SRT selected.
+        // If this libmpv build rejects reload, recover through the same verified
+        // high-level attach path rather than silently leaving stale SRT content.
         if (!reloaded && !await selectAndVerify()) {
           throw const AiSubtitleException(
             'MPV could not reload or reselect the rolling AI Sinhala subtitle track.',
