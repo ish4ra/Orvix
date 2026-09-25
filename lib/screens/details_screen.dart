@@ -4257,7 +4257,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         expectedVideoHash: expectedVideoHash,
         preparedAiSubtitleFile: preparedAiSubtitleFile,
         aiPreflightAttempted: aiPreflightAttempted,
-        aiPreflightFailure: null,
+        aiPreflightFailure: aiPreflightFailure,
         fallbackToExo: tvFreeP2pAuto,
         releaseLocalP2pOnExit: originalLocalP2p,
       );
