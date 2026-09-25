@@ -69,7 +69,14 @@ void main() {
     expect(releasePublisher, contains('gh release upload'));
     expect(releasePublisher, contains('--method PATCH'));
     expect(releasePublisher, contains('-F draft=false'));
-    expect(releasePublisher, contains('-F prerelease=true'));
+    expect(
+      releasePublisher,
+      contains(r'release_prerelease="${ORVIX_RELEASE_PRERELEASE:-true}"'),
+    );
+    expect(
+      releasePublisher,
+      contains(r'-F prerelease="$release_prerelease"'),
+    );
     expect(releasePublisher, contains('expected_count='));
     expect(releasePublisher, contains('.size > 0'));
     expect(windowsMain, contains('CreateMutexW'));
