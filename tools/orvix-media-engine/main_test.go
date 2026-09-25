@@ -159,3 +159,35 @@ func TestLooksEnglish(t *testing.T) {
 		t.Fatal("expected English dialogue to be recognized")
 	}
 }
+
+
+func TestAudioWindowRejectsInvalidDurationBeforeLaunchingFFmpeg(t *testing.T) {
+	s := &server{lastRequest: time.Now()}
+	body := strings.NewReader(`{"videoUrl":"https://example.com/video.mkv","startMs":0,"durationMs":999}`)
+	req := httptest.NewRequest(http.MethodPost, "/audio-window", body)
+	rec := httptest.NewRecorder()
+
+	s.audioWindow(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "durationMs") {
+		t.Fatalf("unexpected body: %q", rec.Body.String())
+	}
+}
+
+func TestCapabilitiesAdvertiseCrashIsolatedAudioExtraction(t *testing.T) {
+	s := &server{lastRequest: time.Now()}
+	req := httptest.NewRequest(http.MethodGet, "/capabilities", nil)
+	rec := httptest.NewRecorder()
+
+	s.capabilities(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "\"audioWindowExtraction\":true") {
+		t.Fatalf("audio extraction capability missing: %s", rec.Body.String())
+	}
+}
