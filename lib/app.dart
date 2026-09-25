@@ -499,37 +499,10 @@ class _OrvixShellState extends State<_OrvixShell> {
                   windowsDesktop ? 10 : 7,
                   windowsDesktop ? 24 : 28,
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      width: windowsDesktop ? 46 : 72,
-                      height: windowsDesktop ? 46 : 72,
-                      child: Image.asset(
-                        'assets/branding/orvix_icon.png',
-                        fit: BoxFit.contain,
-                        filterQuality: FilterQuality.high,
-                        errorBuilder: (_, __, ___) => const Center(
-                          child: Icon(
-                            Icons.play_arrow_rounded,
-                            color: Color(0xFFB9FF45),
-                            size: 42,
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (railExtended) ...[
-                      const SizedBox(width: 11),
-                      const Text(
-                        'ORVIX',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 2.1,
-                          fontSize: 20,
-                        ),
-                      ),
-                    ],
-                  ],
+                child: _OrvixBrand(
+                  iconSize: windowsDesktop ? 46 : 72,
+                  fontSize: 20,
+                  showWordmark: railExtended,
                 ),
               ),
               destinations: const [
@@ -583,6 +556,55 @@ class _OrvixShellState extends State<_OrvixShell> {
   }
 }
 
+
+class _OrvixBrand extends StatelessWidget {
+  const _OrvixBrand({
+    required this.iconSize,
+    required this.fontSize,
+    required this.showWordmark,
+  });
+
+  final double iconSize;
+  final double fontSize;
+  final bool showWordmark;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: iconSize,
+          height: iconSize,
+          child: Image.asset(
+            'assets/branding/orvix_icon.webp',
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.high,
+            errorBuilder: (_, __, ___) => Icon(
+              Icons.play_circle_fill_rounded,
+              color: Theme.of(context).colorScheme.primary,
+              size: iconSize,
+            ),
+          ),
+        ),
+        if (showWordmark) ...[
+          SizedBox(width: iconSize * .20),
+          Text(
+            'orvix',
+            style: TextStyle(
+              color: const Color(0xFFEEFFD3),
+              fontSize: fontSize,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -fontSize * .025,
+              height: 1,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 class _AboutScreen extends StatelessWidget {
   const _AboutScreen();
 
@@ -596,6 +618,12 @@ class _AboutScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              const _OrvixBrand(
+                iconSize: 78,
+                fontSize: 38,
+                showWordmark: true,
+              ),
+              const SizedBox(height: 26),
               Text(
                 'Orvix v${AppUpdateService.currentVersion}',
                 style: Theme.of(context)
@@ -720,35 +748,10 @@ class _TvWordmark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
-    return Row(
-      children: [
-        Container(
-          width: 34,
-          height: 34,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(11),
-            border: Border.all(
-              color: primary.withValues(alpha: .48),
-              width: 1.4,
-            ),
-          ),
-          child: Icon(
-            Icons.play_arrow_rounded,
-            size: 27,
-            color: primary,
-          ),
-        ),
-        const SizedBox(width: 10),
-        const Text(
-          'ORVIX',
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 2.0,
-          ),
-        ),
-      ],
+    return const _OrvixBrand(
+      iconSize: 40,
+      fontSize: 22,
+      showWordmark: true,
     );
   }
 }
