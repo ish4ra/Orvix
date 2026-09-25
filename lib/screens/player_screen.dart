@@ -16,6 +16,7 @@ import '../services/ai_sinhala_runtime_state.dart';
 import '../services/ai_sinhala_trace_service.dart';
 import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/media_state_service.dart';
+import '../services/native_subtitle_event_parser.dart';
 import '../services/online_subtitle_service.dart';
 import '../services/playback_service.dart';
 import '../services/platform_profile.dart';
@@ -3109,91 +3110,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return id.isNotEmpty && id != 'auto' && id != 'no';
   }
 
-  Duration? _parseAssClock(String raw) {
-    final parts = raw.trim().split(':');
-    if (parts.length != 3) return null;
-    final hours = int.tryParse(parts[0]);
-    final minutes = int.tryParse(parts[1]);
-    final seconds = double.tryParse(parts[2]);
-    if (hours == null ||
-        minutes == null ||
-        seconds == null ||
-        !seconds.isFinite ||
-        hours < 0 ||
-        minutes < 0 ||
-        seconds < 0) {
-      return null;
-    }
-    return Duration(
-      milliseconds:
-          ((hours * 3600 + minutes * 60 + seconds) * 1000).round(),
-    );
-  }
-
-  List<String>? _splitAssDialogueFields(String raw) {
-    final colon = raw.indexOf(':');
-    if (colon < 0) return null;
-    final body = raw.substring(colon + 1).trimLeft();
-    final fields = <String>[];
-    var start = 0;
-    // ASS Dialogue has 10 fields. Split only the first 9 commas because the
-    // actual subtitle text is allowed to contain commas.
-    for (var i = 0; i < body.length && fields.length < 9; i++) {
-      if (body.codeUnitAt(i) == 44) {
-        fields.add(body.substring(start, i));
-        start = i + 1;
-      }
-    }
-    if (fields.length != 9 || start > body.length) return null;
-    fields.add(body.substring(start));
-    return fields;
-  }
-
-  String _cleanAssDialogueText(String raw) {
-    return raw
-        .replaceAll(r'\N', '\n')
-        .replaceAll(r'\n', '\n')
-        .replaceAll(r'\h', ' ')
-        .replaceAll(RegExp(r'\{[^}]*\}'), '')
-        .replaceAll(RegExp(r'<[^>]+>'), '')
-        .replaceAll(RegExp(r'[ \t]+'), ' ')
-        .replaceAll(RegExp(r' *\n *'), '\n')
-        .trim();
-  }
-
-  List<({Duration start, Duration end, String text})>
-      _parseNativeAssFullEvents(String raw) {
-    final result =
-        <({Duration start, Duration end, String text})>[];
-    final seen = <String>{};
-    for (final rawLine in raw.split(RegExp(r'[\r\n]+'))) {
-      final line = rawLine.trim();
-      if (!line.toLowerCase().startsWith('dialogue:')) continue;
-      final fields = _splitAssDialogueFields(line);
-      if (fields == null || fields.length != 10) continue;
-      final start = _parseAssClock(fields[1]);
-      final end = _parseAssClock(fields[2]);
-      final text = _cleanAssDialogueText(fields[9]);
-      if (start == null ||
-          end == null ||
-          end <= start ||
-          text.isEmpty ||
-          !_looksLikeEnglishNativeCue(text)) {
-        continue;
-      }
-      final key =
-          '${start.inMilliseconds}|${end.inMilliseconds}|${text.toLowerCase()}';
-      if (!seen.add(key)) continue;
-      result.add((start: start, end: end, text: text));
-    }
-    result.sort((a, b) {
-      final byStart = a.start.compareTo(b.start);
-      if (byStart != 0) return byStart;
-      return a.end.compareTo(b.end);
-    });
-    return result;
-  }
-
   String _liveExactCueKey(
     Duration start,
     Duration end,
@@ -3228,7 +3144,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
     if (raw.trim().isEmpty) return;
 
-    final events = _parseNativeAssFullEvents(raw);
+    final events = NativeSubtitleEventParser.parseAssFull(raw);
     if (events.isEmpty) return;
 
     for (final event in events) {
@@ -3243,7 +3159,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _translateLiveExactEvent(
     String key,
-    ({Duration start, Duration end, String text}) event,
+    NativeSubtitleEvent event,
   ) async {
     final generation = _liveCueGeneration;
     final context = List<String>.from(_liveDialogueContext);
