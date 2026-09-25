@@ -2207,7 +2207,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _liveCueSequence = 0;
     _liveDisplayedSequence = 0;
     _lastLiveCueKey = null;
-    await _setNativeSubtitleDelayProperty(-_liveAiLeadMs / 1000.0);
+    await _applyActiveAiSubtitleDelay();
     await _setNativeSubtitleVisibility(false);
     _startNativeSubtitleClock();
     return true;
@@ -2237,10 +2237,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _generatedAiSubtitlePath = null;
       _generatedAiSubtitleLabel = null;
       _audioAiActive = false;
-      _audioAiWindowWork = null;
+      _audioAiWindowWorks.clear();
       _audioAiWindowStarts.clear();
       _audioAiCoverageEndMs = 0;
       _audioAiNativeAttached = false;
+      _audioAiBitmapTimingMode = false;
+      _audioAiBitmapLastCueIndex = -1;
+      _audioAiBitmapClearTimer?.cancel();
+      _audioAiBitmapClearTimer = null;
       final audioSrt = _audioAiSrtFile;
       _audioAiSrtFile = null;
       if (audioSrt != null) {
@@ -3482,11 +3486,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
     }
 
+    final estimatedDurationMs =
+        (1200 + source.length * 42).clamp(1600, 5200).toInt();
     var cueDurationMs = (cueStartMs != null && cueEndMs != null)
         ? cueEndMs - cueStartMs
-        : 2200;
+        : estimatedDurationMs;
     if (cueDurationMs < 700 || cueDurationMs > 10000) {
-      cueDurationMs = 2200;
+      cueDurationMs = estimatedDurationMs;
     }
 
     try {
@@ -3505,7 +3511,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final elapsedMs =
           DateTime.now().difference(requestStartedAt).inMilliseconds;
       final waitMs = _liveAiLeadMs - elapsedMs;
-      if (waitMs < -1200) {
+      if (waitMs < -300) {
         if (traceCue) {
           unawaited(
             AiSinhalaTraceService.write(
