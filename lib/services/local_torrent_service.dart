@@ -934,12 +934,13 @@ class LocalTorrentService {
             _asInt(capabilities?['remoteSubtitleRouteVersion']) == 1 &&
             capabilities?['audioWindowExtraction'] == true &&
             _asInt(capabilities?['audioWindowRouteVersion']) == 1;
-        if (currentEngine) return;
+        if (currentEngine && _ownsProcess && _process != null) return;
 
-        // A previous Orvix/portable run can leave the old localhost helper
-        // alive. A plain heartbeat is not enough: beta.37's helper would answer
-        // on 11470 but does not implement beta.38's unified audio endpoint.
-        // Stop only Orvix's private binary, then launch the bundled version.
+        // A previous Orvix/portable run can leave a localhost helper alive.
+        // Even when it already exposes the current capabilities, do not inherit
+        // an unowned process: restart it so this app instance owns the lifetime
+        // and can synchronously kill it during Flutter teardown. A plain
+        // heartbeat alone used to let old helpers survive across builds.
         await _stopStaleWindowsEngine();
       } else {
         if (Platform.isAndroid) {
