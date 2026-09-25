@@ -31,13 +31,13 @@ void main() {
     expect(audio, contains('windowStride = Duration(seconds: 20)'));
     expect(audio, contains('transcribe-audio-si'));
 
-    // Windows must not use FFmpegKit in-process for the rolling audio window.
-    // The native plugin callback path previously terminated the whole app.
+    // Windows must keep FFmpeg outside the Flutter process. The Office beta.37
+    // run still terminated after audio-ai-window-start when Dart launched the
+    // child directly, so beta.38 routes extraction through the standalone media
+    // engine process.
     expect(audio, contains('if (Platform.isWindows)'));
-    expect(audio, contains('tools'));
-    expect(audio, contains('ffmpeg.exe'));
-    expect(audio, contains('Process.run('));
-    expect(audio, contains("'-nostdin'"));
+    expect(audio, contains('OrvixMediaEngineService.instance.extractAudioWindow'));
+    expect(audio, isNot(contains('Process.run(')));
     expect(
       player,
       contains(
@@ -55,5 +55,12 @@ void main() {
         'Using the detected English text track directly; full-file rescanning is skipped on Windows.',
       ),
     );
+    expect(player, contains('static const int _liveAiLeadMs = 3000;'));
+    expect(
+      player,
+      contains('await _setNativeSubtitleDelayProperty(-_liveAiLeadMs / 1000.0);'),
+    );
+    expect(player, contains('live-cue-ok index='));
+
   });
 }
