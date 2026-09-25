@@ -468,14 +468,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
     if (_audioAiActive && _preparedAiSubtitle != null) return true;
 
-    final embeddedEnglishBitmap = widget
-        .playback.player.state.tracks.subtitle
-        .any((track) =>
-            _isRealSubtitleTrack(track) &&
-            _isEnglishTrack(track) &&
-            _isImageSubtitleTrack(track));
+    final player = widget.playback.player;
+    final bitmapTimingTrack = _bestNativeEnglishBitmapTrack();
+    final embeddedEnglishBitmap = bitmapTimingTrack != null;
     final audioReason = embeddedEnglishBitmap
-        ? 'Embedded English subtitle found, but it is image-based (PGS/VobSub), so Orvix is listening to the video audio for Sinhala dialogue…'
+        ? 'Embedded English subtitle found, but it is image-based (PGS/VobSub). Orvix is using its exact cue timing while listening to the audio for Sinhala dialogue…'
         : 'No readable English text subtitle was exposed by this source. Listening to the video audio for Sinhala dialogue…';
 
     if (_aiState.mode != AiSinhalaRuntimeMode.preparing) {
@@ -496,14 +493,74 @@ class _PlayerScreenState extends State<PlayerScreen> {
       });
     }
 
-    await _setNativeSubtitleVisibility(true);
-    final firstStart =
-        _audioWindowStartFor(around ?? widget.playback.player.state.position);
-    var cues = await _loadAudioAiWindow(firstStart, phase: phase);
+    // Bitmap English subtitles cannot supply text, but they still contain the
+    // release-authored timing we want. Keep that PGS/VobSub track selected and
+    // decoded while hiding its native pixels; the Flutter Sinhala overlay will
+    // later be driven by the exact bitmap cue clock instead of Gemini timing.
+    _audioAiBitmapTimingMode = false;
+    _audioAiBitmapLastCueIndex = -1;
+    _audioAiBitmapClearTimer?.cancel();
+    _audioAiBitmapClearTimer = null;
+    if (bitmapTimingTrack != null) {
+      try {
+        await player.setSubtitleTrack(bitmapTimingTrack);
+        _timingTrackSelected = true;
+        _timingTrackIsText = false;
+        _audioAiBitmapTimingMode = true;
+        _lastNativeSubtitleStartMs = null;
+        await _hideNativeTimingSubtitle();
+        _startNativeSubtitleClock();
+        unawaited(
+          AiSinhalaTraceService.write(
+            'audio-ai-bitmap-clock id=${bitmapTimingTrack.id} '
+            'language=${bitmapTimingTrack.language ?? ''} '
+            'codec=${bitmapTimingTrack.codec ?? ''}',
+          ),
+        );
+      } catch (error) {
+        _timingTrackSelected = false;
+        _timingTrackIsText = false;
+        _audioAiBitmapTimingMode = false;
+        unawaited(
+          AiSinhalaTraceService.write(
+            'audio-ai-bitmap-clock-error type=${error.runtimeType}',
+          ),
+        );
+      }
+    }
 
-    // Movie/episode openings can contain logos or music. One silent opening
-    // window must not make the whole audio fallback look unavailable.
-    if (cues.isEmpty && mounted && !_closing) {
+    final firstStart =
+        _audioWindowStartFor(around ?? player.state.position);
+
+    // The old serial 28s/20s pipeline could not keep up: a single Gemini/STT
+    // window often takes 20-35 seconds. On Windows prepare two overlapping
+    // windows concurrently so startup has both the opening and the next region,
+    // then keep two workers roughly a minute ahead during playback.
+    final starts = <Duration>[firstStart];
+    if (Platform.isWindows) {
+      starts.add(firstStart + AiAudioSttService.windowStride);
+      if (mounted) {
+        setState(() {
+          _aiPreflightMessage = embeddedEnglishBitmap
+              ? 'Reading the first two dialogue windows while preserving the embedded subtitle timing…'
+              : 'Reading the first two dialogue windows in parallel…';
+        });
+      }
+    }
+
+    final batches = await Future.wait<List<AiAudioSinhalaCue>>(
+      starts.indexed.map(
+        (entry) => _loadAudioAiWindow(
+          entry.$2,
+          phase: entry.$1 == 0 ? phase : '$phase-ahead',
+        ),
+      ),
+    );
+    var cues = batches.expand((batch) => batch).toList(growable: true)
+      ..sort((a, b) => a.start.compareTo(b.start));
+
+    // Non-Windows keeps the conservative single-worker path.
+    if (!Platform.isWindows && cues.isEmpty && mounted && !_closing) {
       final secondStart = firstStart + AiAudioSttService.windowStride;
       if (mounted) {
         setState(() {
@@ -513,6 +570,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
       cues = await _loadAudioAiWindow(secondStart, phase: '$phase-retry');
     }
+
+    // Collapse the overlap between 28-second windows before creating the
+    // prepared subtitle timeline.
+    final unique = <AiAudioSinhalaCue>[];
+    for (final cue in cues) {
+      final normalized = _normalizeAudioCueText(cue.english);
+      final duplicate = unique.any((existing) {
+        final delta =
+            (existing.start.inMilliseconds - cue.start.inMilliseconds).abs();
+        return delta <= 1800 &&
+            _normalizeAudioCueText(existing.english) == normalized;
+      });
+      if (!duplicate) unique.add(cue);
+    }
+    cues = unique;
 
     if (!mounted ||
         _closing ||
@@ -528,6 +600,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _aiPreflightMessage =
             'AI Sinhala could not derive dialogue from this source, so Orvix will play the available native subtitles.';
       });
+      _audioAiBitmapTimingMode = false;
+      _timingTrackSelected = false;
+      _timingTrackIsText = false;
       await _setNativeSubtitleVisibility(true);
       return false;
     }
@@ -545,11 +620,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       ..sort((a, b) => a.start.compareTo(b.start));
 
     _preparedAiSubtitle = AiPreparedSubtitle(
-      key: 'audio-stt-v1:${widget.title}:${_aiMediaSourceUrl.hashCode}',
+      key: 'audio-stt-v2:${widget.title}:${_aiMediaSourceUrl.hashCode}',
       title: widget.title,
       sourceUrl: _aiMediaSourceUrl,
       cues: converted,
-      sourceMatch: 'audio-stt',
+      sourceMatch:
+          _audioAiBitmapTimingMode ? 'audio-stt+bitmap-clock' : 'audio-stt',
     );
     _audioAiCoverageEndMs = converted.fold<int>(
       0,
@@ -557,36 +633,53 @@ class _PlayerScreenState extends State<PlayerScreen> {
           cue.end.inMilliseconds > best ? cue.end.inMilliseconds : best,
     );
     _audioAiActive = true;
-    _timingTrackSelected = false;
-    _timingTrackIsText = false;
+    if (!_audioAiBitmapTimingMode) {
+      _timingTrackSelected = false;
+      _timingTrackIsText = false;
+      _nativeSubtitleClockTimer?.cancel();
+    }
     _nativeAiMatchIndex = -1;
     _lastAiPrefetchBucket = -1;
-    _nativeSubtitleClockTimer?.cancel();
     _liveCueClearTimer?.cancel();
 
     setState(() {
       _transitionAi(AiSinhalaRuntimeMode.prepared);
       _aiSubtitleUnavailable = false;
       _aiDisplaySubtitle = '';
-      _aiPreflightMessage =
-          'AI Sinhala audio subtitles are ready. Orvix will keep generating them ahead of playback.';
+      _aiPreflightMessage = _audioAiBitmapTimingMode
+          ? 'AI Sinhala is ready. Embedded PGS/VobSub timing is now the sync authority.'
+          : 'AI Sinhala audio subtitles are ready. Orvix will keep generating them ahead of playback.';
     });
 
     _positionSubscription ??=
-        widget.playback.player.stream.position.listen(_onPosition);
-    final nativeAttached =
-        await _syncAudioAiNativeTrack(initial: true);
-    if (!nativeAttached) {
-      // Non-native platforms retain the Flutter overlay as a fallback.
-      await _setNativeSubtitleVisibility(false);
-      _refreshAiSubtitle();
-    } else if (mounted && _aiDisplaySubtitle.isNotEmpty) {
-      setState(() => _aiDisplaySubtitle = '');
+        player.stream.position.listen(_onPosition);
+
+    if (_audioAiBitmapTimingMode) {
+      // Keep the bitmap track selected but invisible. Do NOT replace it with
+      // the generated SRT, otherwise we lose the exact native timing oracle.
+      _audioAiNativeAttached = false;
+      await _hideNativeTimingSubtitle();
+      _startNativeSubtitleClock();
+    } else {
+      final nativeAttached = await _syncAudioAiNativeTrack(initial: true);
+      if (!nativeAttached) {
+        await _setNativeSubtitleVisibility(false);
+        _refreshAiSubtitle();
+      } else if (mounted && _aiDisplaySubtitle.isNotEmpty) {
+        setState(() => _aiDisplaySubtitle = '');
+      }
     }
+
+    // Fill the future timeline immediately instead of waiting until only 12s
+    // remain. This is what keeps the comparatively slow audio/STT path ahead of
+    // real-time playback.
+    _ensureAudioAiAhead(player.state.position);
+
     unawaited(
       AiSinhalaTraceService.write(
         'audio-ai-ready phase=$phase cues=${converted.length} '
-        'coverageEndMs=$_audioAiCoverageEndMs',
+        'coverageEndMs=$_audioAiCoverageEndMs '
+        'bitmapClock=$_audioAiBitmapTimingMode workers=${_audioAiWindowWorks.length}',
       ),
     );
     return true;
@@ -601,53 +694,74 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return;
     }
 
-    final remainingMs = _audioAiCoverageEndMs - position.inMilliseconds;
-    final jumpedBeyondCoverage = position.inMilliseconds >
-        _audioAiCoverageEndMs + AiAudioSttService.windowDuration.inMilliseconds;
-    if (!jumpedBeyondCoverage &&
-        (remainingMs > 12000 || _audioAiWindowWork != null)) {
-      return;
+    final maxConcurrent = Platform.isWindows ? 2 : 1;
+    if (_audioAiWindowWorks.length >= maxConcurrent) return;
+
+    final positionMs = position.inMilliseconds < 0 ? 0 : position.inMilliseconds;
+    final horizonMs = positionMs + (Platform.isWindows ? 80000 : 35000);
+    final strideMs = AiAudioSttService.windowStride.inMilliseconds;
+    final durationMs = AiAudioSttService.windowDuration.inMilliseconds;
+
+    var candidate = _audioWindowStartFor(position);
+    if (_audioAiWindowStarts.isNotEmpty) {
+      final furthestStart =
+          _audioAiWindowStarts.reduce((a, b) => a > b ? a : b);
+      final stillNearPreparedRegion =
+          positionMs <= furthestStart + durationMs + strideMs;
+      if (stillNearPreparedRegion) {
+        candidate = Duration(milliseconds: furthestStart + strideMs);
+      }
     }
-    if (_audioAiWindowWork != null) return;
 
-    final anchorMs = jumpedBeyondCoverage
-        ? position.inMilliseconds
-        : (_audioAiCoverageEndMs <= 0
-            ? position.inMilliseconds
-            : _audioAiCoverageEndMs - 7000);
-    var candidate = _audioWindowStartFor(
-      Duration(milliseconds: anchorMs < 0 ? 0 : anchorMs),
-    );
-
-    // Silent windows are still marked attempted. Walk forward until the first
-    // untried window so a quiet scene cannot permanently stop subtitle
-    // generation, and a seek can jump straight to the new playback region.
-    for (var i = 0; i < 6; i++) {
-      if (!_audioAiWindowStarts.contains(candidate.inMilliseconds)) {
+    var inspected = 0;
+    while (_audioAiWindowWorks.length < maxConcurrent &&
+        candidate.inMilliseconds <= horizonMs &&
+        inspected < 12) {
+      final startMs = candidate.inMilliseconds;
+      if (!_audioAiWindowStarts.contains(startMs) &&
+          !_audioAiWindowWorks.containsKey(startMs)) {
         _queueAudioAiWindow(candidate);
-        return;
       }
       candidate += AiAudioSttService.windowStride;
+      inspected++;
     }
   }
 
   void _queueAudioAiWindow(Duration start) {
-    if (_audioAiWindowWork != null || _closing || !_audioAiActive) return;
-    final work = () async {
-      final cues = await _loadAudioAiWindow(start, phase: 'prefetch');
-      if (!mounted || _closing || !_audioAiActive || cues.isEmpty) return;
-      _mergeAudioAiCues(cues);
-      final nativeUpdated =
-          await _syncAudioAiNativeTrack(initial: false);
-      if (!nativeUpdated) {
-        _refreshAiSubtitle();
+    if (_closing || !_audioAiActive) return;
+    final startMs = start.inMilliseconds < 0 ? 0 : start.inMilliseconds;
+    if (_audioAiWindowWorks.containsKey(startMs) ||
+        _audioAiWindowStarts.contains(startMs)) {
+      return;
+    }
+
+    late final Future<void> work;
+    work = () async {
+      final cues = await _loadAudioAiWindow(
+        Duration(milliseconds: startMs),
+        phase: 'prefetch',
+      );
+      if (!mounted || _closing || !_audioAiActive) return;
+      if (cues.isNotEmpty) {
+        _mergeAudioAiCues(cues);
+        if (!_audioAiBitmapTimingMode) {
+          final nativeUpdated =
+              await _syncAudioAiNativeTrack(initial: false);
+          if (!nativeUpdated) {
+            _refreshAiSubtitle();
+          }
+        }
       }
     }();
-    _audioAiWindowWork = work;
+
+    _audioAiWindowWorks[startMs] = work;
     unawaited(
       work.whenComplete(() {
-        if (identical(_audioAiWindowWork, work)) {
-          _audioAiWindowWork = null;
+        if (identical(_audioAiWindowWorks[startMs], work)) {
+          _audioAiWindowWorks.remove(startMs);
+        }
+        if (mounted && !_closing && _audioAiActive) {
+          _ensureAudioAiAhead(widget.playback.player.state.position);
         }
       }),
     );
