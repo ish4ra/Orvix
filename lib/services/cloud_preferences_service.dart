@@ -1,9 +1,16 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
-enum CloudProvider { pikpak, torbox }
+enum CloudProvider { pikpak, torbox, realDebrid, premiumize }
 
 extension CloudProviderLabel on CloudProvider {
-  String get label => this == CloudProvider.pikpak ? 'PikPak' : 'TorBox';
+  String get label {
+    switch (this) {
+      case CloudProvider.pikpak: return 'PikPak';
+      case CloudProvider.torbox: return 'TorBox';
+      case CloudProvider.realDebrid: return 'Real-Debrid';
+      case CloudProvider.premiumize: return 'Premiumize';
+    }
+  }
 }
 
 class CloudPreferencesService {
