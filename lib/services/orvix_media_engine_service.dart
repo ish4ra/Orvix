@@ -148,6 +148,62 @@ class OrvixMediaEngineService {
     }
   }
 
+  Future<List<int>> extractAudioWindow({
+    required String videoUrl,
+    required Duration start,
+    required Duration duration,
+  }) async {
+    if (!Platform.isWindows) {
+      throw const OrvixMediaEngineException(
+        'Standalone audio extraction is currently available on Windows only.',
+      );
+    }
+
+    await ensureRunning();
+    final client = http.Client();
+    try {
+      final response = await client
+          .post(
+            Uri.parse('$baseUrl/audio-window'),
+            headers: const {
+              'Content-Type': 'application/json',
+              'Accept': 'audio/aac',
+            },
+            body: jsonEncode({
+              'videoUrl': videoUrl,
+              'startMs': start.inMilliseconds < 0 ? 0 : start.inMilliseconds,
+              'durationMs': duration.inMilliseconds.clamp(1000, 30000),
+            }),
+          )
+          .timeout(const Duration(seconds: 50));
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final detail = utf8
+            .decode(response.bodyBytes, allowMalformed: true)
+            .trim()
+            .replaceAll(RegExp(r'[\r\n]+'), ' ');
+        throw OrvixMediaEngineException(
+          detail.isEmpty
+              ? 'Orvix media engine audio extraction returned HTTP ${response.statusCode}.'
+              : 'Orvix media engine audio extraction failed: '
+                  '${detail.length > 320 ? detail.substring(0, 320) : detail}',
+        );
+      }
+      if (response.bodyBytes.length < 256) {
+        throw const OrvixMediaEngineException(
+          'Orvix media engine returned an empty audio window.',
+        );
+      }
+      return response.bodyBytes;
+    } on TimeoutException {
+      throw const OrvixMediaEngineException(
+        'Orvix media engine timed out while extracting the audio window.',
+      );
+    } finally {
+      client.close();
+    }
+  }
+
   Future<void> ensureRunning() async {
     if (await _heartbeat()) return;
 
