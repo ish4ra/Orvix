@@ -259,18 +259,49 @@ class _PlayerScreenState extends State<PlayerScreen> {
           : Uri.file(file.path).toString();
 
       if (!_audioAiNativeAttached || initial) {
-        // Bypass Flutter's subtitle overlay entirely. The latest beta.34 log
-        // proves Sinhala cues are produced; let libmpv render those timed cues
-        // through the same native subtitle path that already renders normal SRT.
-        await platform.command(
-          <String>['sub-add', uri, 'select', 'AI Sinhala • audio', 'si'],
-          waitForInitialization: false,
-          throwOnError: true,
+        // Use the same media_kit attach path that has already been proven by
+        // complete generated Sinhala SRTs. Earlier audio builds used raw
+        // "sub-add" and marked success without confirming that MPV actually
+        // selected the new track, which could leave perfectly generated cues
+        // invisible.
+        final player = widget.playback.player;
+        final track = mk.SubtitleTrack.uri(
+          uri,
+          title: 'AI Sinhala • audio',
+          language: 'si',
         );
+        Object? lastAttachError;
+        var attached = false;
+        for (var attempt = 0; attempt < 10 && !_closing; attempt++) {
+          try {
+            await player.setSubtitleTrack(track);
+            await _setNativeSubtitleDelayProperty(0);
+            await _setNativeSubtitleVisibility(true);
+          } catch (error) {
+            lastAttachError = error;
+          }
+          await Future<void>.delayed(
+            Duration(milliseconds: attempt < 4 ? 120 : 220),
+          );
+
+          final selected = player.state.track.subtitle;
+          final selectedId = selected.id.toLowerCase();
+          final selectedTitle = (selected.title ?? '').toLowerCase();
+          final selectedLanguage = (selected.language ?? '').toLowerCase();
+          attached = selectedId != 'no' &&
+              (selectedLanguage == 'si' ||
+                  selectedLanguage == 'sin' ||
+                  selectedTitle.contains('ai sinhala'));
+          if (attached) break;
+        }
+        if (!attached) {
+          throw AiSubtitleException(
+            'MPV did not confirm the rolling AI Sinhala audio subtitle track '
+            '(${lastAttachError?.runtimeType ?? 'no attach error'}).',
+          );
+        }
+
         _audioAiNativeAttached = true;
-        await _setNativeSubtitleDelayProperty(0);
-        await _setNativeSubtitleVisibility(true);
-        await Future<void>.delayed(const Duration(milliseconds: 120));
         var sid = '';
         try {
           sid = (await platform.getProperty(
@@ -282,7 +313,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         unawaited(
           AiSinhalaTraceService.write(
             'audio-ai-native-attach cues=${prepared.cues.length} '
-            'bytes=${await file.length()} sid=$sid',
+            'bytes=${await file.length()} sid=$sid confirmed=true',
           ),
         );
       } else {
