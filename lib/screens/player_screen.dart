@@ -112,6 +112,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   int _liveCueGeneration = 0;
   int _liveCueSequence = 0;
   int _liveDisplayedSequence = 0;
+  String? _lastLiveCueKey;
   static const int _liveAiLeadMs = 3000;
   int _lastAiPrefetchBucket = -1;
   final List<String> _liveDialogueContext = <String>[];
@@ -1922,6 +1923,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _nativeSubtitleClockTimer?.cancel();
     _timingTrackSelected = false;
     _timingTrackIsText = false;
+    _lastLiveCueKey = null;
     _liveCueGeneration++;
     if (mounted && _aiState.mode != AiSinhalaRuntimeMode.native) {
       setState(() => _transitionAi(AiSinhalaRuntimeMode.native));
@@ -2001,6 +2003,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // the whole remote MKV.
     _liveCueSequence = 0;
     _liveDisplayedSequence = 0;
+    _lastLiveCueKey = null;
     await _setNativeSubtitleDelayProperty(-_liveAiLeadMs / 1000.0);
     await _setNativeSubtitleVisibility(false);
     _startNativeSubtitleClock();
@@ -2025,6 +2028,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _timingTrackIsText = false;
       _nativeAiMatchIndex = -1;
       _lastAiPrefetchBucket = -1;
+      _lastLiveCueKey = null;
       _liveCueGeneration++;
       _preparedAiSubtitle = null;
       _generatedAiSubtitlePath = null;
@@ -2344,6 +2348,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _lastNativeSubtitleStartMs = null;
     _lastAiPrefetchBucket = -1;
     _nativeAiMatchIndex = -1;
+    _lastLiveCueKey = null;
     _liveCueGeneration++;
     _liveCueClearTimer?.cancel();
     _liveCueClearTimer = null;
@@ -3030,7 +3035,34 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
 
     if (_liveAiFallback) {
-      await _translateLiveSubtitleCue(source);
+      final nativeStartMs = await _nativeSubtitleStartMs();
+      final nativeEndMs = await _nativeSubtitleEndMs();
+      final fallbackPositionMs =
+          widget.playback.player.state.position.inMilliseconds;
+      final dedupClockMs =
+          nativeStartMs ?? ((fallbackPositionMs ~/ 250) * 250);
+      final normalized = source
+          .toLowerCase()
+          .replaceAll(RegExp(r'<[^>]+>'), '')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+      final cueKey = '$dedupClockMs|$normalized';
+      if (_lastLiveCueKey == cueKey) {
+        if (_liveCueTraceCount < 8) {
+          unawaited(
+            AiSinhalaTraceService.write(
+              'live-cue-duplicate startMs=$dedupClockMs chars=${source.length}',
+            ),
+          );
+        }
+        return;
+      }
+      _lastLiveCueKey = cueKey;
+      await _translateLiveSubtitleCue(
+        source,
+        cueStartMs: nativeStartMs,
+        cueEndMs: nativeEndMs,
+      );
       return;
     }
 
@@ -3107,7 +3139,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
-  Future<void> _translateLiveSubtitleCue(String source) async {
+  Future<void> _translateLiveSubtitleCue(
+    String source, {
+    int? cueStartMs,
+    int? cueEndMs,
+  }) async {
     final modeGeneration = _liveCueGeneration;
     final sequence = ++_liveCueSequence;
     final requestStartedAt = DateTime.now();
@@ -3121,8 +3157,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
     }
 
-    final cueStartMs = await _nativeSubtitleStartMs();
-    final cueEndMs = await _nativeSubtitleEndMs();
     var cueDurationMs = (cueStartMs != null && cueEndMs != null)
         ? cueEndMs - cueStartMs
         : 2200;
