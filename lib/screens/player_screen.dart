@@ -3032,6 +3032,237 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return id.isNotEmpty && id != 'auto' && id != 'no';
   }
 
+  Duration? _parseAssClock(String raw) {
+    final parts = raw.trim().split(':');
+    if (parts.length != 3) return null;
+    final hours = int.tryParse(parts[0]);
+    final minutes = int.tryParse(parts[1]);
+    final seconds = double.tryParse(parts[2]);
+    if (hours == null ||
+        minutes == null ||
+        seconds == null ||
+        !seconds.isFinite ||
+        hours < 0 ||
+        minutes < 0 ||
+        seconds < 0) {
+      return null;
+    }
+    return Duration(
+      milliseconds:
+          ((hours * 3600 + minutes * 60 + seconds) * 1000).round(),
+    );
+  }
+
+  List<String>? _splitAssDialogueFields(String raw) {
+    final colon = raw.indexOf(':');
+    if (colon < 0) return null;
+    final body = raw.substring(colon + 1).trimLeft();
+    final fields = <String>[];
+    var start = 0;
+    // ASS Dialogue has 10 fields. Split only the first 9 commas because the
+    // actual subtitle text is allowed to contain commas.
+    for (var i = 0; i < body.length && fields.length < 9; i++) {
+      if (body.codeUnitAt(i) == 44) {
+        fields.add(body.substring(start, i));
+        start = i + 1;
+      }
+    }
+    if (fields.length != 9 || start > body.length) return null;
+    fields.add(body.substring(start));
+    return fields;
+  }
+
+  String _cleanAssDialogueText(String raw) {
+    return raw
+        .replaceAll(r'\N', '\n')
+        .replaceAll(r'\n', '\n')
+        .replaceAll(r'\h', ' ')
+        .replaceAll(RegExp(r'\{[^}]*\}'), '')
+        .replaceAll(RegExp(r'<[^>]+>'), '')
+        .replaceAll(RegExp(r'[ \t]+'), ' ')
+        .replaceAll(RegExp(r' *\n *'), '\n')
+        .trim();
+  }
+
+  List<({Duration start, Duration end, String text})>
+      _parseNativeAssFullEvents(String raw) {
+    final result =
+        <({Duration start, Duration end, String text})>[];
+    final seen = <String>{};
+    for (final rawLine in raw.split(RegExp(r'[\r\n]+'))) {
+      final line = rawLine.trim();
+      if (!line.toLowerCase().startsWith('dialogue:')) continue;
+      final fields = _splitAssDialogueFields(line);
+      if (fields == null || fields.length != 10) continue;
+      final start = _parseAssClock(fields[1]);
+      final end = _parseAssClock(fields[2]);
+      final text = _cleanAssDialogueText(fields[9]);
+      if (start == null ||
+          end == null ||
+          end <= start ||
+          text.isEmpty ||
+          !_looksLikeEnglishNativeCue(text)) {
+        continue;
+      }
+      final key =
+          '${start.inMilliseconds}|${end.inMilliseconds}|${text.toLowerCase()}';
+      if (!seen.add(key)) continue;
+      result.add((start: start, end: end, text: text));
+    }
+    result.sort((a, b) {
+      final byStart = a.start.compareTo(b.start);
+      if (byStart != 0) return byStart;
+      return a.end.compareTo(b.end);
+    });
+    return result;
+  }
+
+  String _liveExactCueKey(
+    Duration start,
+    Duration end,
+    String text,
+  ) {
+    final normalized = text
+        .toLowerCase()
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    return '${start.inMilliseconds}|${end.inMilliseconds}|$normalized';
+  }
+
+  Future<void> _pollLiveExactTextEvents() async {
+    if (!_liveAiFallback ||
+        !_timingTrackSelected ||
+        !_timingTrackIsText ||
+        !mounted ||
+        _closing) {
+      return;
+    }
+    final platform = widget.playback.player.platform;
+    if (platform is! mk.NativePlayer) return;
+
+    String raw;
+    try {
+      raw = await platform.getProperty(
+        'sub-text/ass-full',
+        waitForInitialization: false,
+      );
+    } catch (_) {
+      return;
+    }
+    if (raw.trim().isEmpty) return;
+
+    final events = _parseNativeAssFullEvents(raw);
+    if (events.isEmpty) return;
+
+    for (final event in events) {
+      final key = _liveExactCueKey(event.start, event.end, event.text);
+      if (_liveExactCues.containsKey(key) ||
+          !_liveExactInFlight.add(key)) {
+        continue;
+      }
+      unawaited(_translateLiveExactEvent(key, event));
+    }
+  }
+
+  Future<void> _translateLiveExactEvent(
+    String key,
+    ({Duration start, Duration end, String text}) event,
+  ) async {
+    final generation = _liveCueGeneration;
+    final context = List<String>.from(_liveDialogueContext);
+    try {
+      final translation = await AiSinhalaSubtitleService.translateCue(
+        title: widget.title,
+        text: event.text,
+        context: context,
+      );
+      if (!mounted ||
+          _closing ||
+          !_liveAiFallback ||
+          generation != _liveCueGeneration) {
+        return;
+      }
+
+      _liveExactCues[key] = AiSubtitleCue(
+        start: event.start,
+        end: event.end,
+        source: event.text,
+        translation: translation,
+      );
+      _liveDialogueContext.add(event.text);
+      if (_liveDialogueContext.length > 8) {
+        _liveDialogueContext.removeAt(0);
+      }
+
+      // Bound memory for long movies while keeping enough history for short
+      // backward seeks.
+      final cutoff = widget.playback.player.state.position -
+          const Duration(minutes: 3);
+      if (_liveExactCues.length > 240) {
+        _liveExactCues.removeWhere((_, cue) => cue.end < cutoff);
+      }
+
+      if (_liveExactTraceCount < 20) {
+        _liveExactTraceCount++;
+        unawaited(
+          AiSinhalaTraceService.write(
+            'live-exact-ready index=$_liveExactTraceCount '
+            'startMs=${event.start.inMilliseconds} '
+            'endMs=${event.end.inMilliseconds} '
+            'chars=${event.text.length}',
+          ),
+        );
+      }
+      _refreshLiveExactSubtitle(
+        widget.playback.player.state.position,
+      );
+    } catch (error) {
+      if (_liveExactTraceCount < 20) {
+        _liveExactTraceCount++;
+        unawaited(
+          AiSinhalaTraceService.write(
+            'live-exact-error index=$_liveExactTraceCount '
+            'startMs=${event.start.inMilliseconds} '
+            'type=${error.runtimeType}',
+          ),
+        );
+      }
+    } finally {
+      _liveExactInFlight.remove(key);
+    }
+  }
+
+  void _refreshLiveExactSubtitle(Duration position) {
+    if (!_liveAiFallback || !mounted || _closing) return;
+    var lookupMs = position.inMilliseconds - _manualSyncOffsetMs;
+    if (lookupMs < 0) lookupMs = 0;
+
+    final active = _liveExactCues.values
+        .where(
+          (cue) =>
+              cue.start.inMilliseconds <= lookupMs &&
+              cue.end.inMilliseconds > lookupMs &&
+              cue.translation?.trim().isNotEmpty == true,
+        )
+        .toList(growable: false)
+      ..sort((a, b) {
+        final byStart = a.start.compareTo(b.start);
+        if (byStart != 0) return byStart;
+        return a.end.compareTo(b.end);
+      });
+
+    final lines = <String>[];
+    final seen = <String>{};
+    for (final cue in active) {
+      final translated = cue.translation!.trim();
+      if (seen.add(translated)) lines.add(translated);
+    }
+    final next = lines.join('\n');
+    if (next != _aiDisplaySubtitle) {
+      setState(() => _aiDisplaySubtitle = next);
+    }
+  }
+
   bool _looksLikeEnglishNativeCue(String raw) {
     final text = raw
         .replaceAll(RegExp(r'<[^>]+>'), ' ')
