@@ -8,7 +8,10 @@ void main() {
     expect(player, contains('Future<bool> _syncAudioAiNativeTrack'));
     expect(player, contains('audio-ai-native-attach'));
     expect(player, contains('audio-ai-native-reload'));
-    expect(player, contains("'sub-add'"));
+    expect(player, contains("mk.SubtitleTrack.uri("));
+    expect(player, contains("title: 'AI Sinhala • audio'"));
+    expect(player, contains("language: 'si'"));
+    expect(player, contains('confirmed=true'));
     expect(player, contains("'sub-reload'"));
     expect(player, contains("'sub-remove'"));
     expect(player, contains('_audioAiNativeAttached'));
