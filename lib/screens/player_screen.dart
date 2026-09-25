@@ -2249,6 +2249,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
         'live-native-v1:${widget.title}:${_aiMediaSourceUrl.hashCode}:'
         '${widget.playback.player.state.track.subtitle.id}';
 
+    final platform = widget.playback.player.platform;
+    if (platform is mk.NativePlayer) {
+      // Stop the old media_kit event stream BEFORE entering liveEmbedded mode.
+      // Otherwise a cue can race through the legacy wall-clock translator in
+      // the small async gap while the exact timeline is being initialized.
+      await _subtitleTimingSubscription?.cancel();
+      _subtitleTimingSubscription = null;
+    }
+
     setState(() {
       _preparedAiSubtitle = null;
       _transitionAi(AiSinhalaRuntimeMode.liveEmbedded);
@@ -2262,15 +2271,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         widget.playback.player.stream.position.listen(_onPosition);
     await _loadManualSync();
 
-    final platform = widget.playback.player.platform;
-    if (platform is mk.NativePlayer) {
-      // Windows/libmpv must have exactly one live subtitle input. A stale
-      // media_kit subtitle-stream subscription from a previous AI mode would
-      // re-enter the old wall-clock translator and recreate the beta.39
-      // "editing/refreshing" bug on top of the exact event timeline.
-      await _subtitleTimingSubscription?.cancel();
-      _subtitleTimingSubscription = null;
-    } else {
+    if (platform is! mk.NativePlayer) {
       // Non-libmpv platforms retain the older event stream fallback.
       _subtitleTimingSubscription ??=
           widget.playback.player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
