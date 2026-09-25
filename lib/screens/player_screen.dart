@@ -120,7 +120,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   final Map<String, AiSubtitleCue> _liveExactCues =
       <String, AiSubtitleCue>{};
   final Set<String> _liveExactInFlight = <String>{};
+  final Set<String> _liveExactLateKeys = <String>{};
   int _liveExactTraceCount = 0;
+  String? _liveExactSyncKey;
+  bool _windowsAiTextOnlyHeld = false;
   bool _aiSubtitleUnavailable = false;
   bool _aiPreferenceEnabled = false;
   String _aiPreflightMessage = '';
@@ -2239,6 +2242,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _lastLiveCueKey = null;
     _liveExactCues.clear();
     _liveExactInFlight.clear();
+    _liveExactLateKeys.clear();
     _liveExactTraceCount = 0;
     _liveDialogueContext.clear();
     _liveExactSyncKey =
@@ -2275,8 +2279,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // Advance the hidden native text track only to harvest future cues. Visible
     // Sinhala is NEVER scheduled by wall clock; it is rendered later from the
     // original ASS/SRT event start/end timestamps against the player's position.
-    await _setNativeSubtitleDelayProperty(-_liveAiLeadMs / 1000.0);
     await _setNativeSubtitleVisibility(false);
+    if (platform is mk.NativePlayer) {
+      await _primeLiveExactLookahead();
+    } else {
+      await _setNativeSubtitleDelayProperty(-_liveAiLeadMs / 1000.0);
+    }
     _startNativeSubtitleClock();
     if (platform is mk.NativePlayer) {
       unawaited(_pollLiveExactTextEvents());
@@ -2308,6 +2316,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _liveCueGeneration++;
       _liveExactCues.clear();
       _liveExactInFlight.clear();
+      _liveExactLateKeys.clear();
       _liveDialogueContext.clear();
       _liveExactTraceCount = 0;
       _liveExactSyncKey = null;
@@ -2635,6 +2644,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (_liveAiFallback) {
       _lastNativeSubtitleStartMs = null;
       _lastLiveCueKey = null;
+      _liveExactLateKeys.clear();
       _refreshLiveExactSubtitle(target);
       unawaited(_pollLiveExactTextEvents());
       return;
@@ -2748,6 +2758,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _liveCueGeneration++;
     _liveExactCues.clear();
     _liveExactInFlight.clear();
+    _liveExactLateKeys.clear();
     _liveDialogueContext.clear();
 
     // Stop async player callbacks before tearing down libmpv. This prevents
@@ -3139,6 +3150,59 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return '${start.inMilliseconds}|${end.inMilliseconds}|$normalized';
   }
 
+  void _queueLiveExactEvents(String raw) {
+    if (raw.trim().isEmpty) return;
+    final events = NativeSubtitleEventParser.parseAssFull(raw);
+    for (final event in events) {
+      final key = _liveExactCueKey(event.start, event.end, event.text);
+      if (_liveExactCues.containsKey(key) || !_liveExactInFlight.add(key)) {
+        continue;
+      }
+      unawaited(_translateLiveExactEvent(key, event));
+    }
+  }
+
+  Future<void> _primeLiveExactLookahead() async {
+    final platform = widget.playback.player.platform;
+    if (platform is! mk.NativePlayer ||
+        !_liveAiFallback ||
+        !_timingTrackSelected ||
+        !_timingTrackIsText ||
+        _closing) {
+      return;
+    }
+
+    // The bundled Windows libmpv (2024-10-21) supports sub-text/ass-full but
+    // predates the newer sub-lines property. To avoid losing subtitles in the
+    // first look-ahead window, sample the hidden track across 0..6 seconds
+    // while startup is still paused, then leave it at the normal 6 s lead.
+    //
+    // 250 ms spacing is intentionally smaller than a normal subtitle cue and
+    // keeps this bounded to 25 cheap property reads; no media re-open/seek or
+    // full-file scan is involved.
+    for (var offsetMs = 0;
+        offsetMs <= _liveAiLeadMs && !_closing;
+        offsetMs += 250) {
+      try {
+        await _setNativeSubtitleDelayProperty(-offsetMs / 1000.0);
+        final raw = await platform.getProperty(
+          'sub-text/ass-full',
+          waitForInitialization: false,
+        );
+        _queueLiveExactEvents(raw);
+      } catch (_) {
+        // A point sample can legitimately have no active subtitle.
+      }
+    }
+    await _setNativeSubtitleDelayProperty(-_liveAiLeadMs / 1000.0);
+    unawaited(
+      AiSinhalaTraceService.write(
+        'live-exact-prime leadMs=$_liveAiLeadMs '
+        'queued=${_liveExactCues.length + _liveExactInFlight.length}',
+      ),
+    );
+  }
+
   Future<void> _pollLiveExactTextEvents() async {
     if (!_liveAiFallback ||
         !_timingTrackSelected ||
@@ -3159,19 +3223,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     } catch (_) {
       return;
     }
-    if (raw.trim().isEmpty) return;
-
-    final events = NativeSubtitleEventParser.parseAssFull(raw);
-    if (events.isEmpty) return;
-
-    for (final event in events) {
-      final key = _liveExactCueKey(event.start, event.end, event.text);
-      if (_liveExactCues.containsKey(key) ||
-          !_liveExactInFlight.add(key)) {
-        continue;
-      }
-      unawaited(_translateLiveExactEvent(key, event));
-    }
+    _queueLiveExactEvents(raw);
   }
 
   Future<void> _translateLiveExactEvent(
@@ -3206,6 +3258,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
         source: event.text,
         translation: translation,
       );
+
+      final currentLookupMs =
+          widget.playback.player.state.position.inMilliseconds -
+              _manualSyncOffsetMs;
+      if (currentLookupMs > event.start.inMilliseconds + 300 &&
+          currentLookupMs < event.end.inMilliseconds) {
+        _liveExactLateKeys.add(key);
+        if (_liveExactTraceCount < 20) {
+          _liveExactTraceCount++;
+          unawaited(
+            AiSinhalaTraceService.write(
+              'live-exact-late-skip index=$_liveExactTraceCount '
+              'startMs=${event.start.inMilliseconds} '
+              'currentMs=$currentLookupMs',
+            ),
+          );
+        }
+      }
+
       // Bound memory for long movies while keeping enough history for short
       // backward seeks.
       final cutoff = widget.playback.player.state.position -
@@ -3249,13 +3320,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
     var lookupMs = position.inMilliseconds - _manualSyncOffsetMs;
     if (lookupMs < 0) lookupMs = 0;
 
-    final active = _liveExactCues.values
+    final active = _liveExactCues.entries
         .where(
-          (cue) =>
-              cue.start.inMilliseconds <= lookupMs &&
-              cue.end.inMilliseconds > lookupMs &&
-              cue.translation?.trim().isNotEmpty == true,
+          (entry) =>
+              !_liveExactLateKeys.contains(entry.key) &&
+              entry.value.start.inMilliseconds <= lookupMs &&
+              entry.value.end.inMilliseconds > lookupMs &&
+              entry.value.translation?.trim().isNotEmpty == true,
         )
+        .map((entry) => entry.value)
         .toList(growable: false)
       ..sort((a, b) {
         final byStart = a.start.compareTo(b.start);
