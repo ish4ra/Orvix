@@ -288,8 +288,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m pip install --disable-pip-version-check pillow
-          python3 tools/generate_desktop_branding.py --macos
+          python3 -m venv "$RUNNER_TEMP/orvix-branding-venv"
+          "$RUNNER_TEMP/orvix-branding-venv/bin/python" -m pip install --disable-pip-version-check pillow
+          "$RUNNER_TEMP/orvix-branding-venv/bin/python" tools/generate_desktop_branding.py --macos
           test -s macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_1024.png
 
       - name: Require macOS 10.15+
