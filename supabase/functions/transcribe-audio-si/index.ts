@@ -98,7 +98,10 @@ Listen to the attached short movie/TV audio window. Detect only clearly spoken E
 
 Rules:
 - Timestamps MUST stay between 0 and ${Math.round(durationMs)} ms.
+- Timing accuracy is critical: start_ms should be the first clearly audible phoneme of the phrase and end_ms the last clearly audible phoneme, rounded to about 100 ms.
+- Never shift a phrase toward the start or end of the clip merely because the clip begins/ends nearby.
 - Keep natural subtitle-sized phrases; do not create word-by-word entries.
+- Preserve dialogue order exactly and keep one spoken phrase per cue.
 - Preserve names, emotion, slang, jokes and profanity level.
 - Do not invent dialogue during silence, music, effects, breaths or unclear speech.
 - If speech is uncertain, omit it instead of guessing.
