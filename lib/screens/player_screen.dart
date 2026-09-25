@@ -2255,7 +2255,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
         widget.playback.player.stream.position.listen(_onPosition);
 
     final platform = widget.playback.player.platform;
-    if (platform is! mk.NativePlayer) {
+    if (platform is mk.NativePlayer) {
+      // Windows/libmpv must have exactly one live subtitle input. A stale
+      // media_kit subtitle-stream subscription from a previous AI mode would
+      // re-enter the old wall-clock translator and recreate the beta.39
+      // "editing/refreshing" bug on top of the exact event timeline.
+      await _subtitleTimingSubscription?.cancel();
+      _subtitleTimingSubscription = null;
+    } else {
       // Non-libmpv platforms retain the older event stream fallback.
       _subtitleTimingSubscription ??=
           widget.playback.player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
@@ -2287,6 +2294,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _subtitleChoiceOverridden = false;
       _nativeSubtitleClockTimer?.cancel();
       _liveCueClearTimer?.cancel();
+      await _subtitleTimingSubscription?.cancel();
+      _subtitleTimingSubscription = null;
       _timingTrackSelected = false;
       _timingTrackIsText = false;
       _nativeAiMatchIndex = -1;
