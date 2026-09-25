@@ -1,7 +1,7 @@
 name: orvix
 description: Multi-platform cinematic media hub for Windows, Android mobile, Android TV and macOS.
 publish_to: 'none'
-version: 0.7.6-beta.45+135
+version: 0.7.7+136
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -51,5 +51,4 @@ dependency_overrides:
 flutter:
   uses-material-design: true
   assets:
-    - assets/branding/orvix_icon.png
-    - assets/branding/orvix_tv_banner.jpg
+    - assets/branding/orvix_icon.webp
