@@ -981,10 +981,17 @@ class AiSinhalaSubtitleService {
     onStatus?.call(
       'Checking this exact torrent file for an English subtitle…',
     );
+    onStatus?.call(
+      'Reading subtitle tracks from the Orvix stream engine…',
+    );
     final embedded = await _fetchEmbeddedEnglishSubtitle(
       videoUrl,
       preferredTrackLabel: preferredTrackLabel,
       videoFileNameHint: videoFileNameHint,
+      onStatus: onStatus,
+    ).timeout(
+      const Duration(seconds: 75),
+      onTimeout: () => null,
     );
     if (embedded == null) {
       throw const AiSubtitleException(
@@ -1322,6 +1329,7 @@ class AiSinhalaSubtitleService {
     String rawVideoUrl, {
     String? preferredTrackLabel,
     String? videoFileNameHint,
+    void Function(String message)? onStatus,
   }) async {
     final videoUri = Uri.tryParse(rawVideoUrl);
     final localP2p =
@@ -1352,11 +1360,25 @@ class AiSinhalaSubtitleService {
     // Free P2P. Ask that native engine to probe and extract the exact proxied
     // file before falling back to the cross-platform FFmpegKit path.
     if (remoteEngineProxy) {
+      onStatus?.call(
+        'Asking the Orvix stream engine for embedded subtitle tracks…',
+      );
       final exact = await _fetchOrvixRemoteEmbeddedEnglishSubtitle(
         rawVideoUrl,
         preferredTrackLabel: preferredTrackLabel,
+        onStatus: onStatus,
+      ).timeout(
+        const Duration(seconds: 65),
+        onTimeout: () => null,
       );
       if (exact != null) return exact;
+
+      // On Windows the native 11470 helper already inspected this exact
+      // debrid object. Do not immediately run a second FFmpegKit probe through
+      // the same localhost proxy: that duplicate path caused multi-minute
+      // loading stalls. Let the caller continue to the exact TorBox/P2P
+      // subtitle fallbacks instead.
+      if (Platform.isWindows) return null;
     }
 
     // Cross-platform fallback/main path for debrid/direct URLs and for local
@@ -1396,6 +1418,7 @@ class AiSinhalaSubtitleService {
       _fetchOrvixRemoteEmbeddedEnglishSubtitle(
     String rawVideoUrl, {
     String? preferredTrackLabel,
+    void Function(String message)? onStatus,
   }) async {
     final videoUri = Uri.tryParse(rawVideoUrl);
     if (videoUri == null || !_isOrvixRemoteProxy(videoUri)) return null;
@@ -1439,9 +1462,12 @@ class AiSinhalaSubtitleService {
 
     dynamic decoded;
     try {
+      onStatus?.call(
+        'Scanning the exact debrid file for English subtitle tracks…',
+      );
       final response = await http
           .get(tracksUri)
-          .timeout(const Duration(seconds: 45));
+          .timeout(const Duration(seconds: 25));
       if (response.statusCode < 200 || response.statusCode >= 300) return null;
       decoded =
           jsonDecode(utf8.decode(response.bodyBytes, allowMalformed: true));
@@ -1490,7 +1516,10 @@ class AiSinhalaSubtitleService {
             ? candidates
             : const <Map<String, dynamic>>[];
 
-    for (final candidate in usable) {
+    for (var candidateIndex = 0;
+        candidateIndex < usable.length;
+        candidateIndex++) {
+      final candidate = usable[candidateIndex];
       final id = candidate['id'] is num
           ? (candidate['id'] as num).toInt()
           : int.tryParse(candidate['id']?.toString() ?? '');
@@ -1502,9 +1531,12 @@ class AiSinhalaSubtitleService {
         fragment: '',
       );
       try {
+        onStatus?.call(
+          'Extracting English subtitle track… ${candidateIndex + 1}/${usable.length}',
+        );
         final response = await http
             .get(subtitleUri)
-            .timeout(const Duration(minutes: 3));
+            .timeout(const Duration(seconds: 35));
         if (response.statusCode < 200 || response.statusCode >= 300) continue;
         if (response.headers['x-orvix-remote-file'] != '1') continue;
         final content =
