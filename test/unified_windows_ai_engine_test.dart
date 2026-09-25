@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('Windows AI uses one native media transport end to end', () {
+  test('Windows playback and optional audio extraction share one media transport', () {
     final details = File('lib/screens/details_screen.dart').readAsStringSync();
     final audio =
         File('lib/services/ai_audio_stt_service.dart').readAsStringSync();
@@ -12,14 +12,7 @@ void main() {
     final patch =
         File('tools/patch_orvix_stream_server.py').readAsStringSync();
 
-    // Whatever URL MPV actually receives must also be the URL used for AI
-    // audio extraction. This prevents signed cloud URLs and localhost proxies
-    // from silently diverging.
     expect(details, contains('aiSourceUrl: aiSourceUrl ?? playbackUrl'));
-
-    // The active Windows fallback is owned by the same stream server that owns
-    // Free P2P and cloud proxying. The old standalone 11471 helper is legacy
-    // only and must not be imported by the active audio/STT service.
     expect(
       audio,
       contains('LocalTorrentService.instance.extractAudioWindow'),
@@ -30,8 +23,6 @@ void main() {
     expect(torrent, contains("'audioWindowExtraction'"));
     expect(torrent, contains("'audioWindowRouteVersion'"));
 
-    // The native engine owns FFmpeg, so Flutter receives bounded AAC bytes or a
-    // normal HTTP error instead of hosting FFmpeg/native callbacks in-process.
     expect(patch, contains('"audioWindowExtraction": true'));
     expect(patch, contains('"audioWindowRouteVersion": 1'));
     expect(patch, contains('pub async fn orvix_audio_window'));
@@ -39,20 +30,41 @@ void main() {
     expect(patch, contains('post(routes::subtitles::orvix_audio_window)'));
   });
 
-  test('live native text cues are translated once and ahead of presentation', () {
+  test('Windows text subtitles use exact per-event timeline and position rendering', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+    final parser =
+        File('lib/services/native_subtitle_event_parser.dart').readAsStringSync();
+
+    expect(player, contains('static const int _liveAiLeadMs = 6000;'));
+    expect(player, contains("'sub-text/ass-full'"));
+    expect(player, contains('NativeSubtitleEventParser.parseAssFull(raw)'));
+    expect(player, contains('_liveExactCues'));
+    expect(player, contains('_liveExactInFlight'));
+    expect(player, contains('_refreshLiveExactSubtitle(position)'));
+    expect(player, contains("final next = lines.join('\\n');"));
+    expect(player, contains('live-exact-ready index='));
+
+    expect(parser, contains("startsWith('dialogue:')"));
+    expect(parser, contains('Split only the first 9 commas'));
+    expect(parser, contains('result.sort'));
+  });
+
+  test('Windows PGS/no-text startup is deliberately held instead of audio guessing', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    expect(player, contains('static const int _liveAiLeadMs = 5000;'));
-    expect(player, contains('String? _lastLiveCueKey;'));
-    expect(player, contains("final cueKey = '\$dedupClockMs|\$normalized';"));
-    expect(player, contains('if (_lastLiveCueKey == cueKey)'));
-    expect(player, contains('live-cue-duplicate'));
-    expect(player, contains('cueStartMs: nativeStartMs'));
-    expect(player, contains('cueEndMs: nativeEndMs'));
-    expect(player, contains('Duration maxWait = const Duration(milliseconds: 6500)'));
-    expect(player, contains('_bestNativeEnglishBitmapTrack()'));
-    expect(player, contains('_displayAudioAiAtBitmapTiming'));
-    expect(player, contains('audio-ai-bitmap-sync'));
-    expect(player, contains('Platform.isWindows ? 2 : 1'));
+    expect(player, contains('bool _windowsAiTextOnlyHeld = false;'));
+    expect(player, contains('audio-ai-held phase='));
+    expect(
+      player,
+      contains(
+        'Native subtitles will be used instead of the unreliable audio-listening fallback.',
+      ),
+    );
+    expect(
+      player,
+      contains(
+        'AI Sinhala is paused for this source because no readable English SRT/ASS track was exposed.',
+      ),
+    );
   });
 }
