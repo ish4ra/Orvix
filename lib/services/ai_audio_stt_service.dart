@@ -8,6 +8,8 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'orvix_media_engine_service.dart';
+
 class AiAudioSinhalaCue {
   const AiAudioSinhalaCue({
     required this.start,
@@ -76,68 +78,21 @@ class AiAudioSttService {
       final startSeconds = (safeStartMs / 1000).toStringAsFixed(3);
       final durationSeconds = (durationMs / 1000).toStringAsFixed(3);
 
+      List<int> bytes;
       if (Platform.isWindows) {
-        // The FFmpegKit Windows callback path has crashed the Flutter process
-        // on real remote-MKV runs before Dart can catch an exception. Release
-        // builds already bundle a pinned ffmpeg.exe beside Orvix, so use that
-        // isolated child process instead of loading FFmpegKit in-process.
-        final executableDir = File(Platform.resolvedExecutable).parent;
-        final bundled = File(
-          '${executableDir.path}${Platform.pathSeparator}'
-          'tools${Platform.pathSeparator}ffmpeg${Platform.pathSeparator}'
-          'bin${Platform.pathSeparator}ffmpeg.exe',
-        );
-        if (!await bundled.exists()) {
-          throw const AiAudioSttException(
-            'Bundled Windows FFmpeg tool was missing.',
+        // Keep FFmpeg completely outside the Flutter process. A real Office
+        // test still terminated the app after audio-ai-window-start even when
+        // Dart launched ffmpeg.exe directly. Route extraction through the
+        // already-separate Orvix media engine so an FFmpeg/helper failure can
+        // only fail this request, never the player process.
+        try {
+          bytes = await OrvixMediaEngineService.instance.extractAudioWindow(
+            videoUrl: videoUrl,
+            start: Duration(milliseconds: safeStartMs),
+            duration: Duration(milliseconds: durationMs),
           );
-        }
-
-        final result = await Process.run(
-          bundled.path,
-          <String>[
-            '-hide_banner',
-            '-loglevel',
-            'error',
-            '-nostdin',
-            '-y',
-            '-rw_timeout',
-            '30000000',
-            '-ss',
-            startSeconds,
-            '-t',
-            durationSeconds,
-            '-i',
-            videoUrl,
-            '-map',
-            '0:a:0?',
-            '-vn',
-            '-sn',
-            '-dn',
-            '-ac',
-            '1',
-            '-ar',
-            '16000',
-            '-c:a',
-            'aac',
-            '-b:a',
-            '32k',
-            '-f',
-            'adts',
-            file.path,
-          ],
-          workingDirectory: executableDir.path,
-          runInShell: false,
-        ).timeout(const Duration(seconds: 45));
-
-        if (result.exitCode != 0) {
-          final detail = result.stderr.toString().trim();
-          throw AiAudioSttException(
-            detail.isEmpty
-                ? 'Bundled FFmpeg could not extract the audio window.'
-                : 'Bundled FFmpeg audio extraction failed: '
-                    '${detail.length > 280 ? detail.substring(0, 280) : detail}',
-          );
+        } on OrvixMediaEngineException catch (error) {
+          throw AiAudioSttException(error.message);
         }
       } else {
         final session = await FFmpegKit.executeWithArguments(<String>[
@@ -177,13 +132,14 @@ class AiAudioSttService {
         }
       }
 
-      if (!await file.exists() || await file.length() < 256) {
-        throw const AiAudioSttException(
-          'Could not extract a short audio window from this video.',
-        );
+      if (!Platform.isWindows) {
+        if (!await file.exists() || await file.length() < 256) {
+          throw const AiAudioSttException(
+            'Could not extract a short audio window from this video.',
+          );
+        }
+        bytes = await file.readAsBytes();
       }
-
-      final bytes = await file.readAsBytes();
       // 28 s mono AAC at 32 kbps is normally ~110 KB. Keep a hard guard well
       // below the Edge Function payload ceiling so a malformed encoder output
       // can never create a huge request.
