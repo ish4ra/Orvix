@@ -176,7 +176,7 @@ void main() {
     expect(
       player,
       contains(
-        'Duration maxWait = const Duration(milliseconds: 2200)',
+        'Duration maxWait = const Duration(milliseconds: 6500)',
       ),
     );
     expect(
