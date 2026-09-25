@@ -3554,6 +3554,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
     final legacyWindowsAiPreflight = Platform.isWindows &&
         aiSettingEnabled &&
         _legacyCompleteFileAiPreflightEnabled;
+    // AI Sinhala beta is temporarily limited to original Free P2P sources.
+    // Debrid/cloud playback must stay normal and must never enter AI preflight.
     final nativeCueAi = aiSettingEnabled;
     final originalUri = Uri.tryParse(url);
     final originalLocalP2p = originalUri != null &&
@@ -3635,11 +3637,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     // IMPORTANT: original Free P2P playback is explicitly excluded here. Its
     // existing resolver/stream lifecycle is left untouched; this block only
     // makes cloud/debrid behave like that known-good subtitle architecture.
-    final windowsDebridCompleteSubtitlePreflight = Platform.isWindows &&
-        aiSettingEnabled &&
-        useLocalMediaBridge &&
-        !originalLocalP2p &&
-        !legacyWindowsAiPreflight;
+    final windowsDebridCompleteSubtitlePreflight = false;
 
     if (windowsDebridCompleteSubtitlePreflight) {
       aiPreflightAttempted = true;
@@ -4218,7 +4216,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         isAndroidTv: PlatformProfile.isAndroidTv,
         url: playbackUrl,
         releaseHint: releaseHint,
-        aiSinhalaEnabled: aiEnabled,
+        aiSinhalaEnabled: aiEnabled && !useLocalMediaBridge,
       );
 
       final tvFreeP2pAuto = PlatformProfile.isAndroidTv &&
@@ -4264,8 +4262,8 @@ class _DetailsScreenState extends State<DetailsScreen> {
         expectedSizeBytes: expectedSizeBytes,
         expectedVideoHash: expectedVideoHash,
         preparedAiSubtitleFile: preparedAiSubtitleFile,
-        aiPreflightAttempted: aiPreflightAttempted,
-        aiPreflightFailure: aiPreflightFailure,
+        aiPreflightAttempted: useLocalMediaBridge ? false : aiPreflightAttempted,
+        aiPreflightFailure: useLocalMediaBridge ? null : aiPreflightFailure,
         fallbackToExo: tvFreeP2pAuto,
         releaseLocalP2pOnExit: originalLocalP2p,
       );
