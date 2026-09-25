@@ -29,7 +29,7 @@ void main() {
     expect(open, contains('await widget.playback.player.play();'));
     expect(
       player,
-      contains('Duration maxWait = const Duration(milliseconds: 2200)'),
+      contains('Duration maxWait = const Duration(milliseconds: 6500)'),
     );
   });
 
