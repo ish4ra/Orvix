@@ -110,6 +110,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   String? _generatedAiSubtitleLabel;
   AiSinhalaRuntimeState _aiState = const AiSinhalaRuntimeState.native();
   int _liveCueGeneration = 0;
+  int _liveCueSequence = 0;
+  int _liveDisplayedSequence = 0;
+  static const int _liveAiLeadMs = 3000;
   int _lastAiPrefetchBucket = -1;
   final List<String> _liveDialogueContext = <String>[];
   bool _aiSubtitleUnavailable = false;
@@ -1989,8 +1992,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     _subtitleTimingSubscription ??=
         widget.playback.player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
-    await _setNativeSubtitleDelayProperty(0);
-    await _setNativeSubtitleVisibility(true);
+
+    // Ask MPV to expose each English cue a few seconds before its authored
+    // presentation time. Gemini takes ~1.5-2.2 s per short cue on the real
+    // Prison Break run, so translating only when the cue is already on-screen
+    // guarantees that short lines arrive too late. Keeping the native track
+    // decoded but hidden gives Orvix a small look-ahead buffer without scanning
+    // the whole remote MKV.
+    _liveCueSequence = 0;
+    _liveDisplayedSequence = 0;
+    await _setNativeSubtitleDelayProperty(-_liveAiLeadMs / 1000.0);
+    await _setNativeSubtitleVisibility(false);
     _startNativeSubtitleClock();
     return true;
   }
@@ -3004,6 +3016,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
         .trim();
 
     if (source.isEmpty) {
+      if (_liveAiFallback) {
+        // In lead-buffered live mode MPV's hidden English cue also ends early.
+        // Sinhala owns its own authored-duration timer, so an early empty event
+        // must not clear the translated cue.
+        return;
+      }
       _liveCueGeneration++;
       if (_aiDisplaySubtitle.isNotEmpty && mounted) {
         setState(() => _aiDisplaySubtitle = '');
@@ -3090,32 +3108,26 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _translateLiveSubtitleCue(String source) async {
-    final generation = ++_liveCueGeneration;
+    final modeGeneration = _liveCueGeneration;
+    final sequence = ++_liveCueSequence;
     final requestStartedAt = DateTime.now();
     final traceCue = _liveCueTraceCount < 8;
     if (traceCue) {
       _liveCueTraceCount++;
       unawaited(
         AiSinhalaTraceService.write(
-          'live-cue-start index=$_liveCueTraceCount chars=${source.length}',
+          'live-cue-start index=$_liveCueTraceCount seq=$sequence chars=${source.length}',
         ),
       );
     }
-    _liveCueClearTimer?.cancel();
-    _liveCueClearTimer = null;
 
-    // Live translation is best-effort. Keep the video's own English subtitle
-    // visible while the network request is in flight so AI failure/latency can
-    // never produce a blank subtitle screen.
-    await _setNativeSubtitleVisibility(true);
-
+    final cueStartMs = await _nativeSubtitleStartMs();
     final cueEndMs = await _nativeSubtitleEndMs();
-    if (!mounted || generation != _liveCueGeneration) return;
-
-    // Never leave the previous dialogue on screen while a new cue is being
-    // translated.
-    if (_aiDisplaySubtitle.isNotEmpty) {
-      setState(() => _aiDisplaySubtitle = '');
+    var cueDurationMs = (cueStartMs != null && cueEndMs != null)
+        ? cueEndMs - cueStartMs
+        : 2200;
+    if (cueDurationMs < 700 || cueDurationMs > 10000) {
+      cueDurationMs = 2200;
     }
 
     try {
@@ -3126,26 +3138,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
       if (!mounted ||
           !_liveAiFallback ||
-          generation != _liveCueGeneration) {
+          modeGeneration != _liveCueGeneration ||
+          _closing) {
         return;
       }
 
-      final nowMs = widget.playback.player.state.position.inMilliseconds;
       final elapsedMs =
           DateTime.now().difference(requestStartedAt).inMilliseconds;
-      final remainingMs = cueEndMs == null
-          ? 2200 - elapsedMs
-          : cueEndMs - nowMs;
-
-      // A translation that repeatedly arrives after the cue is no longer a
-      // functioning subtitle path. Count it as a delivery failure and recover
-      // to English instead of leaving the user with a permanently blank overlay.
-      if (remainingMs < 700) {
+      final waitMs = _liveAiLeadMs - elapsedMs;
+      if (waitMs < -1200) {
         if (traceCue) {
           unawaited(
             AiSinhalaTraceService.write(
-              'live-cue-late index=$_liveCueTraceCount '
-              'elapsedMs=$elapsedMs remainingMs=$remainingMs',
+              'live-cue-late index=$_liveCueTraceCount seq=$sequence '
+              'elapsedMs=$elapsedMs leadMs=$_liveAiLeadMs',
             ),
           );
         }
@@ -3153,31 +3159,47 @@ class _PlayerScreenState extends State<PlayerScreen> {
         return;
       }
 
-      if (traceCue) {
-        unawaited(
-          AiSinhalaTraceService.write(
-            'live-cue-ok index=$_liveCueTraceCount '
-            'elapsedMs=$elapsedMs remainingMs=$remainingMs '
-            'translatedChars=${translation.length}',
-          ),
-        );
+      if (waitMs > 0) {
+        await Future<void>.delayed(Duration(milliseconds: waitMs));
       }
+      if (!mounted ||
+          !_liveAiFallback ||
+          modeGeneration != _liveCueGeneration ||
+          _closing ||
+          sequence <= _liveDisplayedSequence) {
+        return;
+      }
+
       _liveTranslationFailures = 0;
+      _liveDisplayedSequence = sequence;
+      _liveCueClearTimer?.cancel();
       await _setNativeSubtitleVisibility(false);
-      if (!mounted || generation != _liveCueGeneration) return;
+      if (!mounted || !_liveAiFallback) return;
       setState(() => _aiDisplaySubtitle = translation);
+
       _liveDialogueContext.add(source);
       if (_liveDialogueContext.length > 6) {
         _liveDialogueContext.removeAt(0);
       }
 
+      if (traceCue) {
+        unawaited(
+          AiSinhalaTraceService.write(
+            'live-cue-ok index=$_liveCueTraceCount seq=$sequence '
+            'elapsedMs=$elapsedMs bufferedMs=${waitMs > 0 ? waitMs : 0} '
+            'durationMs=$cueDurationMs translatedChars=${translation.length}',
+          ),
+        );
+      }
+
       _liveCueClearTimer = Timer(
-        Duration(milliseconds: remainingMs.clamp(700, 8000)),
+        Duration(milliseconds: cueDurationMs.clamp(700, 8000)),
         () {
           _liveCueClearTimer = null;
           if (!mounted ||
               !_liveAiFallback ||
-              generation != _liveCueGeneration) {
+              modeGeneration != _liveCueGeneration ||
+              _liveDisplayedSequence != sequence) {
             return;
           }
           setState(() => _aiDisplaySubtitle = '');
@@ -3187,7 +3209,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (traceCue) {
         unawaited(
           AiSinhalaTraceService.write(
-            'live-cue-error index=$_liveCueTraceCount '
+            'live-cue-error index=$_liveCueTraceCount seq=$sequence '
             'type=${error.runtimeType}',
           ),
         );
