@@ -63,8 +63,9 @@ void main() {
     final block = details.substring(blockStart, legacyStart);
 
     expect(block, contains('!originalLocalP2p'));
+    expect(block, contains('!originalLocalP2p &&'));
     expect(
-      block,
+      details,
       contains(
         'IMPORTANT: original Free P2P playback is explicitly excluded here.',
       ),
