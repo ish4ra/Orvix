@@ -86,10 +86,9 @@ void main() {
         'AI Sinhala startup was blocked because Windows pre-player preparation was bypassed.',
       )),
     );
-    expect(
-      player,
-      contains('aiPreferred && preprepared == null'),
-    );
+    expect(player, contains('aiPreferred &&'));
+    expect(player, contains('preprepared == null &&'));
+    expect(player, contains('!widget.aiPreflightAttempted'));
     expect(
       runtime,
       contains('to == AiSinhalaRuntimeMode.liveEmbedded'),
