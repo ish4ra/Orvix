@@ -1421,9 +1421,19 @@ class AiSinhalaSubtitleService {
       return null;
     }
 
+    // The player URL is the localhost /proxy/?d=<signed remote URL>.
+    // Probe the original provider URL directly from the native helper instead
+    // of making the helper recursively HTTP back into its own /proxy route.
+    // This keeps subtitle extraction on the exact same remote object while
+    // avoiding localhost self-proxy stalls.
+    final remoteMediaUrl =
+        videoUri.queryParameters['d']?.trim().isNotEmpty == true
+            ? videoUri.queryParameters['d']!.trim()
+            : rawVideoUrl;
+
     final tracksUri = videoUri.replace(
       path: '/orvix/remote/subtitlesTracks',
-      queryParameters: <String, String>{'videoUrl': rawVideoUrl},
+      queryParameters: <String, String>{'videoUrl': remoteMediaUrl},
       fragment: '',
     );
 
@@ -1488,7 +1498,7 @@ class AiSinhalaSubtitleService {
       final label = candidate['label']?.toString().trim();
       final subtitleUri = videoUri.replace(
         path: '/orvix/remote/embedded/$id/subtitles.vtt',
-        queryParameters: <String, String>{'videoUrl': rawVideoUrl},
+        queryParameters: <String, String>{'videoUrl': remoteMediaUrl},
         fragment: '',
       );
       try {
@@ -1500,7 +1510,7 @@ class AiSinhalaSubtitleService {
         final content =
             utf8.decode(response.bodyBytes, allowMalformed: true).trim();
         if (content.isEmpty || _parseSubtitle(content).length < 8) continue;
-        final digest = sha256.convert(utf8.encode(rawVideoUrl)).toString();
+        final digest = sha256.convert(utf8.encode(remoteMediaUrl)).toString();
         return _EmbeddedSubtitleSource(
           content: content,
           identity: 'orvix-remote-embedded://$digest/$id',
