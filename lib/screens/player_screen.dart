@@ -257,79 +257,96 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final uri = Platform.isWindows
           ? Uri.file(file.path, windows: true).toString()
           : Uri.file(file.path).toString();
+      final player = widget.playback.player;
+      final track = mk.SubtitleTrack.uri(
+        uri,
+        title: 'AI Sinhala • audio',
+        language: 'si',
+      );
 
-      if (!_audioAiNativeAttached || initial) {
-        // Use the same media_kit attach path that has already been proven by
-        // complete generated Sinhala SRTs. Earlier audio builds used raw
-        // "sub-add" and marked success without confirming that MPV actually
-        // selected the new track, which could leave perfectly generated cues
-        // invisible.
-        final player = widget.playback.player;
-        final track = mk.SubtitleTrack.uri(
-          uri,
-          title: 'AI Sinhala • audio',
-          language: 'si',
-        );
-        Object? lastAttachError;
-        var attached = false;
+      bool selectedIsAudioAi() {
+        final selected = player.state.track.subtitle;
+        final selectedId = selected.id.toLowerCase();
+        final selectedTitle = (selected.title ?? '').toLowerCase();
+        final selectedLanguage = (selected.language ?? '').toLowerCase();
+        return selectedId != 'no' &&
+            (selectedLanguage == 'si' ||
+                selectedLanguage == 'sin' ||
+                selectedTitle.contains('ai sinhala'));
+      }
+
+      Future<bool> selectAndVerify() async {
         for (var attempt = 0; attempt < 10 && !_closing; attempt++) {
           try {
             await player.setSubtitleTrack(track);
             await _setNativeSubtitleDelayProperty(0);
             await _setNativeSubtitleVisibility(true);
-          } catch (error) {
-            lastAttachError = error;
-          }
+          } catch (_) {}
           await Future<void>.delayed(
             Duration(milliseconds: attempt < 4 ? 120 : 220),
           );
-
-          final selected = player.state.track.subtitle;
-          final selectedId = selected.id.toLowerCase();
-          final selectedTitle = (selected.title ?? '').toLowerCase();
-          final selectedLanguage = (selected.language ?? '').toLowerCase();
-          attached = selectedId != 'no' &&
-              (selectedLanguage == 'si' ||
-                  selectedLanguage == 'sin' ||
-                  selectedTitle.contains('ai sinhala'));
-          if (attached) break;
+          if (selectedIsAudioAi()) return true;
         }
-        if (!attached) {
-          throw AiSubtitleException(
-            'MPV did not confirm the rolling AI Sinhala audio subtitle track '
-            '(${lastAttachError?.runtimeType ?? 'no attach error'}).',
+        return false;
+      }
+
+      final firstAttach = !_audioAiNativeAttached || initial;
+      if (firstAttach) {
+        // Use the same media_kit attach path that is proven by complete
+        // generated Sinhala SRTs, and do not report readiness until the player
+        // state confirms that the Sinhala track is selected.
+        if (!await selectAndVerify()) {
+          throw const AiSubtitleException(
+            'MPV did not confirm the rolling AI Sinhala audio subtitle track.',
           );
         }
-
         _audioAiNativeAttached = true;
-        var sid = '';
-        try {
-          sid = (await platform.getProperty(
-            'sid',
-            waitForInitialization: false,
-          ))
-              .trim();
-        } catch (_) {}
-        unawaited(
-          AiSinhalaTraceService.write(
-            'audio-ai-native-attach cues=${prepared.cues.length} '
-            'bytes=${await file.length()} sid=$sid confirmed=true',
-          ),
-        );
       } else {
-        await platform.command(
-          const <String>['sub-reload'],
-          waitForInitialization: false,
-          throwOnError: true,
-        );
-        await _setNativeSubtitleVisibility(true);
-        unawaited(
-          AiSinhalaTraceService.write(
-            'audio-ai-native-reload cues=${prepared.cues.length} '
-            'bytes=${await file.length()}',
-          ),
-        );
+        var reloaded = false;
+        try {
+          await platform.command(
+            const <String>['sub-reload'],
+            waitForInitialization: false,
+            throwOnError: true,
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 80));
+          reloaded = selectedIsAudioAi();
+        } catch (_) {
+          reloaded = false;
+        }
+
+        // Some libmpv builds do not reload the selected external subtitle when
+        // sub-reload is issued without an explicit sid. Recover through the
+        // same verified high-level attach path rather than silently leaving the
+        // old SRT selected.
+        if (!reloaded && !await selectAndVerify()) {
+          throw const AiSubtitleException(
+            'MPV could not reload or reselect the rolling AI Sinhala subtitle track.',
+          );
+        }
+        _audioAiNativeAttached = true;
       }
+
+      await _setNativeSubtitleDelayProperty(0);
+      await _setNativeSubtitleVisibility(true);
+      var sid = '';
+      try {
+        sid = (await platform.getProperty(
+          'sid',
+          waitForInitialization: false,
+        ))
+            .trim();
+      } catch (_) {}
+
+      unawaited(
+        AiSinhalaTraceService.write(
+          firstAttach
+              ? 'audio-ai-native-attach cues=${prepared.cues.length} '
+                  'bytes=${await file.length()} sid=$sid confirmed=true'
+              : 'audio-ai-native-reload cues=${prepared.cues.length} '
+                  'bytes=${await file.length()} sid=$sid confirmed=true',
+        ),
+      );
       return true;
     } catch (error) {
       _audioAiNativeAttached = false;
