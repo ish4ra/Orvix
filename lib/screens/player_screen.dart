@@ -1509,6 +1509,30 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  mk.SubtitleTrack? _bestNativeEnglishBitmapTrack() {
+    final tracks = widget.playback.player.state.tracks.subtitle
+        .where(_isRealSubtitleTrack)
+        .where(_isImageSubtitleTrack)
+        .where(_isEnglishTrack)
+        .toList(growable: false);
+    if (tracks.isEmpty) return null;
+
+    int score(mk.SubtitleTrack track) {
+      final language = (track.language ?? '').toLowerCase();
+      final title = (track.title ?? '').toLowerCase();
+      var value = 0;
+      if (language == 'eng' || language == 'en') value += 120;
+      if (title == 'eng' || title.contains('english')) value += 110;
+      if (title.contains('full')) value += 20;
+      if (title.contains('forced')) value -= 120;
+      if (title.contains('commentary')) value -= 160;
+      return value;
+    }
+
+    tracks.sort((a, b) => score(b).compareTo(score(a)));
+    return tracks.first;
+  }
+
   mk.SubtitleTrack? _bestNativeEnglishTextTrack() {
     final tracks = widget.playback.player.state.tracks.subtitle
         .where(_isRealSubtitleTrack)
