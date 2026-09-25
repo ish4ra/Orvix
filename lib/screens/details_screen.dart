@@ -3625,6 +3625,179 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
     AiGeneratedSubtitleFile? preparedAiSubtitleFile;
     var aiPreflightAttempted = false;
+    String? aiPreflightFailure;
+
+    // Windows debrid/cloud AI now mirrors the proven complete-file Free P2P
+    // subtitle flow: inspect the exact selected media before opening MPV,
+    // extract the full English text subtitle through the modified 11470 engine,
+    // translate every cue, write one Sinhala SRT, then open the player.
+    //
+    // IMPORTANT: original Free P2P playback is explicitly excluded here. Its
+    // existing resolver/stream lifecycle is left untouched; this block only
+    // makes cloud/debrid behave like that known-good subtitle architecture.
+    final windowsDebridCompleteSubtitlePreflight = Platform.isWindows &&
+        aiSettingEnabled &&
+        useLocalMediaBridge &&
+        !originalLocalP2p &&
+        !legacyWindowsAiPreflight;
+
+    if (windowsDebridCompleteSubtitlePreflight) {
+      aiPreflightAttempted = true;
+      if (mounted) {
+        setState(() {
+          _resolving = true;
+          _resolveProgress = null;
+          _status =
+              'AI Sinhala • extracting the complete English subtitle before playback…';
+        });
+      }
+
+      unawaited(
+        AiSinhalaTraceService.write(
+          'complete-preflight-start mode=debrid-11470 '
+          'provider=${source?.provider ?? 'unknown'} '
+          'playbackHost=${AiSinhalaTraceService.safeHost(playbackUrl)}',
+        ),
+      );
+
+      Future<AiGeneratedSubtitleFile?> prepareFromExactP2pOracle() async {
+        if (source == null ||
+            !source.isMagnet ||
+            (source.torrentFileIndex == null &&
+                source.fileNameHint?.trim().isNotEmpty != true)) {
+          return null;
+        }
+
+        String? oracleUrl;
+        try {
+          if (mounted) {
+            setState(() {
+              _status =
+                  'AI Sinhala • debrid subtitle was not readable. Checking the exact same torrent through the Free P2P subtitle engine…';
+            });
+          }
+          unawaited(
+            AiSinhalaTraceService.write(
+              'complete-preflight-p2p-oracle-start '
+              'fileIdx=${source.torrentFileIndex ?? -1}',
+            ),
+          );
+
+          // Use the same Windows warm-up as real Free P2P playback. The old
+          // subtitle-oracle experiment used warmForPlayback=false and could ask
+          // for embedded tracks before the torrent engine had enough metadata.
+          oracleUrl = await LocalTorrentService.instance.resolve(
+            source,
+            warmForPlayback: true,
+            onProgress: (message) {
+              if (!mounted) return;
+              setState(() {
+                _status = 'AI Sinhala • Free P2P subtitle check • $message';
+              });
+            },
+          );
+
+          final generated = await AiSinhalaSubtitleService
+              .prepareGeneratedSinhalaFromEmbeddedSubtitle(
+            title: title,
+            videoUrl: oracleUrl,
+            videoFileNameHint: source.fileNameHint ?? releaseHint,
+            onStatus: (message) {
+              if (!mounted) return;
+              setState(() => _status = 'AI Sinhala • $message');
+            },
+          );
+          unawaited(
+            AiSinhalaTraceService.write(
+              'complete-preflight-p2p-oracle-match '
+              'provider=${source.provider}',
+            ),
+          );
+          return generated;
+        } catch (error) {
+          unawaited(
+            AiSinhalaTraceService.write(
+              'complete-preflight-p2p-oracle-miss '
+              'type=${error.runtimeType}',
+            ),
+          );
+          return null;
+        } finally {
+          // The torrent is subtitle-only in debrid mode. Playback itself stays
+          // on the already prepared cloud/CDN URL.
+          try {
+            await LocalTorrentService.instance.releaseCurrentStream();
+          } catch (_) {}
+        }
+      }
+
+      try {
+        preparedAiSubtitleFile = await AiSinhalaSubtitleService
+            .prepareGeneratedSinhalaFromEmbeddedSubtitle(
+          title: title,
+          videoUrl: playbackUrl,
+          preferredTrackLabel: source?.fileNameHint,
+          videoFileNameHint: source?.fileNameHint ?? releaseHint,
+          onStatus: (message) {
+            if (!mounted) return;
+            setState(() => _status = 'AI Sinhala • $message');
+          },
+        );
+
+        unawaited(
+          AiSinhalaTraceService.write(
+            'complete-preflight-match mode=debrid-11470 '
+            'source=${preparedAiSubtitleFile?.source ?? 'unknown'}',
+          ),
+        );
+      } on AiSubtitleException catch (error) {
+        unawaited(
+          AiSinhalaTraceService.write(
+            'complete-preflight-remote-miss type=AiSubtitleException '
+            'detail=${error.message.replaceAll(RegExp(r'\\s+'), ' ').trim()}',
+          ),
+        );
+
+        // Exact sibling .srt/.ass files inside the same TorBox torrent are
+        // trustworthy and tiny, so keep this same-release path before waking
+        // the P2P oracle.
+        if (torBoxItem != null && torBoxVideoFile != null) {
+          preparedAiSubtitleFile = await _tryTorBoxSiblingSubtitle(
+            cloudItem: torBoxItem,
+            videoFile: torBoxVideoFile,
+            title: title,
+            episode: episode,
+          );
+        }
+
+        preparedAiSubtitleFile ??= await prepareFromExactP2pOracle();
+
+        if (preparedAiSubtitleFile == null) {
+          aiPreflightFailure =
+              'No readable English text subtitle could be extracted from this exact release. '
+              'Orvix will not use the inaccurate live/audio Sinhala fallback.';
+        }
+      } catch (error) {
+        unawaited(
+          AiSinhalaTraceService.write(
+            'complete-preflight-error type=${error.runtimeType}',
+          ),
+        );
+        preparedAiSubtitleFile = await prepareFromExactP2pOracle();
+        if (preparedAiSubtitleFile == null) {
+          aiPreflightFailure =
+              'AI Sinhala could not prepare a complete subtitle for this exact release. '
+              'Orvix will play the native subtitles instead of guessing live Sinhala.';
+        }
+      }
+
+      if (preparedAiSubtitleFile != null && mounted) {
+        setState(() {
+          _status =
+              'AI Sinhala • complete Sinhala subtitle ready. Opening player…';
+        });
+      }
+    }
 
     // Dormant compatibility path for the retired standalone 11471 preflight.
     // Active beta.38 Windows playback does not enter this branch.
