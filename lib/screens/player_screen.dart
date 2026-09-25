@@ -994,7 +994,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<bool> _activateProgressiveNativeCueAi({
-    Duration maxWait = const Duration(milliseconds: 2200),
+    Duration maxWait = const Duration(milliseconds: 6500),
     String phase = 'initial',
   }) async {
     if (!mounted ||
