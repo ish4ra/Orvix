@@ -4080,7 +4080,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
         episode,
         next,
         source: source,
-        aiSourceUrl: aiSourceUrl ?? url,
+        aiSourceUrl: aiSourceUrl ?? playbackUrl,
         releaseHint: releaseHint,
         expectedSizeBytes: expectedSizeBytes,
         expectedVideoHash: expectedVideoHash,
