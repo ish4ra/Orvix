@@ -78,7 +78,7 @@ class AiAudioSttService {
       final startSeconds = (safeStartMs / 1000).toStringAsFixed(3);
       final durationSeconds = (durationMs / 1000).toStringAsFixed(3);
 
-      List<int> bytes;
+      List<int>? bytes;
       if (Platform.isWindows) {
         // Keep FFmpeg completely outside the Flutter process. A real Office
         // test still terminated the app after audio-ai-window-start even when
@@ -140,10 +140,17 @@ class AiAudioSttService {
         }
         bytes = await file.readAsBytes();
       }
+      final audioBytes = bytes;
+      if (audioBytes == null || audioBytes.length < 256) {
+        throw const AiAudioSttException(
+          'Could not extract a short audio window from this video.',
+        );
+      }
+
       // 28 s mono AAC at 32 kbps is normally ~110 KB. Keep a hard guard well
       // below the Edge Function payload ceiling so a malformed encoder output
       // can never create a huge request.
-      if (bytes.length > 850000) {
+      if (audioBytes.length > 850000) {
         throw const AiAudioSttException(
           'The extracted audio window was unexpectedly large.',
         );
@@ -168,7 +175,7 @@ class AiAudioSttService {
               'title': title,
               'mime_type': 'audio/aac',
               'duration_ms': durationMs,
-              'audio_base64': base64Encode(bytes),
+              'audio_base64': base64Encode(audioBytes),
             }),
           )
           .timeout(const Duration(seconds: 40));
