@@ -3736,7 +3736,6 @@ class _DetailsScreenState extends State<DetailsScreen> {
             .prepareGeneratedSinhalaFromEmbeddedSubtitle(
           title: title,
           videoUrl: playbackUrl,
-          preferredTrackLabel: source?.fileNameHint,
           videoFileNameHint: source?.fileNameHint ?? releaseHint,
           onStatus: (message) {
             if (!mounted) return;
@@ -3762,12 +3761,21 @@ class _DetailsScreenState extends State<DetailsScreen> {
         // trustworthy and tiny, so keep this same-release path before waking
         // the P2P oracle.
         if (torBoxItem != null && torBoxVideoFile != null) {
-          preparedAiSubtitleFile = await _tryTorBoxSiblingSubtitle(
-            cloudItem: torBoxItem,
-            videoFile: torBoxVideoFile,
-            title: title,
-            episode: episode,
-          );
+          try {
+            preparedAiSubtitleFile = await _tryTorBoxSiblingSubtitle(
+              cloudItem: torBoxItem,
+              videoFile: torBoxVideoFile,
+              title: title,
+              episode: episode,
+            );
+          } catch (siblingError) {
+            unawaited(
+              AiSinhalaTraceService.write(
+                'complete-preflight-torbox-sibling-miss '
+                'type=${siblingError.runtimeType}',
+              ),
+            );
+          }
         }
 
         preparedAiSubtitleFile ??= await prepareFromExactP2pOracle();
