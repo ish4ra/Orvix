@@ -9,6 +9,8 @@ import '../services/pikpak_transfer_service.dart';
 import '../services/playback_service.dart';
 import '../services/player_engine_preferences_service.dart';
 import '../services/torbox_service.dart';
+import '../services/real_debrid_service.dart';
+import '../services/premiumize_service.dart';
 import 'android_exo_player_screen.dart';
 import 'player_screen.dart';
 
@@ -112,6 +114,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 segments: const [
                   ButtonSegment(value: CloudProvider.pikpak, label: Text('PikPak'), icon: Icon(Icons.cloud_outlined)),
                   ButtonSegment(value: CloudProvider.torbox, label: Text('TorBox'), icon: Icon(Icons.bolt_outlined)),
+                  ButtonSegment(value: CloudProvider.realDebrid, label: Text('Real-Debrid'), icon: Icon(Icons.cloud_done_outlined)),
+                  ButtonSegment(value: CloudProvider.premiumize, label: Text('Premiumize'), icon: Icon(Icons.cloud_queue_rounded)),
                 ],
                 selected: {_provider},
                 onSelectionChanged: (value) => _select(value.first),
@@ -124,18 +128,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
             duration: const Duration(milliseconds: 180),
             child: _provider == CloudProvider.pikpak
                 ? _PikPakPane(
-                    key: const ValueKey('pikpak'),
-                    pikpak: widget.pikpak,
-                    transfer: widget.transfer,
-                    playback: widget.playback,
-                    onAuthChanged: widget.onAuthChanged,
-                  )
-                : _TorBoxPane(
-                    key: const ValueKey('torbox'),
-                    torbox: widget.torbox,
-                    playback: widget.playback,
-                    onAuthChanged: widget.onAuthChanged,
-                  ),
+                    key: const ValueKey('pikpak'), pikpak: widget.pikpak, transfer: widget.transfer, playback: widget.playback, onAuthChanged: widget.onAuthChanged)
+                : _provider == CloudProvider.torbox
+                    ? _TorBoxPane(key: const ValueKey('torbox'), torbox: widget.torbox, playback: widget.playback, onAuthChanged: widget.onAuthChanged)
+                    : _TokenDebridPane(
+                        key: ValueKey(_provider.name),
+                        provider: _provider,
+                        onAuthChanged: widget.onAuthChanged,
+                      ),
           ),
         ),
       ],
@@ -525,3 +525,65 @@ String _formatBytes(int bytes) {
 }
 
 class _FolderCrumb { const _FolderCrumb(this.id, this.name); final String id; final String name; }
+
+
+class _TokenDebridPane extends StatefulWidget {
+  const _TokenDebridPane({super.key, required this.provider, required this.onAuthChanged});
+  final CloudProvider provider;
+  final VoidCallback onAuthChanged;
+  @override State<_TokenDebridPane> createState()=>_TokenDebridPaneState();
+}
+
+class _TokenDebridPaneState extends State<_TokenDebridPane> {
+  final _controller=TextEditingController();
+  bool _connected=false, _busy=true;
+  String? _message, _accountLabel;
+  bool get _rd=>widget.provider==CloudProvider.realDebrid;
+  @override void initState(){super.initState();_restore();}
+  @override void dispose(){_controller.dispose();super.dispose();}
+  Future<void> _restore() async {
+    final connected=_rd?await RealDebridService.instance.isConnected:await PremiumizeService.instance.isConnected;
+    if(!mounted)return;setState((){_connected=connected;_busy=false;});
+    if(connected)await _loadAccount();
+  }
+  Future<void> _loadAccount() async {
+    try{
+      final data=_rd?await RealDebridService.instance.account():await PremiumizeService.instance.account();
+      final label=_rd?(data['username']??data['email']??'Real-Debrid').toString():(data['customer_id']??data['username']??'Premiumize').toString();
+      if(mounted)setState((){_accountLabel=label;_busy=false;});
+    }catch(e){if(mounted)setState(()=>_message='Could not load account: $e');}
+  }
+  Future<void> _connect() async {
+    setState((){_busy=true;_message=null;});
+    try{
+      if(_rd){await RealDebridService.instance.connectWithToken(_controller.text);}else{await PremiumizeService.instance.connectWithApiKey(_controller.text);}
+      _controller.clear();if(!mounted)return;setState((){_connected=true;_busy=false;_message='Connected successfully.';});widget.onAuthChanged();await _loadAccount();
+    }catch(e){if(mounted)setState((){_busy=false;_message='Connection failed: $e';});}
+  }
+  Future<void> _disconnect() async {
+    if(_rd){await RealDebridService.instance.logout();}else{await PremiumizeService.instance.logout();}
+    if(!mounted)return;setState((){_connected=false;_accountLabel=null;_message='Disconnected.';});widget.onAuthChanged();
+  }
+  @override Widget build(BuildContext context){
+    final name=_rd?'Real-Debrid':'Premiumize';
+    return Padding(
+      padding:const EdgeInsets.all(32),
+      child:_cloudCard(context,
+        icon:_rd?Icons.cloud_done_outlined:Icons.cloud_queue_rounded,
+        title:_connected?(_accountLabel??name):'Connect $name',
+        subtitle:_connected
+          ? '$name is ready for torrent source playback. AI Sinhala remains disabled for debrid sources while the feature is in beta.'
+          : (_rd?'Paste your Real-Debrid API token. Orvix stores it only in secure device storage.':'Paste your Premiumize API key. Orvix stores it only in secure device storage.'),
+        children:_connected?[
+          OutlinedButton.icon(onPressed:_busy?null:_disconnect,icon:const Icon(Icons.logout),label:const Text('Disconnect')),
+          if(_message!=null) Text(_message!),
+        ]:[
+          TextField(controller:_controller,enabled:!_busy,obscureText:true,decoration:InputDecoration(labelText:_rd?'Real-Debrid API token':'Premiumize API key',prefixIcon:const Icon(Icons.key_rounded))),
+          const SizedBox(height:12),
+          FilledButton.icon(onPressed:_busy?null:_connect,icon:const Icon(Icons.link_rounded),label:Text('Connect $name')),
+          if(_message!=null) Padding(padding:const EdgeInsets.only(top:10),child:Text(_message!)),
+        ],
+      ),
+    );
+  }
+}
