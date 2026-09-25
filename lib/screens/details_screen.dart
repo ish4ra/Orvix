@@ -23,6 +23,8 @@ import '../services/platform_profile.dart';
 import '../services/player_engine_preferences_service.dart';
 import '../services/source_provider_service.dart';
 import '../services/torbox_service.dart';
+import '../services/real_debrid_service.dart';
+import '../services/premiumize_service.dart';
 import 'android_exo_player_screen.dart';
 import 'player_screen.dart';
 import 'sources_screen.dart';
@@ -1866,7 +1868,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
         // also exists.
         includeLowQuality: true,
       );
-      final hasDebridConnection = await widget.torbox.isConnected;
+      final hasDebridConnection = (await widget.torbox.isConnected) ||
+          (await RealDebridService.instance.isConnected) ||
+          (await PremiumizeService.instance.isConnected);
       await Navigator.of(context).push<void>(
         PageRouteBuilder<void>(
           transitionDuration: const Duration(milliseconds: 180),
@@ -1885,7 +1889,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
               onPlaySource: (chosen) async {
                 final hasCloudConnection =
                     (await widget.pikpak.isSignedIn) ||
-                    (await widget.torbox.isConnected);
+                    (await widget.torbox.isConnected) ||
+                    (await RealDebridService.instance.isConnected) ||
+                    (await PremiumizeService.instance.isConnected);
                 await _playSourceResult(
                   chosen,
                   item,
@@ -1926,7 +1932,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
 
       final pikpakConnected = await widget.pikpak.isSignedIn;
       final torboxConnected = await widget.torbox.isConnected;
-      final hasCloudConnection = pikpakConnected || torboxConnected;
+      final realDebridConnected = await RealDebridService.instance.isConnected;
+      final premiumizeConnected = await PremiumizeService.instance.isConnected;
+      final hasCloudConnection = pikpakConnected || torboxConnected || realDebridConnected || premiumizeConnected;
 
       SourceResult? chosen;
       if (autoUsePinned) {
@@ -2018,7 +2026,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
     bool? hasCloudConnection,
   }) async {
     final cloudConnected = hasCloudConnection ??
-        ((await widget.pikpak.isSignedIn) || (await widget.torbox.isConnected));
+        ((await widget.pikpak.isSignedIn) || (await widget.torbox.isConnected) ||
+            (await RealDebridService.instance.isConnected) ||
+            (await PremiumizeService.instance.isConnected));
     final releaseHint = _sourceReleaseHint(chosen);
 
     if (!chosen.isMagnet) {
@@ -2083,6 +2093,10 @@ class _DetailsScreenState extends State<DetailsScreen> {
     if (cloud == null || !mounted) return;
     if (cloud == CloudProvider.torbox) {
       await _sendSourceToTorBox(chosen, item, episode);
+    } else if (cloud == CloudProvider.realDebrid) {
+      await _sendSourceToRealDebrid(chosen, item, episode);
+    } else if (cloud == CloudProvider.premiumize) {
+      await _sendSourceToPremiumize(chosen, item, episode);
     } else {
       await _sendSourceToPikPak(chosen, item, episode);
     }
