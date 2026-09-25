@@ -927,13 +927,7 @@ class LocalTorrentService {
     if (await _heartbeat()) {
       if (Platform.isWindows) {
         final capabilities = await _orvixCapabilities();
-        final currentEngine =
-            capabilities?['exactFileEmbeddedSubtitles'] == true &&
-            _asInt(capabilities?['exactSubtitleRouteVersion']) == 1 &&
-            capabilities?['remoteEmbeddedSubtitles'] == true &&
-            _asInt(capabilities?['remoteSubtitleRouteVersion']) == 1 &&
-            capabilities?['audioWindowExtraction'] == true &&
-            _asInt(capabilities?['audioWindowRouteVersion']) == 1;
+        final currentEngine = _hasCurrentWindowsCapabilities(capabilities);
         if (currentEngine && _ownsProcess && _process != null) return;
 
         // A previous Orvix/portable run can leave a localhost helper alive.
@@ -1038,6 +1032,18 @@ class LocalTorrentService {
 
       for (var attempt = 0; attempt < 80; attempt++) {
         if (await _heartbeat()) {
+          if (Platform.isWindows) {
+            final capabilities = await _orvixCapabilities();
+            if (!_hasCurrentWindowsCapabilities(capabilities)) {
+              final process = _process;
+              _process = null;
+              _ownsProcess = false;
+              process?.kill();
+              throw const LocalTorrentException(
+                'The bundled Orvix stream engine is an incompatible build. Reinstall the latest Orvix release.',
+              );
+            }
+          }
           completer.complete();
           return;
         }
@@ -1132,6 +1138,15 @@ class LocalTorrentService {
     ).firstMatch(magnet);
     final value = match?.group(1)?.trim().toLowerCase();
     return value == null || value.isEmpty ? null : value;
+  }
+
+  bool _hasCurrentWindowsCapabilities(Map<String, dynamic>? capabilities) {
+    return capabilities?['exactFileEmbeddedSubtitles'] == true &&
+        _asInt(capabilities?['exactSubtitleRouteVersion']) == 1 &&
+        capabilities?['remoteEmbeddedSubtitles'] == true &&
+        _asInt(capabilities?['remoteSubtitleRouteVersion']) == 1 &&
+        capabilities?['audioWindowExtraction'] == true &&
+        _asInt(capabilities?['audioWindowRouteVersion']) == 1;
   }
 
   int? _asInt(Object? value) {
