@@ -2190,30 +2190,43 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (!mounted || _closing || _subtitleChoiceOverridden) return false;
 
     _liveTranslationFailures = 0;
+    _liveCueGeneration++;
+    _liveCueSequence = 0;
+    _liveDisplayedSequence = 0;
+    _lastLiveCueKey = null;
+    _liveExactCues.clear();
+    _liveExactInFlight.clear();
+    _liveExactTraceCount = 0;
+    _liveDialogueContext.clear();
+
     setState(() {
       _preparedAiSubtitle = null;
       _transitionAi(AiSinhalaRuntimeMode.liveEmbedded);
       _aiSubtitleUnavailable = false;
       _aiDisplaySubtitle = '';
       _aiPreflightMessage =
-          'Using the video’s own English cues for live Sinhala translation. $reason';
+          'Buffering the video’s exact English subtitle timeline for Sinhala translation. $reason';
     });
 
-    _subtitleTimingSubscription ??=
-        widget.playback.player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
+    _positionSubscription ??=
+        widget.playback.player.stream.position.listen(_onPosition);
 
-    // Ask MPV to expose each English cue a few seconds before its authored
-    // presentation time. Gemini takes ~1.5-2.2 s per short cue on the real
-    // Prison Break run, so translating only when the cue is already on-screen
-    // guarantees that short lines arrive too late. Keeping the native track
-    // decoded but hidden gives Orvix a small look-ahead buffer without scanning
-    // the whole remote MKV.
-    _liveCueSequence = 0;
-    _liveDisplayedSequence = 0;
-    _lastLiveCueKey = null;
-    await _applyActiveAiSubtitleDelay();
+    final platform = widget.playback.player.platform;
+    if (platform is! mk.NativePlayer) {
+      // Non-libmpv platforms retain the older event stream fallback.
+      _subtitleTimingSubscription ??=
+          widget.playback.player.stream.subtitle.listen(_onEmbeddedSubtitleCue);
+    }
+
+    // Advance the hidden native text track only to harvest future cues. Visible
+    // Sinhala is NEVER scheduled by wall clock; it is rendered later from the
+    // original ASS/SRT event start/end timestamps against the player's position.
+    await _setNativeSubtitleDelayProperty(-_liveAiLeadMs / 1000.0);
     await _setNativeSubtitleVisibility(false);
     _startNativeSubtitleClock();
+    if (platform is mk.NativePlayer) {
+      unawaited(_pollLiveExactTextEvents());
+    }
     return true;
   }
 
