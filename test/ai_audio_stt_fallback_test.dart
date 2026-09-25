@@ -15,9 +15,9 @@ void main() {
       player,
       contains("return _activateAudioAiFallback(phase: '\$phase-transcript-miss');"),
     );
-    expect(player, contains("sourceMatch: 'audio-stt'"));
+    expect(player, contains("sourceMatch:"));
     expect(player, contains('if (_audioAiActive) {'));
-    expect(player, contains('_ensureAudioAiAhead(adjusted);'));
+    expect(player, contains('_ensureAudioAiAhead(position);'));
 
     // AI startup opens media paused. A failed AI path must still release normal
     // playback instead of leaving the user stuck on a loading screen.
@@ -31,10 +31,8 @@ void main() {
     expect(audio, contains('windowStride = Duration(seconds: 20)'));
     expect(audio, contains('transcribe-audio-si'));
 
-    // Windows must keep FFmpeg outside the Flutter process. The Office beta.37
-    // run still terminated after audio-ai-window-start when Dart launched the
-    // child directly, so beta.38 routes extraction through the standalone media
-    // engine process.
+    // Windows must keep FFmpeg outside the Flutter process. The active path
+    // routes extraction through the same 11470 stream engine that owns playback.
     expect(audio, contains('if (Platform.isWindows)'));
     expect(audio, contains('LocalTorrentService.instance.extractAudioWindow'));
     expect(audio, isNot(contains('OrvixMediaEngineService')));
@@ -56,14 +54,20 @@ void main() {
         'Using the detected English text track directly; full-file rescanning is skipped on Windows.',
       ),
     );
-    expect(player, contains('static const int _liveAiLeadMs = 3000;'));
+    expect(player, contains('static const int _liveAiLeadMs = 5000;'));
     expect(
       player,
-      contains('await _setNativeSubtitleDelayProperty(-_liveAiLeadMs / 1000.0);'),
+      contains('await _applyActiveAiSubtitleDelay();'),
     );
     expect(player, contains('live-cue-ok index='));
     expect(player, contains('String? _lastLiveCueKey;'));
     expect(player, contains('live-cue-duplicate'));
     expect(player, contains('cueStartMs: nativeStartMs'));
+    expect(player, contains('Duration maxWait = const Duration(milliseconds: 6500)'));
+    expect(player, contains('final Map<int, Future<void>> _audioAiWindowWorks'));
+    expect(player, contains('Platform.isWindows ? 2 : 1'));
+    expect(player, contains('_bestNativeEnglishBitmapTrack()'));
+    expect(player, contains('_audioAiBitmapTimingMode'));
+    expect(player, contains('audio-ai-bitmap-sync'));
   });
 }
