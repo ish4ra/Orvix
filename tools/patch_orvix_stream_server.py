@@ -352,7 +352,7 @@ pub struct OrvixAudioWindowQuery {
 }
 
 pub async fn orvix_audio_window(
-    Query(query): Query<OrvixAudioWindowQuery>,
+    Json(query): Json<OrvixAudioWindowQuery>,
 ) -> Response {
     let video_url = query.video_url.trim();
     if !(video_url.starts_with("http://") || video_url.starts_with("https://")) {
@@ -373,6 +373,7 @@ pub async fn orvix_audio_window(
     let start_seconds = format!("{:.3}", query.start_ms as f64 / 1000.0);
     let duration_seconds = format!("{:.3}", query.duration_ms as f64 / 1000.0);
     let mut cmd = tokio::process::Command::new("ffmpeg");
+    cmd.kill_on_drop(true);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
@@ -436,12 +437,7 @@ pub async fn orvix_audio_window(
 
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr);
-        let detail = detail.trim();
-        let detail = if detail.len() > 600 {
-            &detail[..600]
-        } else {
-            detail
-        };
+        let detail = detail.trim().chars().take(600).collect::<String>();
         return Response::builder()
             .status(StatusCode::BAD_GATEWAY)
             .body(axum::body::Body::from(format!(
@@ -823,6 +819,13 @@ def patch_router(root: pathlib.Path) -> None:
     path = root / "server" / "src" / "lib.rs"
     text = path.read_text(encoding="utf-8")
 
+    text = replace_once(
+        text,
+        "routing::get",
+        "routing::{get, post}",
+        "server post route import",
+    )
+
     anchor = '''        .route(
             "/{infoHash}/{fileIdx}/subtitles.vtt",
             get(routes::subtitles::get_subtitles_vtt),
@@ -842,7 +845,7 @@ def patch_router(root: pathlib.Path) -> None:
         )
         .route(
             "/orvix/audio-window",
-            get(routes::subtitles::orvix_audio_window),
+            post(routes::subtitles::orvix_audio_window),
         )
         .route(
             "/orvix/remote/embedded/{trackId}/subtitles.vtt",
