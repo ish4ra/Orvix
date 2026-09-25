@@ -4503,9 +4503,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       value: _aiPreferenceEnabled,
                       busy: _aiSubtitleLoading,
                       detail: _aiSubtitleLoading
-                          ? 'Translating the complete embedded subtitle before playback…'
+                          ? 'Preparing AI Sinhala from the source’s English subtitle track…'
                           : _aiSinhalaEnabled
-                              ? 'On • complete embedded Sinhala SRT loaded with original timing'
+                              ? (_generatedAiSubtitlePath != null
+                                  ? 'On • complete Sinhala SRT loaded with original timing'
+                                  : _liveAiFallback
+                                      ? 'On • translating exact native English subtitle events'
+                                      : 'On • AI Sinhala subtitles active')
                               : _aiSubtitleUnavailable
                                   ? (_aiPreflightMessage.trim().isEmpty
                                       ? 'Off • last attempt could not prepare this source'
@@ -4540,7 +4544,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ],
                   if (_aiSubtitleLoading)
                     const _EmptyTrackMessage(
-                      'AI Sinhala is translating the complete embedded subtitle. Playback stays paused until it is ready.',
+                      'AI Sinhala is preparing the first reliable subtitle buffer. Playback resumes as soon as that startup check finishes.',
                     )
                   else if (_aiSubtitleUnavailable)
                     _EmptyTrackMessage(
