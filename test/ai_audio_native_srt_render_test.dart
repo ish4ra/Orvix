@@ -13,6 +13,7 @@ void main() {
     expect(player, contains("language: 'si'"));
     expect(player, contains('confirmed=true'));
     expect(player, contains("'sub-reload'"));
+    expect(player, contains("<String>['sub-reload', currentSid]"));
     expect(player, contains("'sub-remove'"));
     expect(player, contains('_audioAiNativeAttached'));
   });
