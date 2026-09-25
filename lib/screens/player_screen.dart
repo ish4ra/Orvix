@@ -3413,16 +3413,23 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _pollNativeSubtitleClock() async {
     if (!_aiSinhalaEnabled || !_timingTrackSelected || !mounted) return;
+
+    if (_timingTrackIsText && _liveAiFallback && Platform.isWindows) {
+      // Poll the full ASS event representation instead of the flattened
+      // sub-text string. MPV can have multiple overlapping subtitle events;
+      // sub-text concatenates them and sub-start/sub-end only expose the
+      // first/last aggregate timestamps, which caused beta.39's "editing"
+      // effect and incorrect cue durations.
+      await _pollLiveExactTextEvents();
+      return;
+    }
+
     final startMs = await _nativeSubtitleStartMs();
     if (startMs == null || !mounted) return;
     final previous = _lastNativeSubtitleStartMs;
     if (previous != null && (startMs - previous).abs() < 40) return;
     _lastNativeSubtitleStartMs = startMs;
     if (_timingTrackIsText) {
-      // Do not rely solely on media_kit's subtitle stream for ASS/SSA tracks.
-      // libmpv exposes the authoritative current text directly. Reading it
-      // whenever the native cue start changes makes styled embedded subtitles
-      // drive AI Sinhala even if a stream event is coalesced or missed.
       final platform = widget.playback.player.platform;
       if (platform is mk.NativePlayer) {
         try {
