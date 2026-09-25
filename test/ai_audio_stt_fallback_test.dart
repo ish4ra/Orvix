@@ -36,7 +36,8 @@ void main() {
     // child directly, so beta.38 routes extraction through the standalone media
     // engine process.
     expect(audio, contains('if (Platform.isWindows)'));
-    expect(audio, contains('OrvixMediaEngineService.instance.extractAudioWindow'));
+    expect(audio, contains('LocalTorrentService.instance.extractAudioWindow'));
+    expect(audio, isNot(contains('OrvixMediaEngineService')));
     expect(audio, isNot(contains('Process.run(')));
     expect(
       player,
@@ -61,6 +62,8 @@ void main() {
       contains('await _setNativeSubtitleDelayProperty(-_liveAiLeadMs / 1000.0);'),
     );
     expect(player, contains('live-cue-ok index='));
-
+    expect(player, contains('String? _lastLiveCueKey;'));
+    expect(player, contains('live-cue-duplicate'));
+    expect(player, contains('cueStartMs: nativeStartMs'));
   });
 }
