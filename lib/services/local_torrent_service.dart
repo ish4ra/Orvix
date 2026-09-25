@@ -446,23 +446,23 @@ class LocalTorrentService {
 
     final startMs = start.inMilliseconds < 0 ? 0 : start.inMilliseconds;
     final durationMs = duration.inMilliseconds.clamp(1000, 30000).toInt();
-    final uri = Uri.parse('$baseUrl/orvix/audio-window').replace(
-      queryParameters: <String, String>{
-        'videoUrl': videoUrl,
-        'startMs': '$startMs',
-        'durationMs': '$durationMs',
-      },
-    );
+    final uri = Uri.parse('$baseUrl/orvix/audio-window');
 
     final client = http.Client();
     try {
       final response = await client
-          .get(
+          .post(
             uri,
             headers: const {
               'Accept': 'audio/aac',
+              'Content-Type': 'application/json',
               'Cache-Control': 'no-store',
             },
+            body: jsonEncode(<String, dynamic>{
+              'videoUrl': videoUrl,
+              'startMs': startMs,
+              'durationMs': durationMs,
+            }),
           )
           .timeout(const Duration(seconds: 50));
 
