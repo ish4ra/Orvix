@@ -42,12 +42,17 @@ void main() {
   test('live native text cues are translated once and ahead of presentation', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    expect(player, contains('static const int _liveAiLeadMs = 3000;'));
+    expect(player, contains('static const int _liveAiLeadMs = 5000;'));
     expect(player, contains('String? _lastLiveCueKey;'));
     expect(player, contains("final cueKey = '\$dedupClockMs|\$normalized';"));
     expect(player, contains('if (_lastLiveCueKey == cueKey)'));
     expect(player, contains('live-cue-duplicate'));
     expect(player, contains('cueStartMs: nativeStartMs'));
     expect(player, contains('cueEndMs: nativeEndMs'));
+    expect(player, contains('Duration maxWait = const Duration(milliseconds: 6500)'));
+    expect(player, contains('_bestNativeEnglishBitmapTrack()'));
+    expect(player, contains('_displayAudioAiAtBitmapTiming'));
+    expect(player, contains('audio-ai-bitmap-sync'));
+    expect(player, contains('Platform.isWindows ? 2 : 1'));
   });
 }
