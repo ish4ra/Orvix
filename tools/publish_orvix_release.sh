@@ -92,11 +92,19 @@ done
 
 # Draft releases are not available through /releases/tags/{tag}. Publish by
 # concrete release ID only after every updater asset has been verified.
+# Beta workflows keep the historical prerelease default. Stable workflows can
+# opt out explicitly without maintaining a second release publisher.
+release_prerelease="${ORVIX_RELEASE_PRERELEASE:-true}"
+if [[ "$release_prerelease" != "true" && "$release_prerelease" != "false" ]]; then
+  echo "ORVIX_RELEASE_PRERELEASE must be true or false" >&2
+  exit 64
+fi
+
 gh api \
   --method PATCH \
   "repos/$GITHUB_REPOSITORY/releases/$release_id" \
   -F draft=false \
-  -F prerelease=true \
+  -F prerelease="$release_prerelease" \
   >/dev/null
 
 trap - ERR
