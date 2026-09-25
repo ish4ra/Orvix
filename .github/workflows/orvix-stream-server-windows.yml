@@ -19,7 +19,7 @@ concurrency:
 
 env:
   UPSTREAM_STREAM_SERVER_COMMIT: f585ab6eda9b1411034548c131bb0dc30c6f5f9e
-  MOD_RELEASE_TAG: stream-server-orvix-v0.1.8.2
+  MOD_RELEASE_TAG: stream-server-orvix-v0.1.8.3
   VCPKG_BINARY_SOURCES: "clear"
 
 jobs:
@@ -147,6 +147,8 @@ jobs:
             if ($caps.exactSubtitleRouteVersion -ne 1) { throw 'Unexpected exact subtitle route version' }
             if ($caps.remoteEmbeddedSubtitles -ne $true) { throw 'Remote embedded subtitle capability is missing' }
             if ($caps.remoteSubtitleRouteVersion -ne 1) { throw 'Unexpected remote subtitle route version' }
+            if ($caps.audioWindowExtraction -ne $true) { throw 'Crash-isolated audio window capability is missing' }
+            if ($caps.audioWindowRouteVersion -ne 1) { throw 'Unexpected audio window route version' }
 
             $fakeHash = '0000000000000000000000000000000000000000'
             try {
@@ -176,10 +178,12 @@ jobs:
           Orvix-modified stream-server based on upstream commit $env:UPSTREAM_STREAM_SERVER_COMMIT.
 
           Changes:
-          - embedded subtitle discovery can target the exact selected torrent file index;
+          - embedded subtitle discovery targets the exact selected torrent file index;
           - exact embedded extraction carries both the video file index and subtitle track ID;
-          - legacy upstream subtitle routes remain available;
-          - /orvix/capabilities advertises the exact-file extension.
+          - remote/debrid playback and subtitle inspection can use the same native proxy;
+          - /orvix/audio-window performs short FFmpeg audio extraction outside Flutter;
+          - /orvix/capabilities advertises exact-file, remote-subtitle and audio-window extensions;
+          - legacy upstream subtitle routes remain available.
 
           This binary remains MIT-licensed under the upstream stream-server license.
           "@ | Set-Content 'dist\RELEASE_NOTES.md'
@@ -187,7 +191,7 @@ jobs:
           gh release view $env:MOD_RELEASE_TAG *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $env:MOD_RELEASE_TAG --clobber 'dist\orvix-stream-server-windows-amd64.exe' 'dist\orvix-stream-server-windows-amd64.sha256'
-            gh release edit $env:MOD_RELEASE_TAG --title 'Orvix Stream Server v0.1.8.1 — exact-file subtitles' --prerelease --notes-file 'dist\RELEASE_NOTES.md'
+            gh release edit $env:MOD_RELEASE_TAG --title 'Orvix Stream Server v0.1.8.3 — unified AI media engine' --prerelease --notes-file 'dist\RELEASE_NOTES.md'
           } else {
-            gh release create $env:MOD_RELEASE_TAG --target '${{ github.sha }}' --title 'Orvix Stream Server v0.1.8.1 — exact-file subtitles' --prerelease --notes-file 'dist\RELEASE_NOTES.md' 'dist\orvix-stream-server-windows-amd64.exe' 'dist\orvix-stream-server-windows-amd64.sha256'
+            gh release create $env:MOD_RELEASE_TAG --target '${{ github.sha }}' --title 'Orvix Stream Server v0.1.8.3 — unified AI media engine' --prerelease --notes-file 'dist\RELEASE_NOTES.md' 'dist\orvix-stream-server-windows-amd64.exe' 'dist\orvix-stream-server-windows-amd64.sha256'
           }
