@@ -336,7 +336,142 @@ pub async fn orvix_capabilities() -> impl IntoResponse {
         "exactSubtitleRouteVersion": 1,
         "remoteEmbeddedSubtitles": true,
         "remoteSubtitleRouteVersion": 1,
+        "audioWindowExtraction": true,
+        "audioWindowRouteVersion": 1,
     }))
+}
+
+#[derive(serde::Deserialize)]
+pub struct OrvixAudioWindowQuery {
+    #[serde(rename = "videoUrl")]
+    pub video_url: String,
+    #[serde(rename = "startMs")]
+    pub start_ms: u64,
+    #[serde(rename = "durationMs")]
+    pub duration_ms: u64,
+}
+
+pub async fn orvix_audio_window(
+    Query(query): Query<OrvixAudioWindowQuery>,
+) -> Response {
+    let video_url = query.video_url.trim();
+    if !(video_url.starts_with("http://") || video_url.starts_with("https://")) {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(axum::body::Body::from("videoUrl must be HTTP/HTTPS"))
+            .unwrap();
+    }
+    if query.duration_ms < 1000 || query.duration_ms > 30000 {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(axum::body::Body::from(
+                "durationMs must be between 1000 and 30000",
+            ))
+            .unwrap();
+    }
+
+    let start_seconds = format!("{:.3}", query.start_ms as f64 / 1000.0);
+    let duration_seconds = format!("{:.3}", query.duration_ms as f64 / 1000.0);
+    let mut cmd = tokio::process::Command::new("ffmpeg");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    cmd.args([
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-y",
+        "-rw_timeout",
+        "30000000",
+        "-ss",
+        &start_seconds,
+        "-t",
+        &duration_seconds,
+        "-i",
+        video_url,
+        "-map",
+        "0:a:0?",
+        "-vn",
+        "-sn",
+        "-dn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "32k",
+        "-f",
+        "adts",
+        "-",
+    ]);
+
+    let output = match tokio::time::timeout(
+        std::time::Duration::from_secs(45),
+        cmd.output(),
+    )
+    .await
+    {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => {
+            return Response::builder()
+                .status(StatusCode::BAD_GATEWAY)
+                .body(axum::body::Body::from(format!(
+                    "Audio extraction launch failed: {error}"
+                )))
+                .unwrap();
+        }
+        Err(_) => {
+            return Response::builder()
+                .status(StatusCode::GATEWAY_TIMEOUT)
+                .body(axum::body::Body::from("Audio extraction timed out"))
+                .unwrap();
+        }
+    };
+
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr);
+        let detail = detail.trim();
+        let detail = if detail.len() > 600 {
+            &detail[..600]
+        } else {
+            detail
+        };
+        return Response::builder()
+            .status(StatusCode::BAD_GATEWAY)
+            .body(axum::body::Body::from(format!(
+                "Audio extraction failed: {detail}"
+            )))
+            .unwrap();
+    }
+    if output.stdout.len() < 256 {
+        return Response::builder()
+            .status(StatusCode::BAD_GATEWAY)
+            .body(axum::body::Body::from(
+                "Audio extraction produced no usable bytes",
+            ))
+            .unwrap();
+    }
+    if output.stdout.len() > 850_000 {
+        return Response::builder()
+            .status(StatusCode::BAD_GATEWAY)
+            .body(axum::body::Body::from(
+                "Audio extraction produced an unexpectedly large window",
+            ))
+            .unwrap();
+    }
+
+    Response::builder()
+        .header("content-type", "audio/aac")
+        .header("cache-control", "no-store")
+        .header("access-control-allow-origin", "*")
+        .body(axum::body::Body::from(output.stdout))
+        .unwrap()
 }
 
 #[derive(serde::Deserialize)]
@@ -706,6 +841,10 @@ def patch_router(root: pathlib.Path) -> None:
             get(routes::subtitles::orvix_remote_subtitles_tracks),
         )
         .route(
+            "/orvix/audio-window",
+            get(routes::subtitles::orvix_audio_window),
+        )
+        .route(
             "/orvix/remote/embedded/{trackId}/subtitles.vtt",
             get(routes::subtitles::get_remote_embedded_subtitles_vtt),
         )
@@ -743,6 +882,8 @@ def verify(root: pathlib.Path) -> None:
         ("orvix_resolve_file", subtitles),
         ("exactFileEmbeddedSubtitles", subtitles),
         ("remoteEmbeddedSubtitles", subtitles),
+        ("audioWindowExtraction", subtitles),
+        ("orvix_audio_window", subtitles),
         ("orvix_remote_subtitles_tracks", subtitles),
         ("get_remote_embedded_subtitles_vtt", subtitles),
         ("get_exact_embedded_subtitles_vtt", subtitles),
@@ -750,6 +891,7 @@ def verify(root: pathlib.Path) -> None:
         ('"/orvix/capabilities"', lib),
         ('"/orvix/{infoHash}/resolve-file"', lib),
         ('"/orvix/remote/subtitlesTracks"', lib),
+        ('"/orvix/audio-window"', lib),
         ('"/orvix/remote/embedded/{trackId}/subtitles.vtt"', lib),
         ('"/{infoHash}/{fileIdx}/embedded/{trackId}/subtitles.vtt"', lib),
     ]
