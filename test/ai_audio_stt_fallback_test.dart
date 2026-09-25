@@ -66,6 +66,8 @@ void main() {
     expect(player, contains('NativeSubtitleEventParser.parseAssFull(raw)'));
     expect(player, contains('final Map<String, AiSubtitleCue> _liveExactCues'));
     expect(player, contains('_refreshLiveExactSubtitle(position)'));
+    expect(player, contains('await _subtitleTimingSubscription?.cancel();'));
+    expect(player, contains('_subtitleTimingSubscription = null;'));
     expect(player, contains('lines.join'));
     expect(
       player,
