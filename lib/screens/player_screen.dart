@@ -3162,7 +3162,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     NativeSubtitleEvent event,
   ) async {
     final generation = _liveCueGeneration;
-    final context = List<String>.from(_liveDialogueContext);
+    final priorCues = _liveExactCues.values
+        .where((cue) => cue.start < event.start)
+        .toList(growable: false)
+      ..sort((a, b) => a.start.compareTo(b.start));
+    final context = priorCues
+        .skip(priorCues.length > 6 ? priorCues.length - 6 : 0)
+        .map((cue) => cue.source)
+        .toList(growable: false);
     try {
       final translation = await AiSinhalaSubtitleService.translateCue(
         title: widget.title,
@@ -3182,11 +3189,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
         source: event.text,
         translation: translation,
       );
-      _liveDialogueContext.add(event.text);
-      if (_liveDialogueContext.length > 8) {
-        _liveDialogueContext.removeAt(0);
-      }
-
       // Bound memory for long movies while keeping enough history for short
       // backward seeks.
       final cutoff = widget.playback.player.state.position -
