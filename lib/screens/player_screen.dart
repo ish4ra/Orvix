@@ -1156,6 +1156,38 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ),
       );
       if (maxWait > Duration.zero) {
+        if (Platform.isWindows) {
+          final bitmap = _bestNativeEnglishBitmapTrack();
+          _windowsAiTextOnlyHeld = true;
+
+          if (bitmap != null) {
+            try {
+              await player.setSubtitleTrack(bitmap);
+              await _setNativeSubtitleVisibility(true);
+              await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
+            } catch (_) {}
+          }
+
+          if (mounted && !_closing) {
+            setState(() {
+              if (_aiState.mode != AiSinhalaRuntimeMode.native) {
+                _transitionAi(AiSinhalaRuntimeMode.native);
+              }
+              _aiSubtitleUnavailable = true;
+              _aiDisplaySubtitle = '';
+              _aiPreflightMessage = bitmap != null
+                  ? 'AI Sinhala is paused for this source because its English subtitle is image-based (PGS/VobSub). Native subtitles will be used instead of the unreliable audio-listening fallback.'
+                  : 'AI Sinhala is paused for this source because no readable English SRT/ASS track was exposed. Native playback will continue normally.';
+            });
+          }
+          unawaited(
+            AiSinhalaTraceService.write(
+              'audio-ai-held phase=$phase bitmap=${bitmap != null} '
+              'reason=${bitmap != null ? 'image-subtitle' : 'no-text-track'}',
+            ),
+          );
+          return false;
+        }
         return _activateAudioAiFallback(phase: '$phase-no-text');
       }
       return false;
@@ -1163,6 +1195,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     try {
       await player.setSubtitleTrack(track);
+      _windowsAiTextOnlyHeld = false;
       _timingTrackSelected = true;
       _timingTrackIsText = true;
       _nativeAiMatchIndex = -1;
@@ -1457,10 +1490,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
             if (_aiState.mode != AiSinhalaRuntimeMode.native) {
               _transitionAi(AiSinhalaRuntimeMode.native);
             }
-            _aiSubtitleUnavailable = false;
             _aiDisplaySubtitle = '';
-            _aiPreflightMessage =
-                'Playing normally while Orvix waits briefly for a native English subtitle track…';
+            if (!_windowsAiTextOnlyHeld) {
+              _aiSubtitleUnavailable = false;
+              _aiPreflightMessage =
+                  'Playing normally while Orvix waits briefly for a native English subtitle track…';
+            }
           });
         }
       } else {
@@ -2310,10 +2345,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     if (!activated && mounted && !_closing) {
       setState(() {
-        _aiSubtitleUnavailable = false;
         _aiDisplaySubtitle = '';
-        _aiPreflightMessage =
-            'Playing normally while Orvix waits for a native English subtitle track…';
+        if (!_windowsAiTextOnlyHeld) {
+          _aiSubtitleUnavailable = false;
+          _aiPreflightMessage =
+              'Playing normally while Orvix waits for a native English subtitle track…';
+        }
       });
       unawaited(_discoverNativeCueAiAfterPlayback());
     }
