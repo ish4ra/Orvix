@@ -43,6 +43,11 @@ void main() {
     expect(player, contains('_refreshLiveExactSubtitle(position)'));
     expect(player, contains("final next = lines.join('\\n');"));
     expect(player, contains('live-exact-ready index='));
+    expect(player, contains('Future<void> _primeLiveExactLookahead()'));
+    expect(player, contains('offsetMs += 250'));
+    expect(player, contains('live-exact-prime leadMs='));
+    expect(player, contains('live-exact-late-skip index='));
+    expect(player, contains('_liveExactLateKeys'));
 
     expect(parser, contains("startsWith('dialogue:')"));
     expect(parser, contains('Split only the first 9 commas'));
