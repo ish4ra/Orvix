@@ -1451,8 +1451,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
       // independent and shared by Windows, macOS, Android mobile and Android TV.
       // Complete-file extraction remains available for manual/verified subtitle
       // flows, but it no longer blocks startup.
-      final useProgressiveNativeCueAi =
-          aiPreferred && preprepared == null;
+      final useProgressiveNativeCueAi = aiPreferred &&
+          preprepared == null &&
+          !widget.aiPreflightAttempted;
       var aiReady = preprepared != null;
       var reopenedAfterAiFailure = false;
 
