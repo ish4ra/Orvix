@@ -40,8 +40,13 @@ void main() {
       final source =
           File('lib/services/local_torrent_service.dart').readAsStringSync();
 
+      expect(source, contains('bool _hasCurrentWindowsCapabilities'));
       expect(source, contains("capabilities?['audioWindowExtraction'] == true"));
       expect(source, contains("_asInt(capabilities?['audioWindowRouteVersion']) == 1"));
+      expect(
+        source,
+        contains('The bundled Orvix stream engine is an incompatible build'),
+      );
       expect(source, contains('currentEngine && _ownsProcess && _process != null'));
       expect(source, contains('await _stopStaleWindowsEngine();'));
       expect(source, contains("'taskkill.exe'"));
