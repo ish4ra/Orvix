@@ -3551,7 +3551,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
     // translates those native English cues. Keep the old complete-file engine
     // code below as a dormant recovery path while the new architecture is
     // validated; it must not delay normal startup.
-    final windowsAiEngine = Platform.isWindows &&
+    final legacyWindowsAiPreflight = Platform.isWindows &&
         aiSettingEnabled &&
         _legacyCompleteFileAiPreflightEnabled;
     final nativeCueAi = aiSettingEnabled;
@@ -3577,10 +3577,11 @@ class _DetailsScreenState extends State<DetailsScreen> {
     LocalMediaBridgeHandle? bridgeHandle;
     var playbackUrl = url;
 
-    // The legacy cloud bridge is only needed when Windows AI Sinhala is off.
-    // When AI is on, the standalone media engine owns direct HTTP, free P2P,
-    // TorBox, PikPak and other debrid/cloud URLs from inspection to playback.
-    if (useLocalMediaBridge && !windowsAiEngine) {
+    // The normal Windows path now converges cloud/debrid media onto the same
+    // modified stream-server used by Free P2P. The old standalone 11471
+    // complete-file preflight is disabled and retained only as dormant recovery
+    // code, so active playback + AI share one 11470 transport.
+    if (useLocalMediaBridge && !legacyWindowsAiPreflight) {
       var nativeEngineReady = false;
 
       if (Platform.isWindows) {
@@ -3625,12 +3626,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
     AiGeneratedSubtitleFile? preparedAiSubtitleFile;
     var aiPreflightAttempted = false;
 
-    // Cloud/debrid AI Sinhala on Windows is fail-closed: the player route does
-    // not exist until the standalone engine has inspected the exact provider
-    // URL, generated the complete Sinhala SRT and returned its own local media
-    // session. This prevents audio/video from starting underneath a loading
-    // screen and removes the old player-driven play/pause/seek fallback.
-    if (windowsAiEngine) {
+    // Dormant compatibility path for the retired standalone 11471 preflight.
+    // Active beta.38 Windows playback does not enter this branch.
+    if (legacyWindowsAiPreflight) {
       aiPreflightAttempted = true;
       if (mounted) {
         setState(() {
