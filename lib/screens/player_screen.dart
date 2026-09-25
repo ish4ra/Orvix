@@ -2873,11 +2873,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _onPosition(Duration position) {
+    if (!_aiSinhalaEnabled || !mounted) {
+      return;
+    }
+    if (_liveAiFallback) {
+      _refreshLiveExactSubtitle(position);
+      return;
+    }
+
     final prepared = _preparedAiSubtitle;
-    if (!_aiSinhalaEnabled ||
-        _liveAiFallback ||
-        prepared == null ||
-        !mounted) {
+    if (prepared == null) {
       return;
     }
 
