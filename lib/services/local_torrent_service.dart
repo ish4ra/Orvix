@@ -416,6 +416,90 @@ class LocalTorrentService {
     return proxy.toString();
   }
 
+  Future<List<int>> extractAudioWindow({
+    required String videoUrl,
+    required Duration start,
+    required Duration duration,
+  }) async {
+    if (!Platform.isWindows) {
+      throw const LocalTorrentException(
+        'Native stream-engine audio extraction is currently available on Windows only.',
+      );
+    }
+
+    final source = Uri.tryParse(videoUrl);
+    if (source == null ||
+        !(source.scheme == 'http' || source.scheme == 'https')) {
+      throw const LocalTorrentException(
+        'AI audio extraction requires a readable HTTP/HTTPS media URL.',
+      );
+    }
+
+    await ensureRunning();
+    final capabilities = await _orvixCapabilities();
+    if (capabilities?['audioWindowExtraction'] != true ||
+        _asInt(capabilities?['audioWindowRouteVersion']) != 1) {
+      throw const LocalTorrentException(
+        'The bundled Orvix stream engine does not support crash-isolated audio extraction.',
+      );
+    }
+
+    final startMs = start.inMilliseconds < 0 ? 0 : start.inMilliseconds;
+    final durationMs = duration.inMilliseconds.clamp(1000, 30000).toInt();
+    final uri = Uri.parse('$baseUrl/orvix/audio-window').replace(
+      queryParameters: <String, String>{
+        'videoUrl': videoUrl,
+        'startMs': '$startMs',
+        'durationMs': '$durationMs',
+      },
+    );
+
+    final client = http.Client();
+    try {
+      final response = await client
+          .get(
+            uri,
+            headers: const {
+              'Accept': 'audio/aac',
+              'Cache-Control': 'no-store',
+            },
+          )
+          .timeout(const Duration(seconds: 50));
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final raw = utf8
+            .decode(response.bodyBytes, allowMalformed: true)
+            .trim()
+            .replaceAll(RegExp(r'[\r\n]+'), ' ');
+        final detail = raw.length > 320 ? raw.substring(0, 320) : raw;
+        throw LocalTorrentException(
+          detail.isEmpty
+              ? 'Orvix stream-engine audio extraction returned HTTP ${response.statusCode}.'
+              : 'Orvix stream-engine audio extraction failed: $detail',
+        );
+      }
+
+      final bytes = response.bodyBytes;
+      if (bytes.length < 256) {
+        throw const LocalTorrentException(
+          'Orvix stream engine returned an empty audio window.',
+        );
+      }
+      if (bytes.length > 850000) {
+        throw const LocalTorrentException(
+          'Orvix stream engine returned an unexpectedly large audio window.',
+        );
+      }
+      return bytes;
+    } on TimeoutException {
+      throw const LocalTorrentException(
+        'Orvix stream engine timed out while extracting the audio window.',
+      );
+    } finally {
+      client.close();
+    }
+  }
+
   Future<bool> _remoteProxyHasMediaBytes(Uri proxy) async {
     final client = http.Client();
     try {
