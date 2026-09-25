@@ -184,16 +184,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   value: enabled ?? false,
                   onChanged: enabled == null ? null : _setAiSinhala,
                   secondary: const Icon(Icons.translate_rounded),
-                  title: const Text(
-                    'AI Sinhala subtitles',
-                    style: TextStyle(fontWeight: FontWeight.w900),
+                  title: const Row(
+                    children: [
+                      Text(
+                        'AI Sinhala subtitles',
+                        style: TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                      SizedBox(width: 8),
+                      _BetaBadge(),
+                    ],
                   ),
                   subtitle: Padding(
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       AiSinhalaSubtitleService.canTranslate
-                          ? 'Before playback starts, Orvix selects the video’s own English text subtitle track. It first tries the embedded transcript and an exact-file OpenSubtitles REST match; if those are unavailable, Orvix automatically compares OpenSubtitles v3 with the built-in SubDL backend fallback. During playback, only the video’s native English cue events decide when each Sinhala line appears; provider timestamps are ignored.'
-                          : 'Sign in to your Orvix account first. When enabled, Orvix prepares Sinhala subtitles before playback when a safe timing source is available.',
+                          ? 'BETA • Currently available for Free P2P playback only. AI Sinhala is temporarily unavailable for TorBox, Real-Debrid, Premiumize and other debrid/cloud sources while we improve reliability. Debrid playback will continue normally with native/English subtitles even when this switch is on.'
+                          : 'BETA • Sign in to your Orvix account first. AI Sinhala is currently limited to Free P2P playback; debrid/cloud sources continue with normal subtitles.',
                       style: const TextStyle(height: 1.45),
                     ),
                   ),
@@ -500,6 +506,32 @@ class _AddonLine extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+
+class _BetaBadge extends StatelessWidget {
+  const _BetaBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0xFFB9FF45).withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFFB9FF45).withValues(alpha: 0.45)),
+      ),
+      child: const Text(
+        'BETA',
+        style: TextStyle(
+          color: Color(0xFFB9FF45),
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.8,
+        ),
       ),
     );
   }
