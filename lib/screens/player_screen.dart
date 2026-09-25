@@ -2241,6 +2241,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _liveExactInFlight.clear();
     _liveExactTraceCount = 0;
     _liveDialogueContext.clear();
+    _liveExactSyncKey =
+        'live-native-v1:${widget.title}:${_aiMediaSourceUrl.hashCode}:'
+        '${widget.playback.player.state.track.subtitle.id}';
 
     setState(() {
       _preparedAiSubtitle = null;
@@ -2253,6 +2256,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     _positionSubscription ??=
         widget.playback.player.stream.position.listen(_onPosition);
+    await _loadManualSync();
 
     final platform = widget.playback.player.platform;
     if (platform is mk.NativePlayer) {
@@ -2306,6 +2310,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _liveExactInFlight.clear();
       _liveDialogueContext.clear();
       _liveExactTraceCount = 0;
+      _liveExactSyncKey = null;
       _windowsAiTextOnlyHeld = false;
       _preparedAiSubtitle = null;
       _generatedAiSubtitlePath = null;
@@ -2917,30 +2922,33 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  String? get _activeAiSyncKey =>
+      _preparedAiSubtitle?.key ?? (_liveAiFallback ? _liveExactSyncKey : null);
+
   Future<void> _loadManualSync() async {
-    final prepared = _preparedAiSubtitle;
-    if (prepared == null) return;
-    final value = await AiSinhalaPreferencesService.syncOffsetMs(prepared.key);
+    final key = _activeAiSyncKey;
+    if (key == null) return;
+    final value = await AiSinhalaPreferencesService.syncOffsetMs(key);
     if (!mounted) return;
     setState(() => _manualSyncOffsetMs = value);
     _refreshAiSubtitle();
   }
 
   Future<void> _adjustManualSync(int deltaMs) async {
-    final prepared = _preparedAiSubtitle;
-    if (prepared == null) return;
+    final key = _activeAiSyncKey;
+    if (key == null) return;
     final next = (_manualSyncOffsetMs + deltaMs).clamp(-120000, 120000).toInt();
     if (mounted) setState(() => _manualSyncOffsetMs = next);
-    await AiSinhalaPreferencesService.setSyncOffsetMs(prepared.key, next);
+    await AiSinhalaPreferencesService.setSyncOffsetMs(key, next);
     await _applyActiveAiSubtitleDelay();
     _refreshAiSubtitle();
   }
 
   Future<void> _resetManualSync() async {
-    final prepared = _preparedAiSubtitle;
-    if (prepared == null) return;
+    final key = _activeAiSyncKey;
+    if (key == null) return;
     if (mounted) setState(() => _manualSyncOffsetMs = 0);
-    await AiSinhalaPreferencesService.setSyncOffsetMs(prepared.key, 0);
+    await AiSinhalaPreferencesService.setSyncOffsetMs(key, 0);
     await _applyActiveAiSubtitleDelay();
     _refreshAiSubtitle();
   }
@@ -4566,7 +4574,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   if ((_aiSubtitleLoading || _aiSubtitleUnavailable) &&
                       _aiSinhalaEnabled == false)
                     const SizedBox(height: 12),
-                  if (_aiSinhalaEnabled && _preparedAiSubtitle != null) ...[
+                  if (_aiSinhalaEnabled &&
+                      (_preparedAiSubtitle != null || _liveAiFallback)) ...[
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(14),
@@ -4591,9 +4600,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           ),
                           const SizedBox(height: 5),
                           Text(
-                            _autoSyncSamples.isNotEmpty
-                                ? 'Auto-synced from this video’s embedded English subtitle timing. Adjust only if it still looks off.'
-                                : 'Orvix is using release-matched timing. Adjust only if this source is still out of sync.',
+                            _liveAiFallback
+                                ? 'Timing comes from the exact native English subtitle event timestamps. Adjust only if this release itself has an offset.'
+                                : _autoSyncSamples.isNotEmpty
+                                    ? 'Auto-synced from this video’s embedded English subtitle timing. Adjust only if it still looks off.'
+                                    : 'Orvix is using release-matched timing. Adjust only if this source is still out of sync.',
                             style: TextStyle(
                               color: Theme.of(sheetContext)
                                   .colorScheme
