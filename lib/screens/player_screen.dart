@@ -1060,6 +1060,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     _nativeSubtitleClockTimer?.cancel();
     _liveCueClearTimer?.cancel();
+    _audioAiBitmapClearTimer?.cancel();
+    _audioAiBitmapClearTimer = null;
     _liveCueGeneration++;
     _preparedAiSubtitle = prepared;
     _generatedAiSubtitlePath = null;
@@ -2809,6 +2811,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
   int get _effectiveSyncOffsetMs =>
       (_autoSyncOffsetMs + _manualSyncOffsetMs).clamp(-120000, 120000).toInt();
 
+  Future<void> _applyActiveAiSubtitleDelay() async {
+    if (_liveAiFallback) {
+      await _setNativeSubtitleDelayProperty(
+        (-_liveAiLeadMs + _manualSyncOffsetMs) / 1000.0,
+      );
+      return;
+    }
+    if (_audioAiBitmapTimingMode) {
+      await _setNativeSubtitleDelayProperty(_manualSyncOffsetMs / 1000.0);
+      return;
+    }
+    if (_audioAiNativeAttached) {
+      await _setNativeSubtitleDelayProperty(_effectiveSyncOffsetMs / 1000.0);
+    }
+  }
+
   Future<void> _loadManualSync() async {
     final prepared = _preparedAiSubtitle;
     if (prepared == null) return;
@@ -2824,6 +2842,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final next = (_manualSyncOffsetMs + deltaMs).clamp(-120000, 120000).toInt();
     if (mounted) setState(() => _manualSyncOffsetMs = next);
     await AiSinhalaPreferencesService.setSyncOffsetMs(prepared.key, next);
+    await _applyActiveAiSubtitleDelay();
     _refreshAiSubtitle();
   }
 
@@ -2832,6 +2851,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (prepared == null) return;
     if (mounted) setState(() => _manualSyncOffsetMs = 0);
     await AiSinhalaPreferencesService.setSyncOffsetMs(prepared.key, 0);
+    await _applyActiveAiSubtitleDelay();
     _refreshAiSubtitle();
   }
 
@@ -2857,6 +2877,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       var adjustedMs = position.inMilliseconds - _effectiveSyncOffsetMs;
       if (adjustedMs < 0) adjustedMs = 0;
       final adjusted = Duration(milliseconds: adjustedMs);
+      if (_audioAiBitmapTimingMode) {
+        // Exact PGS/VobSub cue events own visible timing. Position only keeps
+        // the slow STT workers ahead of playback.
+        _ensureAudioAiAhead(position);
+        return;
+      }
       if (_audioAiNativeAttached) {
         // Native SRT owns display timing. Position is now only the prefetch
         // clock; this removes the Flutter overlay from the critical path.
@@ -3177,6 +3203,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (medianDeviation > 1200) return;
     if ((median - _autoSyncOffsetMs).abs() < 80) return;
     setState(() => _autoSyncOffsetMs = median);
+    unawaited(_applyActiveAiSubtitleDelay());
     _refreshAiSubtitle();
   }
 
