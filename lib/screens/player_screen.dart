@@ -2834,9 +2834,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _applyActiveAiSubtitleDelay() async {
     if (_liveAiFallback) {
-      await _setNativeSubtitleDelayProperty(
-        (-_liveAiLeadMs + _manualSyncOffsetMs) / 1000.0,
-      );
+      // Manual sync belongs to visible Sinhala timing, not to the hidden
+      // look-ahead track used only for harvesting future English cues.
+      await _setNativeSubtitleDelayProperty(-_liveAiLeadMs / 1000.0);
       return;
     }
     if (_audioAiBitmapTimingMode) {
