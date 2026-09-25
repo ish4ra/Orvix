@@ -150,6 +150,18 @@ jobs:
             if ($caps.audioWindowExtraction -ne $true) { throw 'Crash-isolated audio window capability is missing' }
             if ($caps.audioWindowRouteVersion -ne 1) { throw 'Unexpected audio window route version' }
 
+            $audioBody = @{
+              videoUrl = 'https://example.invalid/orvix-audio-smoke.mkv'
+              startMs = 0
+              durationMs = 999
+            } | ConvertTo-Json -Compress
+            try {
+              Invoke-WebRequest -UseBasicParsing -Method Post -ContentType 'application/json' -Body $audioBody -Uri 'http://127.0.0.1:11470/orvix/audio-window' -TimeoutSec 5 | Out-Null
+              throw 'Expected invalid audio-window duration to return 400'
+            } catch {
+              if ($_.Exception.Response.StatusCode.value__ -ne 400) { throw }
+            }
+
             $fakeHash = '0000000000000000000000000000000000000000'
             try {
               Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:11470/$fakeHash/0/embedded/1000/subtitles.vtt" -TimeoutSec 5 | Out-Null
