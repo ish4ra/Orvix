@@ -8,7 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'orvix_media_engine_service.dart';
+import 'local_torrent_service.dart';
 
 class AiAudioSinhalaCue {
   const AiAudioSinhalaCue({
@@ -80,18 +80,17 @@ class AiAudioSttService {
 
       List<int>? bytes;
       if (Platform.isWindows) {
-        // Keep FFmpeg completely outside the Flutter process. A real Office
-        // test still terminated the app after audio-ai-window-start even when
-        // Dart launched ffmpeg.exe directly. Route extraction through the
-        // already-separate Orvix media engine so an FFmpeg/helper failure can
-        // only fail this request, never the player process.
+        // Windows uses the exact same native stream-server transport as MPV,
+        // free P2P and cloud/debrid proxy playback. FFmpeg therefore runs in the
+        // stream-server process, never inside Flutter and never against a
+        // different signed/provider URL than the player is consuming.
         try {
-          bytes = await OrvixMediaEngineService.instance.extractAudioWindow(
+          bytes = await LocalTorrentService.instance.extractAudioWindow(
             videoUrl: videoUrl,
             start: Duration(milliseconds: safeStartMs),
             duration: Duration(milliseconds: durationMs),
           );
-        } on OrvixMediaEngineException catch (error) {
+        } on LocalTorrentException catch (error) {
           throw AiAudioSttException(error.message);
         }
       } else {
