@@ -42,6 +42,7 @@ void main() {
 
       expect(source, contains("capabilities?['audioWindowExtraction'] == true"));
       expect(source, contains("_asInt(capabilities?['audioWindowRouteVersion']) == 1"));
+      expect(source, contains('currentEngine && _ownsProcess && _process != null'));
       expect(source, contains('await _stopStaleWindowsEngine();'));
       expect(source, contains("'taskkill.exe'"));
       expect(source, contains("const <String>['/F', '/IM', bundledExeName]"));
