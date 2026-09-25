@@ -113,9 +113,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
   int _liveCueSequence = 0;
   int _liveDisplayedSequence = 0;
   String? _lastLiveCueKey;
-  static const int _liveAiLeadMs = 5000;
+  static const int _liveAiLeadMs = 6000;
   int _lastAiPrefetchBucket = -1;
   final List<String> _liveDialogueContext = <String>[];
+  final Map<String, AiSubtitleCue> _liveExactCues =
+      <String, AiSubtitleCue>{};
+  final Set<String> _liveExactInFlight = <String>{};
+  int _liveExactTraceCount = 0;
   bool _aiSubtitleUnavailable = false;
   bool _aiPreferenceEnabled = false;
   String _aiPreflightMessage = '';
