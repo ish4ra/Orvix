@@ -63,6 +63,9 @@ class NativeSubtitleEventParser {
   }
 
   static String _cleanText(String raw) {
+    // Pure ASS vector drawings are not dialogue. Without this guard a drawing
+    // command such as "m 0 0 l ..." can look like short Latin text.
+    if (RegExp(r'\\p[1-9][0-9]*').hasMatch(raw)) return '';
     return raw
         .replaceAll(r'\N', '\n')
         .replaceAll(r'\n', '\n')
@@ -75,17 +78,13 @@ class NativeSubtitleEventParser {
   }
 
   static bool _looksLikeEnglishDialogue(String text) {
-    final words = RegExp(r"[A-Za-z][A-Za-z'’\-]*")
-        .allMatches(text)
-        .map((match) => match.group(0) ?? '')
-        .where((word) => word.length > 1)
-        .toList(growable: false);
-    if (words.length < 2) return false;
-
+    // The caller has already selected an English subtitle track, so do not
+    // discard valid one-word dialogue such as "No.", "Michael!", or "Run!".
+    // This check only rejects events that contain no meaningful Latin text.
     final latin = RegExp(r'[A-Za-z]').allMatches(text).length;
     final otherLetters =
         RegExp(r'[\u0080-\uFFFF]').allMatches(text).length;
-    return latin >= 4 && latin >= otherLetters * 2;
+    return latin >= 2 && (otherLetters == 0 || latin >= otherLetters);
   }
 
   static List<NativeSubtitleEvent> parseAssFull(String raw) {
