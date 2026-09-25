@@ -3154,7 +3154,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
         } catch (_) {}
       }
     } else {
-      _voteBitmapTiming(startMs);
+      if (_audioAiActive && _audioAiBitmapTimingMode) {
+        await _displayAudioAiAtBitmapTiming(startMs);
+      } else {
+        _voteBitmapTiming(startMs);
+      }
     }
   }
 
@@ -3174,6 +3178,99 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if ((median - _autoSyncOffsetMs).abs() < 80) return;
     setState(() => _autoSyncOffsetMs = median);
     _refreshAiSubtitle();
+  }
+
+  Future<void> _displayAudioAiAtBitmapTiming(int sourceStartMs) async {
+    final prepared = _preparedAiSubtitle;
+    if (!_audioAiActive ||
+        !_audioAiBitmapTimingMode ||
+        prepared == null ||
+        prepared.cues.isEmpty ||
+        !mounted ||
+        _closing) {
+      return;
+    }
+
+    final expectedAiMs = sourceStartMs - _autoSyncOffsetMs;
+    final searchStart = (_audioAiBitmapLastCueIndex + 1)
+        .clamp(0, prepared.cues.length - 1)
+        .toInt();
+    final searchEnd =
+        (searchStart + 10).clamp(0, prepared.cues.length).toInt();
+
+    var bestIndex = -1;
+    var bestDelta = 1 << 30;
+    for (var i = searchStart; i < searchEnd; i++) {
+      final cue = prepared.cues[i];
+      final translation = cue.translation?.trim() ?? '';
+      if (translation.isEmpty) continue;
+      final delta = (cue.start.inMilliseconds - expectedAiMs).abs();
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        bestIndex = i;
+      }
+    }
+
+    // Bitmap subtitles may contain SDH/sign cues that audio STT deliberately
+    // omits. Never steal a distant dialogue line merely to fill every bitmap
+    // event; blank is preferable to visibly wrong sync.
+    if (bestIndex < 0 || bestDelta > 5000) {
+      _audioAiBitmapClearTimer?.cancel();
+      _audioAiBitmapClearTimer = null;
+      if (_aiDisplaySubtitle.isNotEmpty && mounted) {
+        setState(() => _aiDisplaySubtitle = '');
+      }
+      if (bestIndex < 0 || _audioAiBitmapLastCueIndex < 10) {
+        unawaited(
+          AiSinhalaTraceService.write(
+            'audio-ai-bitmap-miss sourceStartMs=$sourceStartMs '
+            'expectedAiMs=$expectedAiMs nearestDeltaMs=$bestDelta',
+          ),
+        );
+      }
+      return;
+    }
+
+    final cue = prepared.cues[bestIndex];
+    _audioAiBitmapLastCueIndex = bestIndex;
+    final sample = sourceStartMs - cue.start.inMilliseconds;
+    _acceptAutoSyncSample(sample);
+
+    final sourceEndMs = await _nativeSubtitleEndMs();
+    var durationMs = sourceEndMs == null ? 0 : sourceEndMs - sourceStartMs;
+    if (durationMs < 650 || durationMs > 12000) {
+      durationMs = (cue.end.inMilliseconds - cue.start.inMilliseconds)
+          .clamp(900, 6500)
+          .toInt();
+    }
+
+    final translation = cue.translation?.trim() ?? '';
+    if (translation.isEmpty || !mounted || _closing) return;
+
+    _audioAiBitmapClearTimer?.cancel();
+    if (_aiDisplaySubtitle != translation) {
+      setState(() => _aiDisplaySubtitle = translation);
+    }
+    _audioAiBitmapClearTimer = Timer(
+      Duration(milliseconds: durationMs),
+      () {
+        _audioAiBitmapClearTimer = null;
+        if (!mounted || _closing || !_audioAiBitmapTimingMode) return;
+        if (_aiDisplaySubtitle == translation) {
+          setState(() => _aiDisplaySubtitle = '');
+        }
+      },
+    );
+
+    if (bestIndex < 12) {
+      unawaited(
+        AiSinhalaTraceService.write(
+          'audio-ai-bitmap-sync sourceStartMs=$sourceStartMs '
+          'cueStartMs=${cue.start.inMilliseconds} deltaMs=$sample '
+          'durationMs=$durationMs index=$bestIndex',
+        ),
+      );
+    }
   }
 
   void _voteBitmapTiming(int sourceStartMs) {
