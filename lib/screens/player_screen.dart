@@ -113,7 +113,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   int _liveCueSequence = 0;
   int _liveDisplayedSequence = 0;
   String? _lastLiveCueKey;
-  static const int _liveAiLeadMs = 3000;
+  static const int _liveAiLeadMs = 5000;
   int _lastAiPrefetchBucket = -1;
   final List<String> _liveDialogueContext = <String>[];
   bool _aiSubtitleUnavailable = false;
@@ -133,11 +133,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   int _preparedTranslationFailures = 0;
   Future<bool>? _bufferedNativeAiPreparation;
   bool _audioAiActive = false;
-  Future<void>? _audioAiWindowWork;
+  final Map<int, Future<void>> _audioAiWindowWorks = <int, Future<void>>{};
   final Set<int> _audioAiWindowStarts = <int>{};
   int _audioAiCoverageEndMs = 0;
   File? _audioAiSrtFile;
   bool _audioAiNativeAttached = false;
+  bool _audioAiBitmapTimingMode = false;
+  int _audioAiBitmapLastCueIndex = -1;
+  Timer? _audioAiBitmapClearTimer;
   int _nativeAiMatchIndex = -1;
   double _subtitleFontSize = SubtitlePreferencesService.defaultFontSize;
   bool _subtitleBackground = SubtitlePreferencesService.defaultBackground;
