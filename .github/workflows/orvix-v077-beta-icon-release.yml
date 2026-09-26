@@ -340,6 +340,20 @@ jobs:
             Orvix-v0.7.9-beta.2-macOS.zip
           test -s Orvix-v0.7.9-beta.2-macOS.zip
 
+      - name: Export macOS branding previews
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p branding-preview-macos
+          cp macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_512.png branding-preview-macos/app-icon-512.png
+          cp assets/branding/orvix_logo.webp branding-preview-macos/in-app-logo.webp
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: branding-preview-macos
+          if-no-files-found: error
+          path: branding-preview-macos/*
+
       - uses: actions/upload-artifact@v4
         with:
           name: macos
@@ -1032,6 +1046,21 @@ jobs:
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk Orvix-v0.7.9-beta.2-Android-Mobile-armeabi-v7a.apk
           cp build/app/outputs/flutter-apk/app-x86_64-release.apk Orvix-v0.7.9-beta.2-Android-Mobile-x86_64.apk
 
+      - name: Export Android mobile branding previews
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p branding-preview-android-mobile
+          cp android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png branding-preview-android-mobile/launcher-192.png
+          cp android/app/src/main/res/drawable-nodpi/orvix_foreground.png branding-preview-android-mobile/adaptive-foreground.png
+          cp assets/branding/orvix_logo.webp branding-preview-android-mobile/in-app-logo.webp
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: branding-preview-android-mobile
+          if-no-files-found: error
+          path: branding-preview-android-mobile/*
+
       - uses: actions/upload-artifact@v4
         with:
           name: android-mobile
@@ -1132,6 +1161,21 @@ jobs:
 
       - name: Rename APK
         run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.9-beta.2-Android-TV.apk
+
+      - name: Export Android TV branding previews
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p branding-preview-android-tv
+          cp android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png branding-preview-android-tv/launcher-192.png
+          cp android/app/src/main/res/drawable-xhdpi/tv_banner.png branding-preview-android-tv/tv-banner.png
+          cp assets/branding/orvix_logo.webp branding-preview-android-tv/in-app-logo.webp
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: branding-preview-android-tv
+          if-no-files-found: error
+          path: branding-preview-android-tv/*
 
       - uses: actions/upload-artifact@v4
         with:
