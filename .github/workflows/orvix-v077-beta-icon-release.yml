@@ -1,4 +1,4 @@
-name: Release Orvix v0.7.9-beta.7 — Windows Forced EXE Icon Rebuild
+name: Release Orvix v0.7.9-beta.7 — Windows EXE Icon Verification Fix
 # v077-stable-regression-test-sync
 # beta2-complete-state-trigger
 # beta45-realdebrid-premiumize-trigger
@@ -424,22 +424,18 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $exe = Resolve-Path 'build\windows\x64\runner\Release\orvix.exe'
-          Add-Type -AssemblyName System.Drawing
-          $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe.Path)
-          if ($null -eq $icon) { throw 'Could not extract icon embedded in orvix.exe' }
-          $bitmap = $icon.ToBitmap()
-          $preview = Join-Path $env:RUNNER_TEMP 'orvix-exe-embedded-icon.png'
-          $bitmap.Save($preview, [System.Drawing.Imaging.ImageFormat]::Png)
-          $bitmap.Dispose()
-          $icon.Dispose()
-          if (-not (Test-Path $preview)) { throw 'Embedded EXE icon preview was not created' }
-
-          # Compare the visible bounds of the generated ICO and EXE resource.
-          # This prevents CI from passing merely because the EXE contains *an* icon.
           $icoPath = Resolve-Path 'windows\runner\resources\app_icon.ico'
-          $ico = New-Object System.Drawing.Icon($icoPath.Path, 256, 256)
-          $icoBitmap = $ico.ToBitmap()
-          $exeBitmap = [System.Drawing.Bitmap]::FromFile($preview)
+          Add-Type -AssemblyName System.Drawing
+
+          # ExtractAssociatedIcon only returns a shell-selected small icon
+          # (typically 32x32), so comparing it to a requested 256px ICO frame
+          # was invalid. Compare the same 32px representation instead.
+          $exeIcon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe.Path)
+          if ($null -eq $exeIcon) { throw 'Could not extract icon embedded in orvix.exe' }
+          $exeBitmap = $exeIcon.ToBitmap()
+          $icoIcon = New-Object System.Drawing.Icon($icoPath.Path, 32, 32)
+          $icoBitmap = $icoIcon.ToBitmap()
+
           function Get-VisibleBounds([System.Drawing.Bitmap]$bmp) {
             $minX=$bmp.Width; $minY=$bmp.Height; $maxX=-1; $maxY=-1
             for ($y=0; $y -lt $bmp.Height; $y++) {
@@ -452,11 +448,16 @@ jobs:
             }
             return @($minX,$minY,$maxX,$maxY)
           }
+
           $icoBounds = Get-VisibleBounds $icoBitmap
           $exeBounds = Get-VisibleBounds $exeBitmap
-          $icoBitmap.Dispose(); $ico.Dispose(); $exeBitmap.Dispose()
+          $preview = Join-Path $env:RUNNER_TEMP 'orvix-exe-embedded-icon.png'
+          $exeBitmap.Save($preview, [System.Drawing.Imaging.ImageFormat]::Png)
+          $icoBitmap.Dispose(); $icoIcon.Dispose()
+          $exeBitmap.Dispose(); $exeIcon.Dispose()
+
           if (($icoBounds -join ',') -ne ($exeBounds -join ',')) {
-            throw "EXE embedded icon bounds $($exeBounds -join ',') do not match generated ICO bounds $($icoBounds -join ',')"
+            throw "32px EXE embedded icon bounds $($exeBounds -join ',') do not match generated ICO bounds $($icoBounds -join ',')"
           }
 
       - name: Bundle verified FFmpeg tools
