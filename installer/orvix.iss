@@ -4,6 +4,7 @@
 #endif
 #define MyAppPublisher "Ishara Lakshan"
 #define MyAppExeName "orvix.exe"
+#define MyIconName "orvix-v0.7.9-beta.6.ico"
 
 [Setup]
 AppId={{C580B2E6-5A7A-4FD7-8C68-36D238B4497B}
@@ -21,7 +22,7 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-UninstallDisplayIcon={app}\orvix-uninstall.ico
+UninstallDisplayIcon={app}\{#MyIconName}
 SetupIconFile=..\windows\runner\resources\app_icon.ico
 SetupLogging=yes
 CloseApplications=force
@@ -35,11 +36,11 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Files]
 Source: "..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\windows\runner\resources\app_icon.ico"; DestDir: "{app}"; DestName: "orvix-uninstall.ico"; Flags: ignoreversion
+Source: "..\windows\runner\resources\app_icon.ico"; DestDir: "{app}"; DestName: "{#MyIconName}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Orvix"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\Orvix"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autoprograms}\Orvix"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyIconName}"
+Name: "{autodesktop}\Orvix"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyIconName}"; Tasks: desktopicon
 
 
 [Code]
@@ -71,4 +72,6 @@ begin
 end;
 
 [Run]
+; Ask Windows Explorer to refresh icon associations after replacing the app.
+Filename: "{sys}\ie4uinit.exe"; Parameters: "-show"; Flags: runhidden waituntilterminated skipifdoesntexist
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Orvix"; Flags: nowait postinstall skipifsilent
