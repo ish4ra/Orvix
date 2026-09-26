@@ -61,8 +61,26 @@ def generate_in_app_mark(image: Image.Image) -> None:
 def generate_windows(image: Image.Image) -> None:
     output = Path("windows/runner/resources/app_icon.ico")
     output.parent.mkdir(parents=True, exist_ok=True)
+    # Windows Explorer sizes icons by the non-transparent artwork bounds.
+    # The canonical rounded-square has intentional outer alpha padding, so
+    # crop only that transparent canvas (never the designed green border),
+    # then restore a tiny 2% safety margin. This makes Orvix visually match
+    # normal installed-app icons such as browsers without changing the art.
+    bbox = image.getbbox()
+    if bbox is None:
+        raise SystemExit("Canonical Orvix icon is fully transparent.")
+    artwork = image.crop(bbox)
+    pad = max(2, round(max(artwork.size) * 0.02))
+    square_side = max(artwork.size) + pad * 2
+    packed = Image.new("RGBA", (square_side, square_side))
+    packed.alpha_composite(
+        artwork,
+        ((square_side - artwork.width) // 2, (square_side - artwork.height) // 2),
+    )
+    packed = packed.resize((1024, 1024), Image.Resampling.LANCZOS)
+
     sizes = (16, 20, 24, 32, 40, 48, 64, 96, 128, 256)
-    image.save(
+    packed.save(
         output,
         format="ICO",
         sizes=[(size, size) for size in sizes],
