@@ -30,7 +30,7 @@ def generate_in_app_mark(image: Image.Image) -> None:
     """Derive the transparent O-only in-app mark from the canonical launcher art."""
     width, height = image.size
     cx, cy = width / 2, height / 2
-    radius_sq = (min(width, height) * 0.36) ** 2
+    radius_sq = (min(width, height) * 0.308) ** 2
     pixels = list(image.getdata())
     cleaned = []
     for index, (r, g, b, a) in enumerate(pixels):
@@ -38,9 +38,9 @@ def generate_in_app_mark(image: Image.Image) -> None:
         y = index // width
         keep = (
             (x - cx) ** 2 + (y - cy) ** 2 < radius_sq
-            and g > 45
-            and g > b * 1.15
-            and g > r * 0.90
+            and g > 70
+            and g > b * 1.20
+            and g > r * 1.02
         )
         cleaned.append((r, g, b, a if keep else 0))
     mark = Image.new("RGBA", image.size)
