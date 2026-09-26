@@ -500,7 +500,7 @@ class _OrvixShellState extends State<_OrvixShell> {
                   windowsDesktop ? 24 : 28,
                 ),
                 child: _OrvixBrand(
-                  iconSize: windowsDesktop ? 52 : 76,
+                  iconSize: windowsDesktop ? 48 : 72,
                   fontSize: 20,
                   showWordmark: railExtended,
                 ),
