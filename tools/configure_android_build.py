@@ -128,16 +128,16 @@ def patch_android(tv: bool) -> None:
     # with the surrounding rounded-square/background fully transparent.
     width, height = source.size
     cx, cy = width / 2, height / 2
-    radius_sq = (min(width, height) * 0.36) ** 2
+    radius_sq = (min(width, height) * 0.308) ** 2
     cleaned = []
     for index, (r, g, b, a) in enumerate(source.getdata()):
         x = index % width
         y = index // width
         keep = (
             (x - cx) ** 2 + (y - cy) ** 2 < radius_sq
-            and g > 45
-            and g > b * 1.15
-            and g > r * 0.90
+            and g > 70
+            and g > b * 1.20
+            and g > r * 1.02
         )
         cleaned.append((r, g, b, a if keep else 0))
     mark = Image.new("RGBA", source.size)
