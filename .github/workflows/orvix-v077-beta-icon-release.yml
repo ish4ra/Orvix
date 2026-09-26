@@ -931,6 +931,22 @@ jobs:
             }
           }
 
+      - name: Export branding previews
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check pillow
+          python tools/generate_desktop_branding.py --windows
+          New-Item -ItemType Directory -Force -Path branding-preview | Out-Null
+          python -c "from PIL import Image; im=Image.open('windows/runner/resources/app_icon.ico'); im.seek(im.n_frames-1); im.convert('RGBA').save('branding-preview/windows-icon.png')"
+          Copy-Item assets/branding/orvix_logo.png branding-preview/launcher-source.png
+          Copy-Item assets/branding/orvix_logo.webp branding-preview/in-app-logo.webp
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: branding-preview
+          if-no-files-found: error
+          path: branding-preview/*
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -1123,7 +1139,8 @@ jobs:
           path: Orvix-v0.7.9-beta.2-Android-TV.apk
 
   release:
-    name: Publish v0.7.9-beta.2
+    name: Hold v0.7.9-beta.2 for visual verification
+    if: ${{ false }}
     needs: [validate, windows, macos, android-mobile, android-tv]
     runs-on: ubuntu-latest
     steps:
