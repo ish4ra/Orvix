@@ -727,7 +727,7 @@ jobs:
           )
           $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
-          & $iscc '/DMyAppVersion=0.7.7' 'installer\orvix.iss'
+          & $iscc '/DMyAppVersion=0.7.8' 'installer\orvix.iss'
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
 
       - name: Smoke test Windows installer package
