@@ -1,4 +1,3 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 class HorizontalScrollRail extends StatefulWidget {
@@ -76,40 +75,6 @@ class _HorizontalScrollRailState extends State<HorizontalScrollRail> {
     );
   }
 
-  void _handlePointerSignal(PointerSignalEvent event) {
-    if (event is! PointerScrollEvent || !_controller.hasClients) return;
-    final dx = event.scrollDelta.dx;
-    final dy = event.scrollDelta.dy;
-    final delta = dx.abs() > dy.abs() ? dx : dy;
-    if (delta.abs() < .5) return;
-
-    // Claim desktop wheel/trackpad signals for this rail before the outer
-    // vertical CustomScrollView can consume them. Without the resolver the
-    // details page can scroll vertically while the episode row appears stuck.
-    GestureBinding.instance.pointerSignalResolver.register(
-      event,
-      (resolvedEvent) {
-        if (resolvedEvent is! PointerScrollEvent ||
-            !_controller.hasClients) {
-          return;
-        }
-        final resolvedDx = resolvedEvent.scrollDelta.dx;
-        final resolvedDy = resolvedEvent.scrollDelta.dy;
-        final resolvedDelta = resolvedDx.abs() > resolvedDy.abs()
-            ? resolvedDx
-            : resolvedDy;
-        _controller.jumpTo(
-          (_controller.offset + resolvedDelta)
-              .clamp(
-                _controller.position.minScrollExtent,
-                _controller.position.maxScrollExtent,
-              )
-              .toDouble(),
-        );
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     if (widget.itemCount <= 0) return const SizedBox.shrink();
@@ -124,18 +89,17 @@ class _HorizontalScrollRailState extends State<HorizontalScrollRail> {
           PointerDeviceKind.invertedStylus,
         },
       ),
-      child: Listener(
-        onPointerSignal: _handlePointerSignal,
-        child: ListView.separated(
-          controller: _controller,
-          primary: false,
-          scrollDirection: Axis.horizontal,
-          physics: const ClampingScrollPhysics(),
-          padding: widget.padding,
-          itemCount: widget.itemCount,
-          separatorBuilder: (_, __) => SizedBox(width: widget.separatorWidth),
-          itemBuilder: widget.itemBuilder,
-        ),
+      child: ListView.separated(
+        controller: _controller,
+        primary: false,
+        scrollDirection: Axis.horizontal,
+        // Mouse-wheel/trackpad scrolling is intentionally disabled for media
+        // rails. Users move horizontally by dragging or with the two arrows.
+        physics: const ClampingScrollPhysics(),
+        padding: widget.padding,
+        itemCount: widget.itemCount,
+        separatorBuilder: (_, __) => SizedBox(width: widget.separatorWidth),
+        itemBuilder: widget.itemBuilder,
       ),
     );
 
