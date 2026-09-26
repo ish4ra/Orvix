@@ -5,7 +5,7 @@ import argparse
 import re
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageChops, ImageDraw
 
 SOURCE = Path("assets/branding/orvix_logo.png")
 IN_APP_LOGO = Path("assets/branding/orvix_logo.webp")
@@ -78,6 +78,15 @@ def generate_windows(image: Image.Image) -> None:
         ((square_side - artwork.width) // 2, (square_side - artwork.height) // 2),
     )
     packed = packed.resize((1024, 1024), Image.Resampling.LANCZOS)
+
+    # The resize must never turn the transparent outer corners into an opaque
+    # black square. Constrain only the *outer* silhouette to the launcher's
+    # rounded-square boundary; the interior black artwork remains untouched.
+    rounded = Image.new("L", (1024, 1024), 0)
+    mask_draw = ImageDraw.Draw(rounded)
+    mask_draw.rounded_rectangle((0, 0, 1023, 1023), radius=165, fill=255)
+    alpha = packed.getchannel("A")
+    packed.putalpha(ImageChops.multiply(alpha, rounded))
 
     sizes = (16, 20, 24, 32, 40, 48, 64, 96, 128, 256)
     packed.save(
