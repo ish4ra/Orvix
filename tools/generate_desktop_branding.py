@@ -3,7 +3,6 @@
 
 import argparse
 import re
-from collections import deque
 from pathlib import Path
 
 from PIL import Image
@@ -11,76 +10,19 @@ from PIL import Image
 SOURCE = Path("assets/branding/orvix_logo.png")
 
 
-def _clean_launcher_artwork(source: Image.Image) -> Image.Image:
-    """Remove only the dark background connected to the outer image edge."""
-    image = source.convert("RGBA").copy()
-    width, height = image.size
-    pixels = image.load()
-    visited = bytearray(width * height)
-    queue = deque()
-
-    def is_outer_dark(x: int, y: int) -> bool:
-        r, g, b, a = pixels[x, y]
-        if a == 0:
-            return True
-        return r <= 46 and g <= 46 and b <= 46
-
-    def push(x: int, y: int) -> None:
-        index = y * width + x
-        if visited[index] or not is_outer_dark(x, y):
-            return
-        visited[index] = 1
-        queue.append((x, y))
-
-    for x in range(width):
-        push(x, 0)
-        push(x, height - 1)
-    for y in range(height):
-        push(0, y)
-        push(width - 1, y)
-
-    while queue:
-        x, y = queue.popleft()
-        r, g, b, _ = pixels[x, y]
-        pixels[x, y] = (r, g, b, 0)
-        if x > 0:
-            push(x - 1, y)
-        if x + 1 < width:
-            push(x + 1, y)
-        if y > 0:
-            push(x, y - 1)
-        if y + 1 < height:
-            push(x, y + 1)
-
-    bbox = image.getbbox()
-    if bbox is None:
-        raise SystemExit("Canonical Orvix icon became empty after background cleanup.")
-    return image.crop(bbox)
-
-
-def _center_artwork(source: Image.Image, size: int, fill_ratio: float) -> Image.Image:
-    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    art = source.copy()
-    target = max(1, int(size * fill_ratio))
-    art.thumbnail((target, target), Image.Resampling.LANCZOS)
-    canvas.alpha_composite(
-        art,
-        ((size - art.width) // 2, (size - art.height) // 2),
-    )
-    return canvas
-
-
 def canonical_icon() -> Image.Image:
+    """Use the user-supplied launcher PNG exactly; preserve its alpha and geometry."""
     image = Image.open(SOURCE).convert("RGBA")
     if image.width < 1024 or image.height < 1024:
         raise SystemExit(
             f"Canonical Orvix icon is too small: {image.size}; expected at least 1024x1024"
         )
-    icon = _center_artwork(_clean_launcher_artwork(image), 1024, 0.96)
+    if image.size != (1024, 1024):
+        image = image.resize((1024, 1024), Image.Resampling.LANCZOS)
     for x, y in ((0, 0), (1023, 0), (0, 1023), (1023, 1023)):
-        if icon.getpixel((x, y))[3] != 0:
+        if image.getpixel((x, y))[3] != 0:
             raise SystemExit("Orvix desktop icon outer corners must be transparent.")
-    return icon
+    return image
 
 
 def generate_windows(image: Image.Image) -> None:
