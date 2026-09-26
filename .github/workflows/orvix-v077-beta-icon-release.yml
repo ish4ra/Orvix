@@ -15,9 +15,12 @@ name: Release Orvix v0.7.7-beta — Icon Fix
 on:
   push:
     branches:
-      - orvix-v0.7.7-beta-icon-fix
+      - orvix-v0.7.7-dev
     paths:
       - '.github/workflows/orvix-v077-beta-icon-release.yml'
+      - 'pubspec.yaml'
+      - 'tools/configure_android_build.py'
+      - 'tools/generate_desktop_branding.py'
   workflow_dispatch:
 permissions:
   contents: write
