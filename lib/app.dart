@@ -577,7 +577,7 @@ class _OrvixBrand extends StatelessWidget {
           width: iconSize,
           height: iconSize,
           child: Image.asset(
-            'assets/branding/orvix_icon.webp',
+            'assets/branding/orvix_logo.webp',
             fit: BoxFit.contain,
             filterQuality: FilterQuality.high,
             errorBuilder: (_, __, ___) => Icon(
