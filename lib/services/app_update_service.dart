@@ -285,6 +285,7 @@ class AppUpdateService {
   Future<File> download(
     AppUpdateInfo update, {
     void Function(double progress)? onProgress,
+    bool Function()? isCancelled,
   }) async {
     final request = http.Request('GET', Uri.parse(update.assetUrl));
     request.headers['User-Agent'] = 'Orvix-Updater';
@@ -311,12 +312,19 @@ class AppUpdateService {
     var received = 0;
     try {
       await for (final chunk in response.stream) {
+        if (isCancelled?.call() == true) {
+          throw const _UpdateDownloadCancelled();
+        }
         sink.add(chunk);
         received += chunk.length;
         if (expected > 0) {
           onProgress?.call((received / expected).clamp(0.0, 1.0));
         }
       }
+    } on _UpdateDownloadCancelled {
+      await sink.close();
+      if (await file.exists()) await file.delete();
+      rethrow;
     } finally {
       await sink.close();
     }
@@ -460,4 +468,11 @@ class AppUpdateService {
   }
 
   void dispose() => _client.close();
+}
+
+class _UpdateDownloadCancelled implements Exception {
+  const _UpdateDownloadCancelled();
+
+  @override
+  String toString() => 'Update download cancelled.';
 }
