@@ -1184,7 +1184,6 @@ jobs:
 
   release:
     name: Hold v0.7.9-beta.2 for visual verification
-    if: ${{ false }}
     needs: [validate, windows, macos, android-mobile, android-tv]
     runs-on: ubuntu-latest
     steps:
