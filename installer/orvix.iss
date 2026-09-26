@@ -34,6 +34,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
 
+[InstallDelete]
+; Delete the old executable before replacement so Explorer does not keep the
+; previous file-icon cache entry across in-place upgrades.
+Type: files; Name: "{app}\{#MyAppExeName}"
+
 [Files]
 Source: "..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\windows\runner\resources\app_icon.ico"; DestDir: "{app}"; DestName: "{#MyIconName}"; Flags: ignoreversion
@@ -44,6 +49,13 @@ Name: "{autodesktop}\Orvix"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{ap
 
 
 [Code]
+const
+  SHCNE_ASSOCCHANGED = $08000000;
+  SHCNF_IDLIST = $0000;
+
+procedure SHChangeNotify(wEventId: LongWord; uFlags: UINT_PTR; dwItem1, dwItem2: UINT_PTR);
+  external 'SHChangeNotify@shell32.dll stdcall';
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
@@ -71,7 +83,17 @@ begin
   Result := '';
 end;
 
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+  begin
+    { Invalidate Explorer's cached icon for the fixed orvix.exe path. }
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, 0, 0);
+  end;
+end;
+
 [Run]
 ; Ask Windows Explorer to refresh icon associations after replacing the app.
+Filename: "{sys}\ie4uinit.exe"; Parameters: "-ClearIconCache"; Flags: runhidden waituntilterminated skipifdoesntexist
 Filename: "{sys}\ie4uinit.exe"; Parameters: "-show"; Flags: runhidden waituntilterminated skipifdoesntexist
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Orvix"; Flags: nowait postinstall skipifsilent
