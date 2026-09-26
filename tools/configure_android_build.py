@@ -142,7 +142,14 @@ def patch_android(tv: bool) -> None:
         cleaned.append((r, g, b, a if keep else 0))
     mark = Image.new("RGBA", source.size)
     mark.putdata(cleaned)
-    mark.save(
+    bbox = mark.getbbox()
+    if bbox is None:
+        raise SystemExit("Could not isolate the Orvix O mark.")
+    mark = mark.crop(bbox)
+    pad = max(2, round(max(mark.size) * 0.035))
+    framed = Image.new("RGBA", (mark.width + pad * 2, mark.height + pad * 2))
+    framed.alpha_composite(mark, (pad, pad))
+    framed.save(
         "assets/branding/orvix_logo.webp",
         format="WEBP",
         quality=95,
