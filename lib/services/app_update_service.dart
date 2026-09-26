@@ -46,7 +46,7 @@ enum AppUpdateInstallResult {
 class AppUpdateService {
   AppUpdateService({http.Client? client}) : _client = client ?? http.Client();
 
-  static const currentVersion = '0.7.8';
+  static const currentVersion = '0.7.9';
   static const _releasesBaseUrl =
       'https://api.github.com/repos/ish4ra/Orvix/releases';
   static const _releaseAssetFetchAttempts = 5;
