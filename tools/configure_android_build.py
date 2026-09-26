@@ -124,6 +124,31 @@ def patch_android(tv: bool) -> None:
         if source.getpixel((x, y))[3] != 0:
             raise SystemExit("Orvix launcher icon outer corners must be transparent.")
 
+    # Keep in-app branding distinct from the launcher: only the lime O mark,
+    # with the surrounding rounded-square/background fully transparent.
+    width, height = source.size
+    cx, cy = width / 2, height / 2
+    radius_sq = (min(width, height) * 0.36) ** 2
+    cleaned = []
+    for index, (r, g, b, a) in enumerate(source.getdata()):
+        x = index % width
+        y = index // width
+        keep = (
+            (x - cx) ** 2 + (y - cy) ** 2 < radius_sq
+            and g > 45
+            and g > b * 1.15
+            and g > r * 0.90
+        )
+        cleaned.append((r, g, b, a if keep else 0))
+    mark = Image.new("RGBA", source.size)
+    mark.putdata(cleaned)
+    mark.save(
+        "assets/branding/orvix_logo.webp",
+        format="WEBP",
+        quality=95,
+        method=6,
+    )
+
     sizes = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
     for density, size in sizes.items():
         out = Path(f"android/app/src/main/res/mipmap-{density}/ic_launcher.png")
