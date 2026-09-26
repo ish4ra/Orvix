@@ -5,7 +5,7 @@ import argparse
 import re
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image
 
 SOURCE = Path("assets/branding/orvix_logo.png")
 IN_APP_LOGO = Path("assets/branding/orvix_logo.webp")
@@ -155,4 +155,55 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main()def generate_windows_icon(image: Image.Image) -> None:
+    output = Path("windows/runner/resources/app_icon.ico")
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    # The supplied PNG contains near-transparent stray pixels all the way to
+    # the canvas edges. PIL getbbox() therefore treated the entire 1254x1254
+    # canvas as artwork, which is why Explorer kept rendering Orvix too small
+    # (and some ICO sizes exposed a dark square/halo).
+    #
+    # Ignore only those effectively invisible alpha-noise pixels, then crop to
+    # the REAL rounded-square artwork. Do not invent a new rounded mask and do
+    # not touch the black interior of the designed icon.
+    alpha = image.getchannel("A")
+    visible = alpha.point(lambda value: 255 if value >= 5 else 0)
+    bbox = visible.getbbox()
+    if bbox is None:
+        raise SystemExit("Canonical Orvix icon has no visible artwork.")
+
+    artwork = image.crop(bbox)
+    artwork_alpha = artwork.getchannel("A").point(
+        lambda value: 0 if value < 5 else value
+    )
+    artwork.putalpha(artwork_alpha)
+
+    # Keep just a tiny transparent safety margin so the rounded green border
+    # nearly fills the Windows icon cell, like normal installed applications.
+    pad = max(2, round(max(artwork.size) * 0.012))
+    side = max(artwork.size) + pad * 2
+    packed = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    packed.alpha_composite(
+        artwork,
+        ((side - artwork.width) // 2, (side - artwork.height) // 2),
+    )
+    packed = packed.resize((1024, 1024), Image.Resampling.LANCZOS)
+
+    # Resampling can recreate tiny alpha values at transparent edges. Remove
+    # only those invisible pixels again so ICO conversion cannot quantize them
+    # into a black halo/square.
+    packed_alpha = packed.getchannel("A").point(
+        lambda value: 0 if value < 5 else value
+    )
+    packed.putalpha(packed_alpha)
+
+    sizes = (16, 20, 24, 32, 40, 48, 64, 96, 128, 256)
+    packed.save(
+        output,
+        format="ICO",
+        sizes=[(size, size) for size in sizes],
+        bitmap_format="png",
+    )
+    print(f"Generated {output} ({output.stat().st_size} bytes)")
+
