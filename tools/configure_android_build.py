@@ -175,7 +175,7 @@ def patch_android(tv: bool) -> None:
     # v0.7.7 uses a tightly cropped 1024px canonical icon.  Keep the complete
     # designed rounded-square edge for raster launcher icons; do not reintroduce
     # the black source-image margin that surrounded the original concept art.
-    raw_src = Image.open("assets/branding/orvix_icon.webp").convert("RGBA")
+    raw_src = Image.open("assets/branding/orvix_logo.png").convert("RGBA")
     source = _center_artwork(
         _clean_launcher_artwork(raw_src),
         1024,
@@ -253,56 +253,21 @@ def patch_android(tv: bool) -> None:
     )
 
     if tv:
-        # Compose at 1280x720, then downsample once to Android TV's required
-        # 320x180 resource.  This prevents the pixelated wide artwork produced
-        # by drawing directly at launcher resolution.
+        # Use the supplied wide TV artwork directly. Preserve its aspect ratio
+        # and fit it inside Android TV's 320x180 banner without stretching.
         banner_path = Path(
             "android/app/src/main/res/drawable-xhdpi/tv_banner.png"
         )
         banner_path.parent.mkdir(parents=True, exist_ok=True)
-
-        master = Image.new("RGBA", (1280, 720), (5, 8, 6, 255))
-        glow = Image.new("RGBA", master.size, (0, 0, 0, 0))
-        glow_draw = ImageDraw.Draw(glow)
-        glow_draw.ellipse((650, -260, 1500, 590), fill=(185, 255, 69, 72))
-        glow_draw.ellipse((-350, 340, 560, 1120), fill=(66, 107, 46, 62))
-        glow = glow.filter(ImageFilter.GaussianBlur(150))
-        master = Image.alpha_composite(master, glow)
-
-        icon = ImageOps.fit(
-            source,
-            (410, 410),
-            method=Image.Resampling.LANCZOS,
-            centering=(0.5, 0.5),
+        supplied_banner = Image.open("assets/branding/tv_banner.png").convert("RGBA")
+        banner = Image.new("RGBA", (320, 180), (5, 8, 6, 255))
+        fitted = supplied_banner.copy()
+        fitted.thumbnail((320, 180), Image.Resampling.LANCZOS)
+        banner.alpha_composite(
+            fitted,
+            ((320 - fitted.width) // 2, (180 - fitted.height) // 2),
         )
-        master.alpha_composite(icon, (76, 155))
-
-        font = None
-        for candidate in (
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
-        ):
-            try:
-                font = ImageFont.truetype(candidate, 178)
-                break
-            except OSError:
-                pass
-        if font is None:
-            font = ImageFont.load_default()
-
-        draw = ImageDraw.Draw(master)
-        draw.text((525, 228), "orvix", font=font, fill=(238, 255, 211, 255))
-        draw.rounded_rectangle(
-            (535, 452, 1125, 466),
-            radius=7,
-            fill=(185, 255, 69, 255),
-        )
-
-        banner = master.convert("RGB").resize(
-            (320, 180),
-            Image.Resampling.LANCZOS,
-        )
-        banner.save(banner_path, format="PNG", optimize=True)
+        banner.convert("RGB").save(banner_path, format="PNG", optimize=True)
 
     main_activity = Path(
         "android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt"
