@@ -11,8 +11,8 @@ void main() {
     expect(home, contains('HorizontalScrollRail('));
     expect(home, contains('_ContinueLandscapeCard('));
     expect(home, contains('episode?.thumbnail'));
-    expect(rail, contains('PointerScrollEvent'));
-    expect(rail, contains('pointerSignalResolver.register'));
+    expect(rail, isNot(contains('PointerScrollEvent')));
+    expect(rail, isNot(contains('pointerSignalResolver.register')));
     expect(rail, contains('PointerDeviceKind.mouse'));
     expect(rail, contains('Icons.chevron_right_rounded'));
     expect(rail, contains('Icons.chevron_left_rounded'));
