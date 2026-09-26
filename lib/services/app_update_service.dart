@@ -46,6 +46,7 @@ enum AppUpdateInstallResult {
 class AppUpdateService {
   AppUpdateService({http.Client? client}) : _client = client ?? http.Client();
 
+  // Keep this synchronized with pubspec.yaml; CI regression coverage enforces it.
   static const currentVersion = '0.7.8-beta.2';
   static const _releasesBaseUrl =
       'https://api.github.com/repos/ish4ra/Orvix/releases';
