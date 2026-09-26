@@ -149,4 +149,55 @@ void main() {
     }
   });
 
+  test('updater detects every newer Orvix stable and beta version', () {
+    bool newer(String candidate, String current) {
+      final re = RegExp(
+        r'^v?(\d+)\.(\d+)\.(\d+)(?:-([A-Za-z]+)[.-]?(\d+)?)?',
+      );
+
+      (List<int>, int, int)? parse(String raw) {
+        final match = re.firstMatch(raw.trim());
+        if (match == null) return null;
+        final base = <int>[
+          int.parse(match.group(1)!),
+          int.parse(match.group(2)!),
+          int.parse(match.group(3)!),
+        ];
+        final label = match.group(4)?.toLowerCase();
+        final stage = switch (label) {
+          null => 4,
+          'rc' => 3,
+          'beta' => 2,
+          'alpha' => 1,
+          _ => 0,
+        };
+        return (base, stage, int.tryParse(match.group(5) ?? '') ?? 0);
+      }
+
+      final a = parse(candidate);
+      final b = parse(current);
+      if (a == null || b == null) return false;
+      for (var i = 0; i < 3; i++) {
+        if (a.$1[i] != b.$1[i]) return a.$1[i] > b.$1[i];
+      }
+      if (a.$2 != b.$2) return a.$2 > b.$2;
+      return a.$3 > b.$3;
+    }
+
+    // Next base version prereleases must be visible to the previous stable.
+    expect(newer('v0.7.8-beta.1', '0.7.7'), isTrue);
+    expect(newer('v0.7.8-beta.2', '0.7.7'), isTrue);
+    expect(newer('v0.7.9-beta.1', '0.7.8-beta.2'), isTrue);
+
+    // Sequential prereleases within one base must also advance.
+    expect(newer('v0.7.8-beta.2', '0.7.8-beta.1'), isTrue);
+    expect(newer('v0.7.8-rc.1', '0.7.8-beta.99'), isTrue);
+    expect(newer('v0.7.8', '0.7.8-rc.9'), isTrue);
+
+    // Never offer the same or an older build.
+    expect(newer('v0.7.8-beta.1', '0.7.8-beta.1'), isFalse);
+    expect(newer('v0.7.8-beta.1', '0.7.8-beta.2'), isFalse);
+    expect(newer('v0.7.7', '0.7.8-beta.1'), isFalse);
+  });
+
 }
