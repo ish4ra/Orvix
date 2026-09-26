@@ -937,7 +937,7 @@ jobs:
           python -m pip install --disable-pip-version-check pillow
           python tools/generate_desktop_branding.py --windows
           New-Item -ItemType Directory -Force -Path branding-preview | Out-Null
-          python -c "from PIL import Image; im=Image.open('windows/runner/resources/app_icon.ico'); im.seek(im.n_frames-1); im.convert('RGBA').save('branding-preview/windows-icon.png')"
+          python -c "from PIL import Image; im=Image.open('windows/runner/resources/app_icon.ico'); im.ico.getimage((256,256)).convert('RGBA').save('branding-preview/windows-icon.png')"
           Copy-Item assets/branding/orvix_logo.png branding-preview/launcher-source.png
           Copy-Item assets/branding/orvix_logo.webp branding-preview/in-app-logo.webp
 
