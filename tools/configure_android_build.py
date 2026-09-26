@@ -176,12 +176,14 @@ def patch_android(tv: bool) -> None:
     # designed rounded-square edge for raster launcher icons; do not reintroduce
     # the black source-image margin that surrounded the original concept art.
     raw_src = Image.open("assets/branding/orvix_icon.webp").convert("RGBA")
-    source = ImageOps.fit(
-        raw_src,
-        (1024, 1024),
-        method=Image.Resampling.LANCZOS,
-        centering=(0.5, 0.5),
+    source = _center_artwork(
+        _clean_launcher_artwork(raw_src),
+        1024,
+        0.96,
     )
+    for x, y in ((0, 0), (1023, 0), (0, 1023), (1023, 1023)):
+        if source.getpixel((x, y))[3] != 0:
+            raise SystemExit("Orvix launcher icon outer corners must be transparent.")
 
     sizes = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
     for density, size in sizes.items():
