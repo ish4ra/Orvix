@@ -4,7 +4,7 @@
 #endif
 #define MyAppPublisher "Ishara Lakshan"
 #define MyAppExeName "orvix.exe"
-#define MyIconName "orvix-v0.7.9-beta.8.ico"
+#define MyIconName "orvix-v0.7.9-beta.9.ico"
 
 [Setup]
 AppId={{C580B2E6-5A7A-4FD7-8C68-36D238B4497B}
