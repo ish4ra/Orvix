@@ -1,4 +1,4 @@
-name: Release Orvix v0.7.9 — Icon Fix
+name: Release Orvix v0.7.8-beta.1 — Icon Fix
 # v077-stable-regression-test-sync
 # beta45-realdebrid-premiumize-trigger
 # beta45-regression-test-fix-trigger
@@ -336,14 +336,14 @@ jobs:
           set -euo pipefail
           ditto -c -k --sequesterRsrc --keepParent \
             build/macos/Build/Products/Release/Orvix.app \
-            Orvix-v0.7.9-macOS.zip
-          test -s Orvix-v0.7.9-macOS.zip
+            Orvix-v0.7.8-beta.1-macOS.zip
+          test -s Orvix-v0.7.8-beta.1-macOS.zip
 
       - uses: actions/upload-artifact@v4
         with:
           name: macos
           if-no-files-found: error
-          path: Orvix-v0.7.9-macOS.zip
+          path: Orvix-v0.7.8-beta.1-macOS.zip
 
   windows:
     needs: validate
@@ -716,7 +716,7 @@ jobs:
 
       - name: Pack portable build
         shell: pwsh
-        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath 'Orvix-v0.7.9-Windows-x64.zip' -Force
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath 'Orvix-v0.7.8-beta.1-Windows-x64.zip' -Force
 
       - name: Install Inno Setup
         shell: pwsh
@@ -731,14 +731,14 @@ jobs:
           )
           $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
-          & $iscc '/DMyAppVersion=0.7.9' 'installer\orvix.iss'
+          & $iscc '/DMyAppVersion=0.7.8-beta.1' 'installer\orvix.iss'
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
 
       - name: Smoke test Windows installer package
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $installer = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.9-Windows-x64.exe'
+          $installer = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.8-beta.1-Windows-x64.exe'
           $installerLog = Join-Path $env:RUNNER_TEMP 'orvix-installer-smoke.log'
           $run = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/LOG=$installerLog" -Wait -PassThru
           if ($run.ExitCode -ne 0) {
@@ -755,7 +755,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $installed = Join-Path $env:LOCALAPPDATA 'Programs\\Orvix\\orvix.exe'
-          $installer = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.9-Windows-x64.exe'
+          $installer = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.8-beta.1-Windows-x64.exe'
           $upgradeLog = Join-Path $env:RUNNER_TEMP 'orvix-installer-running-app.log'
 
           $running = Start-Process -FilePath $installed -PassThru
@@ -810,7 +810,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $currentInstaller = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.9-Windows-x64.exe'
+          $currentInstaller = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.8-beta.1-Windows-x64.exe'
           $installedDir = Join-Path $env:LOCALAPPDATA 'Programs\\Orvix'
           $uninstaller = Join-Path $installedDir 'unins000.exe'
 
@@ -935,8 +935,8 @@ jobs:
           name: windows
           if-no-files-found: error
           path: |
-            Orvix-v0.7.9-Windows-x64.zip
-            installer-output/Orvix-Setup-v0.7.9-Windows-x64.exe
+            Orvix-v0.7.8-beta.1-Windows-x64.zip
+            installer-output/Orvix-Setup-v0.7.8-beta.1-Windows-x64.exe
 
   android-mobile:
     runs-on: ubuntu-latest
@@ -1010,19 +1010,19 @@ jobs:
 
       - name: Rename APKs
         run: |
-          cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.9-Android-Mobile.apk
-          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk Orvix-v0.7.9-Android-Mobile-arm64-v8a.apk
-          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk Orvix-v0.7.9-Android-Mobile-armeabi-v7a.apk
-          cp build/app/outputs/flutter-apk/app-x86_64-release.apk Orvix-v0.7.9-Android-Mobile-x86_64.apk
+          cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.8-beta.1-Android-Mobile.apk
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk Orvix-v0.7.8-beta.1-Android-Mobile-arm64-v8a.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk Orvix-v0.7.8-beta.1-Android-Mobile-armeabi-v7a.apk
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk Orvix-v0.7.8-beta.1-Android-Mobile-x86_64.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: android-mobile
           path: |
-            Orvix-v0.7.9-Android-Mobile.apk
-            Orvix-v0.7.9-Android-Mobile-arm64-v8a.apk
-            Orvix-v0.7.9-Android-Mobile-armeabi-v7a.apk
-            Orvix-v0.7.9-Android-Mobile-x86_64.apk
+            Orvix-v0.7.8-beta.1-Android-Mobile.apk
+            Orvix-v0.7.8-beta.1-Android-Mobile-arm64-v8a.apk
+            Orvix-v0.7.8-beta.1-Android-Mobile-armeabi-v7a.apk
+            Orvix-v0.7.8-beta.1-Android-Mobile-x86_64.apk
 
   android-tv:
     runs-on: ubuntu-latest
@@ -1114,15 +1114,15 @@ jobs:
           "$APKSIGNER" verify --verbose "$APK"
 
       - name: Rename APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.9-Android-TV.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.8-beta.1-Android-TV.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: android-tv
-          path: Orvix-v0.7.9-Android-TV.apk
+          path: Orvix-v0.7.8-beta.1-Android-TV.apk
 
   release:
-    name: Publish v0.7.9
+    name: Publish v0.7.8-beta.1
     needs: [validate, windows, macos, android-mobile, android-tv]
     runs-on: ubuntu-latest
     steps:
@@ -1152,14 +1152,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -s dist/windows/Orvix-v0.7.9-Windows-x64.zip
-          test -s dist/windows/installer-output/Orvix-Setup-v0.7.9-Windows-x64.exe
-          test -s dist/mobile/Orvix-v0.7.9-Android-Mobile.apk
-          test -s dist/mobile/Orvix-v0.7.9-Android-Mobile-arm64-v8a.apk
-          test -s dist/mobile/Orvix-v0.7.9-Android-Mobile-armeabi-v7a.apk
-          test -s dist/mobile/Orvix-v0.7.9-Android-Mobile-x86_64.apk
-          test -s dist/tv/Orvix-v0.7.9-Android-TV.apk
-          test -s dist/macos/Orvix-v0.7.9-macOS.zip
+          test -s dist/windows/Orvix-v0.7.8-beta.1-Windows-x64.zip
+          test -s dist/windows/installer-output/Orvix-Setup-v0.7.8-beta.1-Windows-x64.exe
+          test -s dist/mobile/Orvix-v0.7.8-beta.1-Android-Mobile.apk
+          test -s dist/mobile/Orvix-v0.7.8-beta.1-Android-Mobile-arm64-v8a.apk
+          test -s dist/mobile/Orvix-v0.7.8-beta.1-Android-Mobile-armeabi-v7a.apk
+          test -s dist/mobile/Orvix-v0.7.8-beta.1-Android-Mobile-x86_64.apk
+          test -s dist/tv/Orvix-v0.7.8-beta.1-Android-TV.apk
+          test -s dist/macos/Orvix-v0.7.8-beta.1-macOS.zip
 
       - name: Publish beta icon-fix release
         env:
@@ -1169,7 +1169,7 @@ jobs:
         run: |
           set -euo pipefail
           cat > /tmp/notes.md <<'EOF'
-          Orvix v0.7.9 is an icon-only corrective release based on v0.7.7.
+          Orvix v0.7.8-beta.1 is an icon-only corrective release based on v0.7.7.
 
           Icon correction:
           - Removes only the dark outer canvas connected to the image edge, so the app icon ends cleanly at the rounded lime border.
@@ -1187,15 +1187,15 @@ jobs:
 
           chmod +x tools/publish_orvix_release.sh
           tools/publish_orvix_release.sh \
-            v0.7.9 \
-            'Orvix v0.7.9 — Icon Fix' \
+            v0.7.8-beta.1 \
+            'Orvix v0.7.8-beta.1 — Icon Fix' \
             /tmp/notes.md \
             "${{ github.sha }}" \
-            dist/windows/Orvix-v0.7.9-Windows-x64.zip \
-            dist/windows/installer-output/Orvix-Setup-v0.7.9-Windows-x64.exe \
-            dist/mobile/Orvix-v0.7.9-Android-Mobile.apk \
-            dist/mobile/Orvix-v0.7.9-Android-Mobile-arm64-v8a.apk \
-            dist/mobile/Orvix-v0.7.9-Android-Mobile-armeabi-v7a.apk \
-            dist/mobile/Orvix-v0.7.9-Android-Mobile-x86_64.apk \
-            dist/tv/Orvix-v0.7.9-Android-TV.apk \
-            dist/macos/Orvix-v0.7.9-macOS.zip
+            dist/windows/Orvix-v0.7.8-beta.1-Windows-x64.zip \
+            dist/windows/installer-output/Orvix-Setup-v0.7.8-beta.1-Windows-x64.exe \
+            dist/mobile/Orvix-v0.7.8-beta.1-Android-Mobile.apk \
+            dist/mobile/Orvix-v0.7.8-beta.1-Android-Mobile-arm64-v8a.apk \
+            dist/mobile/Orvix-v0.7.8-beta.1-Android-Mobile-armeabi-v7a.apk \
+            dist/mobile/Orvix-v0.7.8-beta.1-Android-Mobile-x86_64.apk \
+            dist/tv/Orvix-v0.7.8-beta.1-Android-TV.apk \
+            dist/macos/Orvix-v0.7.8-beta.1-macOS.zip
