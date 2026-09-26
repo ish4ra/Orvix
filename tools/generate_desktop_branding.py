@@ -8,6 +8,7 @@ from pathlib import Path
 from PIL import Image
 
 SOURCE = Path("assets/branding/orvix_logo.png")
+IN_APP_LOGO = Path("assets/branding/orvix_logo.webp")
 
 
 def canonical_icon() -> Image.Image:
@@ -23,6 +24,30 @@ def canonical_icon() -> Image.Image:
         if image.getpixel((x, y))[3] != 0:
             raise SystemExit("Orvix desktop icon outer corners must be transparent.")
     return image
+
+
+def generate_in_app_mark(image: Image.Image) -> None:
+    """Derive the transparent O-only in-app mark from the canonical launcher art."""
+    width, height = image.size
+    cx, cy = width / 2, height / 2
+    radius_sq = (min(width, height) * 0.36) ** 2
+    pixels = list(image.getdata())
+    cleaned = []
+    for index, (r, g, b, a) in enumerate(pixels):
+        x = index % width
+        y = index // width
+        keep = (
+            (x - cx) ** 2 + (y - cy) ** 2 < radius_sq
+            and g > 45
+            and g > b * 1.15
+            and g > r * 0.90
+        )
+        cleaned.append((r, g, b, a if keep else 0))
+    mark = Image.new("RGBA", image.size)
+    mark.putdata(cleaned)
+    IN_APP_LOGO.parent.mkdir(parents=True, exist_ok=True)
+    mark.save(IN_APP_LOGO, format="WEBP", quality=95, method=6)
+    print(f"Generated transparent in-app O mark: {IN_APP_LOGO}")
 
 
 def generate_windows(image: Image.Image) -> None:
@@ -87,6 +112,7 @@ def main() -> None:
         parser.error("select --windows and/or --macos")
 
     image = canonical_icon()
+    generate_in_app_mark(image)
     if args.windows:
         generate_windows(image)
     if args.macos:
