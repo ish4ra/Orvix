@@ -45,8 +45,16 @@ def generate_in_app_mark(image: Image.Image) -> None:
         cleaned.append((r, g, b, a if keep else 0))
     mark = Image.new("RGBA", image.size)
     mark.putdata(cleaned)
+    bbox = mark.getbbox()
+    if bbox is None:
+        raise SystemExit("Could not isolate the Orvix O mark.")
+    mark = mark.crop(bbox)
+    # Small transparent breathing room, without the old full-icon canvas.
+    pad = max(2, round(max(mark.size) * 0.035))
+    framed = Image.new("RGBA", (mark.width + pad * 2, mark.height + pad * 2))
+    framed.alpha_composite(mark, (pad, pad))
     IN_APP_LOGO.parent.mkdir(parents=True, exist_ok=True)
-    mark.save(IN_APP_LOGO, format="WEBP", quality=95, method=6)
+    framed.save(IN_APP_LOGO, format="WEBP", quality=95, method=6)
     print(f"Generated transparent in-app O mark: {IN_APP_LOGO}")
 
 
