@@ -500,7 +500,7 @@ class _OrvixShellState extends State<_OrvixShell> {
                   windowsDesktop ? 24 : 28,
                 ),
                 child: _OrvixBrand(
-                  iconSize: windowsDesktop ? 46 : 72,
+                  iconSize: windowsDesktop ? 52 : 76,
                   fontSize: 20,
                   showWordmark: railExtended,
                 ),
@@ -572,6 +572,7 @@ class _OrvixBrand extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         SizedBox(
           width: iconSize,
@@ -619,7 +620,7 @@ class _AboutScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const _OrvixBrand(
-                iconSize: 78,
+                iconSize: 68,
                 fontSize: 38,
                 showWordmark: true,
               ),
