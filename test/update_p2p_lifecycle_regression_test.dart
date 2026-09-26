@@ -92,10 +92,13 @@ void main() {
       update,
       contains("'Cache-Control': 'no-cache, no-store, max-age=0'"),
     );
-    expect(gate, contains('AppLifecycleState.resumed'));
-    expect(gate, contains('Timer.periodic('));
-    expect(gate, contains('Duration(minutes: 5)'));
-    expect(gate, contains('Duration(seconds: 20)'));
+    // Update discovery is intentionally cold-start-only. Do not interrupt a
+    // running Orvix session when a new release appears.
+    expect(gate, contains('unawaited(_checkSoon())'));
+    expect(gate, isNot(contains('AppLifecycleState.resumed')));
+    expect(gate, isNot(contains('Timer.periodic(')));
+    expect(gate, isNot(contains('Duration(minutes: 5)')));
+    expect(gate, isNot(contains('Duration(seconds: 20)')));
     expect(update, contains('_releaseAssetFetchAttempts = 5'));
     expect(update, contains("'_orvix_check'"));
     expect(update, contains("'_orvix_asset_check'"));
