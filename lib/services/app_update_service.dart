@@ -418,6 +418,10 @@ class AppUpdateService {
     final b = _parseVersion(current);
     if (a == null || b == null) return false;
 
+    // Orvix beta releases are sequential update builds. A prerelease of the
+    // next base version (for example 0.7.8-beta.1) must update an installed
+    // 0.7.7 stable build. Within the same base version, normal SemVer ordering
+    // still applies: stable > rc > beta > alpha, and beta.2 > beta.1.
     for (var i = 0; i < 3; i++) {
       if (a.$1[i] != b.$1[i]) return a.$1[i] > b.$1[i];
     }
