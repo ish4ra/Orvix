@@ -1,65 +1,7 @@
 import argparse
-from collections import deque
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
-
-
-def _clean_launcher_artwork(source: Image.Image) -> Image.Image:
-    """Remove only the dark background connected to the outer image edge."""
-    image = source.convert("RGBA").copy()
-    width, height = image.size
-    pixels = image.load()
-    visited = bytearray(width * height)
-    queue = deque()
-
-    def is_outer_dark(x: int, y: int) -> bool:
-        r, g, b, a = pixels[x, y]
-        if a == 0:
-            return True
-        return r <= 46 and g <= 46 and b <= 46
-
-    def push(x: int, y: int) -> None:
-        index = y * width + x
-        if visited[index] or not is_outer_dark(x, y):
-            return
-        visited[index] = 1
-        queue.append((x, y))
-
-    for x in range(width):
-        push(x, 0)
-        push(x, height - 1)
-    for y in range(height):
-        push(0, y)
-        push(width - 1, y)
-
-    while queue:
-        x, y = queue.popleft()
-        r, g, b, _ = pixels[x, y]
-        pixels[x, y] = (r, g, b, 0)
-        if x > 0:
-            push(x - 1, y)
-        if x + 1 < width:
-            push(x + 1, y)
-        if y > 0:
-            push(x, y - 1)
-        if y + 1 < height:
-            push(x, y + 1)
-
-    bbox = image.getbbox()
-    return image.crop(bbox) if bbox else image
-
-
-def _center_artwork(source: Image.Image, size: int, fill_ratio: float) -> Image.Image:
-    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    art = source.copy()
-    target = max(1, int(size * fill_ratio))
-    art.thumbnail((target, target), Image.Resampling.LANCZOS)
-    canvas.alpha_composite(
-        art,
-        ((size - art.width) // 2, (size - art.height) // 2),
-    )
-    return canvas
 
 
 def patch_android(tv: bool) -> None:
@@ -175,12 +117,9 @@ def patch_android(tv: bool) -> None:
     # v0.7.7 uses a tightly cropped 1024px canonical icon.  Keep the complete
     # designed rounded-square edge for raster launcher icons; do not reintroduce
     # the black source-image margin that surrounded the original concept art.
-    raw_src = Image.open("assets/branding/orvix_logo.png").convert("RGBA")
-    source = _center_artwork(
-        _clean_launcher_artwork(raw_src),
-        1024,
-        0.96,
-    )
+    source = Image.open("assets/branding/orvix_logo.png").convert("RGBA")
+    if source.size != (1024, 1024):
+        source = source.resize((1024, 1024), Image.Resampling.LANCZOS)
     for x, y in ((0, 0), (1023, 0), (0, 1023), (1023, 1023)):
         if source.getpixel((x, y))[3] != 0:
             raise SystemExit("Orvix launcher icon outer corners must be transparent.")
@@ -199,7 +138,8 @@ def patch_android(tv: bool) -> None:
 
     # Adaptive icons get breathing room inside the OS mask while still using
     # the exact same high-resolution artwork.
-    fg = _center_artwork(source, 432, .78)
+    # Preserve the exact supplied icon for adaptive foreground too.
+    fg = source.resize((432, 432), Image.Resampling.LANCZOS)
     fg_path = Path("android/app/src/main/res/drawable-nodpi/orvix_foreground.png")
     fg_path.parent.mkdir(parents=True, exist_ok=True)
     fg.save(fg_path)
