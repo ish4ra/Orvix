@@ -411,6 +411,21 @@ jobs:
           if (-not (Test-Path 'windows\runner\resources\app_icon.ico')) { throw 'Windows app icon missing' }
           if ((Get-Item 'windows\runner\resources\app_icon.ico').Length -lt 10000) { throw 'Windows app icon looks invalid' }
 
+      - name: Verify icon embedded in built Windows EXE
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Resolve-Path 'build\windows\x64\runner\Release\orvix.exe'
+          Add-Type -AssemblyName System.Drawing
+          $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe.Path)
+          if ($null -eq $icon) { throw 'Could not extract icon embedded in orvix.exe' }
+          $bitmap = $icon.ToBitmap()
+          $preview = Join-Path $env:RUNNER_TEMP 'orvix-exe-embedded-icon.png'
+          $bitmap.Save($preview, [System.Drawing.Imaging.ImageFormat]::Png)
+          $bitmap.Dispose()
+          $icon.Dispose()
+          if (-not (Test-Path $preview)) { throw 'Embedded EXE icon preview was not created' }
+
       - name: Bundle verified FFmpeg tools
         shell: pwsh
         env:
@@ -954,6 +969,9 @@ jobs:
           python -c "from PIL import Image; im=Image.open('windows/runner/resources/app_icon.ico'); im.ico.getimage((256,256)).convert('RGBA').save('branding-preview/windows-icon.png')"
           Copy-Item assets/branding/orvix_logo.png branding-preview/launcher-source.png
           Copy-Item assets/branding/orvix_logo.webp branding-preview/in-app-logo.webp
+          if (Test-Path (Join-Path $env:RUNNER_TEMP 'orvix-exe-embedded-icon.png')) {
+            Copy-Item (Join-Path $env:RUNNER_TEMP 'orvix-exe-embedded-icon.png') branding-preview/windows-exe-embedded-icon.png
+          }
 
       - uses: actions/upload-artifact@v4
         with:
