@@ -625,8 +625,6 @@ class _SearchHint extends StatelessWidget {
       ),
       child: const Row(
         children: [
-          Icon(Icons.auto_awesome_outlined, size: 28),
-          SizedBox(width: 14),
           Expanded(
             child: Text(
               'Type two or more characters. Orvix searches movies and TV together and updates suggestions automatically as you type.',
