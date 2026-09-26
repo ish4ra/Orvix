@@ -18,7 +18,7 @@ class OrvixUpdateGate extends StatefulWidget {
 }
 
 class _OrvixUpdateGateState extends State<OrvixUpdateGate>
-    with WidgetsBindingObserver {
+{
   final AppUpdateService _updates = AppUpdateService();
 
   AppUpdateInfo? _update;
@@ -29,33 +29,12 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
   File? _downloadedFile;
   bool _checking = false;
   bool _cancelDownloadRequested = false;
-  Timer? _releaseWarmupRetry;
-  Timer? _periodicUpdateCheck;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     unawaited(_reportPreviousWindowsUpdate());
     unawaited(_checkSoon());
-
-    // Releases can become visible while Orvix is already open. Do not make
-    // update discovery depend on an app restart/resume event.
-    _releaseWarmupRetry = Timer(
-      const Duration(seconds: 20),
-      () => unawaited(_checkForUpdate()),
-    );
-    _periodicUpdateCheck = Timer.periodic(
-      const Duration(minutes: 5),
-      (_) => unawaited(_checkForUpdate()),
-    );
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      unawaited(_checkForUpdate());
-    }
   }
 
   Future<void> _reportPreviousWindowsUpdate() async {
@@ -88,7 +67,7 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
       setState(() {
         _update = update;
         // A dismissal only applies to the version the user dismissed. A
-        // newer release discovered on the next app resume/startup is shown.
+        // newer release discovered on the next cold app start is shown.
         _dismissed = false;
         _downloadedFile = null;
       });
@@ -99,9 +78,6 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _releaseWarmupRetry?.cancel();
-    _periodicUpdateCheck?.cancel();
     _updates.dispose();
     super.dispose();
   }
