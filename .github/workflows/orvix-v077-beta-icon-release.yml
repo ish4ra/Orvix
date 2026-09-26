@@ -734,7 +734,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $installer = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.7-beta-Windows-x64.exe'
+          $installer = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.7-Windows-x64.exe'
           $installerLog = Join-Path $env:RUNNER_TEMP 'orvix-installer-smoke.log'
           $run = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/LOG=$installerLog" -Wait -PassThru
           if ($run.ExitCode -ne 0) {
@@ -751,7 +751,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $installed = Join-Path $env:LOCALAPPDATA 'Programs\\Orvix\\orvix.exe'
-          $installer = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.7-beta-Windows-x64.exe'
+          $installer = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.7-Windows-x64.exe'
           $upgradeLog = Join-Path $env:RUNNER_TEMP 'orvix-installer-running-app.log'
 
           $running = Start-Process -FilePath $installed -PassThru
@@ -806,7 +806,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $currentInstaller = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.7-beta-Windows-x64.exe'
+          $currentInstaller = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.7-Windows-x64.exe'
           $installedDir = Join-Path $env:LOCALAPPDATA 'Programs\\Orvix'
           $uninstaller = Join-Path $installedDir 'unins000.exe'
 
@@ -932,7 +932,7 @@ jobs:
           if-no-files-found: error
           path: |
             Orvix-v0.7.7-beta-Windows-x64.zip
-            installer-output/Orvix-Setup-v0.7.7-beta-Windows-x64.exe
+            installer-output/Orvix-Setup-v0.7.7-Windows-x64.exe
 
   android-mobile:
     runs-on: ubuntu-latest
@@ -1149,7 +1149,7 @@ jobs:
         run: |
           set -euo pipefail
           test -s dist/windows/Orvix-v0.7.7-beta-Windows-x64.zip
-          test -s dist/windows/installer-output/Orvix-Setup-v0.7.7-beta-Windows-x64.exe
+          test -s dist/windows/installer-output/Orvix-Setup-v0.7.7-Windows-x64.exe
           test -s dist/mobile/Orvix-v0.7.7-beta-Android-Mobile.apk
           test -s dist/mobile/Orvix-v0.7.7-beta-Android-Mobile-arm64-v8a.apk
           test -s dist/mobile/Orvix-v0.7.7-beta-Android-Mobile-armeabi-v7a.apk
@@ -1188,7 +1188,7 @@ jobs:
             /tmp/notes.md \
             "${{ github.sha }}" \
             dist/windows/Orvix-v0.7.7-beta-Windows-x64.zip \
-            dist/windows/installer-output/Orvix-Setup-v0.7.7-beta-Windows-x64.exe \
+            dist/windows/installer-output/Orvix-Setup-v0.7.7-Windows-x64.exe \
             dist/mobile/Orvix-v0.7.7-beta-Android-Mobile.apk \
             dist/mobile/Orvix-v0.7.7-beta-Android-Mobile-arm64-v8a.apk \
             dist/mobile/Orvix-v0.7.7-beta-Android-Mobile-armeabi-v7a.apk \
