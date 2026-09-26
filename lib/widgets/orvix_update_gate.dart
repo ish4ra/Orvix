@@ -28,6 +28,7 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
   double _progress = 0;
   File? _downloadedFile;
   bool _checking = false;
+  bool _cancelDownloadRequested = false;
   Timer? _releaseWarmupRetry;
   Timer? _periodicUpdateCheck;
 
@@ -112,6 +113,7 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
       _installing = true;
       _applying = false;
       _progress = 0;
+      _cancelDownloadRequested = false;
     });
 
     try {
@@ -119,6 +121,7 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
       if (file == null || !await file.exists()) {
         file = await _updates.download(
           update,
+          isCancelled: () => _cancelDownloadRequested,
           onProgress: (value) {
             if (!mounted) return;
             setState(() => _progress = value);
@@ -166,6 +169,15 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
       }
     } catch (error) {
       if (!mounted) return;
+      if (_cancelDownloadRequested) {
+        setState(() {
+          _installing = false;
+          _applying = false;
+          _progress = 0;
+          _cancelDownloadRequested = false;
+        });
+        return;
+      }
       setState(() {
         _installing = false;
         _applying = false;
@@ -309,10 +321,12 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
                       ),
                     const SizedBox(width: 6),
                     IconButton(
-                      tooltip: 'Later',
-                      onPressed: _installing
+                      tooltip: _installing && !_applying ? 'Cancel download' : 'Later',
+                      onPressed: _applying
                           ? null
-                          : () => setState(() => _dismissed = true),
+                          : _installing
+                              ? () => setState(() => _cancelDownloadRequested = true)
+                              : () => setState(() => _dismissed = true),
                       icon: const Icon(Icons.close_rounded),
                     ),
                   ],
