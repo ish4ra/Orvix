@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PIL import Image
 
-SOURCE = Path("assets/branding/orvix_icon.webp")
+SOURCE = Path("assets/branding/orvix_logo.png")
 
 
 def _clean_launcher_artwork(source: Image.Image) -> Image.Image:
