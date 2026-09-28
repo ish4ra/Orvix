@@ -1089,7 +1089,23 @@ jobs:
           grep -q 'lib/arm64-v8a/libstream_server.so' /tmp/orvix-apk-list.txt
           grep -q 'lib/armeabi-v7a/libstream_server.so' /tmp/orvix-apk-list.txt
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
-          "$APKSIGNER" verify --verbose "$APK"
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          # Regression gate for in-app updates: an APK can be structurally valid
+          # yet still be rejected as an update when signed by a different key.
+          # Compare the new certificate with the currently published Android APK.
+          curl --fail --location --retry 4 \
+            "https://github.com/ish4ra/Orvix/releases/download/v0.7.9-beta.11/Orvix-v0.7.9-beta.11-Android-Mobile.apk" \
+            -o /tmp/orvix-previous.apk
+          "$APKSIGNER" verify --verbose --print-certs /tmp/orvix-previous.apk > /tmp/previous-cert.txt
+          "$APKSIGNER" verify --verbose --print-certs "$APK" > /tmp/current-cert.txt
+          PREVIOUS_CERT="$(grep -m1 'Signer #1 certificate SHA-256 digest:' /tmp/previous-cert.txt | sed 's/.*: //')"
+          CURRENT_CERT="$(grep -m1 'Signer #1 certificate SHA-256 digest:' /tmp/current-cert.txt | sed 's/.*: //')"
+          test -n "$PREVIOUS_CERT"
+          test -n "$CURRENT_CERT"
+          if [ "$PREVIOUS_CERT" != "$CURRENT_CERT" ]; then
+            echo "Android update signing certificate changed: $PREVIOUS_CERT -> $CURRENT_CERT" >&2
+            exit 1
+          fi
 
       - name: Rename APKs
         run: |
