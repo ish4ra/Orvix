@@ -168,13 +168,20 @@ def patch_android(tv: bool) -> None:
         )
         launcher.save(out, format="PNG", optimize=True)
 
-    # Adaptive icons get breathing room inside the OS mask while still using
-    # the exact same high-resolution artwork.
-    # Preserve the exact supplied icon for adaptive foreground too.
-    fg = source.resize((432, 432), Image.Resampling.LANCZOS)
+    # Android adaptive launchers apply their own circle/squircle mask. Feeding
+    # the already-rounded full launcher tile as the foreground produces a
+    # visibly tiny "icon inside an icon". Use the isolated O mark as the
+    # adaptive foreground and let Android provide the dark background/mask.
+    adaptive_canvas = Image.new("RGBA", (432, 432), (0, 0, 0, 0))
+    adaptive_mark = mark.copy()
+    adaptive_mark.thumbnail((310, 310), Image.Resampling.LANCZOS)
+    adaptive_canvas.alpha_composite(
+        adaptive_mark,
+        ((432 - adaptive_mark.width) // 2, (432 - adaptive_mark.height) // 2),
+    )
     fg_path = Path("android/app/src/main/res/drawable-nodpi/orvix_foreground.png")
     fg_path.parent.mkdir(parents=True, exist_ok=True)
-    fg.save(fg_path)
+    adaptive_canvas.save(fg_path, format="PNG", optimize=True)
 
     values = Path("android/app/src/main/res/values/orvix_colors.xml")
     values.write_text(
