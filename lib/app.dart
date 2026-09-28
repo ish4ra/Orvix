@@ -697,6 +697,12 @@ class _AboutScreen extends StatelessWidget {
                 'A multi-cloud cinematic media hub built with Flutter. Orvix connects your cloud services, source providers, library and player across desktop, mobile and TV.',
                 style: TextStyle(height: 1.55),
               ),
+              const SizedBox(height: 18),
+              const _SupportButton(
+                icon: Icons.language_rounded,
+                label: 'isharalakshan.xyz',
+                url: 'https://isharalakshan.xyz',
+              ),
               const SizedBox(height: 28),
               Text(
                 'Support Orvix',
