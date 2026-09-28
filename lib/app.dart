@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'models/media_item.dart';
 import 'screens/account_screen.dart';
@@ -637,7 +638,56 @@ class _AboutScreen extends StatelessWidget {
                 'A multi-cloud cinematic media hub built with Flutter. Orvix connects your cloud services, source providers, library and player across desktop, mobile and TV.',
                 style: TextStyle(height: 1.55),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 28),
+              Text(
+                'Support Orvix',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Orvix is free and open-source. If you enjoy the project, you can support its development or simply star it on GitHub.',
+                style: TextStyle(color: Color(0xFF9EAAA0), height: 1.45),
+              ),
+              const SizedBox(height: 16),
+              const Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  _SupportButton(
+                    icon: Icons.favorite_rounded,
+                    label: 'GitHub Sponsors',
+                    url: 'https://github.com/sponsors/ish4ra',
+                    primary: true,
+                  ),
+                  _SupportButton(
+                    icon: Icons.coffee_rounded,
+                    label: 'Buy Me a Coffee',
+                    url: 'https://buymeacoffee.com/ish4ra',
+                  ),
+                  _SupportButton(
+                    icon: Icons.local_cafe_rounded,
+                    label: 'Ko-fi',
+                    url: 'https://ko-fi.com/ish4ra',
+                  ),
+                  _SupportButton(
+                    icon: Icons.star_rounded,
+                    label: 'Star on GitHub',
+                    url: 'https://github.com/ish4ra/Orvix',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 32),
+              Text(
+                'What Orvix includes',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 16),
               const _FeatureLine(Icons.movie_filter_outlined,
                   'Rich movie & TV discovery with AIOMetadata/Cinemeta fallback'),
               const _FeatureLine(Icons.cloud_outlined,
@@ -662,6 +712,41 @@ class _AboutScreen extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _SupportButton extends StatelessWidget {
+  const _SupportButton({
+    required this.icon,
+    required this.label,
+    required this.url,
+    this.primary = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final String url;
+  final bool primary;
+
+  Future<void> _open() async {
+    final uri = Uri.parse(url);
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (primary) {
+      return FilledButton.icon(
+        onPressed: _open,
+        icon: Icon(icon, size: 19),
+        label: Text(label),
+      );
+    }
+    return OutlinedButton.icon(
+      onPressed: _open,
+      icon: Icon(icon, size: 19),
+      label: Text(label),
     );
   }
 }
