@@ -1098,8 +1098,8 @@ jobs:
             -o /tmp/orvix-previous.apk
           "$APKSIGNER" verify --verbose --print-certs /tmp/orvix-previous.apk > /tmp/previous-cert.txt
           "$APKSIGNER" verify --verbose --print-certs "$APK" > /tmp/current-cert.txt
-          PREVIOUS_CERT="$(grep -m1 'Signer #1 certificate SHA-256 digest:' /tmp/previous-cert.txt | sed 's/.*: //')"
-          CURRENT_CERT="$(grep -m1 'Signer #1 certificate SHA-256 digest:' /tmp/current-cert.txt | sed 's/.*: //')"
+          PREVIOUS_CERT="$(grep -m1 'certificate SHA-256 digest:' /tmp/previous-cert.txt | sed 's/.*: //')"
+          CURRENT_CERT="$(grep -m1 'certificate SHA-256 digest:' /tmp/current-cert.txt | sed 's/.*: //')"
           test -n "$PREVIOUS_CERT"
           test -n "$CURRENT_CERT"
           if [ "$PREVIOUS_CERT" != "$CURRENT_CERT" ]; then
