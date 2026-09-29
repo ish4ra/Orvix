@@ -12,13 +12,13 @@ void main() {
     expect(player, contains('_setAiSinhalaEnabledFromPlayer(value)'));
   });
 
-  test('Windows AI startup is bounded and native-cue driven', () {
+  test('Windows AI startup preserves complete-file preflight and native-cue fallback', () {
     final details = File('lib/screens/details_screen.dart').readAsStringSync();
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(
       details,
-      contains('_legacyCompleteFileAiPreflightEnabled => false'),
+      contains('_legacyCompleteFileAiPreflightEnabled => true'),
     );
 
     final start = player.indexOf('Future<void> _open()');
