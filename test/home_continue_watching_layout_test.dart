@@ -7,7 +7,7 @@ void main() {
     final home = File('lib/screens/home_screen.dart').readAsStringSync();
 
     expect(home, contains('class _ContinueWideCard'));
-    expect(home, contains('final image = item.poster ?? item.background'));
+    expect(home, contains('final image = episode?.thumbnail ?? item.background ?? item.poster'));
     expect(home, contains('width: 400'));
     expect(home, contains('height: 160'));
     expect(home, contains('imageWidth: 104'));
