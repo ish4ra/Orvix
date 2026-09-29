@@ -56,10 +56,10 @@ class DetailsScreen extends StatefulWidget {
   final MediaStateService mediaState;
 
   @override
-  State<DetailsScreen> createState() => _DetailsScreenState();
+  State<DetailsScreen> createState() => DetailsScreenState();
 }
 
-class _DetailsScreenState extends State<DetailsScreen> {
+class DetailsScreenState extends State<DetailsScreen> {
   static const _videoExtensions = <String>{
     'mkv',
     'mp4',
