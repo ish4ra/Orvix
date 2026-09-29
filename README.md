@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="https://opengraph.githubassets.com/1/ish4ra/Orvix" alt="Orvix" width="100%" />
-</p>
-
 <h1 align="center">Orvix</h1>
 
 <p align="center">
