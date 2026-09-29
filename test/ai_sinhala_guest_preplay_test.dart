@@ -21,7 +21,7 @@ void main() {
 
     expect(
       details,
-      contains('_legacyCompleteFileAiPreflightEnabled => false'),
+      contains('_legacyCompleteFileAiPreflightEnabled => true'),
     );
     expect(player, contains('_activateProgressiveNativeCueAi('));
     expect(player, contains('_enableEmbeddedLiveAiFallback('));
