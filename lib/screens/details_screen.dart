@@ -1846,6 +1846,25 @@ class _DetailsScreenState extends State<DetailsScreen> {
     }
   }
 
+  Future<void> resumeContinueWatching(
+    MediaItem item,
+    EpisodeItem? episode,
+  ) async {
+    final rich = await widget.catalog.details(item) ?? item;
+    EpisodeItem? target = episode;
+    if (target != null && rich.kind == MediaKind.series) {
+      for (final candidate in rich.episodes) {
+        if (candidate.season == target.season &&
+            candidate.episode == target.episode) {
+          target = candidate;
+          break;
+        }
+      }
+    }
+    if (!mounted) return;
+    await _findSourcesAndPlay(rich, episode: target, autoUsePinned: true);
+  }
+
   Future<void> _findSourcesAndPlay(
     MediaItem item, {
     EpisodeItem? episode,
