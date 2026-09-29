@@ -65,7 +65,7 @@ void main() {
     // remain available, but they no longer gate normal startup.
     expect(
       details,
-      contains('_legacyCompleteFileAiPreflightEnabled => false'),
+      contains('_legacyCompleteFileAiPreflightEnabled => true'),
     );
     expect(player, contains('final useProgressiveNativeCueAi ='));
     expect(player, contains('play: !(aiReady || useProgressiveNativeCueAi)'));
