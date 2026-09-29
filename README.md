@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/branding/orvix_icon.png" alt="Orvix" width="118" />
+  <img src="https://opengraph.githubassets.com/1/ish4ra/Orvix" alt="Orvix" width="100%" />
 </p>
 
 <h1 align="center">Orvix</h1>
