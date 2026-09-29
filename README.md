@@ -14,6 +14,7 @@
   <img alt="Dart" src="https://img.shields.io/badge/Dart-0175C2?style=for-the-badge&logo=dart&logoColor=white">
   <img alt="Windows" src="https://img.shields.io/badge/Windows-x64-0078D4?style=for-the-badge&logo=windows11&logoColor=white">
   <img alt="Android" src="https://img.shields.io/badge/Android-Mobile%20%2B%20TV-3DDC84?style=for-the-badge&logo=android&logoColor=white">
+  <img alt="macOS" src="https://img.shields.io/badge/macOS-App-000000?style=for-the-badge&logo=apple&logoColor=white">
 </p>
 
 <p align="center">
@@ -64,33 +65,45 @@
 The goal is not to be a thin video-player wrapper. Orvix is being developed as a **complete media browsing, source-resolution, playback and subtitle platform** with separate services for catalog data, account state, source ranking, cloud providers, playback and subtitle intelligence.
 
 > [!IMPORTANT]
-> Orvix is under active development. The v0.7.5 line is a prerelease/beta track, and behavior can differ between Windows, Android Mobile and Android TV while playback paths are being stabilized.
+> Orvix is under active development across Windows, Android Mobile, Android TV and macOS. The latest stable release is **v0.7.7**. The current development branch identifies itself as **v0.7.9-beta.22**, while the latest published prerelease at the time of this README refresh is **v0.7.9-beta.20**. Beta behavior can differ by platform while playback, updates, subtitle preparation and device-specific UX continue to evolve.
 
 ---
 
 ## 🚀 Current development track
 
-The repository has evolved rapidly from the original prototype into the current Flutter application.
+The repository has evolved rapidly from the original prototype into a multi-platform Flutter application with independent catalog, source-resolution, cloud, playback, subtitle, account, update and packaging layers.
 
-**Current public prerelease track:** `v0.7.5-beta.x`
+### Release channels
 
-The v0.7.5 beta series has included work on:
+| Channel | Version / state | Purpose |
+|---|---|---|
+| **Stable** | **v0.7.7** | Tested public release promoted from the v0.7.6 beta line |
+| **Published beta** | **v0.7.9-beta.20** | Search, AI Sinhala diagnostics, support UX and updater/branding refinements |
+| **Development branch** | **v0.7.9-beta.22+162** | Ongoing fixes and release preparation on `orvix-v0.7.7-dev` |
 
-- Android Mobile and Android TV builds
-- native/free P2P playback experiments
-- playability-first free-source ranking
-- Android ExoPlayer-first playback
-- automatic MPV fallback where appropriate
-- TV-specific navigation and source browsing
-- IMDb-popularity-based Trending shelves
-- richer metadata and cast presentation
-- season and episode artwork
-- metadata/source prefetching
-- OpenSubtitles v3 integration plus legacy fallback
-- cinematic title-branded startup/loading screens
-- expanded regression and smoke-test coverage
+Recent development has included:
 
-The latest published prerelease assets can be found on the **[Releases](https://github.com/ish4ra/Orvix/releases)** page.
+- Windows, Android Mobile, Android TV and macOS release packages
+- Android universal and ABI-specific APK distribution
+- Android TV launcher/banner-specific branding
+- transparent launcher icon correction across Windows, Android and macOS
+- free/native P2P playback experiments and playability-first source ranking
+- Android ExoPlayer/Media3-first playback with MPV fallback paths
+- TV-specific navigation, focus and source-browsing work
+- richer search ranking with exact-title and popularity-oriented behavior
+- resilient search behavior when individual metadata/provider requests time out
+- IMDb-backed popularity/top-rated discovery work
+- richer metadata, cast presentation, season/episode artwork and prefetching
+- exact release-oriented OpenSubtitles matching and subtitle de-duplication
+- embedded/external subtitle preparation and AI Sinhala translation experiments
+- Windows AI Sinhala preflight and cue-pipeline diagnostics
+- cross-platform Continue Watching and resume-state work
+- Android updater recovery/resume work for interrupted background downloads
+- GitHub Sponsors, Buy Me a Coffee, Ko-fi and Star on GitHub actions in the About experience
+- a dismissible support reminder flow with delayed reminder and permanent opt-out
+- expanded regression, packaging, native-engine, subtitle-backend and platform verification
+
+The **[Releases](https://github.com/ish4ra/Orvix/releases)** page contains stable and prerelease builds, release notes and platform-specific assets.
 
 ---
 
@@ -98,16 +111,48 @@ The latest published prerelease assets can be found on the **[Releases](https://
 
 | Platform | Status | Playback direction | Distribution |
 |---|---|---|---|
-| **Windows x64** | 🟢 Active | `media_kit` / libmpv | Portable ZIP + Inno Setup installer |
-| **Android Mobile** | 🟡 Active Beta | ExoPlayer/Media3 first, MPV fallback where appropriate | APK + ABI-specific APKs in beta releases |
-| **Android TV** | 🟡 Active Beta | TV-safe Android playback path + P2P experiments | Dedicated Android TV APK |
-| **macOS** | ⚪ Not currently shipping | Planned/research | No current public package |
+| **Windows x64** | 🟢 Active | `media_kit` / libmpv + native media-engine work | Inno Setup installer + portable ZIP |
+| **Android Mobile** | 🟢 Active / Beta-heavy | ExoPlayer/Media3 first, MPV fallback where appropriate | Universal APK + arm64-v8a + armeabi-v7a + x86_64 APKs |
+| **Android TV** | 🟢 Active / Beta-heavy | TV-safe Android path + P2P/player experiments | Dedicated Android TV APK + TV banner resources |
+| **macOS** | 🟡 Shipping / evolving | Desktop `media_kit` / libmpv path | macOS application ZIP |
 
 ### Release philosophy
 
-Orvix currently favors rapid prerelease testing over pretending every platform is already production-stable.
+Orvix uses a stable channel plus fast prerelease iteration. Stable releases provide a tested checkpoint, while beta builds are used to validate player behavior, subtitle pipelines, updater logic, search regressions, branding and device-specific fixes before the next stable promotion.
 
-Windows remains the most mature desktop target. Android Mobile and Android TV are being tested aggressively because their decoder, networking, P2P and remote-control behavior differs significantly from desktop.
+Windows remains the most mature desktop target, while Android Mobile, Android TV and macOS have separate packaging and validation concerns. Android in particular receives device-specific work around codecs, background networking, updater reliability, launcher resources, remote-control behavior and P2P playback.
+
+---
+
+## 🧬 Recent beta evolution
+
+The v0.7.9 beta line has become a broad stabilization and product-polish cycle rather than a single feature release.
+
+### Search & discovery hardening
+
+- protects search from partial metadata/provider timeouts instead of allowing one slow dependency to collapse the whole result set
+- continues exact-title-oriented ranking while improving popularity ordering for ambiguous titles
+- preserves richer poster/thumbnail context for Continue Watching across platforms
+
+### Subtitle & AI diagnostics
+
+- keeps the experimental AI Sinhala pipeline release-aware
+- adds Windows-side diagnostics around the embedded subtitle source, translated cue output and generated SRT stage
+- continues exact-match, timing and preparation work so subtitle failures can be isolated to source selection, translation, timing or player attachment
+- uses FFmpeg-based cross-platform subtitle extraction/preparation work in the current development dependency set
+
+### Update & packaging reliability
+
+- Android update downloads can recover from background socket disconnects and continue using a fresh HTTP Range request in recent beta work
+- update-signing continuity is explicitly verified in the release pipeline
+- Windows installer, portable archive, Android Mobile, Android TV and macOS packages are built as separate release assets
+- platform icon resources are regenerated from the approved transparent source artwork instead of relying on one generic launcher asset
+
+### Project support & community surface
+
+- About-screen actions include GitHub Sponsors, Buy Me a Coffee, Ko-fi and Star on GitHub
+- support reminder UX is designed to remain dismissible, with delayed reminder and permanent opt-out choices
+- repository-level GitHub funding metadata complements the in-app support links
 
 ---
 
@@ -140,6 +185,8 @@ Windows remains the most mature desktop target. Android Mobile and Android TV ar
 - configurable Home shelves
 - persistent UI preferences
 - per-title and series source pinning in supported flows
+- cross-platform Continue Watching thumbnail/state improvements in recent beta work
+- resume-path null-safety and regression fixes in current development
 
 ### Sources
 
@@ -157,7 +204,7 @@ Windows remains the most mature desktop target. Android Mobile and Android TV ar
 - configurable source result limits
 - source pinning
 - Quick Play prioritization
-- free-source playability-first ranking in the v0.7.5 beta line
+- free-source playability-first ranking in the current beta architecture
 - filtering for problematic 3D/SBS-style releases
 - preferred release-group support in earlier/current source-engine work
 - exact episode/file metadata preservation for season packs
@@ -193,7 +240,7 @@ Windows remains the most mature desktop target. Android Mobile and Android TV ar
 - external subtitle support
 - next-episode workflow
 - buffering/startup failure handling
-- title-branded cinematic loading/startup treatment in v0.7.5 beta
+- title-branded cinematic loading/startup treatment in current beta builds
 - lighter mid-playback rebuffer UI
 - large-file/cloud playback tuning
 - patched desktop `media_kit` dependencies for stability
@@ -204,12 +251,14 @@ Windows remains the most mature desktop target. Android Mobile and Android TV ar
 - external SRT/VTT/ASS/SSA support
 - OpenSubtitles-based subtitle discovery work
 - OpenSubtitles v3 integration in recent beta builds
-- official legacy OpenSubtitles addon fallback in the v0.7.5 beta line
+- official legacy OpenSubtitles addon fallback where enabled by the current subtitle path
 - subtitle de-duplication
 - exact-video subtitle matching work using file metadata/hash where available
 - subtitle timing/sync calibration work
 - manual sync fallback controls in relevant builds
 - experimental AI Sinhala translation
+- generated SRT preparation/attachment experiments
+- embedded subtitle extraction/preflight diagnostics on current desktop beta work
 
 ### Account & backend
 
@@ -271,7 +320,7 @@ Orvix intentionally separates **presentation**, **domain/services**, **provider 
 │  ├─ HTTP                                                        │
 │  ├─ Supabase                                                    │
 │  ├─ GitHub Actions                                              │
-│  └─ Windows / Android packaging                                 │
+│  └─ Windows / Android / macOS packaging                         │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -391,7 +440,7 @@ This metadata is also important for exact episode routing in season packs.
 
 ## 🌐 Free P2P playback experiments
 
-The v0.7.5 prerelease line includes a dedicated free P2P playback effort.
+Current prerelease development includes a dedicated free P2P playback effort.
 
 The key problem is not simply "can a torrent be opened?" It is whether a particular source can become playable fast enough on the actual device and network.
 
@@ -525,7 +574,7 @@ The patches currently pinned in `pubspec.yaml` address native lifetime/render-co
 
 ### Android
 
-Recent v0.7.5 beta work routes Android playback through:
+Current Android beta work routes playback through:
 
 1. **ExoPlayer / Media3 first**
 2. **MPV fallback where appropriate**
@@ -557,7 +606,7 @@ The player work includes:
 
 ## 🎞️ Cinematic startup/loading experience
 
-Recent v0.7.5 beta builds added title-aware startup visuals.
+Recent beta builds added title-aware startup visuals.
 
 When available, the loading experience can use the selected title's:
 
@@ -616,7 +665,7 @@ When exact release metadata is unavailable, Orvix can fall back to title/episode
 
 Orvix includes an experimental **AI Sinhala** subtitle pipeline aimed at natural Sri Lankan Sinhala rather than literal word-for-word translation.
 
-The architecture is deliberately server-backed so the AI provider secret is not embedded in the client application.
+The architecture is deliberately server-backed so the AI provider secret is not embedded in the client application. Current development also includes native/cross-platform subtitle extraction and generated-SRT preparation paths so the system can distinguish subtitle acquisition, cue parsing, translation, output generation and player attachment as separate stages.
 
 ```text
 Selected English text subtitle
@@ -720,14 +769,20 @@ This separation makes the UI behave like a media application rather than a raw c
 | Design | Material 3 + custom cinematic UI |
 | Desktop player | media_kit / libmpv |
 | Android player direction | ExoPlayer / Media3 + MPV fallback |
+| Subtitle/media preprocessing | FFmpeg Kit HTTPS build in current development |
 | Networking | http |
 | Images | cached_network_image |
 | Secure credentials | flutter_secure_storage |
 | Local preferences/state | shared_preferences |
 | Backend/Auth | Supabase |
 | File interaction | file_picker |
+| Filesystem/platform paths | path_provider |
 | Desktop window integration | window_manager |
+| Additional video integration | video_player |
+| Archive/update handling | archive |
 | Windows packaging | Inno Setup |
+| Android packaging | Universal + ABI-specific APKs + Android TV APK |
+| macOS packaging | Application ZIP |
 | Automation | GitHub Actions |
 | Legacy prototype | Go |
 
@@ -845,6 +900,10 @@ Recent release workflows have included combinations of:
 - Inno Setup packaging
 - Android Mobile APK generation
 - Android TV APK generation
+- signed Android APK verification
+- Android TV banner dimension verification
+- macOS release build verification
+- updater/signing-continuity checks in recent beta workflows
 - native P2P engine verification
 - release-asset publishing
 - regression coverage around loading/player/subtitle behavior
@@ -869,6 +928,8 @@ Orvix-<version>-Android-Mobile-armeabi-v7a.apk
 Orvix-<version>-Android-Mobile-x86_64.apk
 
 Orvix-<version>-Android-TV.apk
+
+Orvix-<version>-macOS.zip
 ```
 
 Use the platform package that matches your device and the release notes for that build.
@@ -887,6 +948,7 @@ For the current Flutter codebase, you will generally need:
 - Visual Studio with **Desktop development with C++** for Windows builds
 - Inno Setup only if you want to reproduce the Windows installer packaging
 - platform tooling for any Android development branch/build path you are working with
+- Xcode/macOS tooling when reproducing macOS builds
 
 ### Clone
 
@@ -927,6 +989,44 @@ The packaged release pipeline additionally creates a portable ZIP and an Inno Se
 
 > [!WARNING]
 > The Android beta line has changed quickly during P2P/player development. For Android testing, use the source/tag associated with the beta release you are reproducing rather than assuming every historical Android release can be rebuilt identically from a different commit.
+
+---
+
+## 🔄 Distribution & update system
+
+Orvix treats packaging and updates as part of the product rather than an afterthought.
+
+### Windows
+
+- Inno Setup installer
+- portable x64 ZIP
+- Windows executable/installer/shortcut icon generation
+- release validation around installer/update and single-instance behavior
+
+### Android Mobile
+
+- universal APK
+- arm64-v8a APK
+- armeabi-v7a APK
+- x86_64 APK
+- adaptive launcher assets
+- recent updater work around interrupted/background downloads and HTTP Range resume
+- release-signing continuity checks
+
+### Android TV
+
+- dedicated TV APK
+- TV-safe launcher/banner resources
+- remote/focus-specific UX work
+- separate playback and P2P validation because TV devices often behave differently from phones
+
+### macOS
+
+- packaged application ZIP
+- complete AppIcon generation from the shared Orvix master artwork
+- release-build verification in the multi-platform pipeline
+
+This packaging split allows platform-specific fixes to evolve without pretending every operating system has identical media, networking, launcher or installation behavior.
 
 ---
 
@@ -1058,6 +1158,17 @@ That separation is especially important for the Android TV and P2P work, where s
 - playability-first ranking
 - richer loading and metadata experience
 
+### Multi-platform release & stabilization era
+
+- stable Windows, Android Mobile, Android TV and macOS packaging
+- platform-specific launcher/icon/banner generation
+- updater and signing-continuity work
+- search timeout/regression hardening
+- Continue Watching and resume-state fixes
+- deeper AI Sinhala cue/SRT diagnostics
+- support/community actions inside the app
+- increasingly broad automated release validation
+
 For detailed historical changes, see **[CHANGELOG.md](CHANGELOG.md)** and the **[Releases](https://github.com/ish4ra/Orvix/releases)** page.
 
 ---
@@ -1078,7 +1189,7 @@ The roadmap is intentionally fluid while the cross-platform playback architectur
 - stabilize AI Sinhala translation without sacrificing sync
 - reduce metadata/source-loading latency
 - improve episode/season UI consistency
-- continue Windows/Android release automation
+- continue Windows/Android/macOS release automation
 
 ### Medium-term
 
@@ -1095,7 +1206,7 @@ The roadmap is intentionally fluid while the cross-platform playback architectur
 
 - stable cross-platform v1
 - cleaner automatic update strategy
-- optional macOS resurrection
+- harden macOS parity and packaging
 - deeper automated testing
 - broader provider ecosystem
 - production-quality TV experience
@@ -1135,20 +1246,30 @@ For P2P issues, the exact source matters. "Movie X does not play" is less useful
 
 ## ☕ Support Orvix
 
-If you enjoy Orvix and want to support its continued development, you can help fund the project here:
+<p align="center">
+  <strong>Orvix is an independent open-source project.</strong><br>
+  If you enjoy the project and want to help with development, testing, hosting and future releases, you can support it here.
+</p>
 
 <p align="center">
   <a href="https://www.buymeacoffee.com/ish4ra">
-    <img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&emoji=%E2%98%95&slug=ish4ra&button_colour=FFDD00&font_colour=000000&font_family=Lato&outline_colour=000000&coffee_colour=ffffff" alt="Buy Me a Coffee" height="52">
+    <img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&emoji=%E2%98%95&slug=ish4ra&button_colour=FFDD00&font_colour=000000&font_family=Lato&outline_colour=000000&coffee_colour=ffffff" alt="Buy Me a Coffee" height="60">
   </a>
-  &nbsp;&nbsp;
+  &nbsp;&nbsp;&nbsp;&nbsp;
   <a href="https://ko-fi.com/ish4ra">
-    <img src="https://storage.ko-fi.com/cdn/kofi3.png?v=3" alt="Support me on Ko-fi" height="52">
+    <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support Orvix on Ko-fi" height="60">
   </a>
 </p>
 
-Your support helps with development, testing, hosting, and keeping Orvix open source.
+<p align="center">
+  <a href="https://github.com/ish4ra/Orvix/stargazers"><strong>⭐ Star Orvix on GitHub</strong></a>
+  &nbsp; • &nbsp;
+  <a href="https://github.com/sponsors/ish4ra"><strong>❤ GitHub Sponsors</strong></a>
+</p>
 
+<p align="center">
+  <sub>Financial support is optional. Starring the repository, reporting reproducible bugs, testing prereleases and contributing fixes are also valuable ways to help the project.</sub>
+</p>
 
 ---
 
