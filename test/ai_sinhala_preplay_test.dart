@@ -3,13 +3,13 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('automatic AI Sinhala starts from native player cues without full-SRT blocking', () {
+  test('automatic AI Sinhala preserves complete-file preflight with native cue fallback', () {
     final details = File('lib/screens/details_screen.dart').readAsStringSync();
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(
       details,
-      contains('_legacyCompleteFileAiPreflightEnabled => false'),
+      contains('_legacyCompleteFileAiPreflightEnabled => true'),
     );
 
     final openStart = player.indexOf('Future<void> _open()');
