@@ -287,15 +287,6 @@ class AppUpdateService {
     void Function(double progress)? onProgress,
     bool Function()? isCancelled,
   }) async {
-    final request = http.Request('GET', Uri.parse(update.assetUrl));
-    request.headers['User-Agent'] = 'Orvix-Updater';
-    final response = await _client.send(request).timeout(
-          const Duration(seconds: 25),
-        );
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError('Update download returned HTTP ${response.statusCode}.');
-    }
-
     final temp = await getTemporaryDirectory();
     final updateDir = Directory(
       '${temp.path}${Platform.pathSeparator}orvix-updates',
@@ -306,31 +297,93 @@ class AppUpdateService {
     );
     if (await file.exists()) await file.delete();
 
-    final sink = file.openWrite();
-    final expected =
-        response.contentLength ?? update.assetSize ?? 0;
+    final expectedTotal = update.assetSize ?? 0;
     var received = 0;
-    try {
-      await for (final chunk in response.stream) {
-        if (isCancelled?.call() == true) {
-          throw const _UpdateDownloadCancelled();
-        }
-        sink.add(chunk);
-        received += chunk.length;
-        if (expected > 0) {
-          onProgress?.call((received / expected).clamp(0.0, 1.0));
-        }
+    Object? lastError;
+
+    // Android can suspend the activity/network socket when the user leaves
+    // Orvix during a large GitHub download. Resume the same APK with HTTP
+    // Range requests instead of treating that transient disconnect as a
+    // failed update. Each retry starts from the stable GitHub asset URL so a
+    // fresh signed release-assets redirect is obtained.
+    for (var attempt = 0; attempt < 5; attempt++) {
+      if (isCancelled?.call() == true) {
+        if (await file.exists()) await file.delete();
+        throw const _UpdateDownloadCancelled();
       }
-    } on _UpdateDownloadCancelled {
-      await sink.close();
-      if (await file.exists()) await file.delete();
-      rethrow;
-    } finally {
-      await sink.close();
+
+      IOSink? sink;
+      try {
+        final request = http.Request('GET', Uri.parse(update.assetUrl));
+        request.headers['User-Agent'] = 'Orvix-Updater';
+        if (received > 0) request.headers['Range'] = 'bytes=$received-';
+
+        final response = await _client.send(request).timeout(
+              const Duration(seconds: 30),
+            );
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw StateError(
+            'Update download returned HTTP ${response.statusCode}.',
+          );
+        }
+
+        // A server may ignore Range and return the whole asset. In that case
+        // restart the local file rather than appending a duplicate APK.
+        final resumed = received > 0 && response.statusCode == 206;
+        if (received > 0 && !resumed) {
+          received = 0;
+          if (await file.exists()) await file.delete();
+        }
+
+        sink = file.openWrite(
+          mode: resumed ? FileMode.append : FileMode.write,
+        );
+        final responseTotal = response.contentLength ?? 0;
+        final expected = expectedTotal > 0
+            ? expectedTotal
+            : received + responseTotal;
+
+        await for (final chunk in response.stream) {
+          if (isCancelled?.call() == true) {
+            throw const _UpdateDownloadCancelled();
+          }
+          sink.add(chunk);
+          received += chunk.length;
+          if (expected > 0) {
+            onProgress?.call((received / expected).clamp(0.0, 1.0));
+          }
+        }
+        await sink.flush();
+        await sink.close();
+        sink = null;
+
+        if (expectedTotal <= 0 || received >= expectedTotal) {
+          lastError = null;
+          break;
+        }
+        lastError = StateError(
+          'Update download ended early ($received/$expectedTotal bytes).',
+        );
+      } on _UpdateDownloadCancelled {
+        await sink?.close();
+        if (await file.exists()) await file.delete();
+        rethrow;
+      } catch (error) {
+        lastError = error;
+        await sink?.close();
+      }
+
+      if (attempt < 4) {
+        await Future<void>.delayed(Duration(seconds: attempt < 2 ? 1 : 2));
+      }
     }
 
+    if (lastError != null) throw lastError;
     if (!await file.exists() || await file.length() <= 0) {
       throw StateError('Downloaded update file is empty.');
+    }
+    if (expectedTotal > 0 && await file.length() != expectedTotal) {
+      throw StateError('Downloaded update file size did not match GitHub.');
     }
 
     final digest = update.assetDigest?.trim();
