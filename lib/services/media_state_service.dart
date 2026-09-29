@@ -228,6 +228,10 @@ class MediaStateService {
         final durationMs = int.tryParse(value['durationMs']?.toString() ?? '') ?? 0;
         final updatedAt = DateTime.tryParse(value['updatedAt']?.toString() ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
         if (item.id.isEmpty || durationMs <= 0) continue;
+        // Old builds could leave a completed episode in persisted progress if
+        // the final completion event raced player teardown. Never surface
+        // effectively-finished media in Continue Watching.
+        if (positionMs <= 0 || positionMs / durationMs >= .95) continue;
         entries.add(
           ContinueWatchingEntry(
             item: item,
