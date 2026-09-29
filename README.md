@@ -1253,11 +1253,11 @@ For P2P issues, the exact source matters. "Movie X does not play" is less useful
 
 <p align="center">
   <a href="https://www.buymeacoffee.com/ish4ra">
-    <img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&emoji=%E2%98%95&slug=ish4ra&button_colour=FFDD00&font_colour=000000&font_family=Lato&outline_colour=000000&coffee_colour=ffffff" alt="Buy Me a Coffee" height="60">
+    <img alt="Buy Me a Coffee" src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=000000">
   </a>
-  &nbsp;&nbsp;&nbsp;&nbsp;
+  &nbsp;&nbsp;
   <a href="https://ko-fi.com/ish4ra">
-    <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support Orvix on Ko-fi" height="60">
+    <img alt="Ko-fi" src="https://img.shields.io/badge/Ko--fi-72A5F2?style=for-the-badge&logo=kofi&logoColor=ffffff">
   </a>
 </p>
 
