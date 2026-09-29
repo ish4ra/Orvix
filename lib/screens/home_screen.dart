@@ -971,7 +971,7 @@ class _ContinueWideCardState extends State<_ContinueWideCard> {
     final entry = widget.entry;
     final item = entry.item;
     final episode = entry.episode;
-    final image = item.poster ?? item.background;
+    final image = episode?.thumbnail ?? item.background ?? item.poster;
     final isUpNext = item.kind == MediaKind.series && entry.progress <= .001;
     final compact = widget.height <= 125;
 
