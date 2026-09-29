@@ -15,6 +15,7 @@
   <img alt="Windows" src="https://img.shields.io/badge/Windows-x64-0078D4?style=for-the-badge&logo=windows11&logoColor=white">
   <img alt="Android" src="https://img.shields.io/badge/Android-Mobile%20%2B%20TV-3DDC84?style=for-the-badge&logo=android&logoColor=white">
   <img alt="macOS" src="https://img.shields.io/badge/macOS-App-000000?style=for-the-badge&logo=apple&logoColor=white">
+  <a href="LICENSE"><img alt="License: AGPL-3.0-only" src="https://img.shields.io/badge/License-AGPL--3.0--only-663399?style=for-the-badge"></a>
 </p>
 
 <p align="center">
@@ -35,6 +36,7 @@
   <a href="#-subtitles--ai-sinhala">Subtitles</a> •
   <a href="#-building-from-source">Build</a> •
   <a href="#-roadmap">Roadmap</a> •
+  <a href="#-license">License</a> •
   <a href="#-support-orvix">Support</a>
 </p>
 
@@ -1243,6 +1245,17 @@ Subtitle track/provider if subtitle-related:
 
 For P2P issues, the exact source matters. "Movie X does not play" is less useful than the exact torrent/release and device combination.
 
+
+---
+
+
+## ⚖️ License
+
+Orvix is licensed under the **GNU Affero General Public License v3.0 only (AGPL-3.0-only)**.
+
+In practical terms, you may use, study, modify and redistribute Orvix under the terms of the AGPL. Modified versions that are conveyed must remain under the same license, and if a modified version is made available for users to interact with over a network, those users must be offered access to the corresponding source code as required by AGPLv3.
+
+See the full [LICENSE](LICENSE) text for the legally controlling terms.
 
 ---
 
