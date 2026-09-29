@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'models/media_item.dart';
@@ -245,65 +244,6 @@ class _OrvixShellState extends State<_OrvixShell> {
   int _index = 0;
   int _authRevision = 0;
   int _libraryRevision = 0;
-  static const _supportLaunchKey = 'support_prompt_launch_count';
-  static const _supportNeverKey = 'support_prompt_never';
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowSupportPrompt());
-  }
-
-  Future<void> _maybeShowSupportPrompt() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (prefs.getBool(_supportNeverKey) == true) return;
-    final count = (prefs.getInt(_supportLaunchKey) ?? 0) + 1;
-    await prefs.setInt(_supportLaunchKey, count);
-    if (!mounted || count < 3 || (count - 3) % 10 != 0) return;
-
-    final action = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        icon: const Icon(Icons.favorite_rounded, color: Color(0xFFB9FF45)),
-        title: const Text('Support Orvix 💚'),
-        content: const Text(
-          'Orvix is a free and open-source project built and maintained by a student developer.\n\n'
-          'If you enjoy using Orvix, your support helps me continue developing the app, fixing bugs, and adding new features. Even starring the project on GitHub makes a difference.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, 'never'),
-            child: const Text("Don't ask me again"),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, 'later'),
-            child: const Text('Maybe Later'),
-          ),
-          OutlinedButton.icon(
-            onPressed: () => Navigator.pop(dialogContext, 'star'),
-            icon: const Icon(Icons.star_rounded),
-            label: const Text('Star on GitHub'),
-          ),
-          FilledButton.icon(
-            onPressed: () => Navigator.pop(dialogContext, 'support'),
-            icon: const Icon(Icons.favorite_rounded),
-            label: const Text('Support the Developer'),
-          ),
-        ],
-      ),
-    );
-
-    if (action == 'never') {
-      await prefs.setBool(_supportNeverKey, true);
-    } else if (action == 'star') {
-      await prefs.setBool(_supportNeverKey, true);
-      await launchUrl(Uri.parse('https://github.com/ish4ra/Orvix'), mode: LaunchMode.externalApplication);
-    } else if (action == 'support') {
-      await prefs.setBool(_supportNeverKey, true);
-      await launchUrl(Uri.parse('https://github.com/sponsors/ish4ra'), mode: LaunchMode.externalApplication);
-    }
-  }
-
   void _refreshAfterAccountChange() {
     if (!mounted) return;
     setState(() {
@@ -347,6 +287,31 @@ class _OrvixShellState extends State<_OrvixShell> {
     try {
       await OrvixAccountService.pushLocalStateIfSignedIn();
     } catch (_) {}
+    if (mounted) setState(() => _libraryRevision++);
+  }
+
+  Future<void> _resumeContinueWatching(ContinueWatchingEntry entry) async {
+    final rich = await widget.catalog.details(entry.item) ?? entry.item;
+    if (!mounted) return;
+
+    final key = GlobalKey<_ContinueResumeHostState>();
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _ContinueResumeHost(
+          key: key,
+          item: rich,
+          episode: entry.episode,
+          catalog: widget.catalog,
+          pikpak: widget.pikpak,
+          transfer: widget.transfer,
+          sources: widget.sources,
+          torbox: widget.torbox,
+          cloudPreferences: widget.cloudPreferences,
+          playback: widget.playback,
+          mediaState: widget.mediaState,
+        ),
+      ),
+    );
     if (mounted) setState(() => _libraryRevision++);
   }
 
@@ -420,6 +385,7 @@ class _OrvixShellState extends State<_OrvixShell> {
         sources: widget.sources,
         mediaState: widget.mediaState,
         onOpen: _openMedia,
+        onResume: _resumeContinueWatching,
       ),
       SearchScreen(
         catalog: widget.catalog,
@@ -614,6 +580,59 @@ class _OrvixShellState extends State<_OrvixShell> {
       ),
     );
   }
+}
+
+
+class _ContinueResumeHost extends StatefulWidget {
+  const _ContinueResumeHost({
+    super.key,
+    required this.item,
+    required this.episode,
+    required this.catalog,
+    required this.pikpak,
+    required this.transfer,
+    required this.sources,
+    required this.torbox,
+    required this.cloudPreferences,
+    required this.playback,
+    required this.mediaState,
+  });
+  final MediaItem item;
+  final EpisodeItem? episode;
+  final CatalogService catalog;
+  final PikPakService pikpak;
+  final PikPakTransferService transfer;
+  final SourceProviderService sources;
+  final TorBoxService torbox;
+  final CloudPreferencesService cloudPreferences;
+  final PlaybackService playback;
+  final MediaStateService mediaState;
+  @override State<_ContinueResumeHost> createState() => _ContinueResumeHostState();
+}
+
+class _ContinueResumeHostState extends State<_ContinueResumeHost> {
+  final _detailsKey = GlobalKey<DetailsScreenState>();
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _detailsKey.currentState?.resumeContinueWatching(widget.item, widget.episode);
+      if (mounted) Navigator.of(context).pop();
+    });
+  }
+  @override
+  Widget build(BuildContext context) => DetailsScreen(
+    key: _detailsKey,
+    item: widget.item,
+    catalog: widget.catalog,
+    pikpak: widget.pikpak,
+    transfer: widget.transfer,
+    sources: widget.sources,
+    torbox: widget.torbox,
+    cloudPreferences: widget.cloudPreferences,
+    playback: widget.playback,
+    mediaState: widget.mediaState,
+  );
 }
 
 
