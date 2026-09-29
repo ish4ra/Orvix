@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/media_item.dart';
+import 'ai_sinhala_trace_service.dart';
 import 'embedded_subtitle_extractor_service.dart';
 import 'online_subtitle_service.dart';
 
@@ -823,6 +824,10 @@ class AiSinhalaSubtitleService {
     void Function(String message)? onStatus,
   }) async {
     final cues = _parseSubtitle(embeddedSrt);
+    unawaited(AiSinhalaTraceService.write(_subtitleAuditSummary(
+      stage: 'embedded-source',
+      cues: cues,
+    )));
     if (cues.length < 8) {
       throw const AiSubtitleException(
         'The standalone media engine returned an embedded subtitle that could not be parsed safely.',
@@ -872,6 +877,11 @@ class AiSinhalaSubtitleService {
         'The complete embedded subtitle did not finish translating.',
       );
     }
+    unawaited(AiSinhalaTraceService.write(_subtitleAuditSummary(
+      stage: 'translated-output',
+      cues: prepared.cues,
+      translated: true,
+    )));
 
     final file = await _writeGeneratedSrt(cacheKey, prepared);
     onStatus?.call(
@@ -1989,6 +1999,34 @@ class AiSinhalaSubtitleService {
     );
   }
 
+  static String _subtitleAuditSummary({
+    required String stage,
+    required List<AiSubtitleCue> cues,
+    bool translated = false,
+  }) {
+    if (cues.isEmpty) return 'subtitle-audit stage=$stage cues=0';
+    var overlaps = 0;
+    var duplicateStarts = 0;
+    var longGaps = 0;
+    var empty = 0;
+    var previousEnd = cues.first.start;
+    var previousStart = Duration(milliseconds: -1);
+    for (final cue in cues) {
+      final value = translated ? cue.translation?.trim() ?? '' : cue.source.trim();
+      if (value.isEmpty) empty++;
+      if (cue.start < previousEnd) overlaps++;
+      if (cue.start == previousStart) duplicateStarts++;
+      if (cue.start - previousEnd > const Duration(seconds: 8)) longGaps++;
+      if (cue.end > previousEnd) previousEnd = cue.end;
+      previousStart = cue.start;
+    }
+    final firstMs = cues.first.start.inMilliseconds;
+    final lastMs = cues.last.end.inMilliseconds;
+    return 'subtitle-audit stage=$stage cues=${cues.length} empty=$empty '
+        'overlaps=$overlaps duplicateStarts=$duplicateStarts longGaps8s=$longGaps '
+        'firstMs=$firstMs lastMs=$lastMs';
+  }
+
   static Future<File> _writeGeneratedSrt(
     String cacheKey,
     AiPreparedSubtitle prepared,
@@ -2025,6 +2063,9 @@ class AiSinhalaSubtitleService {
       encoding: utf8,
       flush: true,
     );
+    unawaited(AiSinhalaTraceService.write(
+      'subtitle-audit stage=generated-srt cues=${prepared.cues.length} bytes=${utf8.encode(rendered).length}',
+    ));
     return file;
   }
 
