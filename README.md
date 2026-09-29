@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/branding/orvix_banner.png" alt="Orvix" width="100%" />
+  <img src="assets/branding/orvix_banner.png?v=0698d4ca55fc80ec2326fb6a6a7fab57260d1280" alt="Orvix" width="100%" />
 </p>
 
 <h1 align="center">Orvix</h1>
