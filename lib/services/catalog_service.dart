@@ -855,11 +855,13 @@ class CatalogService {
 
     var score = 0;
     if (title == titleQuery) {
+      // Exact title is the strongest relevance signal, but popularity still
+      // decides among same-title movie/series/remake matches.
       score += 1000000;
     } else if (title.startsWith('$titleQuery ')) {
-      score += 320000;
+      score += 240000;
     } else if (title.contains(titleQuery)) {
-      score += 140000;
+      score += 100000;
     } else {
       final words = titleQuery
           .split(' ')
@@ -879,13 +881,13 @@ class CatalogService {
 
     final votes = signal?.voteCount ?? 0;
     if (votes > 0) {
-      score += (log(votes + 1) * 9000).round();
+      score += (log(votes + 1) * 18000).round();
     }
     final rating = signal?.rating ?? item.rating ?? 0;
-    score += (rating * 850).round();
+    score += (rating * 1200).round();
 
     if (sourceRank != null) {
-      score += (12000 - sourceRank.clamp(0, 20) * 600).clamp(0, 12000);
+      score += (18000 - sourceRank.clamp(0, 20) * 900).clamp(0, 18000);
     }
     return score;
   }
