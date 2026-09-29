@@ -66,13 +66,13 @@ void main() {
     expect(translate, contains('_translateIndicesResilient('));
   });
 
-  test('automatic startup uses progressive native player cues before playback', () {
+  test('automatic startup preserves restored complete-file preflight before native cue fallback', () {
     final details = File('lib/screens/details_screen.dart').readAsStringSync();
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(
       details,
-      contains('_legacyCompleteFileAiPreflightEnabled => false'),
+      contains('_legacyCompleteFileAiPreflightEnabled => true'),
     );
 
     final start = player.indexOf('Future<void> _open()');
