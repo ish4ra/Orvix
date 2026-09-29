@@ -1253,7 +1253,7 @@ For P2P issues, the exact source matters. "Movie X does not play" is less useful
   If you enjoy the project and want to help with development, testing, hosting and future releases, you can support it here.
 </p>
 
-<p align="center"><a href="https://www.buymeacoffee.com/ish4ra"><img alt="Buy Me a Coffee" src="assets/branding/support_buymeacoffee_final.png" width="230" height="64"></a>&nbsp;&nbsp;&nbsp;<a href="https://ko-fi.com/ish4ra"><img alt="Ko-fi" src="https://raw.githubusercontent.com/ish4ra/Orvix/f720cfe9f224755419480118b34047eee716c9c3b/assets/branding/support_kofi_final.png" width="230" height="64"></a></p>
+<p align="center"><a href="https://www.buymeacoffee.com/ish4ra"><img alt="Buy Me a Coffee" src="assets/branding/support_buymeacoffee_final.png" width="230" height="64"></a>&nbsp;&nbsp;&nbsp;<a href="https://ko-fi.com/ish4ra"><img alt="Ko-fi" src="assets/branding/support_kofi_final_embed.svg" width="230" height="64"></a></p>
 
 <p align="center">
   <a href="https://github.com/ish4ra/Orvix/stargazers"><strong>⭐ Star Orvix on GitHub</strong></a>
