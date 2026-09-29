@@ -101,7 +101,7 @@ class _DetailsScreenState extends State<DetailsScreen> {
   // progressive native-cue architecture is validated. Keep this as a runtime
   // getter so the old recovery code can remain compiled without becoming an
   // analyzer-level dead branch.
-  bool get _legacyCompleteFileAiPreflightEnabled => false;
+  bool get _legacyCompleteFileAiPreflightEnabled => true;
 
   @override
   void initState() {
