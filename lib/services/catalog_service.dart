@@ -49,15 +49,17 @@ class CatalogService {
     final normalized = query.trim();
     if (normalized.runes.length < 2) return const [];
 
-    final results = await Future.wait([
-      _searchKind(MediaKind.movie, normalized, limit: limit),
-      _searchKind(MediaKind.series, normalized, limit: limit),
+    // Movie and series search are independent. One slow Cinemeta endpoint must
+    // not blank the whole search screen. Keep whichever side succeeds.
+    final groups = await Future.wait([
+      _searchKindSafe(MediaKind.movie, normalized, limit: limit),
+      _searchKindSafe(MediaKind.series, normalized, limit: limit),
     ]);
 
     final merged = <MediaItem>[];
     final seen = <String>{};
     final sourceRank = <String, int>{};
-    for (final group in results) {
+    for (final group in groups) {
       for (var index = 0; index < group.length; index++) {
         final item = group[index];
         final key = '${item.kind.name}:${item.id}';
@@ -65,8 +67,14 @@ class CatalogService {
         if (seen.add(key)) merged.add(item);
       }
     }
+    if (merged.isEmpty) return const [];
 
-    final imdbSignals = await _imdbSearchSignals(merged);
+    // Popularity enrichment is useful, but it is optional. Search results must
+    // render immediately even when IMDb is slow or unavailable.
+    final imdbSignals = await _imdbSearchSignals(merged).timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => const <String, _ImdbSearchSignal>{},
+    );
     final enriched = merged
         .map((item) => _withSearchSignal(item, imdbSignals[item.id]))
         .toList(growable: false);
@@ -84,12 +92,22 @@ class CatalogService {
     });
 
     final selected = enriched.take(limit).toList(growable: false);
-    // Search taps on phones do not have a focus/hover phase. Warm a handful of
-    // likely choices after results are ready without delaying the search UI.
     for (final item in selected.take(6)) {
       unawaited(prefetchDetails(item));
     }
     return selected;
+  }
+
+  Future<List<MediaItem>> _searchKindSafe(
+    MediaKind kind,
+    String query, {
+    required int limit,
+  }) async {
+    try {
+      return await _searchKind(kind, query, limit: limit);
+    } catch (_) {
+      return const [];
+    }
   }
 
   MediaItem? peekDetails(MediaItem item) {
