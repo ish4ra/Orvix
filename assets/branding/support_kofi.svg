@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="230" height="64" viewBox="0 0 230 64" role="img" aria-labelledby="title desc">
+  <title id="title">Ko-fi</title>
+  <desc id="desc">Support Orvix on Ko-fi</desc>
+  <rect width="230" height="64" rx="14" fill="#72A5F2"/>
+  <g transform="translate(20 16)">
+    <rect x="3" y="3" width="24" height="22" rx="5" fill="#FFFFFF"/>
+    <path d="M27 8h3a7 7 0 0 1 0 14h-3v-4h3a3 3 0 1 0 0-6h-3z" fill="#FFFFFF"/>
+    <path d="M15 20s-6-3.7-6-8a3.7 3.7 0 0 1 6-2.9A3.7 3.7 0 0 1 21 12c0 4.3-6 8-6 8z" fill="#FF5E5B"/>
+  </g>
+  <text x="140" y="40" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="18" font-weight="700" fill="#FFFFFF">Support on Ko-fi</text>
+</svg>
