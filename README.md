@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/branding/orvix_banner.png" alt="Orvix" width="100%" />
+</p>
+
 <h1 align="center">Orvix</h1>
 
 <p align="center">
