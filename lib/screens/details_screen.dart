@@ -1852,10 +1852,12 @@ class DetailsScreenState extends State<DetailsScreen> {
   ) async {
     final rich = await widget.catalog.details(item) ?? item;
     EpisodeItem? target = episode;
-    if (target != null && rich.kind == MediaKind.series) {
+    if (episode != null && rich.kind == MediaKind.series) {
+      final resumeSeason = episode.season;
+      final resumeEpisode = episode.episode;
       for (final candidate in rich.episodes) {
-        if (candidate.season == target.season &&
-            candidate.episode == target.episode) {
+        if (candidate.season == resumeSeason &&
+            candidate.episode == resumeEpisode) {
           target = candidate;
           break;
         }
