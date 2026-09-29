@@ -20,12 +20,14 @@ class HomeScreen extends StatefulWidget {
     required this.sources,
     required this.mediaState,
     required this.onOpen,
+    required this.onResume,
   });
 
   final CatalogService catalog;
   final SourceProviderService sources;
   final MediaStateService mediaState;
   final ValueChanged<MediaItem> onOpen;
+  final ValueChanged<ContinueWatchingEntry> onResume;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -348,7 +350,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (data.continueWatching.isNotEmpty)
                     _ContinueRail(
                       items: data.continueWatching,
-                      onOpen: (entry) => widget.onOpen(entry.item),
+                      onOpen: widget.onResume,
                     )
                   else
                     const SizedBox.shrink()
