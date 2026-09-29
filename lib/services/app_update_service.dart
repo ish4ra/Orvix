@@ -54,7 +54,12 @@ class AppUpdateService {
   static const MethodChannel _androidUpdateChannel =
       MethodChannel('orvix/app_update');
 
-  final http.Client _client;
+  http.Client _client;
+
+  void _resetClient() {
+    _client.close();
+    _client = http.Client();
+  }
 
   Future<({bool success, String detail, String version})?>
       consumeLastWindowsUpdateStatus() async {
@@ -371,6 +376,10 @@ class AppUpdateService {
       } catch (error) {
         lastError = error;
         await sink?.close();
+        // A dropped Android/background socket can leave package:http's
+        // persistent client tied to the dead connection. Recreate it before
+        // retrying so the next Range request gets a genuinely fresh socket.
+        _resetClient();
       }
 
       if (attempt < 4) {
