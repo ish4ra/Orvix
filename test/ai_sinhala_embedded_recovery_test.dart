@@ -3,13 +3,13 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('automatic startup uses the active player embedded text track as timing truth', () {
+  test('automatic startup preserves exact complete-file preflight and native timing fallback', () {
     final details = File('lib/screens/details_screen.dart').readAsStringSync();
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(
       details,
-      contains('_legacyCompleteFileAiPreflightEnabled => false'),
+      contains('_legacyCompleteFileAiPreflightEnabled => true'),
     );
     final openStart = player.indexOf('Future<void> _open()');
     final openEnd = player.indexOf('void _onPlaybackError', openStart);
