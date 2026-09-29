@@ -115,6 +115,8 @@ The **[Releases](https://github.com/ish4ra/Orvix/releases)** page contains stabl
 | **Android Mobile** | 🟢 Active / Beta-heavy | ExoPlayer/Media3 first, MPV fallback where appropriate | Universal APK + arm64-v8a + armeabi-v7a + x86_64 APKs |
 | **Android TV** | 🟢 Active / Beta-heavy | TV-safe Android path + P2P/player experiments | Dedicated Android TV APK + TV banner resources |
 | **macOS** | 🟡 Shipping / evolving | Desktop `media_kit` / libmpv path | macOS application ZIP |
+| **Linux** | 🔴 Planned | Future desktop target; native media dependencies, packaging and cross-distro validation are not implemented yet | Not currently shipped |
+| **iOS / iPadOS** | 🔴 Planned / Research | Future Apple mobile target; playback, background networking and distribution constraints still need validation | Not currently shipped |
 
 ### Release philosophy
 
