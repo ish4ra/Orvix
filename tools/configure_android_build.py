@@ -174,7 +174,7 @@ def patch_android(tv: bool) -> None:
     # adaptive foreground and let Android provide the dark background/mask.
     adaptive_canvas = Image.new("RGBA", (432, 432), (0, 0, 0, 0))
     adaptive_mark = mark.copy()
-    adaptive_mark.thumbnail((310, 310), Image.Resampling.LANCZOS)
+    adaptive_mark.thumbnail((260, 260), Image.Resampling.LANCZOS)
     adaptive_canvas.alpha_composite(
         adaptive_mark,
         ((432 - adaptive_mark.width) // 2, (432 - adaptive_mark.height) // 2),
