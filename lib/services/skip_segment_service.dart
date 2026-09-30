@@ -65,7 +65,7 @@ class IntroDbService {
     } else {
       query['is_movie'] = 'true';
     }
-    final uri = Uri.https('introdb.app', '/segments', query);
+    final uri = Uri.https('api.introdb.app', '/segments', query);
     try {
       final response = await _client
           .get(uri, headers: const {'Accept': 'application/json'})
