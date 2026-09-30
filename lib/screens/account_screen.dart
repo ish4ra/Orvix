@@ -388,7 +388,7 @@ class _AccountScreenState extends State<AccountScreen> {
               const _InfoLine(Icons.tune_rounded,
                   'Orvix app preferences and source settings'),
               const _InfoLine(Icons.cloud_off_outlined,
-                  'PikPak/TorBox passwords, tokens and secret credentials stay local'),
+                  'Connected debrid and cloud-service credentials sync securely with your Orvix account'),
             ],
           ),
         ),
