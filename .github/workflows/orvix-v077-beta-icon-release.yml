@@ -11,6 +11,7 @@ name: Release Orvix v0.7.9-beta.26 — UI Rail Fix beta.26 v4
 # buffered-native-ai-clean-build
 # atomic-release-by-release-id
 # retry-publish-existing-draft-via-gh-release-view
+# beta26-updater-version-fix
 # beta45-dynamic-ffmpeg-retrigger
 
 on:
