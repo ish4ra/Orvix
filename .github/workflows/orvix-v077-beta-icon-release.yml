@@ -399,7 +399,15 @@ jobs:
           Remove-Item -Recurse -Force 'build\windows' -ErrorAction SilentlyContinue
           flutter clean
           flutter pub get
-          flutter build windows --release
+          $env:CMAKE_TLS_VERIFY = '1'
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            flutter build windows --release
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -eq 3) { throw 'Windows Flutter build failed after 3 attempts' }
+            Write-Host "Windows build attempt $attempt failed, retrying transient dependency download..."
+            Start-Sleep -Seconds (10 * $attempt)
+            Remove-Item -Recurse -Force 'build\windows' -ErrorAction SilentlyContinue
+          }
 
       - name: Build standalone Orvix media engine
         shell: pwsh
