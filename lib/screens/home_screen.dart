@@ -396,14 +396,15 @@ class _DesktopHomeView extends StatelessWidget {
           if (hero != null)
             _DesktopFeaturedHero(
               item: hero,
-              onOpen: () => onOpen(hero),
+              onOpen: () => widget.onOpen(hero),
               onPreview: () => onPrefetch(hero),
               onCustomize: onCustomize,
             ),
           if (data.continueWatching.isNotEmpty)
             _DesktopContinueRail(
               items: data.continueWatching,
-              onOpen: (entry) => onOpen(entry.item),
+              onOpen: (entry) => widget.onOpen(entry.item),
+              onFocusReveal: _revealFocusedChild,
               onPrefetch: (entry) => onPrefetch(entry.item),
             ),
           for (final section in data.sections)
@@ -411,8 +412,9 @@ class _DesktopHomeView extends StatelessWidget {
               _DesktopPosterShelf(
                 title: section.label,
                 items: data.items(section),
-                onOpen: onOpen,
-                onPrefetch: onPrefetch,
+                onOpen: widget.onOpen,
+                onPrefetch: widget.onPrefetch,
+                onFocusReveal: _revealFocusedChild,
               ),
         ],
       ),
@@ -636,12 +638,14 @@ class _DesktopPosterShelf extends StatelessWidget {
     required this.items,
     required this.onOpen,
     required this.onPrefetch,
+    required this.onFocusReveal,
   });
 
   final String title;
   final List<MediaItem> items;
   final ValueChanged<MediaItem> onOpen;
   final ValueChanged<MediaItem> onPrefetch;
+  final ValueChanged<BuildContext> onFocusReveal;
 
   @override
   Widget build(BuildContext context) {
@@ -1263,6 +1267,7 @@ class _ContinueRail extends StatelessWidget {
 
   final List<ContinueWatchingEntry> items;
   final ValueChanged<ContinueWatchingEntry> onOpen;
+  final ValueChanged<BuildContext> onFocusReveal;
 
   @override
   Widget build(BuildContext context) {
@@ -1410,7 +1415,7 @@ class _HomeData {
 }
 
 
-class _TvHomeView extends StatelessWidget {
+class _TvHomeView extends StatefulWidget {
   const _TvHomeView({
     required this.data,
     required this.onOpen,
@@ -1422,12 +1427,39 @@ class _TvHomeView extends StatelessWidget {
   final ValueChanged<MediaItem> onPrefetch;
 
   @override
+  State<_TvHomeView> createState() => _TvHomeViewState();
+}
+
+class _TvHomeViewState extends State<_TvHomeView> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _revealFocusedChild(BuildContext childContext) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Scrollable.ensureVisible(
+        childContext,
+        alignment: .42,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final data = widget.data;
     final hero = data.hero;
     return ColoredBox(
       color: const Color(0xFF080A09),
       child: ListView(
-        key: const PageStorageKey('orvix-tv-home-v2'),
+        controller: _scrollController,
+        key: const PageStorageKey('orvix-tv-home-v3'),
         cacheExtent: 1500,
         padding: const EdgeInsets.only(bottom: 54),
         children: [
@@ -1681,7 +1713,10 @@ class _TvPosterShelf extends StatelessWidget {
                     focusScale: 1.055,
                     autofocus: false,
                     onFocusChanged: (focused) {
-                      if (focused) onPrefetch(item);
+                      if (focused) {
+                        onPrefetch(item);
+                        onFocusReveal(context);
+                      }
                     },
                     onTap: () => onOpen(item),
                   ),
@@ -1699,6 +1734,7 @@ class _TvContinueLandscapeRail extends StatelessWidget {
   const _TvContinueLandscapeRail({
     required this.items,
     required this.onOpen,
+    required this.onFocusReveal,
   });
 
   final List<ContinueWatchingEntry> items;
@@ -1743,6 +1779,9 @@ class _TvContinueLandscapeRail extends StatelessWidget {
                     height: 160,
                     imageWidth: 104,
                     autofocus: index == 0,
+                    onFocusChanged: (focused) {
+                      if (focused) onFocusReveal(context);
+                    },
                     onTap: () => onOpen(entry),
                   ),
                 );
