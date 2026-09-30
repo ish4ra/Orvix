@@ -94,8 +94,8 @@ void main() {
           File('lib/services/local_torrent_service.dart').readAsStringSync();
 
       expect(source, contains('purgeWindowsTorrentCache'));
-      expect(source, contains("'stremio-server'"));
-      expect(source, contains("'torrent-cache'"));
+      expect(source, contains('stremio-server'));
+      expect(source, contains('torrent-cache'));
 
       final disposeIndex = source.indexOf('Future<void> dispose() async');
       final killIndex = source.indexOf('process.kill();', disposeIndex);
