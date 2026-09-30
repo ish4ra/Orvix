@@ -835,7 +835,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (!enabled) return;
     final item = widget.item;
     if (item == null) return;
-    final imdb = RegExp(r'tt\d+', caseSensitive: false).firstMatch(item.id)?.group(0);
+    final imdb = IntroDbService.imdbIdFrom(item.id) ??
+        IntroDbService.imdbIdFrom(widget.episode?.id ?? '');
     if (imdb == null) return;
     final episode = widget.episode;
     final segments = await IntroDbService().segments(
