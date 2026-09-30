@@ -7,6 +7,7 @@ import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/online_subtitle_service.dart';
 import '../services/player_engine_preferences_service.dart';
 import '../services/subtitle_preferences_service.dart';
+import '../services/skip_segment_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -19,6 +20,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool? _aiSinhala;
   String? _preferredSubtitleLanguage;
   PlayerEnginePreference? _playerEngine;
+  bool? _skipSegments;
 
   @override
   void initState() {
@@ -30,12 +32,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final enabled = await AiSinhalaPreferencesService.isEnabled();
     final language = await SubtitlePreferencesService.preferredLanguage();
     final playerEngine = await PlayerEnginePreferencesService.get();
+    final skipSegments = await SkipSegmentPreferencesService.isEnabled();
     if (!mounted) return;
     setState(() {
       _aiSinhala = enabled;
       _preferredSubtitleLanguage =
           OnlineSubtitleService.normalizeLanguage(language);
       _playerEngine = playerEngine;
+      _skipSegments = skipSegments;
     });
   }
 
@@ -48,6 +52,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final normalized = OnlineSubtitleService.normalizeLanguage(language);
     setState(() => _preferredSubtitleLanguage = normalized);
     await SubtitlePreferencesService.setPreferredLanguage(normalized);
+  }
+
+  Future<void> _setSkipSegments(bool enabled) async {
+    setState(() => _skipSegments = enabled);
+    await SkipSegmentPreferencesService.setEnabled(enabled);
   }
 
   Future<void> _setAiSinhala(bool enabled) async {
@@ -171,6 +180,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ),
                   ],
+                ),
+              ),
+              const SizedBox(height: 22),
+              Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0D120E),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFF263827)),
+                ),
+                child: SwitchListTile.adaptive(
+                  value: _skipSegments ?? true,
+                  onChanged: _skipSegments == null ? null : _setSkipSegments,
+                  secondary: const Icon(Icons.fast_forward_rounded),
+                  title: const Text(
+                    'Skip intro, recap and outro',
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  subtitle: const Padding(
+                    padding: EdgeInsets.only(top: 6),
+                    child: Text(
+                      'Use community timestamps from IntroDB to show skip actions during playback. Enabled by default and falls back to normal playback when no timestamp is available.',
+                      style: TextStyle(height: 1.45),
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 22),
