@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class OrvixSupporter {
@@ -39,8 +41,15 @@ class OrvixSupporter {
       };
 }
 
+class OrvixContributor {
+  const OrvixContributor({required this.login, required this.contributions, this.avatarUrl, this.profileUrl});
+  final String login; final int contributions; final String? avatarUrl, profileUrl;
+  factory OrvixContributor.fromJson(Map<String, dynamic> json) => OrvixContributor(login: (json['login'] as String?) ?? 'Contributor', contributions: (json['contributions'] as num?)?.toInt() ?? 0, avatarUrl: json['avatar_url'] as String?, profileUrl: json['html_url'] as String?);
+}
+
 abstract interface class SupportersRepository {
   Future<List<OrvixSupporter>> fetchPublicSupporters();
+  Future<List<OrvixContributor>> fetchContributors();
 }
 
 class SupabaseSupportersRepository implements SupportersRepository {
@@ -48,6 +57,14 @@ class SupabaseSupportersRepository implements SupportersRepository {
       : _client = client ?? Supabase.instance.client;
 
   final SupabaseClient _client;
+
+  @override
+  Future<List<OrvixContributor>> fetchContributors() async {
+    final response = await http.get(Uri.parse('https://api.github.com/repos/ish4ra/Orvix/contributors?per_page=100'), headers: {'Accept': 'application/vnd.github+json'});
+    if (response.statusCode < 200 || response.statusCode >= 300) throw Exception('GitHub contributors request failed');
+    final rows = jsonDecode(response.body) as List;
+    return rows.map((row) => OrvixContributor.fromJson(Map<String, dynamic>.from(row as Map))).toList(growable: false);
+  }
 
   @override
   Future<List<OrvixSupporter>> fetchPublicSupporters() async {
@@ -70,6 +87,6 @@ class SupportersService {
 
   static SupportersRepository repository = SupabaseSupportersRepository();
 
-  static Future<List<OrvixSupporter>> fetchPublicSupporters() =>
-      repository.fetchPublicSupporters();
+  static Future<List<OrvixSupporter>> fetchPublicSupporters() => repository.fetchPublicSupporters();
+  static Future<List<OrvixContributor>> fetchContributors() => repository.fetchContributors();
 }
