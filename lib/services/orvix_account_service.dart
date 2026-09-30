@@ -1,6 +1,9 @@
 import 'dart:convert';
 
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'secure_storage_factory.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class OrvixAccountService {
@@ -14,6 +17,15 @@ class OrvixAccountService {
     'pikora_source_addons',
     'pikora_integrated_torrentio_url_v1',
   };
+
+  static const _credentialKeys = <String>[
+    'orvix_torbox_api_token_v1',
+    'pikpak_access_token',
+    'pikpak_refresh_token',
+    'pikpak_username',
+    'pikpak_user_id',
+  ];
+  static final FlutterSecureStorage _secureStorage = createOrvixSecureStorage();
 
   static SupabaseClient get _client => Supabase.instance.client;
   static User? get currentUser => _client.auth.currentUser;
@@ -110,9 +122,36 @@ class OrvixAccountService {
     }, onConflict: 'user_id');
   }
 
+  static Future<void> syncCredentialsIfSignedIn() async {
+    if (!isSignedIn) return;
+    final local = <String, String>{};
+    for (final key in _credentialKeys) {
+      final value = await _secureStorage.read(key: key);
+      if (value != null && value.isNotEmpty) local[key] = value;
+    }
+
+    final remoteRaw = await _client.rpc('load_orvix_credentials');
+    final remote = remoteRaw is Map
+        ? remoteRaw.map((key, value) => MapEntry(key.toString(), value?.toString() ?? ''))
+        : <String, String>{};
+
+    final merged = <String, String>{...remote, ...local}
+      ..removeWhere((_, value) => value.isEmpty);
+    for (final entry in merged.entries) {
+      if ((await _secureStorage.read(key: entry.key))?.isNotEmpty != true) {
+        await _secureStorage.write(key: entry.key, value: entry.value);
+      }
+    }
+    if (merged.isNotEmpty) {
+      await _client.rpc('save_orvix_credentials', params: {'p_payload': merged});
+    }
+  }
+
   static Future<void> mergeCloudIntoLocal() async {
     final user = currentUser;
     if (user == null) return;
+
+    await syncCredentialsIfSignedIn();
 
     final prefs = await SharedPreferences.getInstance();
     final rows =
