@@ -318,6 +318,9 @@ class _AccountScreenState extends State<AccountScreen> {
       if (!mounted) return;
       setState(() => _message = 'Signed out. Local data stays on this device.');
       widget.onAuthChanged();
+      if (PlatformProfile.isAndroidTv) {
+        unawaited(_startTvLogin());
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
