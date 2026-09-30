@@ -15,6 +15,7 @@ name: Release Orvix v0.7.9-beta.33 — Cross-platform IntroDB + navigation fixes
 # beta27-support-navigation-release
 # beta30-real-supporters-official-icons
 # beta45-dynamic-ffmpeg-retrigger
+# beta33-ffmpeg-execution-validation-retrigger
 
 on:
   push:
