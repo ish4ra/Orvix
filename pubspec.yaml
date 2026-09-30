@@ -15,6 +15,7 @@ dependencies:
   http: ^1.2.2
   shared_preferences: ^2.3.5
   url_launcher: ^6.3.1
+  simple_icons: ^16.23.0
   cached_network_image: ^3.4.1
   media_kit: ^1.1.11
   media_kit_video: ^2.0.1
