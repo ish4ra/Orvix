@@ -52,8 +52,7 @@
 - configurable Stremio-compatible source providers
 - playability-oriented source ranking
 - free P2P/torrent playback experiments
-- PikPak and TorBox cloud workflows
-- Real-Debrid and Premiumize debrid playback workflows
+- PikPak, TorBox, Real-Debrid and Premiumize cloud/debrid workflows
 - native in-app playback
 - Android ExoPlayer/Media3 routing with MPV fallback in current beta development
 - Windows libmpv-based playback
@@ -65,7 +64,7 @@
 - Orvix account integration backed by Supabase
 - automated multi-platform release pipelines
 
-The goal is not to be a thin video-player wrapper. Orvix is being developed as a **complete media browsing, source-resolution, playback and subtitle platform** with separate services for catalog data, account state, source ranking, cloud providers, playback and subtitle intelligence.
+The goal is not to be a thin video-player wrapper. Orvix is being developed as a **complete media browsing, source-resolution, playback and subtitle platform** with separate services for catalog data, account state, source ranking, cloud/debrid providers, playback and subtitle intelligence.
 
 > [!IMPORTANT]
 > Orvix is under active development across Windows, Android Mobile, Android TV and macOS. The latest stable release is **v0.7.7**. The current development branch identifies itself as **v0.7.9-beta.22**, while the latest published prerelease at the time of this README refresh is **v0.7.9-beta.20**. Beta behavior can differ by platform while playback, updates, subtitle preparation and device-specific UX continue to evolve.
@@ -214,14 +213,16 @@ The v0.7.9 beta line has become a broad stabilization and product-polish cycle r
 - preferred release-group support in earlier/current source-engine work
 - exact episode/file metadata preservation for season packs
 
-### Cloud / remote media workflows
+### Cloud / debrid / remote media workflows
 
 - **PikPak** integration
 - **TorBox** integration
-- secure token storage
-- account/library browsing
-- preferred-cloud selection
-- cloud-first matching
+- **Real-Debrid** integration
+- **Premiumize** integration
+- secure token/API-key storage
+- account/library browsing where supported
+- preferred provider selection
+- cloud/debrid-first matching
 - magnet submission
 - direct-link submission where supported
 - transfer/task polling
@@ -364,7 +365,7 @@ Prefetch/cache selected metadata
 Sources / Play
 ```
 
-Catalog data is intentionally separate from the user's cloud/debrid state. A title can be discoverable even when it does not already exist in PikPak or TorBox, or when no Real-Debrid/Premiumize-resolved source has been prepared yet.
+Catalog data is intentionally separate from the user's cloud/debrid state. A title can be discoverable regardless of whether it already exists in PikPak or TorBox, or whether a Real-Debrid or Premiumize source has been resolved yet.
 
 ---
 
@@ -771,16 +772,16 @@ Home preferences are persistent, and earlier/current work allows rows to be enab
 
 ## 📚 Library, Watchlist & Continue Watching
 
-Orvix keeps user media state separate from cloud storage.
+Orvix keeps user media state separate from cloud/debrid provider state.
 
 That means:
 
-- adding a movie to the Orvix Library does not mean copying it to PikPak
+- adding a movie to the Orvix Library does not automatically copy, submit or resolve it through PikPak, TorBox, Real-Debrid or Premiumize
 - Watchlist is an app-level state
 - Continue Watching is driven by playback progress
 - TV progress can be tracked per episode while representing the series cleanly in the UI
 
-This separation makes the UI behave like a media application rather than a raw cloud-file browser.
+This separation makes the UI behave like a media application rather than a raw cloud/debrid file browser.
 
 ---
 
@@ -1060,10 +1061,10 @@ Orvix intentionally keeps provider/account behavior configurable.
 
 Depending on the feature:
 
-- connect a supported cloud provider
+- connect a supported cloud/debrid provider
 - configure compatible source providers
 - select source-ranking behavior
-- choose a preferred cloud
+- choose a preferred cloud/debrid provider
 - select subtitle behavior
 - sign in to an Orvix account for authenticated backend features
 
@@ -1114,7 +1115,7 @@ Large media applications become difficult to maintain when every screen directly
 Orvix instead uses dedicated services so that:
 
 - catalog changes do not require rewriting the player
-- a new cloud provider does not require rewriting Home
+- a new cloud/debrid provider does not require rewriting Home
 - subtitle logic can evolve independently
 - source ranking can change without replacing provider APIs
 - account/backend behavior is not embedded in UI widgets
@@ -1126,7 +1127,7 @@ This also makes testing and debugging easier because failures can be narrowed do
 Catalog?
 Source discovery?
 Ranking?
-Cloud transfer?
+Cloud/debrid resolution?
 P2P engine?
 Playable URL?
 Player engine?
@@ -1163,6 +1164,14 @@ That separation is especially important for the Android TV and P2P work, where s
 - richer source ranking
 - exact season-pack routing
 - Library / Continue Watching improvements
+
+### Debrid expansion era
+
+- Real-Debrid integration
+- Premiumize integration
+- cloud/debrid-aware provider selection
+- torrent/file resolution across provider-specific API flows
+- secure local handling of third-party provider credentials
 
 ### Subtitle & account era
 
