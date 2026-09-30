@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:simple_icons/simple_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'models/media_item.dart';
@@ -741,23 +742,23 @@ class _AboutScreen extends StatelessWidget {
                 runSpacing: 10,
                 children: [
                   _SupportButton(
-                    icon: Icons.favorite_rounded,
+                    icon: SimpleIcons.githubsponsors,
                     label: 'GitHub Sponsors',
                     url: 'https://github.com/sponsors/ish4ra',
                     primary: true,
                   ),
                   _SupportButton(
-                    icon: Icons.coffee_rounded,
+                    icon: SimpleIcons.buymeacoffee,
                     label: 'Buy Me a Coffee',
                     url: 'https://buymeacoffee.com/ish4ra',
                   ),
                   _SupportButton(
-                    icon: Icons.local_cafe_rounded,
+                    icon: SimpleIcons.kofi,
                     label: 'Ko-fi',
                     url: 'https://ko-fi.com/ish4ra',
                   ),
                   _SupportButton(
-                    icon: Icons.star_rounded,
+                    icon: SimpleIcons.github,
                     label: 'Star on GitHub',
                     url: 'https://github.com/ish4ra/Orvix',
                   ),
@@ -782,17 +783,17 @@ class _AboutScreen extends StatelessWidget {
                 runSpacing: 10,
                 children: [
                   _SupportButton(
-                    brand: _SocialBrand.mastodon,
-                    label: 'Fosstodon',
+                    icon: SimpleIcons.mastodon,
+                    label: 'Mastodon',
                     url: 'https://fosstodon.org/@orvix',
                   ),
                   _SupportButton(
-                    brand: _SocialBrand.lemmy,
+                    icon: SimpleIcons.lemmy,
                     label: 'Lemmy',
                     url: 'https://lemmy.ml/c/Orvix',
                   ),
                   _SupportButton(
-                    icon: Icons.code_rounded,
+                    icon: SimpleIcons.github,
                     label: 'GitHub',
                     url: 'https://github.com/ish4ra/Orvix',
                   ),
@@ -835,84 +836,15 @@ class _AboutScreen extends StatelessWidget {
   }
 }
 
-enum _SocialBrand { mastodon, lemmy }
-
-class _SocialBrandIcon extends StatelessWidget {
-  const _SocialBrandIcon(this.brand, {required this.size});
-  final _SocialBrand brand;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      size: Size.square(size),
-      painter: _SocialBrandPainter(brand),
-    );
-  }
-}
-
-class _SocialBrandPainter extends CustomPainter {
-  const _SocialBrandPainter(this.brand);
-  final _SocialBrand brand;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0xFFEEFFD3)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = size.width * .105
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    final w = size.width, h = size.height;
-    if (brand == _SocialBrand.mastodon) {
-      final body = Path()
-        ..moveTo(.18 * w, .73 * h)
-        ..quadraticBezierTo(.10 * w, .60 * h, .12 * w, .34 * h)
-        ..quadraticBezierTo(.14 * w, .12 * h, .38 * w, .10 * h)
-        ..lineTo(.62 * w, .10 * h)
-        ..quadraticBezierTo(.86 * w, .12 * h, .88 * w, .34 * h)
-        ..lineTo(.86 * w, .61 * h)
-        ..quadraticBezierTo(.82 * w, .78 * h, .58 * w, .80 * h)
-        ..quadraticBezierTo(.42 * w, .82 * h, .29 * w, .76 * h)
-        ..quadraticBezierTo(.30 * w, .91 * h, .51 * w, .92 * h);
-      canvas.drawPath(body, paint);
-      canvas.drawLine(Offset(.32*w,.35*h), Offset(.32*w,.61*h), paint);
-      canvas.drawLine(Offset(.68*w,.35*h), Offset(.68*w,.61*h), paint);
-      canvas.drawArc(Rect.fromLTWH(.32*w,.27*h,.36*w,.28*h), 3.14, 3.14, false, paint);
-      canvas.drawLine(Offset(.50*w,.35*h), Offset(.50*w,.56*h), paint);
-    } else {
-      final head = Path()
-        ..moveTo(.23*w,.43*h)
-        ..quadraticBezierTo(.27*w,.22*h,.50*w,.22*h)
-        ..quadraticBezierTo(.73*w,.22*h,.77*w,.43*h)
-        ..quadraticBezierTo(.82*w,.70*h,.50*w,.78*h)
-        ..quadraticBezierTo(.18*w,.70*h,.23*w,.43*h);
-      canvas.drawPath(head, paint);
-      canvas.drawLine(Offset(.30*w,.30*h), Offset(.18*w,.16*h), paint);
-      canvas.drawLine(Offset(.70*w,.30*h), Offset(.82*w,.16*h), paint);
-      canvas.drawLine(Offset(.28*w,.70*h), Offset(.14*w,.82*h), paint);
-      canvas.drawLine(Offset(.72*w,.70*h), Offset(.86*w,.82*h), paint);
-      final fill = Paint()..color = const Color(0xFFEEFFD3);
-      canvas.drawCircle(Offset(.39*w,.50*h), .055*w, fill);
-      canvas.drawCircle(Offset(.61*w,.50*h), .055*w, fill);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _SocialBrandPainter oldDelegate) => oldDelegate.brand != brand;
-}
-
 class _SupportButton extends StatelessWidget {
   const _SupportButton({
     required this.label,
     required this.url,
-    this.icon,
-    this.brand,
+    required this.icon,
     this.primary = false,
-  }) : assert(icon != null || brand != null);
+  });
 
-  final IconData? icon;
-  final _SocialBrand? brand;
+  final IconData icon;
   final String label;
   final String url;
   final bool primary;
@@ -922,10 +854,7 @@ class _SupportButton extends StatelessWidget {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
-  Widget _buttonIcon() {
-    if (brand != null) return _SocialBrandIcon(brand!, size: 19);
-    return Icon(icon, size: 19);
-  }
+  Widget _buttonIcon() => Icon(icon, size: 19);
 
   @override
   Widget build(BuildContext context) {
