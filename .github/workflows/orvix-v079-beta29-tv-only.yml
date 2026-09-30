@@ -2,9 +2,6 @@ name: Orvix v0.7.9-beta.29 TV-only QR login
 # beta29-retry-after-version-sync
 
 on:
-  push:
-    branches:
-      - feature/tv-qr-login
   workflow_dispatch:
 
 permissions:
