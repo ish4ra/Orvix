@@ -904,7 +904,6 @@ class _SocialBrandPainter extends CustomPainter {
 
 class _SupportButton extends StatelessWidget {
   const _SupportButton({
-    required this.icon,
     required this.label,
     required this.url,
     this.icon,
