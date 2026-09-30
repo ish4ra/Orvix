@@ -21,6 +21,7 @@ import '../services/online_subtitle_service.dart';
 import '../services/playback_service.dart';
 import '../services/platform_profile.dart';
 import '../services/subtitle_preferences_service.dart';
+import '../services/skip_segment_service.dart';
 import '../widgets/player_loading_overlay.dart';
 
 class PlayerScreen extends StatefulWidget {
@@ -105,6 +106,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void>? _exitPreparation;
   bool _backNavigationInProgress = false;
   bool _closing = false;
+  List<SkipSegment> _skipSegments = const [];
+  SkipSegment? _activeSkipSegment;
+  bool _skipSegmentDismissed = false;
+  bool _skipSegmentsEnabled = true;
   final FocusNode _focusNode = FocusNode();
   AiPreparedSubtitle? _preparedAiSubtitle;
   String? _generatedAiSubtitlePath;
@@ -784,6 +789,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _preparedAiSubtitle = null;
     _aiState = const AiSinhalaRuntimeState.native();
     unawaited(_loadSubtitlePreferences());
+    unawaited(_loadSkipSegments());
     _playbackErrorSubscription =
         widget.playback.player.stream.error.listen(_onPlaybackError);
     _startupPlayingSubscription =
@@ -798,6 +804,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (position > Duration.zero && widget.playback.player.state.playing) {
         _markPlaybackStarted();
       }
+      _updateActiveSkipSegment(position);
     });
     if (_aiSinhalaEnabled) {
       _positionSubscription =
@@ -819,6 +826,84 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _focusNode.requestFocus();
       unawaited(_enterAndroidMobilePlayerMode());
     });
+  }
+
+  Future<void> _loadSkipSegments() async {
+    final enabled = await SkipSegmentPreferencesService.isEnabled();
+    if (!mounted || _closing) return;
+    _skipSegmentsEnabled = enabled;
+    if (!enabled) return;
+    final item = widget.item;
+    if (item == null) return;
+    final imdb = RegExp(r'tt\d+', caseSensitive: false).firstMatch(item.id)?.group(0);
+    if (imdb == null) return;
+    final episode = widget.episode;
+    final segments = await IntroDbService().segments(
+      imdbId: imdb,
+      season: episode?.season,
+      episode: episode?.episode,
+    );
+    if (!mounted || _closing) return;
+    setState(() {
+      _skipSegments = segments;
+      _activeSkipSegment = null;
+      _skipSegmentDismissed = false;
+    });
+    _updateActiveSkipSegment(widget.playback.player.state.position);
+  }
+
+  void _updateActiveSkipSegment(Duration position) {
+    if (!_skipSegmentsEnabled || _skipSegments.isEmpty || !mounted || _closing) return;
+    final current = _skipSegments.cast<SkipSegment?>().firstWhere(
+          (segment) => segment!.contains(position),
+          orElse: () => null,
+        );
+    if (identical(current, _activeSkipSegment)) return;
+    setState(() {
+      _activeSkipSegment = current;
+      _skipSegmentDismissed = false;
+    });
+  }
+
+  Future<void> _skipActiveSegment() async {
+    final segment = _activeSkipSegment;
+    if (segment == null) return;
+    final duration = widget.playback.player.state.duration;
+    var target = segment.end;
+    if (duration > Duration.zero && target >= duration) {
+      target = duration - const Duration(milliseconds: 1);
+    }
+    if (target < Duration.zero) target = Duration.zero;
+    await widget.playback.player.seek(target);
+    _afterSeek(target);
+    if (!mounted) return;
+    setState(() {
+      _skipSegmentDismissed = true;
+      _activeSkipSegment = null;
+    });
+  }
+
+  Widget _skipSegmentOverlay() {
+    final segment = _activeSkipSegment!;
+    final compact = !_desktop && MediaQuery.sizeOf(context).shortestSide < 600;
+    return Positioned(
+      right: compact ? 14 : 28,
+      bottom: compact ? 92 : 112,
+      child: Focus(
+        canRequestFocus: true,
+        child: FilledButton.icon(
+          onPressed: _skipActiveSegment,
+          icon: const Icon(Icons.fast_forward_rounded),
+          label: Text(segment.label),
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFFB9FF45),
+            foregroundColor: Colors.black,
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            textStyle: const TextStyle(fontWeight: FontWeight.w900),
+          ),
+        ),
+      ),
+    );
   }
 
   bool _hasPlaybackActivity() {
@@ -4912,6 +4997,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     child: _controls(context),
                   ),
                 ),
+                if (_activeSkipSegment != null && !_skipSegmentDismissed)
+                  _skipSegmentOverlay(),
                 if (_nextCountdown > 0) _nextEpisodeOverlay(),
               ],
             ),
