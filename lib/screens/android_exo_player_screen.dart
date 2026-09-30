@@ -78,7 +78,8 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     if (!await SkipSegmentPreferencesService.isEnabled()) return;
     final item = widget.item;
     if (item == null) return;
-    final imdb = RegExp(r'tt\d+', caseSensitive: false).firstMatch(item.id)?.group(0);
+    final imdb = IntroDbService.imdbIdFrom(item.id) ??
+        IntroDbService.imdbIdFrom(widget.episode?.id ?? '');
     if (imdb == null) return;
     final episode = widget.episode;
     final segments = await IntroDbService().segments(
