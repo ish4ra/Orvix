@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:simple_icons/simple_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/supporters_service.dart';
 
@@ -58,10 +59,10 @@ class _SupportersScreenState extends State<SupportersScreen>
               ),
               const SizedBox(height: 20),
               const Wrap(spacing: 10, runSpacing: 10, children: [
-                _LinkButton('GitHub Sponsors', 'https://github.com/sponsors/ish4ra', Icons.favorite_rounded, true),
-                _LinkButton('Buy Me a Coffee', 'https://buymeacoffee.com/ish4ra', Icons.local_cafe_rounded, false),
-                _LinkButton('Ko-fi', 'https://ko-fi.com/ish4ra', Icons.coffee_rounded, false),
-                _LinkButton('Star on GitHub', 'https://github.com/ish4ra/Orvix', Icons.star_rounded, false),
+                _LinkButton('GitHub Sponsors', 'https://github.com/sponsors/ish4ra', SimpleIcons.githubsponsors, true),
+                _LinkButton('Buy Me a Coffee', 'https://buymeacoffee.com/ish4ra', SimpleIcons.buymeacoffee, false),
+                _LinkButton('Ko-fi', 'https://ko-fi.com/ish4ra', SimpleIcons.kofi, false),
+                _LinkButton('Star on GitHub', 'https://github.com/ish4ra/Orvix', SimpleIcons.github, false),
               ]),
               const SizedBox(height: 30),
               Container(
