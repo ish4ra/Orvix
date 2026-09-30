@@ -765,6 +765,41 @@ class _AboutScreen extends StatelessWidget {
               ),
               const SizedBox(height: 32),
               Text(
+                'Community',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Follow Orvix updates and join the community.',
+                style: TextStyle(color: Color(0xFF9EAAA0), height: 1.45),
+              ),
+              const SizedBox(height: 16),
+              const Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  _SupportButton(
+                    iconAsset: 'assets/social/mastodon.svg',
+                    label: 'Fosstodon',
+                    url: 'https://fosstodon.org/@orvix',
+                  ),
+                  _SupportButton(
+                    iconAsset: 'assets/social/lemmy.svg',
+                    label: 'Lemmy',
+                    url: 'https://lemmy.ml/c/Orvix',
+                  ),
+                  _SupportButton(
+                    icon: Icons.code_rounded,
+                    label: 'GitHub',
+                    url: 'https://github.com/ish4ra/Orvix',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 32),
+              Text(
                 'What Orvix includes',
                 style: Theme.of(context)
                     .textTheme
@@ -805,10 +840,13 @@ class _SupportButton extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.url,
+    this.icon,
+    this.iconAsset,
     this.primary = false,
-  });
+  }) : assert(icon != null || iconAsset != null);
 
-  final IconData icon;
+  final IconData? icon;
+  final String? iconAsset;
   final String label;
   final String url;
   final bool primary;
@@ -818,18 +856,30 @@ class _SupportButton extends StatelessWidget {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
+  Widget _buttonIcon() {
+    if (iconAsset != null) {
+      return SvgPicture.asset(
+        iconAsset!,
+        width: 19,
+        height: 19,
+        fit: BoxFit.contain,
+      );
+    }
+    return Icon(icon, size: 19);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (primary) {
       return FilledButton.icon(
         onPressed: _open,
-        icon: Icon(icon, size: 19),
+        icon: _buttonIcon(),
         label: Text(label),
       );
     }
     return OutlinedButton.icon(
       onPressed: _open,
-      icon: Icon(icon, size: 19),
+      icon: _buttonIcon(),
       label: Text(label),
     );
   }
