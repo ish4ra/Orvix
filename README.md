@@ -53,6 +53,7 @@
 - playability-oriented source ranking
 - free P2P/torrent playback experiments
 - PikPak and TorBox cloud workflows
+- Real-Debrid and Premiumize debrid playback workflows
 - native in-app playback
 - Android ExoPlayer/Media3 routing with MPV fallback in current beta development
 - Windows libmpv-based playback
@@ -303,6 +304,8 @@ Orvix intentionally separates **presentation**, **domain/services**, **provider 
 │  ├─ CloudPreferencesService                                     │
 │  ├─ PikPakService / PikPakTransferService                       │
 │  ├─ TorBoxService                                               │
+│  ├─ Real-Debrid integration                                     │
+│  ├─ Premiumize integration                                      │
 │  ├─ PlaybackService                                             │
 │  ├─ OrvixAccountService                                         │
 │  └─ AI Sinhala subtitle services                                │
@@ -361,7 +364,7 @@ Prefetch/cache selected metadata
 Sources / Play
 ```
 
-Catalog data is intentionally separate from the user's cloud library. A title can be discoverable even when it does not already exist in PikPak or TorBox.
+Catalog data is intentionally separate from the user's cloud/debrid state. A title can be discoverable even when it does not already exist in PikPak or TorBox, or when no Real-Debrid/Premiumize-resolved source has been prepared yet.
 
 ---
 
@@ -495,14 +498,18 @@ Player routing
 
 ## ☁️ Multi-cloud architecture
 
-Orvix also supports a cloud-first playback path.
+Orvix also supports a cloud-first and debrid-aware playback path.
 
-### Supported cloud services in the current codebase
+### Supported cloud & debrid services
 
-| Provider | Authentication | Library | Add source | Task polling | Playback URL |
-|---|---:|---:|---:|---:|---:|
-| **PikPak** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **TorBox** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Provider | Authentication | Library / account items | Add / resolve source | Task / transfer state | Playback URL | Current role |
+|---|---:|---:|---:|---:|---:|---|
+| **PikPak** | ✅ | ✅ | ✅ | ✅ | ✅ | Cloud library + transfer workflow |
+| **TorBox** | ✅ | ✅ | ✅ | ✅ | ✅ | Cloud/debrid library + transfer workflow |
+| **Real-Debrid** | ✅ | ◐ | ✅ | ✅ | ✅ | Torrent add → file selection → unrestricted stream-link resolution |
+| **Premiumize** | ✅ | ◐ | ✅ | ◐ | ✅ | Debrid/direct-download resolution path |
+
+> `◐` means the integration exists but that area is not yet at feature parity with the fuller PikPak/TorBox library workflow. Real-Debrid and Premiumize are newer prerelease integrations and are still being hardened across platforms.
 
 ### High-level flow
 
@@ -510,10 +517,10 @@ Orvix also supports a cloud-first playback path.
 Movie / Episode
       │
       ▼
-Read preferred cloud
+Read preferred cloud / debrid provider
       │
       ▼
-Check connected cloud for an existing match
+Check connected provider for an existing match / resolvable item
       │
       ├── found ─────────► resolve playable file
       │                         │
@@ -529,7 +536,7 @@ Check connected cloud for an existing match
        User chooses source
               │
               ▼
-   Submit to PikPak / TorBox
+ Submit / resolve through selected provider
               │
               ▼
          Poll task state
@@ -543,6 +550,19 @@ Check connected cloud for an existing match
               ▼
              Player
 ```
+
+
+### Provider-specific debrid paths
+
+The provider abstraction is not limited to a single API shape. Current/recent prerelease work includes different resolution paths for each service:
+
+- **PikPak** — cloud library lookup, source transfer, task polling, exact child-file selection and playable URL resolution
+- **TorBox** — API-key/device authorization flows, torrent/web-download library browsing, source submission, task polling and playable-file resolution
+- **Real-Debrid** — local API-token storage, torrent submission, file selection and unrestricted stream-link resolution
+- **Premiumize** — local API-key storage and debrid/direct-download resolution
+- provider selection can work with multiple connected services rather than assuming a single hard-wired backend
+
+Secret tokens and credentials are intended to remain device-local; account sync should not upload third-party cloud/debrid secrets.
 
 ### Season-pack correctness
 
@@ -1198,7 +1218,7 @@ The roadmap is intentionally fluid while the cross-platform playback architectur
 ### Medium-term
 
 - stronger provider abstraction
-- richer cloud/debrid status and task management
+- richer cloud/debrid status and task management across PikPak, TorBox, Real-Debrid and Premiumize
 - more robust cross-device state
 - improved subtitle styling
 - download/background-transfer strategy where appropriate
@@ -1212,7 +1232,7 @@ The roadmap is intentionally fluid while the cross-platform playback architectur
 - cleaner automatic update strategy
 - harden macOS parity and packaging
 - deeper automated testing
-- broader provider ecosystem
+- broader provider ecosystem beyond the current PikPak, TorBox, Real-Debrid and Premiumize integrations
 - production-quality TV experience
 
 The older roadmap document is available at **[docs/ROADMAP.md](docs/ROADMAP.md)**, but active prerelease development may move faster than that document.
