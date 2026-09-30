@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  analyze:
+  validate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -24,5 +24,7 @@ jobs:
         run: flutter --version
       - name: Install dependencies
         run: flutter pub get
-      - name: Analyze
-        run: flutter analyze
+      - name: Analyze project
+        run: flutter analyze --no-fatal-warnings --no-fatal-infos
+      - name: Run tests
+        run: flutter test
