@@ -782,7 +782,7 @@ class _AboutScreen extends StatelessWidget {
               const _FeatureLine(Icons.movie_filter_outlined,
                   'Rich movie & TV discovery with AIOMetadata/Cinemeta fallback'),
               const _FeatureLine(Icons.cloud_outlined,
-                  'PikPak + TorBox cloud connections, cloud libraries and transfer bridge'),
+                  'Debrid and cloud-service connections, libraries and transfer bridge'),
               const _FeatureLine(Icons.person_outline_rounded,
                   'Optional Orvix account for Library, progress and preference sync'),
               const _FeatureLine(Icons.hub_outlined,
