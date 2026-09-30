@@ -73,7 +73,7 @@ class SupabaseSupportersRepository implements SupportersRepository {
         .select('display_name,provider,support_type,tier,avatar_url,profile_url,supporter_since')
         .eq('is_public', true)
         .eq('is_active', true)
-        .order('supporter_since', ascending: false)
+        .order('supporter_since', ascending: true)
         .limit(250);
 
     return (rows as List)
