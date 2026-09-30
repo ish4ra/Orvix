@@ -63,7 +63,7 @@ class IntroDbService {
       query['season'] = season.toString();
       query['episode'] = episode.toString();
     }
-    final uri = Uri.https('introdb.app', '/api/segments', query);
+    final uri = Uri.https('introdb.app', '/segments', query);
     try {
       final response = await _client
           .get(uri, headers: const {'Accept': 'application/json'})
