@@ -1163,6 +1163,24 @@ class LocalTorrentService {
     }
   }
 
+  static Future<void> purgeWindowsTorrentCache({String? localAppData}) async {
+    if (!Platform.isWindows) return;
+    final root = localAppData ?? Platform.environment['LOCALAPPDATA'];
+    if (root == null || root.trim().isEmpty) return;
+    final cache = Directory(
+      '$root${Platform.pathSeparator}stremio-server'
+      '${Platform.pathSeparator}torrent-cache',
+    );
+    try {
+      if (await cache.exists()) {
+        await cache.delete(recursive: true);
+      }
+    } catch (_) {
+      // Cleanup is best-effort. A file can remain locked for a moment while
+      // the native engine is finishing shutdown.
+    }
+  }
+
   Future<void> dispose() async {
     _probeCleanupTimer?.cancel();
     _probeCleanupTimer = null;
@@ -1185,6 +1203,9 @@ class LocalTorrentService {
         try {
           await process.exitCode.timeout(const Duration(seconds: 3));
         } catch (_) {}
+      }
+      if (Platform.isWindows) {
+        await purgeWindowsTorrentCache();
       }
       return;
     }
