@@ -89,5 +89,21 @@ void main() {
         1,
       );
     });
+    test('Windows shutdown cleanup targets the stream-server torrent cache', () {
+      final source =
+          File('lib/services/local_torrent_service.dart').readAsStringSync();
+
+      expect(source, contains('purgeWindowsTorrentCache'));
+      expect(source, contains("'stremio-server'"));
+      expect(source, contains("'torrent-cache'"));
+
+      final disposeIndex = source.indexOf('Future<void> dispose() async');
+      final killIndex = source.indexOf('process.kill();', disposeIndex);
+      final purgeIndex =
+          source.indexOf('await purgeWindowsTorrentCache();', disposeIndex);
+      expect(killIndex, greaterThan(disposeIndex));
+      expect(purgeIndex, greaterThan(killIndex));
+    });
+
   });
 }
