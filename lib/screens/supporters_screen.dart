@@ -5,10 +5,13 @@ class SupportersScreen extends StatefulWidget {
   const SupportersScreen({super.key});
   @override State<SupportersScreen> createState() => _SupportersScreenState();
 }
-class _SupportersScreenState extends State<SupportersScreen> {
+class _SupportersScreenState extends State<SupportersScreen> with SingleTickerProviderStateMixin {
   late Future<List<OrvixSupporter>> _supporters;
-  @override void initState() { super.initState(); _supporters = SupportersService.fetchPublicSupporters(); }
-  void _reload() => setState(() => _supporters = SupportersService.fetchPublicSupporters());
+  late Future<List<OrvixContributor>> _contributors;
+  late final TabController _tabs;
+  @override void initState() { super.initState(); _tabs = TabController(length: 2, vsync: this); _supporters = SupportersService.fetchPublicSupporters(); _contributors = SupportersService.fetchContributors(); }
+  @override void dispose() { _tabs.dispose(); super.dispose(); }
+  void _reload() => setState(() { _supporters = SupportersService.fetchPublicSupporters(); _contributors = SupportersService.fetchContributors(); });
   @override Widget build(BuildContext context) => ListView(
     padding: const EdgeInsets.all(34),
     children: [ConstrainedBox(
@@ -17,8 +20,11 @@ class _SupportersScreenState extends State<SupportersScreen> {
         Text('Supporters & Contributors', style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w900)),
         const SizedBox(height: 8),
         const Text('Thank you to everyone helping Orvix stay independent and open source.', style: TextStyle(color: Color(0xFF9CA99E), height: 1.45)),
-        const SizedBox(height: 24),
-        FutureBuilder<List<OrvixSupporter>>(future: _supporters, builder: (context, snapshot) {
+        const SizedBox(height: 20),
+        TabBar(controller: _tabs, isScrollable: true, tabs: const [Tab(text: 'Supporters'), Tab(text: 'Contributors')]),
+        const SizedBox(height: 18),
+        SizedBox(height: 560, child: TabBarView(controller: _tabs, children: [
+        SingleChildScrollView(child: FutureBuilder<List<OrvixSupporter>>(future: _supporters, builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) return const Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator()));
           if (snapshot.hasError) return _MessageCard(icon: Icons.cloud_off_rounded, title: 'Could not load supporters', subtitle: 'Check your connection and try again.', action: TextButton(onPressed: _reload, child: const Text('Retry')));
           final supporters = snapshot.data ?? const <OrvixSupporter>[];
@@ -29,7 +35,15 @@ class _SupportersScreenState extends State<SupportersScreen> {
               separatorBuilder: (_, __) => const Divider(height: 1, indent: 76),
               itemBuilder: (context, index) => _SupporterTile(supporter: supporters[index])),
           );
-        }),
+        })),
+        SingleChildScrollView(child: FutureBuilder<List<OrvixContributor>>(future: _contributors, builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) return const Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator()));
+          if (snapshot.hasError) return _MessageCard(icon: Icons.cloud_off_rounded, title: 'Could not load contributors', subtitle: 'GitHub contributors are temporarily unavailable.', action: TextButton(onPressed: _reload, child: const Text('Retry')));
+          final contributors = snapshot.data ?? const <OrvixContributor>[];
+          if (contributors.isEmpty) return const _MessageCard(icon: Icons.code_rounded, title: 'Contributors', subtitle: 'GitHub contributors will appear here.');
+          return Container(decoration: BoxDecoration(color: const Color(0xFF0D120E), borderRadius: BorderRadius.circular(18), border: Border.all(color: const Color(0xFF263827))), child: ListView.separated(shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), itemCount: contributors.length, separatorBuilder: (_, __) => const Divider(height: 1, indent: 76), itemBuilder: (context, index) { final item = contributors[index]; return ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8), leading: CircleAvatar(radius: 24, backgroundColor: const Color(0xFF172416), backgroundImage: item.avatarUrl != null ? NetworkImage(item.avatarUrl!) : null, child: item.avatarUrl == null ? const Icon(Icons.code_rounded, color: Color(0xFFCBFF75)) : null), title: Text(item.login, style: const TextStyle(fontWeight: FontWeight.w900)), subtitle: Text('${item.contributions} contribution${item.contributions == 1 ? '' : 's'}')); }));
+        })),
+        ])),
       ]),
     )],
   );
