@@ -96,6 +96,8 @@ void main() {
       expect(source, contains('purgeWindowsTorrentCache'));
       expect(source, contains('stremio-server'));
       expect(source, contains('torrent-cache'));
+    expect(source, contains('purgeStaleWindowsTorrentCacheOnStartup'));
+    expect(source, contains('attempts = 8'));
 
       final disposeIndex = source.indexOf('Future<void> dispose() async');
       final killIndex = source.indexOf('process.kill();', disposeIndex);
