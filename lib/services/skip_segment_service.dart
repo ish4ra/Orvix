@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -72,7 +73,10 @@ class IntroDbService {
       final response = await _client
           .get(uri, headers: const {'Accept': 'application/json'})
           .timeout(const Duration(seconds: 8));
-      if (response.statusCode != 200) return const [];
+      if (response.statusCode != 200) {
+        _trace('http=${response.statusCode} uri=$uri');
+        return const [];
+      }
       final decoded = jsonDecode(response.body);
       if (decoded is! Map) return const [];
       final result = <SkipSegment>[];
@@ -94,8 +98,10 @@ class IntroDbService {
       add('post_credits', SkipSegmentType.postCredits);
       result.sort((a, b) => a.start.compareTo(b.start));
       _cache[key] = List.unmodifiable(result);
+      _trace('ok key=$key segments=${result.map((e) => e.type.name).join(',')}');
       return _cache[key]!;
-    } catch (_) {
+    } catch (error) {
+      _trace('error key=$key type=${error.runtimeType}');
       return const [];
     }
   }
@@ -126,6 +132,17 @@ class IntroDbService {
     final number = value is num ? value.toDouble() : double.tryParse('${value ?? ''}');
     if (number == null || !number.isFinite) return null;
     return Duration(milliseconds: number.round());
+  }
+
+  static void _trace(String message) {
+    if (!Platform.isWindows) return;
+    try {
+      final root = Platform.environment['LOCALAPPDATA'];
+      if (root == null || root.isEmpty) return;
+      final file = File('$root${Platform.pathSeparator}Orvix${Platform.pathSeparator}skip-segments.log');
+      file.parent.createSync(recursive: true);
+      file.writeAsStringSync('${DateTime.now().toIso8601String()} $message\n', mode: FileMode.append, flush: true);
+    } catch (_) {}
   }
 
   static void clearCache() => _cache.clear();
