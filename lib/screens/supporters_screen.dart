@@ -58,7 +58,7 @@ class _SupporterTile extends StatelessWidget {
       contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
       leading: CircleAvatar(radius: 24, backgroundColor: const Color(0xFF172416),
         backgroundImage: avatar != null && avatar.isNotEmpty ? NetworkImage(avatar) : null,
-        child: avatar == null || avatar.isEmpty ? Text(supporter.name.characters.first.toUpperCase(), style: const TextStyle(color: Color(0xFFCBFF75), fontWeight: FontWeight.w900)) : null),
+        child: avatar == null || avatar.isEmpty ? Text((supporter.name.trim().isEmpty ? '?' : supporter.name.trim().substring(0, 1)).toUpperCase(), style: const TextStyle(color: Color(0xFFCBFF75), fontWeight: FontWeight.w900)) : null),
       title: Text(supporter.name, style: const TextStyle(fontWeight: FontWeight.w900)),
       subtitle: Padding(padding: const EdgeInsets.only(top: 4), child: Wrap(spacing: 8, runSpacing: 4, children: [
         Text(supporter.tier ?? supporter.supportType),
