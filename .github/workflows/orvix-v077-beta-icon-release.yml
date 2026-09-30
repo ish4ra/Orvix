@@ -494,7 +494,11 @@ jobs:
           }
           $latest = Invoke-RestMethod -Uri 'https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest' -Headers $apiHeaders
           $asset = $latest.assets |
-            Where-Object { $_.name -match '^ffmpeg-master-latest-win64-lgpl.*\.zip
+            Where-Object { $_.name -match '^ffmpeg-master-latest-win64-lgpl.*[.]zip$' } |
+            Sort-Object name |
+            Select-Object -First 1
+          if (-not $asset) { throw 'Current BtbN release does not contain a Win64 LGPL ZIP asset' }
+          $assetName = [string]$asset.name
           if (-not $asset.digest -or -not ([string]$asset.digest).StartsWith('sha256:')) {
             throw "GitHub did not provide a SHA-256 digest for $assetName"
           }
