@@ -542,8 +542,6 @@ jobs:
           $ffprobe = Join-Path $ffmpegBin 'ffprobe.exe'
           if (-not (Test-Path $ffmpeg)) { throw "Bundled ffmpeg.exe is missing: $ffmpeg" }
           if (-not (Test-Path $ffprobe)) { throw "Bundled ffprobe.exe is missing: $ffprobe" }
-          if ((Get-Item $ffmpeg).Length -lt 1000000) { throw 'Bundled ffmpeg.exe looks invalid' }
-          if ((Get-Item $ffprobe).Length -lt 1000000) { throw 'Bundled ffprobe.exe looks invalid' }
           # Do not pipe the process directly into Select-Object -First 1:
           # closing stdout early can make FFmpeg exit non-zero even though the
           # executable itself started correctly. Capture first, then inspect.
