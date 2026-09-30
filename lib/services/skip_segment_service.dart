@@ -62,6 +62,8 @@ class IntroDbService {
     if (season != null && episode != null) {
       query['season'] = season.toString();
       query['episode'] = episode.toString();
+    } else {
+      query['is_movie'] = 'true';
     }
     final uri = Uri.https('introdb.app', '/segments', query);
     try {
@@ -102,6 +104,17 @@ class IntroDbService {
   }
 
   static Duration? _seconds(Object? value) {
+    if (value is String && value.contains(':')) {
+      final parts = value.split(':').map(double.tryParse).toList();
+      if (parts.any((part) => part == null) || parts.length < 2 || parts.length > 3) {
+        return null;
+      }
+      final seconds = parts.length == 3
+          ? parts[0]! * 3600 + parts[1]! * 60 + parts[2]!
+          : parts[0]! * 60 + parts[1]!;
+      if (!seconds.isFinite || seconds < 0) return null;
+      return Duration(milliseconds: (seconds * 1000).round());
+    }
     final number = value is num ? value.toDouble() : double.tryParse('${value ?? ''}');
     if (number == null || !number.isFinite) return null;
     return Duration(milliseconds: (number * 1000).round());
