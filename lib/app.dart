@@ -9,7 +9,6 @@ import 'screens/media_library_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/sources_screen.dart';
-import 'screens/supporters_screen.dart';
 import 'services/catalog_service.dart';
 import 'services/cloud_preferences_service.dart';
 import 'services/media_state_service.dart';
@@ -238,7 +237,6 @@ class _OrvixShellState extends State<_OrvixShell> {
         key: ValueKey('account-$_authRevision'),
         onAuthChanged: _refreshAfterAccountChange,
       ),
-      const SupportersScreen(),
       const _AboutScreen(),
     ];
 
@@ -320,11 +318,6 @@ class _OrvixShellState extends State<_OrvixShell> {
                   icon: Icon(Icons.person_outline_rounded),
                   selectedIcon: Icon(Icons.person_rounded),
                   label: Text('Account'),
-                ),
-                NavigationRailDestination(
-                  icon: Icon(Icons.favorite_border_rounded),
-                  selectedIcon: Icon(Icons.favorite_rounded),
-                  label: Text('Supporters'),
                 ),
                 NavigationRailDestination(
                   icon: Icon(Icons.info_outline_rounded),
