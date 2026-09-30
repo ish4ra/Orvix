@@ -63,20 +63,39 @@ class SupabaseSupportersRepository implements SupportersRepository {
     final response = await http.get(Uri.parse('https://api.github.com/repos/ish4ra/Orvix/contributors?per_page=100'), headers: {'Accept': 'application/vnd.github+json'});
     if (response.statusCode < 200 || response.statusCode >= 300) throw Exception('GitHub contributors request failed');
     final rows = jsonDecode(response.body) as List;
-    return rows.map((row) => OrvixContributor.fromJson(Map<String, dynamic>.from(row as Map))).toList(growable: false);
+    return rows
+        .map((row) => OrvixContributor.fromJson(Map<String, dynamic>.from(row as Map)))
+        .where((contributor) {
+          final login = contributor.login.toLowerCase();
+          return !login.endsWith('[bot]') &&
+              !login.endsWith('-bot') &&
+              !login.endsWith('_bot') &&
+              login != 'dependabot' &&
+              login != 'renovate';
+        })
+        .toList(growable: false);
   }
 
   @override
   Future<List<OrvixSupporter>> fetchPublicSupporters() async {
     final rows = await _client
         .from('supporters')
-        .select('display_name,provider,support_type,tier,avatar_url,profile_url,supporter_since')
+        .select('provider_user_id,display_name,provider,support_type,tier,avatar_url,profile_url,supporter_since')
         .eq('is_public', true)
         .eq('is_active', true)
         .order('supporter_since', ascending: true)
         .limit(250);
 
     return (rows as List)
+        .where((row) {
+          final data = Map<String, dynamic>.from(row as Map);
+          final provider = data['provider'] as String?;
+          final providerUserId = data['provider_user_id']?.toString();
+          final name = (data['display_name'] as String?)?.trim();
+          // Known provider sandbox/test identities must never appear publicly.
+          return !(provider == 'buymeacoffee' && providerUserId == '2345') &&
+              !(provider == 'kofi' && name == 'Jo Example');
+        })
         .map((row) => OrvixSupporter.fromJson(Map<String, dynamic>.from(row as Map)))
         .toList(growable: false);
   }
