@@ -47,6 +47,8 @@ class IntroDbService {
   final http.Client _client;
   static final Map<String, List<SkipSegment>> _cache = {};
 
+  static String? imdbIdFrom(String raw) => _normalizeImdb(raw);
+
   Future<List<SkipSegment>> segments({
     required String imdbId,
     int? season,
