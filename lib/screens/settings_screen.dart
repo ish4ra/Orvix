@@ -7,6 +7,7 @@ import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/online_subtitle_service.dart';
 import '../services/player_engine_preferences_service.dart';
 import '../services/subtitle_preferences_service.dart';
+import 'supporters_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -62,6 +63,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               : 'AI Sinhala subtitles disabled.',
         ),
       ),
+    );
+  }
+
+  void _openSupporters() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const SupportersScreen()),
     );
   }
 
@@ -371,6 +378,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           'Torrentio-compatible results plus the default Comet and MediaFusion provider pool. AIOStreams remains optional.',
                     ),
                   ],
+                ),
+              ),
+              const SizedBox(height: 28),
+              Text(
+                'Community',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w900,
+                    ),
+              ),
+              const SizedBox(height: 10),
+              Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0D120E),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFF263827)),
+                ),
+                child: ListTile(
+                  onTap: _openSupporters,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                  leading: const Icon(Icons.favorite_rounded, color: Color(0xFFB9FF45)),
+                  title: const Text('Support Orvix', style: TextStyle(fontWeight: FontWeight.w900)),
+                  subtitle: const Padding(
+                    padding: EdgeInsets.only(top: 5),
+                    child: Text('Meet the supporters and contributors helping Orvix stay independent and open source.'),
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
                 ),
               ),
             ],
