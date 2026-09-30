@@ -6,6 +6,7 @@ import 'package:video_player/video_player.dart';
 
 import '../models/media_item.dart';
 import '../services/media_state_service.dart';
+import '../services/skip_segment_service.dart';
 import '../widgets/player_loading_overlay.dart';
 
 class AndroidExoPlayerResult {
@@ -62,11 +63,62 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
   bool _closing = false;
   bool _initialized = false;
   String? _error;
+  List<SkipSegment> _skipSegments = const [];
+  SkipSegment? _activeSkipSegment;
+  bool _skipDismissed = false;
 
   @override
   void initState() {
     super.initState();
     unawaited(_open());
+    unawaited(_loadSkipSegments());
+  }
+
+  Future<void> _loadSkipSegments() async {
+    if (!await SkipSegmentPreferencesService.isEnabled()) return;
+    final item = widget.item;
+    if (item == null) return;
+    final imdb = RegExp(r'tt\d+', caseSensitive: false).firstMatch(item.id)?.group(0);
+    if (imdb == null) return;
+    final episode = widget.episode;
+    final segments = await IntroDbService().segments(
+      imdbId: imdb,
+      season: episode?.season,
+      episode: episode?.episode,
+    );
+    if (!mounted || _closing) return;
+    setState(() => _skipSegments = segments);
+  }
+
+  void _updateSkipSegment(Duration position) {
+    if (_skipSegments.isEmpty || !mounted || _closing) return;
+    final current = _skipSegments.cast<SkipSegment?>().firstWhere(
+          (segment) => segment!.contains(position),
+          orElse: () => null,
+        );
+    if (identical(current, _activeSkipSegment)) return;
+    setState(() {
+      _activeSkipSegment = current;
+      _skipDismissed = false;
+    });
+  }
+
+  Future<void> _skipActiveSegment() async {
+    final controller = _controller;
+    final segment = _activeSkipSegment;
+    if (controller == null || segment == null || !controller.value.isInitialized) return;
+    var target = segment.end;
+    final duration = controller.value.duration;
+    if (duration > Duration.zero && target >= duration) {
+      target = duration - const Duration(milliseconds: 1);
+    }
+    await controller.seekTo(target < Duration.zero ? Duration.zero : target);
+    if (!mounted) return;
+    setState(() {
+      _activeSkipSegment = null;
+      _skipDismissed = true;
+    });
+    _showControls();
   }
 
   Future<void> _open() async {
@@ -135,6 +187,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       return;
     }
 
+    _updateSkipSegment(value.position);
     if (_initialized) setState(() {});
   }
 
@@ -378,6 +431,16 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                 ),
               if (_controlsVisible && _error == null)
                 _controls(value),
+              if (_activeSkipSegment != null && !_skipDismissed && _error == null)
+                Positioned(
+                  right: 24,
+                  bottom: 108,
+                  child: FilledButton.icon(
+                    onPressed: _skipActiveSegment,
+                    icon: const Icon(Icons.fast_forward_rounded),
+                    label: Text(_activeSkipSegment!.label),
+                  ),
+                ),
               if (_error != null) _errorView(),
               ],
             ),
