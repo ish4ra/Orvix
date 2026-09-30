@@ -1163,7 +1163,10 @@ class LocalTorrentService {
     }
   }
 
-  static Future<void> purgeWindowsTorrentCache({String? localAppData}) async {
+  static Future<void> purgeWindowsTorrentCache({
+    String? localAppData,
+    int attempts = 8,
+  }) async {
     if (!Platform.isWindows) return;
     final root = localAppData ?? Platform.environment['LOCALAPPDATA'];
     if (root == null || root.trim().isEmpty) return;
@@ -1171,14 +1174,23 @@ class LocalTorrentService {
       '$root${Platform.pathSeparator}stremio-server'
       '${Platform.pathSeparator}torrent-cache',
     );
-    try {
-      if (await cache.exists()) {
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      try {
+        if (!await cache.exists()) return;
         await cache.delete(recursive: true);
-      }
-    } catch (_) {
-      // Cleanup is best-effort. A file can remain locked for a moment while
-      // the native engine is finishing shutdown.
+        if (!await cache.exists()) return;
+      } catch (_) {}
+      await Future<void>.delayed(
+        Duration(milliseconds: 250 * (attempt + 1)),
+      );
     }
+  }
+
+  static Future<void> purgeStaleWindowsTorrentCacheOnStartup() async {
+    if (!Platform.isWindows) return;
+    // A previous hard close can bypass Flutter's detached/dispose callbacks.
+    // Remove stale cache on the next launch before a new torrent engine starts.
+    await purgeWindowsTorrentCache(attempts: 4);
   }
 
   Future<void> dispose() async {
