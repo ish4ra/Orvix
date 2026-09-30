@@ -18,7 +18,7 @@ name: Release Orvix v0.7.9-beta.27 — UI Rail Fix beta.27 v4
 on:
   push:
     branches:
-      - orvix-v0.7.9-beta.27-supporters
+      - orvix-v0.7.9-beta.26-supporters
     paths:
       - '.github/workflows/orvix-v077-beta-icon-release.yml'
       - 'pubspec.yaml'
