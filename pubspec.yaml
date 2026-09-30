@@ -1,7 +1,7 @@
 name: orvix
 description: Multi-platform cinematic media hub for Windows, Android mobile, Android TV and macOS.
 publish_to: 'none'
-version: 0.7.9-beta.26+166
+version: 0.7.9-beta.27+167
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
