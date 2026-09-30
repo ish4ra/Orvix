@@ -895,7 +895,9 @@ class DetailsScreenState extends State<DetailsScreen> {
           const SizedBox(height: 12),
           SizedBox(
             height: 62,
-            child: ListView.separated(
+            child: FocusTraversalGroup(
+              policy: ReadingOrderTraversalPolicy(),
+              child: ListView.separated(
               padding: const EdgeInsets.symmetric(horizontal: 42, vertical: 4),
               scrollDirection: Axis.horizontal,
               itemCount: seasons.length,
@@ -908,6 +910,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                   onTap: () => _selectSeason(item, season),
                 );
               },
+              ),
             ),
           ),
           const SizedBox(height: 18),
@@ -925,7 +928,9 @@ class DetailsScreenState extends State<DetailsScreen> {
           const SizedBox(height: 13),
           SizedBox(
             height: 188,
-            child: ListView.separated(
+            child: FocusTraversalGroup(
+              policy: ReadingOrderTraversalPolicy(),
+              child: ListView.separated(
               padding: const EdgeInsets.symmetric(horizontal: 42, vertical: 6),
               scrollDirection: Axis.horizontal,
               cacheExtent: 1400,
@@ -945,6 +950,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                   ),
                 );
               },
+              ),
             ),
           ),
         ],
@@ -4641,7 +4647,10 @@ class _TvSeasonTileState extends State<_TvSeasonTile> {
           borderRadius: BorderRadius.circular(14),
           focusColor: Colors.transparent,
           splashColor: Colors.transparent,
-          onFocusChange: (value) => setState(() => _focused = value),
+          onFocusChange: (value) {
+            setState(() => _focused = value);
+            if (value) Scrollable.ensureVisible(context, alignment: .5, duration: const Duration(milliseconds: 140), curve: Curves.easeOutCubic);
+          },
           onTap: widget.onTap,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 120),
@@ -4853,7 +4862,10 @@ class _TvEpisodeCardState extends State<_TvEpisodeCard> {
             child: InkWell(
               focusColor: Colors.transparent,
               splashColor: Colors.transparent,
-              onFocusChange: (value) => setState(() => _focused = value),
+              onFocusChange: (value) {
+                setState(() => _focused = value);
+                if (value) Scrollable.ensureVisible(context, alignment: .5, duration: const Duration(milliseconds: 140), curve: Curves.easeOutCubic);
+              },
               onTap: widget.onPlay,
               child: Stack(
                 fit: StackFit.expand,
