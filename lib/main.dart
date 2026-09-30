@@ -11,6 +11,7 @@ import 'package:window_manager/window_manager.dart';
 import 'app.dart';
 import 'services/orvix_account_service.dart';
 import 'services/ai_sinhala_trace_service.dart';
+import 'services/local_torrent_service.dart';
 
 bool _isFfmpegKitWindowsStdioFailure(Object error, StackTrace? stack) {
   if (!Platform.isWindows || error is! FileSystemException) return false;
@@ -74,6 +75,10 @@ Future<void> main() async {
   }
 
   MediaKit.ensureInitialized();
+
+  // Clear cache left by a previous Windows hard close before the native P2P
+  // engine can reopen files inside it.
+  await LocalTorrentService.purgeStaleWindowsTorrentCacheOnStartup();
 
   await Supabase.initialize(
     url: 'https://kpjuisxofwqxhbnnsyzf.supabase.co',
