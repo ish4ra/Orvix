@@ -510,7 +510,7 @@ Orvix also supports a cloud-first and debrid-aware playback path.
 | **Real-Debrid** | ✅ | ◐ | ✅ | ✅ | ✅ | Torrent add → file selection → unrestricted stream-link resolution |
 | **Premiumize** | ✅ | ◐ | ✅ | ◐ | ✅ | Debrid/direct-download resolution path |
 
-> `◐` means the integration exists but that area is not yet at feature parity with the fuller PikPak/TorBox library workflow. Real-Debrid and Premiumize are newer prerelease integrations and are still being hardened across platforms.
+> `◐` means the integration exists but that area is not yet at full provider parity. PikPak and TorBox currently have the fuller library workflows, while Real-Debrid and Premiumize are newer prerelease integrations that are still being hardened across platforms.
 
 ### High-level flow
 
