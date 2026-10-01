@@ -1043,16 +1043,20 @@ class SourceProviderService {
     final seedHealth = _freeSeederHealthRank(result.seeders);
     final size = _freeSizeEfficiencyRank(result);
 
-    // A recent real failure is stronger evidence than addon labels. Successful
-    // history is deliberately NOT boosted: "played here before" does not mean
-    // the release is the most portable choice on another Android/TV device.
+    // Real playback history is stronger evidence than a provider's reported
+    // swarm snapshot. Keep failures heavily penalized, while giving a modest
+    // boost to a release that recently started successfully on this install.
+    // The boost stays below availability/exact-file signals so it cannot make
+    // a dead or badly routed torrent outrank a currently viable source.
     final recentFailurePenalty = history <= -2 ? 1500000000 : 0;
+    final recentSuccessBoost = history >= 2 ? 80000000 : history > 0 ? 30000000 : 0;
 
     return direct * 2000000000 +
         availability * 400000000 +
         universal * 30000000 +
         exactFile * 120000000 +
         seedHealth * 10000000 +
+        recentSuccessBoost +
         // Once a swarm is viable, a practical payload matters to real startup
         // more than chasing another raw-seeder bucket. This lets a healthy
         // compact 720p encode outrank a very heavy 1080p/4K torrent without
