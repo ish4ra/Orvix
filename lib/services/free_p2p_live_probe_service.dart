@@ -8,6 +8,7 @@ class FreeP2pLiveProbeService {
       <String, ({DateTime at, LocalTorrentProbeResult result})>{};
   Future<void>? _running;
   bool _rankingReady = false;
+  List<String>? _frozenOrder;
 
   String _key(SourceResult source) =>
       '${source.resource}|${source.torrentFileIndex ?? source.fileNameHint ?? 'auto'}';
@@ -44,6 +45,16 @@ class FreeP2pLiveProbeService {
     final baseIndex = <String, int>{
       for (var i = 0; i < base.length; i++) _key(base[i]): i,
     };
+    final frozen = _frozenOrder;
+    if (frozen != null) {
+      final frozenIndex = <String, int>{
+        for (var i = 0; i < frozen.length; i++) frozen[i]: i,
+      };
+      final stable = [...base];
+      stable.sort((a, b) => (frozenIndex[_key(a)] ?? 999999)
+          .compareTo(frozenIndex[_key(b)] ?? 999999));
+      return stable;
+    }
     if (_running != null && !_rankingReady) {
       return base;
     }
@@ -122,6 +133,14 @@ class FreeP2pLiveProbeService {
     return completer.future;
   }
 
+  void freezeRanking(
+    Iterable<SourceResult> results,
+    SourceProviderService sources,
+  ) {
+    if (_frozenOrder != null) return;
+    _frozenOrder = rank(results, sources).map(_key).toList(growable: false);
+  }
+
   Future<void> prepareForPlayback(SourceResult source) async {
     await LocalTorrentService.instance.prepareRetainedProbeForPlayback(source);
   }
@@ -134,5 +153,6 @@ class FreeP2pLiveProbeService {
     unawaited(release());
     _cache.clear();
     _rankingReady = false;
+    _frozenOrder = null;
   }
 }
