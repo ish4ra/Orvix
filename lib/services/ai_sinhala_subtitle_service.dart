@@ -2871,10 +2871,16 @@ class AiSinhalaSubtitleService {
           'segments': segments,
         });
         final data = response.data;
+        if (response.status == 428 ||
+            (data is Map && data['error'] == 'gemini_api_key_required')) {
+          throw const AiSubtitleException(
+            'Add your Gemini API key in Settings to use AI Sinhala subtitles.',
+          );
+        }
         if (response.status == 429 ||
             (data is Map && data['error'] == 'rate_limited')) {
           throw const AiSubtitleException(
-            'AI Sinhala subtitle limit reached.',
+            'Your Gemini quota is temporarily limited. Try again after the quota window resets.',
             rateLimited: true,
           );
         }
@@ -2976,10 +2982,16 @@ class AiSinhalaSubtitleService {
               .toList(growable: false),
         });
         final data = response.data;
+        if (response.status == 428 ||
+            (data is Map && data['error'] == 'gemini_api_key_required')) {
+          throw const AiSubtitleException(
+            'Add your Gemini API key in Settings to use AI Sinhala subtitles.',
+          );
+        }
         if (response.status == 429 ||
             (data is Map && data['error'] == 'rate_limited')) {
           throw const AiSubtitleException(
-            'AI Sinhala subtitle limit reached.',
+            'Your Gemini quota is temporarily limited. Try again after the quota window resets.',
             rateLimited: true,
           );
         }
