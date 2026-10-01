@@ -18,6 +18,7 @@ name: Release Orvix v0.7.9-beta.36 — supporter membership status
 # beta33-ffmpeg-execution-validation-retrigger
 # beta33-static-ffmpeg-retrigger
 # beta34-nuvio-skip-button-release
+# beta36-updater-version-sync
 
 on:
   push:
