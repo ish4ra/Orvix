@@ -11,6 +11,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/media_item.dart';
 import 'ai_sinhala_trace_service.dart';
+import 'ai_translation_credentials_service.dart';
 import 'embedded_subtitle_extractor_service.dart';
 import 'online_subtitle_service.dart';
 
@@ -3520,25 +3521,22 @@ class AiSinhalaSubtitleService {
   static Future<_TranslationResponse> _invokeTranslation(
     Map<String, dynamic> body,
   ) async {
-    final session = Supabase.instance.client.auth.currentSession;
-    if (session != null) {
-      final response = await Supabase.instance.client.functions.invoke(
-        'translate-subtitle-si',
-        body: body,
-      );
-      return _TranslationResponse(
-        status: response.status,
-        data: response.data,
+    final apiKey = await AiTranslationCredentialsService.geminiApiKey();
+    if (apiKey == null) {
+      return const _TranslationResponse(
+        status: 428,
+        data: <String, dynamic>{'error': 'gemini_api_key_required'},
       );
     }
 
     final response = await http
         .post(
           _translationEndpoint,
-          headers: const {
+          headers: <String, String>{
             'Authorization': 'Bearer $_guestFunctionJwt',
             'apikey': _guestFunctionJwt,
             'Content-Type': 'application/json',
+            'X-Orvix-Gemini-Key': apiKey,
           },
           body: jsonEncode(body),
         )
