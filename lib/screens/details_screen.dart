@@ -2816,6 +2816,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         FilterChip(
+                          showCheckmark: false,
                           selected: freeStreamingRanking,
                           avatar: const Icon(Icons.bolt_rounded, size: 18),
                           label: const Text('Free P2P'),
@@ -2827,6 +2828,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                           }),
                         ),
                         FilterChip(
+                          showCheckmark: false,
                           selected: compatibilityOnly,
                           avatar: Icon(
                             compatibilityOnly
@@ -2841,6 +2843,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                               setSheetState(() => compatibilityOnly = value),
                         ),
                         FilterChip(
+                          showCheckmark: false,
                           selected: smoothRanking,
                           avatar: Icon(
                             smoothRanking
@@ -2862,31 +2865,41 @@ class DetailsScreenState extends State<DetailsScreen> {
                           icon: const Icon(Icons.tune_rounded),
                           label: const Text('Sort'),
                         ),
-                        if (best != null)
-                          FilledButton.icon(
-                            onPressed: freeStreamingRanking &&
-                                    best.isMagnet &&
-                                    !liveProbe.hasPlayableResult
-                                ? null
-                                : () => Navigator.pop(sheetContext, best),
-                            icon: Icon(
-                              freeStreamingRanking &&
-                                      !liveProbe.hasPlayableResult
-                                  ? Icons.radar_rounded
-                                  : Icons.bolt_rounded,
-                            ),
-                            label: Text(
-                              freeStreamingRanking &&
-                                      !liveProbe.hasPlayableResult
-                                  ? 'Checking live…'
-                                  : bestIsPinned
-                                      ? 'Play pinned'
-                                      : 'Quick Play ${best.quality ?? ''}'
-                                          .trim(),
-                            ),
-                          ),
                       ],
                     ),
+                    if (best != null) ...[
+                      const SizedBox(height: 10),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: FilledButton.tonalIcon(
+                          onPressed: freeStreamingRanking &&
+                                  best.isMagnet &&
+                                  !liveProbe.hasPlayableResult
+                              ? null
+                              : () => Navigator.pop(sheetContext, best),
+                          icon: Icon(
+                            freeStreamingRanking &&
+                                    !liveProbe.hasPlayableResult
+                                ? Icons.radar_rounded
+                                : Icons.play_arrow_rounded,
+                          ),
+                          label: Text(
+                            freeStreamingRanking &&
+                                    !liveProbe.hasPlayableResult
+                                ? 'Checking live…'
+                                : bestIsPinned
+                                    ? 'Play pinned'
+                                    : 'Quick Play ${best.quality ?? ''}'.trim(),
+                          ),
+                          style: FilledButton.styleFrom(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: compactSheet ? 14 : 18,
+                              vertical: compactSheet ? 10 : 12,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     Container(
                       padding: const EdgeInsets.symmetric(
