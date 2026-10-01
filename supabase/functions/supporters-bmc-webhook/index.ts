@@ -73,11 +73,11 @@ Deno.serve(async (req) => {
     return Response.json({ ok: true, ignored: "anonymous/no supporter_id" });
   }
 
-  const inactive =
+  const refunded = type.endsWith(".refunded");
+  const endedRecurring =
     type.endsWith(".cancelled") ||
     type.endsWith(".canceled") ||
-    type.endsWith(".paused") ||
-    type.endsWith(".refunded");
+    type.endsWith(".paused");
 
   const recurring =
     type.startsWith("membership.") ||
@@ -91,7 +91,8 @@ Deno.serve(async (req) => {
     data.supporter_name_type === "private" ||
     data.supporter_name_type === "anonymous";
 
-  const visible = !inactive && !privateSupport;
+  const former = recurring && endedRecurring;
+  const visible = !refunded && !privateSupport;
   const eventAt = iso(data.created_at ?? data.started_at ?? body.created);
   const now = new Date().toISOString();
   const providerSyncId = data.id === null || data.id === undefined ? null : String(data.id);
@@ -104,7 +105,7 @@ Deno.serve(async (req) => {
 
   const existing = await client
     .from("supporters")
-    .select("display_name,avatar_url,profile_url,supporter_since")
+    .select("display_name,avatar_url,profile_url,supporter_since,tier")
     .eq("provider", "buymeacoffee")
     .eq("provider_user_id", String(supporterId))
     .maybeSingle();
@@ -137,14 +138,16 @@ Deno.serve(async (req) => {
       : "Private supporter",
     avatar_url: incomingAvatar ?? current?.avatar_url ?? null,
     profile_url: incomingProfile ?? current?.profile_url ?? null,
-    support_type: recurring
-      ? (type.startsWith("membership.") ? "Member" : "Monthly supporter")
-      : String(data.support_type ?? "Supporter"),
-    tier: data.membership_level_name ?? data.membership_name ?? data.tier_name ?? null,
+    support_type: former
+      ? (type.startsWith("membership.") ? "Former Member" : "Former Monthly supporter")
+      : recurring
+          ? (type.startsWith("membership.") ? "Member" : "Monthly supporter")
+          : String(data.support_type ?? "Supporter"),
+    tier: data.membership_level_name ?? data.membership_name ?? data.tier_name ?? current?.tier ?? null,
     supporter_since: current?.supporter_since ?? eventAt,
     last_supported_at: eventAt,
-    is_recurring: recurring,
-    is_active: !inactive,
+    is_recurring: recurring && !former,
+    is_active: !refunded,
     is_public: visible,
     updated_at: now,
   };
