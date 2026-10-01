@@ -14,6 +14,7 @@ import 'screens/media_library_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/sources_screen.dart';
+import 'screens/supporters_screen.dart';
 import 'services/app_update_service.dart';
 import 'services/catalog_service.dart';
 import 'services/cloud_preferences_service.dart';
@@ -348,9 +349,14 @@ class _OrvixShellState extends State<_OrvixShell> {
                 onTap: () => Navigator.pop(sheetContext, 6),
               ),
               ListTile(
+                leading: const Icon(Icons.favorite_rounded),
+                title: const Text('Support'),
+                onTap: () => Navigator.pop(sheetContext, 7),
+              ),
+              ListTile(
                 leading: const Icon(Icons.info_rounded),
                 title: const Text('About'),
-                onTap: () => Navigator.pop(sheetContext, 7),
+                onTap: () => Navigator.pop(sheetContext, 8),
               ),
             ],
           ),
@@ -414,6 +420,7 @@ class _OrvixShellState extends State<_OrvixShell> {
         key: ValueKey('account-$_authRevision'),
         onAuthChanged: _refreshAfterAccountChange,
       ),
+      const SupportersScreen(),
       const _AboutScreen(),
     ];
 
@@ -567,6 +574,11 @@ class _OrvixShellState extends State<_OrvixShell> {
                   icon: Icon(Icons.person_outline_rounded),
                   selectedIcon: Icon(Icons.person_rounded),
                   label: Text('Account'),
+                ),
+                NavigationRailDestination(
+                  icon: Icon(Icons.favorite_border_rounded),
+                  selectedIcon: Icon(Icons.favorite_rounded),
+                  label: Text('Support'),
                 ),
                 NavigationRailDestination(
                   icon: Icon(Icons.info_outline_rounded),
@@ -725,47 +737,6 @@ class _AboutScreen extends StatelessWidget {
               ),
               const SizedBox(height: 28),
               Text(
-                'Support Orvix',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Orvix is free and open-source. If you enjoy the project, you can support its development or simply star it on GitHub.',
-                style: TextStyle(color: Color(0xFF9EAAA0), height: 1.45),
-              ),
-              const SizedBox(height: 16),
-              const Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  _SupportButton(
-                    icon: SimpleIcons.githubsponsors,
-                    label: 'GitHub Sponsors',
-                    url: 'https://github.com/sponsors/ish4ra',
-                    primary: true,
-                  ),
-                  _SupportButton(
-                    icon: SimpleIcons.buymeacoffee,
-                    label: 'Buy Me a Coffee',
-                    url: 'https://buymeacoffee.com/ish4ra',
-                  ),
-                  _SupportButton(
-                    icon: SimpleIcons.kofi,
-                    label: 'Ko-fi',
-                    url: 'https://ko-fi.com/ish4ra',
-                  ),
-                  _SupportButton(
-                    icon: SimpleIcons.github,
-                    label: 'Star on GitHub',
-                    url: 'https://github.com/ish4ra/Orvix',
-                  ),
-                ],
-              ),
-              const SizedBox(height: 32),
-              Text(
                 'Community',
                 style: Theme.of(context)
                     .textTheme
@@ -911,7 +882,8 @@ class _TvTopNavigation extends StatelessWidget {
     (icon: Icons.hub_rounded, label: 'Sources', index: 4),
     (icon: Icons.settings_rounded, label: 'Settings', index: 5),
     (icon: Icons.person_rounded, label: 'Account', index: 6),
-    (icon: Icons.info_rounded, label: 'About', index: 7),
+    (icon: Icons.favorite_rounded, label: 'Support', index: 7),
+    (icon: Icons.info_rounded, label: 'About', index: 8),
   ];
 
   @override
