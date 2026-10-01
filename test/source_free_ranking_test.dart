@@ -91,7 +91,7 @@ void main() {
     expect(ranked.first, same(practical720));
   });
 
-  test('Free success history is invisible and does not override live health', () async {
+  test('Free recent success can break a healthy-swarm tie without hiding current health', () async {
     final service = SourceProviderService();
     final knownGood = torrent(
       name: 'Known.Good.720p.x264',
@@ -108,7 +108,9 @@ void main() {
     await service.recordPlaybackOutcome(knownGood, success: true);
     final ranked = service.sortForFreeStreaming([healthier, knownGood]);
 
-    expect(ranked.first, same(healthier));
+    // Both swarms are currently viable. A recent successful startup is useful
+    // evidence for Free P2P and may outrank the larger reported swarm.
+    expect(ranked.first, same(knownGood));
     expect(service.assessFreePlayback(knownGood).label, isNot('WORKED BEFORE'));
   });
 
