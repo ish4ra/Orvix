@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../services/ai_sinhala_preferences_service.dart';
 import '../services/ai_sinhala_subtitle_service.dart';
+import '../services/ai_translation_credentials_service.dart';
 import '../services/online_subtitle_service.dart';
 import '../services/player_engine_preferences_service.dart';
 import '../services/subtitle_preferences_service.dart';
@@ -21,6 +22,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _preferredSubtitleLanguage;
   PlayerEnginePreference? _playerEngine;
   bool? _skipSegments;
+  bool _hasGeminiKey = false;
 
   @override
   void initState() {
@@ -33,6 +35,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final language = await SubtitlePreferencesService.preferredLanguage();
     final playerEngine = await PlayerEnginePreferencesService.get();
     final skipSegments = await SkipSegmentPreferencesService.isEnabled();
+    final hasGeminiKey = await AiTranslationCredentialsService.hasGeminiApiKey();
     if (!mounted) return;
     setState(() {
       _aiSinhala = enabled;
@@ -40,6 +43,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           OnlineSubtitleService.normalizeLanguage(language);
       _playerEngine = playerEngine;
       _skipSegments = skipSegments;
+      _hasGeminiKey = hasGeminiKey;
     });
   }
 
@@ -57,6 +61,72 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _setSkipSegments(bool enabled) async {
     setState(() => _skipSegments = enabled);
     await SkipSegmentPreferencesService.setEnabled(enabled);
+  }
+
+  Future<void> _configureGeminiKey() async {
+    final controller = TextEditingController();
+    var obscure = true;
+    final saved = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Gemini API key'),
+          content: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'AI Sinhala uses your own Gemini quota. The key is stored in this device’s secure storage and is only sent to the Orvix translation endpoint for Gemini requests.',
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: controller,
+                  obscureText: obscure,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: InputDecoration(
+                    labelText: 'Gemini API key',
+                    hintText: 'Paste API key',
+                    suffixIcon: IconButton(
+                      onPressed: () => setDialogState(() => obscure = !obscure),
+                      icon: Icon(obscure
+                          ? Icons.visibility_rounded
+                          : Icons.visibility_off_rounded),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, controller.text),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (saved == null || saved.trim().isEmpty) return;
+    await AiTranslationCredentialsService.setGeminiApiKey(saved);
+    if (!mounted) return;
+    setState(() => _hasGeminiKey = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Gemini API key saved securely on this device.')),
+    );
+  }
+
+  Future<void> _removeGeminiKey() async {
+    await AiTranslationCredentialsService.clearGeminiApiKey();
+    if (!mounted) return;
+    setState(() => _hasGeminiKey = false);
   }
 
   Future<void> _setAiSinhala(bool enabled) async {
@@ -231,11 +301,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     padding: const EdgeInsets.only(top: 6),
                     child: Text(
                       AiSinhalaSubtitleService.canTranslate
-                          ? 'BETA • Currently available for Free P2P playback only. AI Sinhala is temporarily unavailable for TorBox, Real-Debrid, Premiumize and other debrid/cloud sources while we improve reliability. Debrid playback will continue normally with native/English subtitles even when this switch is on.'
+                          ? 'BETA • Currently available for Free P2P playback only. A Gemini API key is required and uses your own Gemini quota. Debrid/cloud playback continues normally with native/English subtitles.'
                           : 'BETA • Sign in to your Orvix account first. AI Sinhala is currently limited to Free P2P playback; debrid/cloud sources continue with normal subtitles.',
                       style: const TextStyle(height: 1.45),
                     ),
                   ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0B0F0C),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFF263827)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Gemini translation key',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _hasGeminiKey
+                                ? 'Configured on this device'
+                                : 'Required for AI Sinhala. Uses your own Gemini quota.',
+                            style: const TextStyle(
+                              color: Color(0xFF9CA99E),
+                              fontSize: 12.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_hasGeminiKey)
+                      TextButton(
+                        onPressed: _removeGeminiKey,
+                        child: const Text('Remove'),
+                      ),
+                    const SizedBox(width: 8),
+                    OutlinedButton(
+                      onPressed: _configureGeminiKey,
+                      child: Text(_hasGeminiKey ? 'Replace' : 'Add key'),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 12),
