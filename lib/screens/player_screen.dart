@@ -888,19 +888,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final segment = _activeSkipSegment!;
     final compact = !_desktop && MediaQuery.sizeOf(context).shortestSide < 600;
     return Positioned(
-      right: compact ? 14 : 28,
+      left: compact ? 14 : 28,
       bottom: compact ? 92 : 112,
       child: Focus(
         canRequestFocus: true,
         child: FilledButton.icon(
           onPressed: _skipActiveSegment,
-          icon: const Icon(Icons.fast_forward_rounded),
+          icon: const Icon(Icons.skip_next_rounded, size: 20),
           label: Text(segment.label),
           style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFFB9FF45),
-            foregroundColor: Colors.black,
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-            textStyle: const TextStyle(fontWeight: FontWeight.w900),
+            backgroundColor: const Color(0xD91E1E1E),
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            textStyle: const TextStyle(fontWeight: FontWeight.w700),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
           ),
         ),
       ),
