@@ -122,14 +122,93 @@ class _SupportersList extends StatelessWidget {
             onTap: s.profileUrl == null ? null : () => open(s.profileUrl),
             contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
             leading: _Avatar(url: s.avatarUrl, fallback: s.name),
-            title: Text(s.name, style: const TextStyle(fontWeight: FontWeight.w900)),
-            subtitle: Text([s.providerLabel, s.supportType, if (s.tier?.isNotEmpty == true) s.tier!].join(' • '), style: const TextStyle(color: Color(0xFF9CA99E))),
+            title: Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(s.name, style: const TextStyle(fontWeight: FontWeight.w900)),
+                _SupportStatusBadge(supportType: s.supportType),
+              ],
+            ),
+            subtitle: Text(
+              _supporterSubtitle(s),
+              style: const TextStyle(color: Color(0xFF9CA99E)),
+            ),
             trailing: i < 3 ? _EarlyBadge(number: i + 1) : null,
           );
         },
       );
     },
   );
+}
+
+String _supporterSubtitle(OrvixSupporter supporter) {
+  final parts = <String>[supporter.providerLabel];
+  final type = supporter.supportType.trim().toLowerCase();
+
+  if (type == 'supporter') {
+    parts.add('One-time supporter');
+  } else {
+    parts.add(supporter.supportType);
+  }
+
+  final tier = supporter.tier?.trim();
+  if (tier != null &&
+      tier.isNotEmpty &&
+      tier.toLowerCase() != supporter.supportType.toLowerCase()) {
+    parts.add(tier);
+  }
+
+  return parts.join(' • ');
+}
+
+class _SupportStatusBadge extends StatelessWidget {
+  const _SupportStatusBadge({required this.supportType});
+
+  final String supportType;
+
+  @override
+  Widget build(BuildContext context) {
+    final type = supportType.trim().toLowerCase();
+    final former = type.contains('former');
+    final member = !former &&
+        (type == 'member' ||
+            type.contains('membership') ||
+            type.contains('monthly') ||
+            type.contains('recurring'));
+
+    final label = former
+        ? 'FORMER MEMBER'
+        : member
+            ? 'MEMBER'
+            : 'SUPPORTER';
+
+    final background =
+        former ? const Color(0xFF171D18) : const Color(0xFF263B18);
+    final border =
+        former ? const Color(0xFF39423A) : const Color(0xFF426B2E);
+    final foreground =
+        former ? const Color(0xFF9CA99E) : const Color(0xFFCBFF75);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: border),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: foreground,
+          fontWeight: FontWeight.w900,
+          fontSize: 10,
+          letterSpacing: 0.45,
+        ),
+      ),
+    );
+  }
 }
 
 class _ContributorsList extends StatelessWidget {
