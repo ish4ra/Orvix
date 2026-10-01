@@ -102,13 +102,39 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     await Future.wait<void>([
-      loadMedia(HomeSectionId.popularMovies, () => widget.catalog.popularMovies(limit: 30)),
-      loadMedia(HomeSectionId.popularTv, () => widget.catalog.popularSeries(limit: 30)),
-      loadMedia(HomeSectionId.topRatedMovies, () => widget.catalog.topRatedMovies(limit: 30)),
-      loadMedia(HomeSectionId.topRatedTv, () => widget.catalog.topRatedSeries(limit: 30)),
-      loadMedia(HomeSectionId.imdbTopMovies, () => widget.catalog.imdbTopMovies(limit: 36)),
-      loadMedia(HomeSectionId.imdbTopTv, () => widget.catalog.imdbTopSeries(limit: 36)),
-    ]);
+      loadMedia(
+        HomeSectionId.popularMovies,
+        () => widget.catalog.popularMovies(limit: 30),
+      ),
+      loadMedia(
+        HomeSectionId.popularTv,
+        () => widget.catalog.popularSeries(limit: 30),
+      ),
+      loadMedia(
+        HomeSectionId.topRatedMovies,
+        () => widget.catalog.topRatedMovies(limit: 30),
+      ),
+      loadMedia(
+        HomeSectionId.topRatedTv,
+        () => widget.catalog.topRatedSeries(limit: 30),
+      ),
+    ]).timeout(
+      const Duration(seconds: 24),
+      onTimeout: () => <void>[],
+    );
+
+    // These rows currently resolve through the same IMDb top-rated requests as
+    // topRatedMovies/topRatedTv. Loading them again on startup doubled the
+    // slowest network work and could leave Home on a spinner after a brief
+    // connection loss. Reuse the already-loaded rows instead.
+    if (sections.contains(HomeSectionId.imdbTopMovies)) {
+      media[HomeSectionId.imdbTopMovies] =
+          media[HomeSectionId.topRatedMovies] ?? const <MediaItem>[];
+    }
+    if (sections.contains(HomeSectionId.imdbTopTv)) {
+      media[HomeSectionId.imdbTopTv] =
+          media[HomeSectionId.topRatedTv] ?? const <MediaItem>[];
+    }
 
     final continueWatching = sections.contains(HomeSectionId.continueWatching)
         ? await widget.mediaState.continueWatching(limit: 24)
