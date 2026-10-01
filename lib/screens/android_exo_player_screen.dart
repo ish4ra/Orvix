@@ -434,12 +434,24 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                 _controls(value),
               if (_activeSkipSegment != null && !_skipDismissed && _error == null)
                 Positioned(
-                  right: 24,
+                  left: 24,
                   bottom: 108,
                   child: FilledButton.icon(
                     onPressed: _skipActiveSegment,
-                    icon: const Icon(Icons.fast_forward_rounded),
+                    icon: const Icon(Icons.skip_next_rounded, size: 20),
                     label: Text(_activeSkipSegment!.label),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xD91E1E1E),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 12,
+                      ),
+                      textStyle: const TextStyle(fontWeight: FontWeight.w700),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
                   ),
                 ),
               if (_error != null) _errorView(),
