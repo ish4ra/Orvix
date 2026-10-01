@@ -2876,7 +2876,10 @@ class DetailsScreenState extends State<DetailsScreen> {
                                   best.isMagnet &&
                                   !liveProbe.hasPlayableResult
                               ? null
-                              : () => Navigator.pop(sheetContext, best),
+                              : () {
+                                  liveProbe.freezeRanking(results, widget.sources);
+                                  Navigator.pop(sheetContext, best);
+                                },
                           icon: Icon(
                             freeStreamingRanking &&
                                     !liveProbe.hasPlayableResult
@@ -2964,7 +2967,10 @@ class DetailsScreenState extends State<DetailsScreen> {
                           if (compactSheet) {
                             return InkWell(
                               borderRadius: BorderRadius.circular(14),
-                              onTap: () => Navigator.pop(sheetContext, result),
+                              onTap: () {
+                                liveProbe.freezeRanking(results, widget.sources);
+                                Navigator.pop(sheetContext, result);
+                              },
                               child: Padding(
                                 padding:
                                     const EdgeInsets.symmetric(vertical: 10),
@@ -3068,7 +3074,10 @@ class DetailsScreenState extends State<DetailsScreen> {
                             borderRadius: BorderRadius.circular(15),
                             child: InkWell(
                               borderRadius: BorderRadius.circular(15),
-                              onTap: () => Navigator.pop(sheetContext, result),
+                              onTap: () {
+                                liveProbe.freezeRanking(results, widget.sources);
+                                Navigator.pop(sheetContext, result);
+                              },
                               child: Container(
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(15),
