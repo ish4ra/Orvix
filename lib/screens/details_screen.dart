@@ -1611,10 +1611,14 @@ class DetailsScreenState extends State<DetailsScreen> {
 
         final playButton = FilledButton.icon(
           onPressed: _resolving ? null : () => _play(item, episode: episode),
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFFE7ECE8),
-            foregroundColor: const Color(0xFF071009),
-          ),
+          style: compact && PlatformProfile.isAndroidMobile
+              ? FilledButton.styleFrom(
+                  // Mobile-only secondary lime: stays inside Orvix's green
+                  // family without competing with the selected season chip.
+                  backgroundColor: const Color(0xFFCBFF75),
+                  foregroundColor: const Color(0xFF050806),
+                )
+              : null,
           icon: const Icon(Icons.play_arrow_rounded),
           label: const Text('Play'),
         );
