@@ -3,19 +3,19 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('Continue Watching keeps the Nuvio-style wide information-card layout', () {
+  test('Android mobile and TV reuse the Windows landscape Continue Watching card', () {
     final home = File('lib/screens/home_screen.dart').readAsStringSync();
 
-    expect(home, contains('class _ContinueWideCard'));
-    expect(home, contains('final image = episode?.thumbnail ?? item.background ?? item.poster'));
-    expect(home, contains('width: 400'));
+    expect(home, contains('class _ContinueLandscapeCard'));
+    expect(home, contains('final image = episode?.thumbnail'));
+    expect(home, contains('entry.item.background'));
+    expect(home, contains('entry.item.poster'));
+    expect(home, contains('width: 292'));
     expect(home, contains('height: 160'));
-    expect(home, contains('imageWidth: 104'));
-    expect(home, contains('width: 280'));
-    expect(home, contains('height: 120'));
-    expect(home, contains('imageWidth: 82'));
-    expect(home, contains("'Up Next'"));
-    expect(home, contains('% watched'));
+    expect(home, contains('width: 330'));
+    expect(home, contains('height: 178'));
+    expect(home, contains('LinearProgressIndicator'));
+    expect(home, contains("'Resume'"));
     expect(home, isNot(contains('class _TvContinueCard')));
     expect(home, isNot(contains('class _DesktopContinueCard')));
   });
