@@ -12,10 +12,14 @@ void main() {
     expect(library, contains('SingleChildScrollView'));
     expect(app, contains('class _TvFocusAutoScroll'));
     expect(app, contains('Scrollable.ensureVisible'));
+    expect(app, contains('return PopScope('));
+    expect(app, contains('canPop: false'));
+    expect(app, contains('_selectDestination(0)'));
   });
 
   test('Android mobile can approve the QR session shown by TV', () {
     final account = File('lib/screens/account_screen.dart').readAsStringSync();
+    final mobileCompat = File('tools/configure_android_mobile_compat.py').readAsStringSync();
 
     expect(account, contains('MobileScanner('));
     expect(account, contains("'Scan TV QR'"));
@@ -24,5 +28,7 @@ void main() {
     expect(account, contains("queryParameters['code']"));
     expect(account, contains('final validCode = code.length == 6'));
     expect(account, isNot(contains("RegExp(r'^[A-Z0-9]")));
+    expect(mobileCompat, contains('android.permission.CAMERA'));
+    expect(mobileCompat, contains('android.hardware.camera'));
   });
 }
