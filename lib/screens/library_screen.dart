@@ -243,9 +243,12 @@ class _PikPakPaneState extends State<_PikPakPane> {
     );
   }
 
-  Widget _buildLogin(BuildContext context) => Align(
-    alignment: Alignment.topCenter,
-    child: ConstrainedBox(
+  Widget _buildLogin(BuildContext context) => SingleChildScrollView(
+    key: const PageStorageKey('pikpak-login-scroll'),
+    padding: const EdgeInsets.only(bottom: 28),
+    child: Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 560),
       child: _cloudCard(
         context,
@@ -262,6 +265,7 @@ class _PikPakPaneState extends State<_PikPakPane> {
           if (_verificationUrl != null) ...[const SizedBox(height: 10), OutlinedButton.icon(onPressed: _openVerification, icon: const Icon(Icons.verified_user_outlined), label: const Text('Open verification'))],
         ],
       ),
+    ),
     ),
   );
 
@@ -431,9 +435,12 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
     );
   }
 
-  Widget _buildLogin(BuildContext context) => Align(
-    alignment: Alignment.topCenter,
-    child: ConstrainedBox(
+  Widget _buildLogin(BuildContext context) => SingleChildScrollView(
+    key: const PageStorageKey('torbox-login-scroll'),
+    padding: const EdgeInsets.only(bottom: 28),
+    child: Align(
+      alignment: Alignment.topCenter,
+      child: ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 620),
       child: _cloudCard(context,
         icon: Icons.bolt_rounded,
@@ -447,6 +454,7 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
           OutlinedButton.icon(onPressed: _busy ? null : _connectApiKey, icon: const Icon(Icons.link_rounded), label: const Text('Connect with API key')),
           if (_message != null) ...[const SizedBox(height: 12), Text(_message!, textAlign: TextAlign.center)],
         ],
+      ),
       ),
     ),
   );
@@ -566,8 +574,9 @@ class _TokenDebridPaneState extends State<_TokenDebridPane> {
   }
   @override Widget build(BuildContext context){
     final name=_rd?'Real-Debrid':'Premiumize';
-    return Padding(
-      padding:const EdgeInsets.all(32),
+    return SingleChildScrollView(
+      key: PageStorageKey('debrid-login-${widget.provider.name}'),
+      padding: const EdgeInsets.all(32),
       child:_cloudCard(context,
         icon:_rd?Icons.cloud_done_outlined:Icons.cloud_queue_rounded,
         title:_connected?(_accountLabel??name):'Connect $name',
