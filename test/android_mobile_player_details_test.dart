@@ -18,6 +18,8 @@ void main() {
     expect(details, contains('height: 38'));
     expect(details, contains('minWidth: 92'));
     expect(details, contains('selectedLime'));
-    expect(details, contains('backgroundColor: const Color(0xFFE7ECE8)'));
+    expect(details, contains('compact && PlatformProfile.isAndroidMobile'));
+    expect(details, contains('backgroundColor: const Color(0xFFCBFF75)'));
+    expect(details, contains('backgroundColor: const Color(0xFF9FE52E)'));
   });
 }
