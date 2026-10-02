@@ -7,7 +7,8 @@ void main() {
     final home = File('lib/screens/home_screen.dart').readAsStringSync();
 
     expect(home, contains('class _ContinueLandscapeCard'));
-    expect(home, contains('final image = episode?.thumbnail'));
+    expect(home, contains('final image = widget.preferEpisodeThumbnail'));
+    expect(home, contains('preferEpisodeThumbnail: false'));
     expect(home, contains('entry.item.background'));
     expect(home, contains('entry.item.poster'));
     expect(home, contains('width: 292'));
