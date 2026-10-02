@@ -1321,7 +1321,7 @@ class _ContinueRail extends StatelessWidget {
           ),
           const SizedBox(height: 13),
           SizedBox(
-            height: 132,
+            height: 172,
             child: ListView.separated(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
               scrollDirection: Axis.horizontal,
@@ -1330,11 +1330,10 @@ class _ContinueRail extends StatelessWidget {
               separatorBuilder: (_, __) => const SizedBox(width: 14),
               itemBuilder: (context, index) {
                 final entry = items[index];
-                return _ContinueWideCard(
+                return _ContinueLandscapeCard(
                   entry: entry,
-                  width: 280,
-                  height: 120,
-                  imageWidth: 82,
+                  width: 292,
+                  height: 160,
                   onTap: () => onOpen(entry),
                 );
               },
@@ -1750,7 +1749,7 @@ class _TvContinueLandscapeRail extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           SizedBox(
-            height: 172,
+            height: 190,
             child: ListView.separated(
               padding: const EdgeInsets.symmetric(
                 horizontal: 42,
@@ -1763,12 +1762,10 @@ class _TvContinueLandscapeRail extends StatelessWidget {
               itemBuilder: (context, index) {
                 final entry = items[index];
                 return RepaintBoundary(
-                  child: _ContinueWideCard(
+                  child: _ContinueLandscapeCard(
                     entry: entry,
-                    width: 400,
-                    height: 160,
-                    imageWidth: 104,
-                    autofocus: index == 0,
+                    width: 330,
+                    height: 178,
                     onTap: () => onOpen(entry),
                   ),
                 );
