@@ -4916,7 +4916,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 if (_error == null)
                   Video(
                     controller: widget.playback.controller,
-                    fit: BoxFit.contain,
+                    // On phones, fill the physical display and crop only the
+                    // excess edge when the source aspect ratio differs. The
+                    // previous contain fit letterboxed inside both dimensions.
+                    fit: PlatformProfile.isAndroidMobile
+                        ? BoxFit.cover
+                        : BoxFit.contain,
                     controls: NoVideoControls,
                     subtitleViewConfiguration: SubtitleViewConfiguration(
                       // NativePlayer/libmpv renders source subtitles itself so
