@@ -22,5 +22,7 @@ void main() {
     expect(account, contains("'approve_tv_login_session'"));
     expect(account, contains("'p_user_code': code"));
     expect(account, contains("queryParameters['code']"));
+    expect(account, contains('final validCode = code.length == 6'));
+    expect(account, isNot(contains("RegExp(r'^[A-Z0-9]")));
   });
 }
