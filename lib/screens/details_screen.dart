@@ -1379,9 +1379,9 @@ class DetailsScreenState extends State<DetailsScreen> {
           ),
           const SizedBox(height: 12),
           HorizontalScrollRail(
-            height: 58,
+            height: compact ? 46 : 58,
             showArrows: false,
-            separatorWidth: 10,
+            separatorWidth: compact ? 8 : 10,
             scrollStep: 420,
             itemCount: seasons.length,
             itemBuilder: (context, index) {
@@ -1611,6 +1611,10 @@ class DetailsScreenState extends State<DetailsScreen> {
 
         final playButton = FilledButton.icon(
           onPressed: _resolving ? null : () => _play(item, episode: episode),
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFFE7ECE8),
+            foregroundColor: const Color(0xFF071009),
+          ),
           icon: const Icon(Icons.play_arrow_rounded),
           label: const Text('Play'),
         );
@@ -4735,6 +4739,7 @@ class _MobileSeasonTileState extends State<_MobileSeasonTile> {
   @override
   Widget build(BuildContext context) {
     const lime = Color(0xFFB9FF45);
+    const selectedLime = Color(0xFF9FE52E);
     final active = widget.selected;
     final highlighted = _hovered || _focused;
     final label = widget.season == 0 ? 'Specials' : 'Season ${widget.season}';
@@ -4758,13 +4763,13 @@ class _MobileSeasonTileState extends State<_MobileSeasonTile> {
             onTap: widget.onTap,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
-              height: 46,
-              constraints: const BoxConstraints(minWidth: 112),
-              padding: const EdgeInsets.symmetric(horizontal: 18),
+              height: 38,
+              constraints: const BoxConstraints(minWidth: 92),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: active
-                    ? lime
+                    ? selectedLime
                     : highlighted
                         ? const Color(0xFF1B211A)
                         : const Color(0xFF101411),
@@ -4783,7 +4788,7 @@ class _MobileSeasonTileState extends State<_MobileSeasonTile> {
                 maxLines: 1,
                 style: TextStyle(
                   color: active ? Colors.black : Colors.white,
-                  fontSize: 13.5,
+                  fontSize: 12.5,
                   fontWeight: FontWeight.w900,
                   letterSpacing: -.1,
                 ),
