@@ -1,0 +1,200 @@
+name: Orvix CI
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: orvix-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Analyze and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze Flutter source
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+
+      - name: Run Flutter tests
+        run: flutter test
+
+      - name: Test standalone media engine
+        working-directory: tools/orvix-media-engine
+        run: go test ./...
+
+      - name: Validate build helper syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            tools/configure_android_build.py \
+            tools/configure_android_mobile_compat.py \
+            tools/configure_android_signing.py \
+            tools/generate_desktop_branding.py
+          bash -n tools/publish_orvix_release.sh
+
+  windows:
+    name: Build Windows
+    needs: validate
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Configure branding
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --disable-pip-version-check pillow
+          python tools/generate_desktop_branding.py --windows
+
+      - name: Build Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          flutter build windows --release
+          if (-not (Test-Path 'build\windows\x64\runner\Release\orvix.exe')) {
+            throw 'Windows executable was not produced.'
+          }
+
+  android-mobile:
+    name: Build Android Mobile
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform
+        run: flutter create --platforms=android --org com.orvix --project-name orvix .
+
+      - name: Configure Android mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check pillow
+          python3 tools/configure_android_build.py
+          python3 tools/configure_android_mobile_compat.py
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Android mobile
+        run: flutter build apk --release
+
+      - name: Verify APK
+        run: |
+          test -s build/app/outputs/flutter-apk/app-release.apk
+          unzip -t build/app/outputs/flutter-apk/app-release.apk >/dev/null
+
+  android-tv:
+    name: Build Android TV
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform
+        run: flutter create --platforms=android --org com.orvix --project-name orvix .
+
+      - name: Configure Android TV
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check pillow
+          python3 tools/configure_android_build.py --tv
+          python3 tools/configure_android_mobile_compat.py
+          grep -q 'android.intent.category.LEANBACK_LAUNCHER' android/app/src/main/AndroidManifest.xml
+          grep -q 'android:screenOrientation="landscape"' android/app/src/main/AndroidManifest.xml
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Android TV
+        run: flutter build apk --release --dart-define=ORVIX_TV=true
+
+      - name: Verify APK
+        run: |
+          test -s build/app/outputs/flutter-apk/app-release.apk
+          unzip -t build/app/outputs/flutter-apk/app-release.apk >/dev/null
+
+  macos:
+    name: Build macOS
+    needs: validate
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate macOS platform
+        run: flutter create --platforms=macos --org com.orvix --project-name orvix .
+
+      - name: Configure branding
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/orvix-branding-venv"
+          "$RUNNER_TEMP/orvix-branding-venv/bin/python" -m pip install --disable-pip-version-check pillow
+          "$RUNNER_TEMP/orvix-branding-venv/bin/python" tools/generate_desktop_branding.py --macos
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build macOS
+        run: flutter build macos --release
+
+      - name: Verify app
+        run: test -d build/macos/Build/Products/Release/Orvix.app
