@@ -335,6 +335,7 @@ class _HomeScreenState extends State<HomeScreen> {
           return _TvHomeView(
             data: data,
             onOpen: _openItem,
+            onResume: widget.onResume,
             onPrefetch: _prefetchItem,
           );
         }
@@ -1441,11 +1442,13 @@ class _TvHomeView extends StatelessWidget {
   const _TvHomeView({
     required this.data,
     required this.onOpen,
+    required this.onResume,
     required this.onPrefetch,
   });
 
   final _HomeData data;
   final ValueChanged<MediaItem> onOpen;
+  final ValueChanged<ContinueWatchingEntry> onResume;
   final ValueChanged<MediaItem> onPrefetch;
 
   @override
@@ -1466,7 +1469,7 @@ class _TvHomeView extends StatelessWidget {
           if (data.continueWatching.isNotEmpty)
             _TvContinueLandscapeRail(
               items: data.continueWatching,
-              onOpen: (entry) => onOpen(entry.item),
+              onOpen: onResume,
             ),
           for (final section in data.sections)
             if (section != HomeSectionId.continueWatching)
