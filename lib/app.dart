@@ -439,21 +439,38 @@ class _OrvixShellState extends State<_OrvixShell> {
     );
 
     if (PlatformProfile.isAndroidTv) {
-      return Scaffold(
-        backgroundColor: const Color(0xFF050806),
-        body: SafeArea(
-          child: Column(
-            children: [
-              _TvTopNavigation(
-                selectedIndex: _index,
-                onSelected: _selectDestination,
-              ),
-              Expanded(
-                child: _TvFocusAutoScroll(
-                  child: ClipRect(child: body),
+      // Android TV Back must navigate inside Orvix instead of dropping straight
+      // to the launcher from a top-level destination. Child Navigator routes
+      // (details/player/dialogs) still get first chance to pop normally.
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (didPop) return;
+          if (_index != 0) {
+            _selectDestination(0);
+          }
+          // At Home, consume Back. The remote Home button remains the explicit
+          // way to leave Orvix, preventing accidental exits during DPAD use.
+        },
+        child: Scaffold(
+          backgroundColor: const Color(0xFF050806),
+          body: SafeArea(
+            child: Column(
+              children: [
+                _TvTopNavigation(
+                  selectedIndex: _index,
+                  onSelected: _selectDestination,
                 ),
-              ),
-            ],
+                Expanded(
+                  child: FocusTraversalGroup(
+                    policy: ReadingOrderTraversalPolicy(),
+                    child: _TvFocusAutoScroll(
+                      child: ClipRect(child: body),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       );
