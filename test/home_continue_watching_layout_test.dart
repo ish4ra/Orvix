@@ -9,6 +9,8 @@ void main() {
     expect(home, contains('class _ContinueLandscapeCard'));
     expect(home, contains('final image = widget.preferEpisodeThumbnail'));
     expect(home, contains('preferEpisodeThumbnail: false'));
+    expect(home, contains('required this.onResume'));
+    expect(home, contains('onOpen: onResume'));
     expect(home, contains('entry.item.background'));
     expect(home, contains('entry.item.poster'));
     expect(home, contains('width: 292'));
