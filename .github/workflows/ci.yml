@@ -72,8 +72,8 @@ jobs:
           grep -q '^  validate:' .github/workflows/prerelease.yml
           grep -q '^  release:' .github/workflows/prerelease.yml
           grep -q 'tools/publish_orvix_release.sh' .github/workflows/prerelease.yml
-          ! grep -R --line-number --fixed-strings 'feature/tv-qr-login' .github/workflows
-          ! grep -R --line-number --fixed-strings 'IntroDB skip button fix' .github/workflows
+          ! grep --line-number --fixed-strings 'feature/tv-qr-login' .github/workflows/prerelease.yml
+          ! grep --line-number --fixed-strings 'IntroDB skip button fix' .github/workflows/prerelease.yml
 
   windows:
     name: Build Windows
