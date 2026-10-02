@@ -543,14 +543,17 @@ class _AccountScreenState extends State<AccountScreen> {
 
   Future<void> _approveTvCode(String raw) async {
     if (OrvixAccountService.currentUser == null) {
-      setState(() => _message = 'Sign in to your Orvix account first, then scan the TV QR code.');
+      setState(() => _message =
+          'Sign in to your Orvix account first, then scan the TV QR code.');
       return;
     }
+
     final uri = Uri.tryParse(raw.trim());
     final fromUrl = uri?.queryParameters['code'];
     final code = (fromUrl ?? raw)
         .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')
         .toUpperCase();
+
     if (!RegExp(r'^[A-Z0-9]{6}
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -871,9 +874,11 @@ class _TvSignedInPane extends StatelessWidget {
   }
 }
 ).hasMatch(code)) {
-      setState(() => _message = 'That QR code is not a valid Orvix TV login code.');
+      setState(() =>
+          _message = 'That QR code is not a valid Orvix TV login code.');
       return;
     }
+
     setState(() {
       _busy = true;
       _message = 'Approving TV…';
@@ -888,7 +893,10 @@ class _TvSignedInPane extends StatelessWidget {
           ? 'TV approved. Orvix on your TV will sign in automatically.'
           : 'That TV code expired or was already used. Refresh the QR on the TV.');
     } catch (_) {
-      if (mounted) setState(() => _message = 'Could not approve the TV. Refresh its QR code and try again.');
+      if (mounted) {
+        setState(() => _message =
+            'Could not approve the TV. Refresh its QR code and try again.');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1221,7 +1229,8 @@ class _OrvixTvQrScannerScreen extends StatefulWidget {
   const _OrvixTvQrScannerScreen();
 
   @override
-  State<_OrvixTvQrScannerScreen> createState() => _OrvixTvQrScannerScreenState();
+  State<_OrvixTvQrScannerScreen> createState() =>
+      _OrvixTvQrScannerScreenState();
 }
 
 class _OrvixTvQrScannerScreenState extends State<_OrvixTvQrScannerScreen> {
@@ -1262,7 +1271,8 @@ class _OrvixTvQrScannerScreenState extends State<_OrvixTvQrScannerScreen> {
                 width: 250,
                 height: 250,
                 decoration: BoxDecoration(
-                  border: Border.all(color: const Color(0xFFB9FF45), width: 3),
+                  border:
+                      Border.all(color: const Color(0xFFB9FF45), width: 3),
                   borderRadius: BorderRadius.circular(20),
                 ),
               ),
@@ -1275,7 +1285,11 @@ class _OrvixTvQrScannerScreenState extends State<_OrvixTvQrScannerScreen> {
             child: Text(
               'Point the camera at the QR code shown by Orvix on your TV.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ],
