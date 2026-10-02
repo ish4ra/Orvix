@@ -1,4 +1,4 @@
-name: Release Orvix v0.7.9-beta.41 — Android TV + mobile parity fixes
+name: Orvix prerelease
 # v077-stable-regression-test-sync
 # beta2-complete-state-trigger
 # beta45-realdebrid-premiumize-trigger
@@ -27,15 +27,15 @@ name: Release Orvix v0.7.9-beta.41 — Android TV + mobile parity fixes
 on:
   push:
     branches:
-      - feature/tv-qr-login
+      - develop
     paths:
-      - '.github/workflows/orvix-v077-beta-icon-release.yml'
       - 'pubspec.yaml'
-      - 'tools/configure_android_build.py'
-      - 'tools/generate_desktop_branding.py'
   workflow_dispatch:
 permissions:
   contents: write
+
+env:
+  ORVIX_VERSION: 0.7.9-beta.41
 
 concurrency:
   group: orvix-v077-beta-icon-release
@@ -47,6 +47,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_VERSION="$(awk '$1 == "version:" {print $2}' pubspec.yaml)"
+          APP_VERSION="${APP_VERSION%%+*}"
+          if [ "$APP_VERSION" != "${{ env.ORVIX_VERSION }}" ]; then
+            echo "Workflow release version ${{ env.ORVIX_VERSION }} does not match pubspec version $APP_VERSION" >&2
+            exit 1
+          fi
 
       - uses: actions/setup-go@v5
         with:
@@ -348,8 +359,8 @@ jobs:
           set -euo pipefail
           ditto -c -k --sequesterRsrc --keepParent \
             build/macos/Build/Products/Release/Orvix.app \
-            Orvix-v0.7.9-beta.41-macOS.zip
-          test -s Orvix-v0.7.9-beta.41-macOS.zip
+            Orvix-v${{ env.ORVIX_VERSION }}-macOS.zip
+          test -s Orvix-v${{ env.ORVIX_VERSION }}-macOS.zip
 
       - name: Export macOS branding previews
         shell: bash
@@ -369,7 +380,7 @@ jobs:
         with:
           name: macos
           if-no-files-found: error
-          path: Orvix-v0.7.9-beta.41-macOS.zip
+          path: Orvix-v${{ env.ORVIX_VERSION }}-macOS.zip
 
   windows:
     needs: validate
@@ -790,7 +801,7 @@ jobs:
 
       - name: Pack portable build
         shell: pwsh
-        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath 'Orvix-v0.7.9-beta.41-Windows-x64.zip' -Force
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath 'Orvix-v${{ env.ORVIX_VERSION }}-Windows-x64.zip' -Force
 
       - name: Install Inno Setup
         shell: pwsh
@@ -805,14 +816,14 @@ jobs:
           )
           $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
-          & $iscc '/DMyAppVersion=0.7.9-beta.41' 'installer\orvix.iss'
+          & $iscc '/DMyAppVersion=${{ env.ORVIX_VERSION }}' 'installer\orvix.iss'
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
 
       - name: Smoke test Windows installer package
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $installer = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.9-beta.41-Windows-x64.exe'
+          $installer = Resolve-Path 'installer-output\\Orvix-Setup-v${{ env.ORVIX_VERSION }}-Windows-x64.exe'
           $installerLog = Join-Path $env:RUNNER_TEMP 'orvix-installer-smoke.log'
           $run = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/LOG=$installerLog" -Wait -PassThru
           if ($run.ExitCode -ne 0) {
@@ -829,7 +840,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $installed = Join-Path $env:LOCALAPPDATA 'Programs\\Orvix\\orvix.exe'
-          $installer = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.9-beta.41-Windows-x64.exe'
+          $installer = Resolve-Path 'installer-output\\Orvix-Setup-v${{ env.ORVIX_VERSION }}-Windows-x64.exe'
           $upgradeLog = Join-Path $env:RUNNER_TEMP 'orvix-installer-running-app.log'
 
           $running = Start-Process -FilePath $installed -PassThru
@@ -884,7 +895,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $currentInstaller = Resolve-Path 'installer-output\\Orvix-Setup-v0.7.9-beta.41-Windows-x64.exe'
+          $currentInstaller = Resolve-Path 'installer-output\\Orvix-Setup-v${{ env.ORVIX_VERSION }}-Windows-x64.exe'
           $installedDir = Join-Path $env:LOCALAPPDATA 'Programs\\Orvix'
           $uninstaller = Join-Path $installedDir 'unins000.exe'
 
@@ -1028,8 +1039,8 @@ jobs:
           name: windows
           if-no-files-found: error
           path: |
-            Orvix-v0.7.9-beta.41-Windows-x64.zip
-            installer-output/Orvix-Setup-v0.7.9-beta.41-Windows-x64.exe
+            Orvix-v${{ env.ORVIX_VERSION }}-Windows-x64.zip
+            installer-output/Orvix-Setup-v${{ env.ORVIX_VERSION }}-Windows-x64.exe
 
   android-mobile:
     runs-on: ubuntu-latest
@@ -1119,10 +1130,10 @@ jobs:
 
       - name: Rename APKs
         run: |
-          cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.9-beta.41-Android-Mobile.apk
-          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk Orvix-v0.7.9-beta.41-Android-Mobile-arm64-v8a.apk
-          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk Orvix-v0.7.9-beta.41-Android-Mobile-armeabi-v7a.apk
-          cp build/app/outputs/flutter-apk/app-x86_64-release.apk Orvix-v0.7.9-beta.41-Android-Mobile-x86_64.apk
+          cp build/app/outputs/flutter-apk/app-release.apk Orvix-v${{ env.ORVIX_VERSION }}-Android-Mobile.apk
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk Orvix-v${{ env.ORVIX_VERSION }}-Android-Mobile-arm64-v8a.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk Orvix-v${{ env.ORVIX_VERSION }}-Android-Mobile-armeabi-v7a.apk
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk Orvix-v${{ env.ORVIX_VERSION }}-Android-Mobile-x86_64.apk
 
       - name: Export Android mobile branding previews
         shell: bash
@@ -1143,10 +1154,10 @@ jobs:
         with:
           name: android-mobile
           path: |
-            Orvix-v0.7.9-beta.41-Android-Mobile.apk
-            Orvix-v0.7.9-beta.41-Android-Mobile-arm64-v8a.apk
-            Orvix-v0.7.9-beta.41-Android-Mobile-armeabi-v7a.apk
-            Orvix-v0.7.9-beta.41-Android-Mobile-x86_64.apk
+            Orvix-v${{ env.ORVIX_VERSION }}-Android-Mobile.apk
+            Orvix-v${{ env.ORVIX_VERSION }}-Android-Mobile-arm64-v8a.apk
+            Orvix-v${{ env.ORVIX_VERSION }}-Android-Mobile-armeabi-v7a.apk
+            Orvix-v${{ env.ORVIX_VERSION }}-Android-Mobile-x86_64.apk
 
   android-tv:
     runs-on: ubuntu-latest
@@ -1238,7 +1249,7 @@ jobs:
           "$APKSIGNER" verify --verbose "$APK"
 
       - name: Rename APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v0.7.9-beta.41-Android-TV.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v${{ env.ORVIX_VERSION }}-Android-TV.apk
 
       - name: Export Android TV branding previews
         shell: bash
@@ -1258,10 +1269,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: android-tv
-          path: Orvix-v0.7.9-beta.41-Android-TV.apk
+          path: Orvix-v${{ env.ORVIX_VERSION }}-Android-TV.apk
 
   release:
-    name: Release v0.7.9-beta.41 cross-platform
+    name: Publish Orvix prerelease
     needs: [validate, windows, macos, android-mobile, android-tv]
     runs-on: ubuntu-latest
     steps:
@@ -1291,52 +1302,40 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -s dist/windows/Orvix-v0.7.9-beta.41-Windows-x64.zip
-          test -s dist/windows/installer-output/Orvix-Setup-v0.7.9-beta.41-Windows-x64.exe
-          test -s dist/mobile/Orvix-v0.7.9-beta.41-Android-Mobile.apk
-          test -s dist/mobile/Orvix-v0.7.9-beta.41-Android-Mobile-arm64-v8a.apk
-          test -s dist/mobile/Orvix-v0.7.9-beta.41-Android-Mobile-armeabi-v7a.apk
-          test -s dist/mobile/Orvix-v0.7.9-beta.41-Android-Mobile-x86_64.apk
-          test -s dist/tv/Orvix-v0.7.9-beta.41-Android-TV.apk
-          test -s dist/macos/Orvix-v0.7.9-beta.41-macOS.zip
+          test -s dist/windows/Orvix-v${{ env.ORVIX_VERSION }}-Windows-x64.zip
+          test -s dist/windows/installer-output/Orvix-Setup-v${{ env.ORVIX_VERSION }}-Windows-x64.exe
+          test -s dist/mobile/Orvix-v${{ env.ORVIX_VERSION }}-Android-Mobile.apk
+          test -s dist/mobile/Orvix-v${{ env.ORVIX_VERSION }}-Android-Mobile-arm64-v8a.apk
+          test -s dist/mobile/Orvix-v${{ env.ORVIX_VERSION }}-Android-Mobile-armeabi-v7a.apk
+          test -s dist/mobile/Orvix-v${{ env.ORVIX_VERSION }}-Android-Mobile-x86_64.apk
+          test -s dist/tv/Orvix-v${{ env.ORVIX_VERSION }}-Android-TV.apk
+          test -s dist/macos/Orvix-v${{ env.ORVIX_VERSION }}-macOS.zip
 
-      - name: Publish beta icon-fix release
+      - name: Publish Orvix prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           ORVIX_RELEASE_PRERELEASE: "true"
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/notes.md <<'EOF'
-          Orvix v0.7.9-beta.41 carries the latest shared Orvix account, secure debrid/cloud credential sync, Supporters, generic debrid wording, and TV QR account work across Windows, Android Mobile, Android TV, and macOS.
-
-          Icon correction:
-          - Uses the supplied transparent launcher PNG directly without flood-fill cleanup, cropping, or extra centering.
-          - Keeps the intended black interior inside the rounded Orvix icon.
-          - Preserves transparent outer corners instead of showing a black square around the icon.
-          - Regenerates Windows EXE/installer/shortcut ICO assets from the corrected artwork.
-          - Regenerates Android Mobile and Android TV launcher/adaptive icon assets from the corrected artwork.
-          - Regenerates the macOS AppIcon set from the corrected artwork.
-          - CI explicitly verifies transparent outer corners before packaging.
-
-          Scope:
-          - Moves GitHub Sponsors, Buy Me a Coffee, Ko-fi, and Star on GitHub into the dedicated Support destination.
-          - Adds Support to desktop navigation, Android mobile More navigation, and Android TV top navigation, with themed Supporters and Contributors tabs.
-          - No playback, P2P, debrid, subtitle, AI Sinhala, or navigation behavior changes.
-          - Keeps application behavior unchanged apart from release/update metadata and icon generation.
-          EOF
+          gh api \
+            --method POST \
+            "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="v${{ env.ORVIX_VERSION }}" \
+            -f target_commitish="${GITHUB_SHA}" \
+            --jq '.body' > /tmp/notes.md
 
           chmod +x tools/publish_orvix_release.sh
           tools/publish_orvix_release.sh \
-            v0.7.9-beta.41 \
-            'Orvix v0.7.9-beta.41 — IntroDB skip button fix' \
+            v${{ env.ORVIX_VERSION }} \
+            "Orvix v${{ env.ORVIX_VERSION }}" \
             /tmp/notes.md \
             "${{ github.sha }}" \
-            dist/windows/Orvix-v0.7.9-beta.41-Windows-x64.zip \
-            dist/windows/installer-output/Orvix-Setup-v0.7.9-beta.41-Windows-x64.exe \
-            dist/mobile/Orvix-v0.7.9-beta.41-Android-Mobile.apk \
-            dist/mobile/Orvix-v0.7.9-beta.41-Android-Mobile-arm64-v8a.apk \
-            dist/mobile/Orvix-v0.7.9-beta.41-Android-Mobile-armeabi-v7a.apk \
-            dist/mobile/Orvix-v0.7.9-beta.41-Android-Mobile-x86_64.apk \
-            dist/tv/Orvix-v0.7.9-beta.41-Android-TV.apk \
-            dist/macos/Orvix-v0.7.9-beta.41-macOS.zip
+            dist/windows/Orvix-v${{ env.ORVIX_VERSION }}-Windows-x64.zip \
+            dist/windows/installer-output/Orvix-Setup-v${{ env.ORVIX_VERSION }}-Windows-x64.exe \
+            dist/mobile/Orvix-v${{ env.ORVIX_VERSION }}-Android-Mobile.apk \
+            dist/mobile/Orvix-v${{ env.ORVIX_VERSION }}-Android-Mobile-arm64-v8a.apk \
+            dist/mobile/Orvix-v${{ env.ORVIX_VERSION }}-Android-Mobile-armeabi-v7a.apk \
+            dist/mobile/Orvix-v${{ env.ORVIX_VERSION }}-Android-Mobile-x86_64.apk \
+            dist/tv/Orvix-v${{ env.ORVIX_VERSION }}-Android-TV.apk \
+            dist/macos/Orvix-v${{ env.ORVIX_VERSION }}-macOS.zip
