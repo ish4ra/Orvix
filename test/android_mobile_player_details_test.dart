@@ -11,15 +11,15 @@ void main() {
     expect(player, contains(': BoxFit.contain'));
   });
 
-  test('Mobile season controls stay compact and Play is visually distinct', () {
+  test('Mobile season controls stay compact and Play uses Orvix lime family', () {
     final details = File('lib/screens/details_screen.dart').readAsStringSync();
 
     expect(details, contains('height: compact ? 46 : 58'));
     expect(details, contains('height: 38'));
     expect(details, contains('minWidth: 92'));
-    expect(details, contains('selectedLime'));
+    expect(details, contains('const selectedLime = Color(0xFF9FE52E)'));
+    expect(details, contains('? selectedLime'));
     expect(details, contains('compact && PlatformProfile.isAndroidMobile'));
     expect(details, contains('backgroundColor: const Color(0xFFCBFF75)'));
-    expect(details, contains('backgroundColor: const Color(0xFF9FE52E)'));
   });
 }
