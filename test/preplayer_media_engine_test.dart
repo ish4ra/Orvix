@@ -272,9 +272,10 @@ void main() {
         File('lib/services/ai_sinhala_preferences_service.dart').readAsStringSync();
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    expect(preferences, contains("orvix_ai_sinhala_enabled_v3"));
+    expect(preferences, contains("orvix_ai_sinhala_enabled_v4"));
     expect(preferences, contains("orvix_ai_sinhala_enabled_v2"));
-    expect(preferences, contains('final migrated = Platform.isWindows ? true'));
+    expect(preferences, contains('await prefs.setBool(_enabledKey, false);'));
+    expect(preferences, isNot(contains('Platform.isWindows ? true')));
     expect(
       player,
       isNot(contains('await AiSinhalaPreferencesService.setEnabled(false);')),
