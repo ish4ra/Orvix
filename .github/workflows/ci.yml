@@ -1,0 +1,186 @@
+name: Orvix CI
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - 'lib/**'
+      - 'test/**'
+      - 'tools/**'
+      - 'windows/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/prerelease.yml'
+      - '.coderabbit.yaml'
+      - 'AGENTS.md'
+      - 'renovate.json'
+  pull_request:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: orvix-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Analyze + regressions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Get dependencies
+        run: flutter pub get
+      - name: Analyze Dart
+        run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
+      - name: Run Flutter regression suite
+        run: flutter test
+      - name: Test standalone media engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd tools/orvix-media-engine
+          go test ./...
+      - name: Validate build helper syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile             tools/configure_android_build.py             tools/configure_android_mobile_compat.py             tools/configure_android_signing.py             tools/generate_desktop_branding.py
+          bash -n tools/publish_orvix_release.sh
+      - name: Guard canonical maintenance rules
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f .github/workflows/ci.yml
+          test -f .github/workflows/prerelease.yml
+          test "$(find .github/workflows -maxdepth 1 -type f -name '*.yml' | wc -l)" -eq 2
+          ! grep -R --line-number --fixed-strings 'feature/tv-qr-login' .github/workflows
+          ! grep -R --line-number --fixed-strings 'IntroDB skip button fix' .github/workflows
+
+  windows:
+    name: Build Windows
+    needs: quality
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Get dependencies
+        run: flutter pub get
+      - name: Build Windows app
+        run: flutter build windows --release
+      - name: Build media engine
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location 'tools\orvix-media-engine'
+          try {
+            go test ./...
+            go build -trimpath -ldflags '-s -w' -o '..\..\build\windows\x64\runner\Release\orvix-media-engine.exe' .
+          } finally {
+            Pop-Location
+          }
+          if (-not (Test-Path 'build\windows\x64\runner\Release\orvix-media-engine.exe')) {
+            throw 'Orvix media engine was not built.'
+          }
+
+  android-mobile:
+    name: Build Android Mobile
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate Android platform
+        run: flutter create --platforms=android --org com.orvix --project-name orvix .
+      - name: Configure Android mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check pillow
+          python3 tools/configure_android_build.py
+          python3 tools/configure_android_mobile_compat.py
+      - name: Get dependencies
+        run: flutter pub get
+      - name: Compile Android mobile
+        run: flutter build apk --debug
+      - name: Verify APK
+        shell: bash
+        run: test -s build/app/outputs/flutter-apk/app-debug.apk
+
+  android-tv:
+    name: Build Android TV
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate Android platform
+        run: flutter create --platforms=android --org com.orvix --project-name orvix .
+      - name: Configure Android TV
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check pillow
+          python3 tools/configure_android_build.py --tv
+          python3 tools/configure_android_mobile_compat.py
+          grep -q 'android.intent.category.LEANBACK_LAUNCHER' android/app/src/main/AndroidManifest.xml
+      - name: Get dependencies
+        run: flutter pub get
+      - name: Compile Android TV
+        run: flutter build apk --debug --dart-define=ORVIX_TV=true
+      - name: Verify APK
+        shell: bash
+        run: test -s build/app/outputs/flutter-apk/app-debug.apk
+
+  macos:
+    name: Build macOS
+    needs: quality
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate macOS platform
+        run: flutter create --platforms=macos --org com.orvix --project-name orvix .
+      - name: Get dependencies
+        run: flutter pub get
+      - name: Build macOS app
+        run: flutter build macos --release
+      - name: Verify app bundle
+        shell: bash
+        run: test -d build/macos/Build/Products/Release/Orvix.app
