@@ -781,6 +781,7 @@ class _ContinueLandscapeCard extends StatefulWidget {
     required this.height,
     required this.onTap,
     this.onPreview,
+    this.preferEpisodeThumbnail = true,
   });
 
   final ContinueWatchingEntry entry;
@@ -788,6 +789,7 @@ class _ContinueLandscapeCard extends StatefulWidget {
   final double height;
   final VoidCallback onTap;
   final VoidCallback? onPreview;
+  final bool preferEpisodeThumbnail;
 
   @override
   State<_ContinueLandscapeCard> createState() =>
@@ -804,9 +806,9 @@ class _ContinueLandscapeCardState extends State<_ContinueLandscapeCard> {
     final active = _hovered || _focused;
     final entry = widget.entry;
     final episode = entry.episode;
-    final image = episode?.thumbnail ??
-        entry.item.background ??
-        entry.item.poster;
+    final image = widget.preferEpisodeThumbnail
+        ? (episode?.thumbnail ?? entry.item.background ?? entry.item.poster)
+        : (entry.item.background ?? entry.item.poster ?? episode?.thumbnail);
     final remaining =
         (entry.duration - entry.position).inMinutes.clamp(0, 9999);
     final episodeLabel = episode == null
@@ -1766,6 +1768,10 @@ class _TvContinueLandscapeRail extends StatelessWidget {
                     entry: entry,
                     width: 330,
                     height: 178,
+                    // TV artwork should stay cinematic and predictable. Nuvio TV
+                    // likewise lets episode thumbnails be disabled independently
+                    // for Continue Watching; prefer the title backdrop here.
+                    preferEpisodeThumbnail: false,
                     onTap: () => onOpen(entry),
                   ),
                 );
