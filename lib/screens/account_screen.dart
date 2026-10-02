@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/orvix_account_service.dart';
@@ -539,6 +541,367 @@ class _AccountScreenState extends State<AccountScreen> {
     );
   }
 
+  Future<void> _approveTvCode(String raw) async {
+    if (OrvixAccountService.currentUser == null) {
+      setState(() => _message = 'Sign in to your Orvix account first, then scan the TV QR code.');
+      return;
+    }
+    final uri = Uri.tryParse(raw.trim());
+    final fromUrl = uri?.queryParameters['code'];
+    final code = (fromUrl ?? raw)
+        .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')
+        .toUpperCase();
+    if (!RegExp(r'^[A-Z0-9]{6}
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            CircleAvatar(
+              radius: 22,
+              child: Text((user.email?.isNotEmpty ?? false)
+                  ? user.email![0].toUpperCase()
+                  : 'O'),
+            ),
+            const SizedBox(width: 13),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Cloud sync active',
+                      style: TextStyle(fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 3),
+                  Text(user.email ?? user.id, overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            if (Platform.isAndroid && !PlatformProfile.isAndroidTv)
+              FilledButton.icon(
+                onPressed: _busy ? null : _scanTvQr,
+                icon: const Icon(Icons.qr_code_scanner_rounded),
+                label: const Text('Scan TV QR'),
+              ),
+            FilledButton.icon(
+              onPressed: _busy ? null : _syncNow,
+              icon: _syncing
+                  ? const SizedBox(
+                      width: 17,
+                      height: 17,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.sync_rounded),
+              label: Text(_syncing ? 'Syncing…' : 'Sync now'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _signOut,
+              icon: const Icon(Icons.logout_rounded),
+              label: const Text('Sign out'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _InfoLine extends StatelessWidget {
+  const _InfoLine(this.icon, this.text);
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
+          const SizedBox(width: 10),
+          Expanded(child: Text(text)),
+        ],
+      ),
+    );
+  }
+}
+
+
+class _TvAccountLayout extends StatelessWidget {
+  const _TvAccountLayout({
+    required this.user,
+    required this.loginState,
+    required this.busy,
+    required this.syncing,
+    required this.onRefreshLogin,
+    required this.onCancelLogin,
+    required this.onSync,
+    required this.onSignOut,
+  });
+
+  final User? user;
+  final TvDeviceLoginState loginState;
+  final bool busy;
+  final bool syncing;
+  final VoidCallback onRefreshLogin;
+  final VoidCallback onCancelLogin;
+  final VoidCallback onSync;
+  final VoidCallback onSignOut;
+
+  @override
+  Widget build(BuildContext context) {
+    const primaryText = Color(0xFFF5F7F2);
+    const secondaryText = Color(0xFF9BA69C);
+    const pane = Color(0x0FFFFFFF);
+    const border = Color(0xFF263627);
+    final signedIn = user != null;
+
+    return FocusTraversalGroup(
+      policy: ReadingOrderTraversalPolicy(),
+      child: Container(
+        color: const Color(0xFF050806),
+        child: Row(
+          children: [
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 56),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Image.asset('assets/branding/orvix_logo.webp', height: 58, fit: BoxFit.contain),
+                    const SizedBox(height: 30),
+                    const Text(
+                      'Your Orvix, synced across screens.',
+                      style: TextStyle(
+                        color: primaryText,
+                        fontSize: 40,
+                        height: 1.12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Text(
+                      signedIn
+                          ? 'Connected to your Orvix account.'
+                          : 'Scan the QR code with your phone to sign in without typing on your TV.',
+                      style: const TextStyle(color: secondaryText, fontSize: 17, height: 1.5),
+                    ),
+                    if (signedIn) ...[
+                      const SizedBox(height: 24),
+                      Text(
+                        user!.email ?? 'Orvix account',
+                        style: const TextStyle(color: Color(0xFFCBFF75), fontSize: 18, fontWeight: FontWeight.w700),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            Container(
+              width: 460,
+              height: double.infinity,
+              decoration: const BoxDecoration(
+                color: pane,
+                border: Border(left: BorderSide(color: border)),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 48),
+              child: Center(
+                child: signedIn
+                    ? _TvSignedInPane(
+                        email: user!.email ?? 'Orvix account',
+                        busy: busy,
+                        syncing: syncing,
+                        onSync: onSync,
+                        onSignOut: onSignOut,
+                      )
+                    : _TvQrPane(
+                        state: loginState,
+                        onRefresh: onRefreshLogin,
+                        onCancel: onCancelLogin,
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TvQrPane extends StatelessWidget {
+  const _TvQrPane({required this.state, required this.onRefresh, required this.onCancel});
+  final TvDeviceLoginState state;
+  final VoidCallback onRefresh;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final waiting = state.phase == TvDeviceLoginPhase.waiting || state.phase == TvDeviceLoginPhase.signingIn;
+    final url = state.verificationUrl;
+    final code = state.userCode;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text(
+          'Scan QR and sign in on your phone',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Color(0xFF9BA69C), fontSize: 16, height: 1.4),
+        ),
+        const SizedBox(height: 26),
+        if (waiting && url != null)
+          Container(
+            width: 222,
+            height: 222,
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)),
+            child: QrImageView(data: url, backgroundColor: Colors.white, eyeStyle: const QrEyeStyle(color: Colors.black), dataModuleStyle: const QrDataModuleStyle(color: Colors.black)),
+          )
+        else
+          Container(
+            width: 222,
+            height: 222,
+            decoration: BoxDecoration(
+              color: const Color(0x0FFFFFFF),
+              border: Border.all(color: const Color(0xFF263627)),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Center(
+              child: state.phase == TvDeviceLoginPhase.starting
+                  ? const CircularProgressIndicator()
+                  : const Icon(Icons.qr_code_2_rounded, size: 82, color: Color(0xFF6E796F)),
+            ),
+          ),
+        const SizedBox(height: 20),
+        if (code != null)
+          Text(
+            code.length == 6 ? '${code.substring(0, 3)}-${code.substring(3)}' : code,
+            style: const TextStyle(
+              color: Color(0xFFF5F7F2),
+              fontSize: 25,
+              letterSpacing: 3,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        const SizedBox(height: 12),
+        Text(
+          state.phase == TvDeviceLoginPhase.signingIn
+              ? 'Signing you in…'
+              : state.phase == TvDeviceLoginPhase.expired
+                  ? 'QR login expired. Generate a new code.'
+                  : state.phase == TvDeviceLoginPhase.failed
+                      ? (state.message ?? 'Could not start QR login.')
+                      : waiting
+                          ? 'Waiting for approval on your phone…'
+                          : 'Preparing QR login…',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: state.phase == TvDeviceLoginPhase.failed || state.phase == TvDeviceLoginPhase.expired
+                ? Theme.of(context).colorScheme.error
+                : const Color(0xFF9BA69C),
+            fontSize: 14,
+          ),
+        ),
+        const SizedBox(height: 26),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            OutlinedButton(
+              autofocus: state.phase == TvDeviceLoginPhase.failed || state.phase == TvDeviceLoginPhase.expired,
+              onPressed: state.phase == TvDeviceLoginPhase.starting || state.phase == TvDeviceLoginPhase.signingIn ? null : onRefresh,
+              child: Text(waiting ? 'Refresh code' : 'Try again'),
+            ),
+            if (waiting) ...[
+              const SizedBox(width: 12),
+              TextButton(onPressed: onCancel, child: const Text('Cancel')),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _TvSignedInPane extends StatelessWidget {
+  const _TvSignedInPane({
+    required this.email,
+    required this.busy,
+    required this.syncing,
+    required this.onSync,
+    required this.onSignOut,
+  });
+  final String email;
+  final bool busy;
+  final bool syncing;
+  final VoidCallback onSync;
+  final VoidCallback onSignOut;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.check_circle_rounded, color: Color(0xFFB9FF45), size: 64),
+        const SizedBox(height: 18),
+        const Text('Account connected', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 8),
+        Text(email, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFF9BA69C))),
+        const SizedBox(height: 28),
+        FilledButton.icon(
+          autofocus: true,
+          onPressed: busy ? null : onSync,
+          icon: syncing
+              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.sync_rounded),
+          label: Text(syncing ? 'Syncing…' : 'Sync now'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: busy ? null : onSignOut,
+          icon: const Icon(Icons.logout_rounded),
+          label: const Text('Sign out'),
+        ),
+      ],
+    );
+  }
+}
+).hasMatch(code)) {
+      setState(() => _message = 'That QR code is not a valid Orvix TV login code.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _message = 'Approving TV…';
+    });
+    try {
+      final approved = await Supabase.instance.client.rpc(
+        'approve_tv_login_session',
+        params: {'p_user_code': code},
+      );
+      if (!mounted) return;
+      setState(() => _message = approved == true
+          ? 'TV approved. Orvix on your TV will sign in automatically.'
+          : 'That TV code expired or was already used. Refresh the QR on the TV.');
+    } catch (_) {
+      if (mounted) setState(() => _message = 'Could not approve the TV. Refresh its QR code and try again.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _scanTvQr() async {
+    if (!Platform.isAndroid || PlatformProfile.isAndroidTv || _busy) return;
+    final value = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const _OrvixTvQrScannerScreen()),
+    );
+    if (value != null && mounted) await _approveTvCode(value);
+  }
+
   Widget _signedInCard(User user) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -849,6 +1212,74 @@ class _TvSignedInPane extends StatelessWidget {
           label: const Text('Sign out'),
         ),
       ],
+    );
+  }
+}
+
+
+class _OrvixTvQrScannerScreen extends StatefulWidget {
+  const _OrvixTvQrScannerScreen();
+
+  @override
+  State<_OrvixTvQrScannerScreen> createState() => _OrvixTvQrScannerScreenState();
+}
+
+class _OrvixTvQrScannerScreenState extends State<_OrvixTvQrScannerScreen> {
+  bool _handled = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        title: const Text('Scan Orvix TV QR'),
+      ),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          MobileScanner(
+            onDetect: (capture) {
+              if (_handled) return;
+              for (final barcode in capture.barcodes) {
+                final value = barcode.rawValue?.trim();
+                if (value == null || value.isEmpty) continue;
+                final uri = Uri.tryParse(value);
+                final code = uri?.queryParameters['code'];
+                final normalized = (code ?? value)
+                    .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '')
+                    .toUpperCase();
+                if (!RegExp(r'^[A-Z0-9]{6}$').hasMatch(normalized)) continue;
+                _handled = true;
+                Navigator.of(context).pop(value);
+                return;
+              }
+            },
+          ),
+          Center(
+            child: IgnorePointer(
+              child: Container(
+                width: 250,
+                height: 250,
+                decoration: BoxDecoration(
+                  border: Border.all(color: const Color(0xFFB9FF45), width: 3),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+              ),
+            ),
+          ),
+          const Positioned(
+            left: 24,
+            right: 24,
+            bottom: 42,
+            child: Text(
+              'Point the camera at the QR code shown by Orvix on your TV.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
