@@ -449,7 +449,9 @@ class _OrvixShellState extends State<_OrvixShell> {
                 onSelected: _selectDestination,
               ),
               Expanded(
-                child: ClipRect(child: body),
+                child: _TvFocusAutoScroll(
+                  child: ClipRect(child: body),
+                ),
               ),
             ],
           ),
@@ -1013,4 +1015,47 @@ class _TvTopNavButtonState extends State<_TvTopNavButton> {
       ),
     );
   }
+}
+
+
+/// TV focus must always bring the newly focused control into the visible
+/// viewport. This mirrors TV-first UIs where DPAD traversal and scrolling are
+/// one operation instead of requiring touch/wheel input.
+class _TvFocusAutoScroll extends StatefulWidget {
+  const _TvFocusAutoScroll({required this.child});
+  final Widget child;
+
+  @override
+  State<_TvFocusAutoScroll> createState() => _TvFocusAutoScrollState();
+}
+
+class _TvFocusAutoScrollState extends State<_TvFocusAutoScroll> {
+  @override
+  void initState() {
+    super.initState();
+    FocusManager.instance.addListener(_revealPrimaryFocus);
+  }
+
+  @override
+  void dispose() {
+    FocusManager.instance.removeListener(_revealPrimaryFocus);
+    super.dispose();
+  }
+
+  void _revealPrimaryFocus() {
+    final focusContext = FocusManager.instance.primaryFocus?.context;
+    if (!mounted || focusContext == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !focusContext.mounted) return;
+      Scrollable.ensureVisible(
+        focusContext,
+        duration: const Duration(milliseconds: 170),
+        curve: Curves.easeOutCubic,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
