@@ -2519,6 +2519,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   bool _subtitleLanguageMatches(dynamic track, String preferred) {
+    // English is frequently carried only in a track title while the language
+    // tag itself is blank/und. Preserve that common MKV case.
+    if (preferred == 'eng' && _isEnglishTrack(track)) return true;
     final raw = (track.language ?? '').toString().trim().toLowerCase();
     if (raw.isEmpty) return false;
     final exact = OnlineSubtitleService.normalizeLanguage(raw);
@@ -2528,11 +2531,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return OnlineSubtitleService.normalizeLanguage(base) == preferred;
   }
 
-  OnlineSubtitleResult? _bestOnlineSubtitle(
+  List<OnlineSubtitleResult> _bestOnlineSubtitles(
     List<OnlineSubtitleResult> results,
     String preferred,
   ) {
-    final matches = results.where((entry) {
+    return results.where((entry) {
       if (OnlineSubtitleService.normalizeLanguage(entry.language) != preferred) {
         return false;
       }
@@ -2541,8 +2544,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           !label.contains('commentary') &&
           !label.contains('foreign only') &&
           !label.contains('signs');
-    }).toList(growable: false);
-    return matches.isEmpty ? null : matches.first;
+    }).take(5).toList(growable: false);
   }
 
   Future<bool> _attachOnlineSubtitle(
@@ -2620,11 +2622,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
 
       if (userOverride) {
-        _subtitleChoiceOverridden = true;
+        // Preserve the exact behavior of choosing an embedded/local native
+        // subtitle: leave AI mode, cancel its timing state and make this an
+        // explicit user choice only after the local subtitle is ready.
+        await _activateNativeSubtitle(track);
+      } else {
+        await player.setSubtitleTrack(track);
+        await _setNativeSubtitleVisibility(true);
+        await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
       }
-      await player.setSubtitleTrack(track);
-      await _setNativeSubtitleVisibility(true);
-      await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
 
       final old = _normalOnlineSubtitleFile;
       _normalOnlineSubtitleFile = file;
@@ -2657,9 +2663,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (_closing || _aiPreferenceEnabled || _subtitleChoiceOverridden) {
         return false;
       }
-      final candidate = _bestOnlineSubtitle(results, preferred);
-      if (candidate == null) return false;
-      return _attachOnlineSubtitle(candidate, userOverride: false);
+      final candidates = _bestOnlineSubtitles(results, preferred);
+      for (final candidate in candidates) {
+        if (await _attachOnlineSubtitle(candidate, userOverride: false)) {
+          return true;
+        }
+        if (_closing || _aiPreferenceEnabled || _subtitleChoiceOverridden) {
+          return false;
+        }
+      }
+      return false;
     } catch (_) {
       return false;
     }
