@@ -1286,17 +1286,47 @@ class _Hero extends StatelessWidget {
                     const SizedBox(height: 20),
                     Row(
                       children: [
-                        FilledButton.icon(
-                          onPressed: onOpen,
-                          icon: const Icon(Icons.play_arrow_rounded),
-                          label: const Text('View & Play'),
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: onOpen,
+                            style: FilledButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 12,
+                              ),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            icon: const Icon(
+                              Icons.play_arrow_rounded,
+                              size: 18,
+                            ),
+                            label: const FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text('View & Play'),
+                            ),
+                          ),
                         ),
                         if (onCustomize != null) ...[
-                          const Spacer(),
-                          OutlinedButton.icon(
-                            onPressed: onCustomize,
-                            icon: const Icon(Icons.tune_rounded),
-                            label: const Text('Customize Home'),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: onCustomize,
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 12,
+                                ),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              icon: const Icon(
+                                Icons.tune_rounded,
+                                size: 18,
+                              ),
+                              label: const FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text('Customize Home'),
+                              ),
+                            ),
                           ),
                         ],
                       ],
