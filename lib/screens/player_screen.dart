@@ -21,6 +21,7 @@ import '../services/online_subtitle_service.dart';
 import '../services/playback_service.dart';
 import '../services/platform_profile.dart';
 import '../services/subtitle_preferences_service.dart';
+import '../services/subtitle_render_policy.dart';
 import '../services/skip_segment_service.dart';
 import '../widgets/player_loading_overlay.dart';
 
@@ -2794,11 +2795,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _setNativeSubtitleVisibility(bool visible) async {
-    final platform = widget.playback.player.platform;
+    final player = widget.playback.player;
+    final platform = player.platform;
     if (platform is! mk.NativePlayer) return;
     try {
-      if (visible && !_aiSinhalaRequested) {
-        // Preserve authored ASS/SSA styling when AI Sinhala is off.
+      final selected = player.state.track.subtitle;
+      final nativeVisible = SubtitleRenderPolicy.nativeSubtitleVisible(
+        requestedVisible: visible,
+        aiSinhalaRequested: _aiSinhalaRequested,
+        isAndroid: Platform.isAndroid,
+        isBitmapTrack: _isImageSubtitleTrack(selected),
+      );
+
+      if (nativeVisible && !_aiSinhalaRequested) {
+        // Preserve authored native styling where the native renderer is used.
         await platform.setProperty(
           'sub-ass-override',
           'no',
@@ -2807,7 +2817,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
       await platform.setProperty(
         'sub-visibility',
-        visible ? 'yes' : 'no',
+        nativeVisible ? 'yes' : 'no',
         waitForInitialization: false,
       );
     } catch (_) {}
@@ -5232,11 +5242,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         : BoxFit.contain,
                     controls: NoVideoControls,
                     subtitleViewConfiguration: SubtitleViewConfiguration(
-                      // NativePlayer/libmpv renders source subtitles itself so
-                      // ASS/SSA/bitmap styling is preserved. Flutter styling is
-                      // only a fallback for non-native player platforms.
-                      visible: !_aiSinhalaRequested &&
-                          widget.playback.player.platform is! mk.NativePlayer,
+                      // media_kit's default libass=false mode renders text
+                      // subtitle cues through SubtitleView. Android must keep
+                      // this Flutter overlay enabled; bitmap tracks are still
+                      // drawn by the native renderer. Desktop keeps its existing
+                      // native-player behavior.
+                      visible: SubtitleRenderPolicy.flutterOverlayVisible(
+                        aiSinhalaRequested: _aiSinhalaRequested,
+                        isAndroid: Platform.isAndroid,
+                        isNativePlayer:
+                            widget.playback.player.platform is mk.NativePlayer,
+                      ),
                       style: TextStyle(
                         height: 1.35,
                         fontSize: _effectiveSubtitleFontSize(context),
