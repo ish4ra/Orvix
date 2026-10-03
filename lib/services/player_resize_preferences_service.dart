@@ -1,3 +1,4 @@
+import 'package:flutter/painting.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum PlayerResizeMode {
@@ -17,6 +18,12 @@ extension PlayerResizeModeLabel on PlayerResizeMode {
         PlayerResizeMode.fit => PlayerResizeMode.fill,
         PlayerResizeMode.fill => PlayerResizeMode.zoom,
         PlayerResizeMode.zoom => PlayerResizeMode.fit,
+      };
+
+  BoxFit get boxFit => switch (this) {
+        PlayerResizeMode.fit => BoxFit.contain,
+        PlayerResizeMode.fill => BoxFit.fill,
+        PlayerResizeMode.zoom => BoxFit.cover,
       };
 }
 
