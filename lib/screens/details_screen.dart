@@ -1683,6 +1683,64 @@ class DetailsScreenState extends State<DetailsScreen> {
   }
 
   Widget _busyOverlay(MediaItem item) {
+    if (PlatformProfile.isAndroidMobile) {
+      return Positioned(
+        left: 0,
+        right: 0,
+        bottom: 0,
+        child: SafeArea(
+          top: false,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
+            decoration: const BoxDecoration(
+              color: Color(0xF20B0F0C),
+              border: Border(top: BorderSide(color: Color(0xFF263827))),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _status.isEmpty ? 'Preparing playback…' : _status,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFFE6ECE7),
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    if (_resolveProgress != null) ...[
+                      const SizedBox(width: 12),
+                      Text(
+                        '${(_resolveProgress! * 100).round()}%',
+                        style: const TextStyle(
+                          color: Color(0xFFB9FF45),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 9),
+                _resolveProgress == null
+                    ? const LinearProgressIndicator(minHeight: 3)
+                    : LinearProgressIndicator(
+                        value: _resolveProgress,
+                        minHeight: 3,
+                      ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     final backdrop = item.background ?? item.poster;
     return Positioned.fill(
       child: ColoredBox(
@@ -2738,8 +2796,6 @@ class DetailsScreenState extends State<DetailsScreen> {
               : ordered;
           final limitHiddenCount = totalAfterFilter - sorted.length;
           final best = sorted.isEmpty ? null : sorted.first;
-          final bestIsPinned = best != null &&
-              widget.sources.matchesPinned(best, pinnedIdentity);
           final color = Theme.of(context).colorScheme;
           final priorityText =
               priority.map((e) => e.label.toLowerCase()).join(' → ');
@@ -2758,6 +2814,39 @@ class DetailsScreenState extends State<DetailsScreen> {
               '$compatibilityHiddenCount risky hidden',
             if (limitHiddenCount > 0) '$limitHiddenCount beyond limit',
           ];
+
+          Widget quickPlayButton(SourceResult source) {
+            final waitingForProbe = freeStreamingRanking &&
+                source.isMagnet &&
+                !liveProbe.hasPlayableResult;
+            final pinned = widget.sources.matchesPinned(source, pinnedIdentity);
+            return FilledButton.tonalIcon(
+              onPressed: waitingForProbe
+                  ? null
+                  : () {
+                      liveProbe.freezeRanking(results, widget.sources);
+                      Navigator.pop(sheetContext, source);
+                    },
+              icon: Icon(
+                freeStreamingRanking && !liveProbe.hasPlayableResult
+                    ? Icons.radar_rounded
+                    : Icons.play_arrow_rounded,
+              ),
+              label: Text(
+                freeStreamingRanking && !liveProbe.hasPlayableResult
+                    ? 'Checking live…'
+                    : pinned
+                        ? 'Play pinned'
+                        : 'Quick Play ${source.quality ?? ''}'.trim(),
+              ),
+              style: FilledButton.styleFrom(
+                padding: EdgeInsets.symmetric(
+                  horizontal: compactSheet ? 14 : 18,
+                  vertical: compactSheet ? 10 : 12,
+                ),
+              ),
+            );
+          }
 
           return SafeArea(
             child: SizedBox(
@@ -2867,48 +2956,36 @@ class DetailsScreenState extends State<DetailsScreen> {
                             if (value) freeStreamingRanking = false;
                           }),
                         ),
-                        OutlinedButton.icon(
-                          onPressed: () =>
-                              customizePriority(sheetContext, setSheetState),
-                          icon: const Icon(Icons.tune_rounded),
-                          label: const Text('Sort'),
-                        ),
+                        if (!PlatformProfile.isAndroidMobile)
+                          OutlinedButton.icon(
+                            onPressed: () =>
+                                customizePriority(sheetContext, setSheetState),
+                            icon: const Icon(Icons.tune_rounded),
+                            label: const Text('Sort'),
+                          ),
                       ],
                     ),
-                    if (best != null) ...[
+                    if (PlatformProfile.isAndroidMobile) ...[
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () =>
+                                customizePriority(sheetContext, setSheetState),
+                            icon: const Icon(Icons.tune_rounded),
+                            label: const Text('Sort'),
+                          ),
+                          if (best != null) ...[
+                            const SizedBox(width: 10),
+                            Flexible(child: quickPlayButton(best)),
+                          ],
+                        ],
+                      ),
+                    ] else if (best != null) ...[
                       const SizedBox(height: 10),
                       Align(
                         alignment: Alignment.centerRight,
-                        child: FilledButton.tonalIcon(
-                          onPressed: freeStreamingRanking &&
-                                  best.isMagnet &&
-                                  !liveProbe.hasPlayableResult
-                              ? null
-                              : () {
-                                  liveProbe.freezeRanking(results, widget.sources);
-                                  Navigator.pop(sheetContext, best);
-                                },
-                          icon: Icon(
-                            freeStreamingRanking &&
-                                    !liveProbe.hasPlayableResult
-                                ? Icons.radar_rounded
-                                : Icons.play_arrow_rounded,
-                          ),
-                          label: Text(
-                            freeStreamingRanking &&
-                                    !liveProbe.hasPlayableResult
-                                ? 'Checking live…'
-                                : bestIsPinned
-                                    ? 'Play pinned'
-                                    : 'Quick Play ${best.quality ?? ''}'.trim(),
-                          ),
-                          style: FilledButton.styleFrom(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: compactSheet ? 14 : 18,
-                              vertical: compactSheet ? 10 : 12,
-                            ),
-                          ),
-                        ),
+                        child: quickPlayButton(best),
                       ),
                     ],
                     const SizedBox(height: 12),

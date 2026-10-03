@@ -3,23 +3,16 @@ class SubtitleRenderPolicy {
 
   static bool flutterOverlayVisible({
     required bool aiSinhalaRequested,
-    required bool isAndroid,
     required bool isNativePlayer,
   }) {
+    // Native playback uses libass. Do not flatten ASS/SSA into SubtitleView.
     if (aiSinhalaRequested) return false;
-    if (isAndroid) return true;
     return !isNativePlayer;
   }
 
   static bool nativeSubtitleVisible({
     required bool requestedVisible,
-    required bool aiSinhalaRequested,
-    required bool isAndroid,
-    required bool isBitmapTrack,
   }) {
-    if (!requestedVisible) return false;
-    if (aiSinhalaRequested) return true;
-    if (isAndroid) return isBitmapTrack;
-    return true;
+    return requestedVisible;
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/media_item.dart';
 import '../services/media_state_service.dart';
+import '../services/platform_profile.dart';
 import '../widgets/media_card.dart';
 
 enum _LibraryFilter { all, movies, tv }
@@ -63,8 +64,14 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
   @override
   Widget build(BuildContext context) {
     final visible = _visible;
+    final mobile = PlatformProfile.isAndroidMobile;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(32, 30, 32, 40),
+      padding: EdgeInsets.fromLTRB(
+        mobile ? 16 : 32,
+        mobile ? 20 : 30,
+        mobile ? 16 : 32,
+        mobile ? 24 : 40,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -127,18 +134,19 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
                     ? _EmptyLibrary(hasItems: _items.isNotEmpty)
                     : LayoutBuilder(
                         builder: (context, constraints) {
-                          final count =
-                              (constraints.maxWidth / 190).floor().clamp(2, 8);
+                          final count = mobile
+                              ? 3
+                              : (constraints.maxWidth / 190)
+                                  .floor()
+                                  .clamp(2, 8);
                           return GridView.builder(
                             itemCount: visible.length,
                             gridDelegate:
                                 SliverGridDelegateWithFixedCrossAxisCount(
                               crossAxisCount: count,
-                              crossAxisSpacing: 18,
-                              mainAxisSpacing: 22,
-                              // Match the TV-safe MediaCard height used by
-                              // Search so poster/title metadata never overflows.
-                              childAspectRatio: .50,
+                              crossAxisSpacing: mobile ? 12 : 18,
+                              mainAxisSpacing: mobile ? 16 : 22,
+                              childAspectRatio: mobile ? .56 : .50,
                             ),
                             itemBuilder: (context, index) {
                               final item = visible[index];
@@ -148,6 +156,7 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
                                     child: MediaCard(
                                       item: item,
                                       width: double.infinity,
+                                      compact: mobile,
                                       onTap: () => widget.onOpen(item),
                                     ),
                                   ),
@@ -157,9 +166,17 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
                                     child: IconButton.filledTonal(
                                       tooltip: 'Remove from Library',
                                       onPressed: () => _remove(item),
-                                      icon: const Icon(
-                                          Icons.bookmark_remove_outlined,
-                                          size: 19),
+                                      style: mobile
+                                          ? IconButton.styleFrom(
+                                              minimumSize: const Size(30, 30),
+                                              maximumSize: const Size(30, 30),
+                                              padding: EdgeInsets.zero,
+                                            )
+                                          : null,
+                                      icon: Icon(
+                                        Icons.bookmark_remove_outlined,
+                                        size: mobile ? 16 : 19,
+                                      ),
                                     ),
                                   ),
                                 ],
