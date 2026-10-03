@@ -76,6 +76,15 @@ void main() {
     expect(player, contains("preferred == 'eng' && _isEnglishTrack(track)"));
     expect(player, contains('for (final candidate in candidates)'));
     expect(player, contains('final nativePreferred = player.state.tracks.subtitle'));
+    expect(player, contains('var nativeSelected = false;'));
+    expect(player, contains('if (nativeSelected)'));
+    expect(
+      player,
+      contains(
+        'continue with the\n'
+        '          // already-materialized online subtitle',
+      ),
+    );
     expect(player, contains('await _activateNativeSubtitle(track);'));
     expect(player, contains('unawaited(_ensureNormalSubtitleSelection());'));
     expect(playback, contains("'slang': 'eng,en,en-US,en-GB'"));
