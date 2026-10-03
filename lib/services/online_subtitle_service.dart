@@ -367,6 +367,17 @@ class OnlineSubtitleService {
       throw StateError('Downloaded subtitle was empty.');
     }
 
+    final decodedText = utf8.decode(bytes, allowMalformed: true).trim();
+    final looksTimedText = extension == '.ass' || extension == '.ssa'
+        ? decodedText.contains('[Events]') ||
+            decodedText.contains('Dialogue:')
+        : decodedText.contains('-->');
+    if (!looksTimedText) {
+      throw StateError(
+        'Downloaded subtitle did not contain recognizable timed text.',
+      );
+    }
+
     final dir = Directory(
       '${Directory.systemTemp.path}${Platform.pathSeparator}'
       'orvix-online-subs',
