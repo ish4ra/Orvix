@@ -2499,9 +2499,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _loadResizePreference() async {
     final mode = await PlayerResizePreferencesService.load(
-      fallback: PlatformProfile.isAndroidMobile
-          ? PlayerResizeMode.zoom
-          : PlayerResizeMode.fit,
+      fallback: PlayerResizeMode.fit,
     );
     if (!mounted || _closing || _resizeModeSelectedByUser) return;
     setState(() => _resizeMode = mode);
@@ -2826,6 +2824,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         aiSinhalaRequested: _aiSinhalaRequested,
         isAndroid: Platform.isAndroid,
         isBitmapTrack: _isImageSubtitleTrack(selected),
+        nativeStyledSubtitles: PlatformProfile.isAndroidMobile,
       );
 
       if (nativeVisible && !_aiSinhalaRequested) {
@@ -5075,7 +5074,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     _subtitleAppearanceControls(setSheetState),
                     const SizedBox(height: 12),
                   ] else ...[
-                    if (Platform.isAndroid) ...[
+                    if (PlatformProfile.isAndroidMobile)
+                      const _EmptyTrackMessage(
+                        'Embedded subtitle styling, size, positioning and fonts are '
+                        'preserved by the native renderer when the source provides them.',
+                      )
+                    else if (Platform.isAndroid) ...[
                       const _EmptyTrackMessage(
                         'Android text subtitles use Orvix styling for consistent size. '
                         'Image-based subtitles such as PGS keep their source styling.',
@@ -5282,10 +5286,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 if (_error == null)
                   Video(
                     controller: widget.playback.controller,
-                    // Match Nuvio's resize model. Fit is the default and
-                    // preserves the source aspect ratio; Fill stretches to the
-                    // viewport; Zoom fills while preserving aspect ratio and
-                    // crops only the excess edge.
+                    width: double.infinity,
+                    height: double.infinity,
+                    // On Android Mobile the viewport itself must match the
+                    // physical player area. The previous source-sized viewport
+                    // could be fitted a second time and leave black space on
+                    // both axes. Fit now means one source-preserving fit into
+                    // the full player viewport: one axis touches the screen and
+                    // only the other axis may letterbox when aspect ratios differ.
+                    aspectRatio: PlatformProfile.isAndroidMobile
+                        ? MediaQuery.sizeOf(context).aspectRatio
+                        : null,
                     fit: _resizeMode.boxFit,
                     controls: NoVideoControls,
                     subtitleViewConfiguration: SubtitleViewConfiguration(
@@ -5299,6 +5310,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         isAndroid: Platform.isAndroid,
                         isNativePlayer:
                             widget.playback.player.platform is mk.NativePlayer,
+                        nativeStyledSubtitles: PlatformProfile.isAndroidMobile,
                       ),
                       // media_kit otherwise scales subtitle text again from a
                       // 1920x1080 reference. On Android logical pixels this can
