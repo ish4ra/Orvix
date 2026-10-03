@@ -1601,6 +1601,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
         }
       } else {
         await _setNativeSubtitleVisibility(true);
+        // Normal playback must not depend on the container marking a subtitle
+        // track as default. Apply the user's preferred language as soon as the
+        // native track list becomes available.
+        unawaited(_ensureNormalSubtitleSelection());
       }
 
       if (aiPreferred &&
@@ -2498,6 +2502,85 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _preferredSubtitleLanguage =
           OnlineSubtitleService.normalizeLanguage(language);
     });
+  }
+
+  Future<void> _ensureNormalSubtitleSelection() async {
+    if (_closing || _aiPreferenceEnabled || _subtitleChoiceOverridden) return;
+
+    final player = widget.playback.player;
+    final preferred = OnlineSubtitleService.normalizeLanguage(
+      await SubtitlePreferencesService.preferredLanguage(),
+    );
+    _preferredSubtitleLanguage = preferred;
+
+    for (var attempt = 0; attempt < 16 && mounted && !_closing; attempt++) {
+      if (_aiPreferenceEnabled || _subtitleChoiceOverridden) return;
+
+      final current = player.state.track.subtitle;
+      if (_isRealSubtitleTrack(current)) {
+        await _setNativeSubtitleVisibility(true);
+        await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
+        return;
+      }
+
+      final tracks = player.state.tracks.subtitle
+          .where(_isRealSubtitleTrack)
+          .toList(growable: false);
+      mk.SubtitleTrack? chosen;
+
+      if (preferred == 'eng') {
+        chosen = _bestNativeEnglishTextTrack() ??
+            _bestNativeEnglishBitmapTrack();
+      } else {
+        final preferredTracks = tracks.where((track) {
+          final language = OnlineSubtitleService.normalizeLanguage(
+            (track.language ?? '').trim(),
+          );
+          return language == preferred;
+        }).toList(growable: false);
+
+        if (preferredTracks.isNotEmpty) {
+          preferredTracks.sort((a, b) {
+            int score(mk.SubtitleTrack track) {
+              final title = (track.title ?? '').toLowerCase();
+              var value = _isImageSubtitleTrack(track) ? 0 : 20;
+              if (title.contains('full')) value += 10;
+              if (title.contains('forced')) value -= 80;
+              if (title.contains('commentary')) value -= 120;
+              return value;
+            }
+
+            return score(b).compareTo(score(a));
+          });
+          chosen = preferredTracks.first;
+        }
+      }
+
+      if (chosen == null) {
+        final unknownText =
+            tracks.where(_isUnlabeledTextTrack).toList(growable: false);
+        if (unknownText.length == 1) chosen = unknownText.first;
+      }
+
+      if (chosen != null) {
+        try {
+          await player.setSubtitleTrack(chosen);
+          await _setNativeSubtitleVisibility(true);
+          await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
+          return;
+        } catch (_) {
+          // Track metadata can arrive before the native player accepts the
+          // selection. Retry briefly without interrupting playback.
+        }
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 125));
+    }
+
+    // Even when no selectable track exists, keep the native renderer enabled
+    // so late/default tracks are never hidden by Orvix.
+    await _setNativeSubtitleVisibility(true);
+    await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
   }
 
   Future<void> _setNativeSubtitleVisibility(bool visible) async {
