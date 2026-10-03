@@ -57,4 +57,17 @@ void main() {
       contains('Source subtitle appearance is preserved by the native player.'),
     );
   });
+  test('normal playback auto-selects a preferred native subtitle when AI is off', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(player, contains('Future<void> _ensureNormalSubtitleSelection()'));
+    expect(
+      player,
+      contains('SubtitlePreferencesService.preferredLanguage()'),
+    );
+    expect(player, contains('_bestNativeEnglishTextTrack()'));
+    expect(player, contains('_bestNativeEnglishBitmapTrack()'));
+    expect(player, contains('unawaited(_ensureNormalSubtitleSelection());'));
+  });
+
 }
