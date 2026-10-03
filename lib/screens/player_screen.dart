@@ -2498,7 +2498,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _loadResizePreference() async {
-    final mode = await PlayerResizePreferencesService.load();
+    final mode = await PlayerResizePreferencesService.load(
+      fallback: PlatformProfile.isAndroidMobile
+          ? PlayerResizeMode.zoom
+          : PlayerResizeMode.fit,
+    );
     if (!mounted || _closing || _resizeModeSelectedByUser) return;
     setState(() => _resizeMode = mode);
   }
@@ -2816,8 +2820,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final platform = player.platform;
     if (platform is! mk.NativePlayer) return;
     try {
+      final selected = player.state.track.subtitle;
       final nativeVisible = SubtitleRenderPolicy.nativeSubtitleVisible(
         requestedVisible: visible,
+        aiSinhalaRequested: _aiSinhalaRequested,
+        isAndroid: Platform.isAndroid,
+        isBitmapTrack: _isImageSubtitleTrack(selected),
       );
 
       if (nativeVisible && !_aiSinhalaRequested) {
@@ -5067,10 +5075,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     _subtitleAppearanceControls(setSheetState),
                     const SizedBox(height: 12),
                   ] else ...[
-                    const _EmptyTrackMessage(
-                      'Source subtitle appearance, font size, positioning and embedded '
-                      'font styling are preserved by the native libass renderer.',
-                    ),
+                    if (Platform.isAndroid) ...[
+                      const _EmptyTrackMessage(
+                        'Android text subtitles use Orvix styling for consistent size. '
+                        'Image-based subtitles such as PGS keep their source styling.',
+                      ),
+                      const SizedBox(height: 12),
+                      _subtitleAppearanceControls(setSheetState),
+                    ] else
+                      const _EmptyTrackMessage(
+                        'Source subtitle appearance is preserved by the native player.',
+                      ),
                     const SizedBox(height: 12),
                     _subtitleSyncControls(setSheetState),
                     const SizedBox(height: 12),
@@ -5281,6 +5296,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       // native-player behavior.
                       visible: SubtitleRenderPolicy.flutterOverlayVisible(
                         aiSinhalaRequested: _aiSinhalaRequested,
+                        isAndroid: Platform.isAndroid,
                         isNativePlayer:
                             widget.playback.player.platform is mk.NativePlayer,
                       ),

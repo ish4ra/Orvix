@@ -14,9 +14,6 @@ class PlaybackService {
             bufferSize: Platform.isAndroid
                 ? 96 * 1024 * 1024
                 : 512 * 1024 * 1024,
-            // Preserve embedded ASS/SSA styling with MPV/libass instead of
-            // flattening normal text subtitles into Flutter Text widgets.
-            libass: true,
           ),
         ) {
     controller = VideoController(player);
@@ -52,10 +49,6 @@ class PlaybackService {
       // validates the selected track and replaces forced/commentary tracks
       // with a better embedded or online subtitle when needed.
       'slang': 'eng,en,en-US,en-GB',
-      // media_kit cannot discover Android system fonts through fontconfig.
-      // Point libass directly at the readable system font directory instead.
-      if (Platform.isAndroid) 'sub-fonts-dir': '/system/fonts',
-      if (Platform.isAndroid) 'sub-font': 'Noto Sans Sinhala',
       'stream-lavf-o':
           'reconnect=1,reconnect_on_network_error=1,reconnect_on_http_error=5xx,reconnect_delay_max=10',
     };
