@@ -2498,7 +2498,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _loadResizePreference() async {
-    final mode = await PlayerResizePreferencesService.load();
+    final mode = await PlayerResizePreferencesService.load(
+      fallback: PlatformProfile.isAndroidMobile
+          ? PlayerResizeMode.zoom
+          : PlayerResizeMode.fit,
+    );
     if (!mounted || _closing || _resizeModeSelectedByUser) return;
     setState(() => _resizeMode = mode);
   }
