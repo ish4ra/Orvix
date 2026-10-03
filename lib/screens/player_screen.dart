@@ -171,6 +171,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _androidMobilePlayerMode = false;
   bool _mobilePortraitPlayer = false;
   PlayerResizeMode _resizeMode = PlayerResizeMode.fit;
+  bool _resizeModeSelectedByUser = false;
   bool _tvControlFocused = false;
 
   bool get _desktop =>
@@ -2498,21 +2499,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _loadResizePreference() async {
     final mode = await PlayerResizePreferencesService.load();
-    if (!mounted || _closing) return;
+    if (!mounted || _closing || _resizeModeSelectedByUser) return;
     setState(() => _resizeMode = mode);
   }
 
   Future<void> _setResizeMode(PlayerResizeMode mode) async {
+    _resizeModeSelectedByUser = true;
     if (mounted) setState(() => _resizeMode = mode);
     await PlayerResizePreferencesService.save(mode);
     if (mounted) _showControls();
   }
-
-  BoxFit get _videoBoxFit => switch (_resizeMode) {
-        PlayerResizeMode.fit => BoxFit.contain,
-        PlayerResizeMode.fill => BoxFit.fill,
-        PlayerResizeMode.zoom => BoxFit.cover,
-      };
 
   Future<void> _loadSubtitlePreferences() async {
     final fontSize = await SubtitlePreferencesService.fontSize();
@@ -5286,7 +5282,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     // preserves the source aspect ratio; Fill stretches to the
                     // viewport; Zoom fills while preserving aspect ratio and
                     // crops only the excess edge.
-                    fit: _videoBoxFit,
+                    fit: _resizeMode.boxFit,
                     controls: NoVideoControls,
                     subtitleViewConfiguration: SubtitleViewConfiguration(
                       // media_kit's default libass=false mode renders text
