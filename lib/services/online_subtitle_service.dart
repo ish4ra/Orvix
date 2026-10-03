@@ -1,6 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:archive/archive.dart';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 
 import '../models/media_item.dart';
 import 'subdl_transcript_service.dart';
@@ -285,6 +288,114 @@ class OnlineSubtitleService {
         byUrl[candidate.url] = result;
       }
     }
+  }
+
+  static Future<File> materialize(OnlineSubtitleResult result) async {
+    final response = await http
+        .get(
+          Uri.parse(result.url),
+          headers: const {
+            'Accept': 'text/plain, application/octet-stream, application/zip, */*',
+            'User-Agent': 'Orvix-Subtitle-Client',
+          },
+        )
+        .timeout(const Duration(seconds: 20));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError(
+        'Subtitle download returned HTTP ${response.statusCode}.',
+      );
+    }
+
+    var bytes = response.bodyBytes;
+    var extension = _subtitleExtension(result.url, result.label);
+
+    if (bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
+      bytes = gzip.decode(bytes);
+    }
+
+    if (bytes.length >= 4 &&
+        bytes[0] == 0x50 &&
+        bytes[1] == 0x4b &&
+        (bytes[2] == 0x03 || bytes[2] == 0x05 || bytes[2] == 0x07) &&
+        (bytes[3] == 0x04 || bytes[3] == 0x06 || bytes[3] == 0x08)) {
+      final archive = ZipDecoder().decodeBytes(bytes, verify: true);
+      final subtitleFiles = archive.files.where((entry) {
+        if (!entry.isFile) return false;
+        final name = entry.name.toLowerCase();
+        if (name.startsWith('__macosx/') ||
+            name.split('/').last.startsWith('._')) {
+          return false;
+        }
+        return name.endsWith('.srt') ||
+            name.endsWith('.vtt') ||
+            name.endsWith('.ass') ||
+            name.endsWith('.ssa');
+      }).toList(growable: false);
+
+      if (subtitleFiles.isEmpty) {
+        throw StateError(
+          'Subtitle archive did not contain a supported subtitle file.',
+        );
+      }
+
+      int score(dynamic entry) {
+        final name = entry.name.toString().toLowerCase();
+        var value = entry.size is int ? entry.size as int : 0;
+        if (name.endsWith('.srt')) value += 4000000;
+        if (name.endsWith('.vtt')) value += 3000000;
+        if (name.endsWith('.ass')) value += 2000000;
+        if (name.endsWith('.ssa')) value += 1000000;
+        if (name.contains('forced') ||
+            name.contains('commentary') ||
+            name.contains('foreign only') ||
+            name.contains('signs')) {
+          value -= 8000000;
+        }
+        return value;
+      }
+
+      subtitleFiles.sort((a, b) => score(b).compareTo(score(a)));
+      final selected = subtitleFiles.first;
+      final content = selected.readBytes();
+      if (content == null || content.isEmpty) {
+        throw StateError('Subtitle archive entry was empty.');
+      }
+      bytes = content;
+      extension = _subtitleExtension(selected.name, selected.name);
+    }
+
+    if (bytes.isEmpty) {
+      throw StateError('Downloaded subtitle was empty.');
+    }
+
+    final temp = await getTemporaryDirectory();
+    final dir = Directory(
+      '${temp.path}${Platform.pathSeparator}orvix-online-subs',
+    );
+    await dir.create(recursive: true);
+
+    final safeId = result.id
+        .replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_');
+    final file = File(
+      '${dir.path}${Platform.pathSeparator}'
+      '${safeId.isEmpty ? 'subtitle' : safeId}_'
+      '${DateTime.now().microsecondsSinceEpoch}$extension',
+    );
+    await file.writeAsBytes(bytes, flush: true);
+    return file;
+  }
+
+  static String _subtitleExtension(String primary, String fallback) {
+    for (final raw in <String>[primary, fallback]) {
+      final value = raw.toLowerCase().split('?').first;
+      for (final extension in const <String>['.srt', '.vtt', '.ass', '.ssa']) {
+        if (value.endsWith(extension) || value.contains('$extension.')) {
+          return extension;
+        }
+      }
+    }
+    return '.srt';
   }
 
   static String normalizeLanguage(String raw) {
