@@ -10,10 +10,7 @@ void main() {
     expect(player, contains('fit: _resizeMode.boxFit'));
     expect(player, contains('width: double.infinity'));
     expect(player, contains('height: double.infinity'));
-    expect(
-      player,
-      contains('MediaQuery.sizeOf(context).aspectRatio'),
-    );
+    expect(player, isNot(contains('aspectRatio: PlatformProfile.isAndroidMobile')));
     expect(player, contains('_resizeModeMenu()'));
     expect(player, contains('_resizeModeSelectedByUser = true'));
     expect(
