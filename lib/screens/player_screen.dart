@@ -164,6 +164,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   String _preferredSubtitleLanguage =
       SubtitlePreferencesService.defaultPreferredLanguage;
   bool _subtitleChoiceOverridden = false;
+  File? _normalOnlineSubtitleFile;
+  Future<List<OnlineSubtitleResult>>? _normalOnlineSubtitleSearch;
   bool _androidMobilePlayerMode = false;
   bool _mobilePortraitPlayer = false;
   bool _tvControlFocused = false;
@@ -2507,6 +2509,184 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
   }
 
+  bool _isLikelyFullSubtitleTrack(dynamic track) {
+    if (!_isRealSubtitleTrack(track)) return false;
+    final title = (track.title ?? '').toString().trim().toLowerCase();
+    return !title.contains('forced') &&
+        !title.contains('commentary') &&
+        !title.contains('foreign only') &&
+        !title.contains('signs');
+  }
+
+  bool _subtitleLanguageMatches(dynamic track, String preferred) {
+    // English is frequently carried only in a track title while the language
+    // tag itself is blank/und. Preserve that common MKV case.
+    if (preferred == 'eng' && _isEnglishTrack(track)) return true;
+    final raw = (track.language ?? '').toString().trim().toLowerCase();
+    if (raw.isEmpty) return false;
+    final exact = OnlineSubtitleService.normalizeLanguage(raw);
+    if (exact == preferred) return true;
+    if (preferred.contains('-')) return false;
+    final base = raw.split(RegExp(r'[-_]')).first;
+    return OnlineSubtitleService.normalizeLanguage(base) == preferred;
+  }
+
+  List<OnlineSubtitleResult> _bestOnlineSubtitles(
+    List<OnlineSubtitleResult> results,
+    String preferred,
+  ) {
+    return results.where((entry) {
+      if (OnlineSubtitleService.normalizeLanguage(entry.language) != preferred) {
+        return false;
+      }
+      final label = entry.label.toLowerCase();
+      return !label.contains('forced') &&
+          !label.contains('commentary') &&
+          !label.contains('foreign only') &&
+          !label.contains('signs');
+    }).take(5).toList(growable: false);
+  }
+
+  Future<bool> _attachOnlineSubtitle(
+    OnlineSubtitleResult subtitle, {
+    required bool userOverride,
+  }) async {
+    if (_closing || (!userOverride && (_aiPreferenceEnabled || _subtitleChoiceOverridden))) {
+      return false;
+    }
+
+    File? file;
+    try {
+      file = await OnlineSubtitleService.materialize(subtitle);
+      if (_closing ||
+          (!userOverride &&
+              (_aiPreferenceEnabled || _subtitleChoiceOverridden))) {
+        try {
+          if (await file.exists()) await file.delete();
+        } catch (_) {}
+        return false;
+      }
+
+      final player = widget.playback.player;
+      final preferred = OnlineSubtitleService.normalizeLanguage(
+        subtitle.language,
+      );
+
+      if (!userOverride) {
+        final current = player.state.track.subtitle;
+        if (_isLikelyFullSubtitleTrack(current) &&
+            _subtitleLanguageMatches(current, preferred)) {
+          try {
+            if (await file.exists()) await file.delete();
+          } catch (_) {}
+          await _setNativeSubtitleVisibility(true);
+          await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
+          return true;
+        }
+
+        // Embedded metadata can arrive while the online request is in flight.
+        // Re-check the complete native track list before attaching a download
+        // so a release-authored preferred-language subtitle always wins.
+        final nativePreferred = player.state.tracks.subtitle
+            .where(_isLikelyFullSubtitleTrack)
+            .where((track) => _subtitleLanguageMatches(track, preferred))
+            .toList(growable: false);
+        if (nativePreferred.isNotEmpty) {
+          nativePreferred.sort((a, b) {
+            int score(mk.SubtitleTrack track) {
+              final title = (track.title ?? '').toLowerCase();
+              var value = _isImageSubtitleTrack(track) ? 0 : 20;
+              if (title.contains('full')) value += 10;
+              return value;
+            }
+
+            return score(b).compareTo(score(a));
+          });
+          var nativeSelected = false;
+          try {
+            await player.setSubtitleTrack(nativePreferred.first);
+            nativeSelected = true;
+          } catch (_) {
+            nativeSelected = false;
+          }
+          if (nativeSelected) {
+            if (await file.exists()) await file.delete();
+            await _setNativeSubtitleVisibility(true);
+            await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
+            return true;
+          }
+          // If the late embedded track cannot be selected, continue with the
+          // already-materialized online subtitle instead of reporting success
+          // while leaving the screen subtitle-less.
+        }
+      }
+
+      final uri = Platform.isWindows
+          ? Uri.file(file.path, windows: true).toString()
+          : Uri.file(file.path).toString();
+      final track = mk.SubtitleTrack.uri(
+        uri,
+        title: '${subtitle.languageLabel} • ${subtitle.provider}',
+        language: subtitle.language,
+      );
+
+      if (userOverride) {
+        // Preserve the exact behavior of choosing an embedded/local native
+        // subtitle: leave AI mode, cancel its timing state and make this an
+        // explicit user choice only after the local subtitle is ready.
+        await _activateNativeSubtitle(track);
+      } else {
+        await player.setSubtitleTrack(track);
+        await _setNativeSubtitleVisibility(true);
+        await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
+      }
+
+      final old = _normalOnlineSubtitleFile;
+      _normalOnlineSubtitleFile = file;
+      file = null;
+      if (old != null) {
+        try {
+          if (await old.exists()) await old.delete();
+        } catch (_) {}
+      }
+      return true;
+    } catch (_) {
+      if (file != null) {
+        try {
+          if (await file.exists()) await file.delete();
+        } catch (_) {}
+      }
+      return false;
+    }
+  }
+
+  Future<bool> _tryNormalOnlineSubtitleFallback(
+    Future<List<OnlineSubtitleResult>> search,
+    String preferred,
+  ) async {
+    if (_closing || _aiPreferenceEnabled || _subtitleChoiceOverridden) {
+      return false;
+    }
+    try {
+      final results = await search;
+      if (_closing || _aiPreferenceEnabled || _subtitleChoiceOverridden) {
+        return false;
+      }
+      final candidates = _bestOnlineSubtitles(results, preferred);
+      for (final candidate in candidates) {
+        if (await _attachOnlineSubtitle(candidate, userOverride: false)) {
+          return true;
+        }
+        if (_closing || _aiPreferenceEnabled || _subtitleChoiceOverridden) {
+          return false;
+        }
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _ensureNormalSubtitleSelection() async {
     if (_closing || _aiPreferenceEnabled || _subtitleChoiceOverridden) return;
 
@@ -2516,24 +2696,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
     _preferredSubtitleLanguage = preferred;
 
-    bool languageMatchesPreference(mk.SubtitleTrack track) {
-      final raw = (track.language ?? '').trim().toLowerCase();
-      if (raw.isEmpty) return false;
-      final exact = OnlineSubtitleService.normalizeLanguage(raw);
-      if (exact == preferred) return true;
-      if (preferred.contains('-')) return false;
-      final base = raw.split(RegExp(r'[-_]')).first;
-      return OnlineSubtitleService.normalizeLanguage(base) == preferred;
-    }
-
-    // Remote/P2P containers can publish subtitle metadata well after video
-    // playback has already started. Keep a lightweight bounded watcher alive
-    // for 30 seconds instead of assuming the first two seconds are enough.
+    // Give MPV a short window to expose embedded tracks. If the selected
+    // release has none, start an online lookup in parallel instead of leaving
+    // normal AI-off playback permanently subtitle-less.
     for (var attempt = 0; attempt < 120 && mounted && !_closing; attempt++) {
       if (_aiPreferenceEnabled || _subtitleChoiceOverridden) return;
 
       final current = player.state.track.subtitle;
-      if (_isRealSubtitleTrack(current)) {
+      if (_isLikelyFullSubtitleTrack(current) &&
+          (_subtitleLanguageMatches(current, preferred) ||
+              (preferred == 'eng' && _isUnlabeledTextTrack(current)))) {
         await _setNativeSubtitleVisibility(true);
         await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
         return;
@@ -2544,39 +2716,30 @@ class _PlayerScreenState extends State<PlayerScreen> {
           .toList(growable: false);
       mk.SubtitleTrack? chosen;
 
-      if (preferred == 'eng') {
-        // Prefer an explicitly English text track, then an explicitly English
-        // bitmap track. Only after both fail may a sole unlabeled text track
-        // stand in for English.
-        chosen = _bestNativeEnglishTextTrack(
-              allowUnlabeledFallback: false,
-            ) ??
-            _bestNativeEnglishBitmapTrack();
-      } else {
-        final preferredTracks = tracks
-            .where(languageMatchesPreference)
-            .toList(growable: false);
+      final preferredTracks = tracks
+          .where(_isLikelyFullSubtitleTrack)
+          .where((track) => _subtitleLanguageMatches(track, preferred))
+          .toList(growable: false);
 
-        if (preferredTracks.isNotEmpty) {
-          preferredTracks.sort((a, b) {
-            int score(mk.SubtitleTrack track) {
-              final title = (track.title ?? '').toLowerCase();
-              var value = _isImageSubtitleTrack(track) ? 0 : 20;
-              if (title.contains('full')) value += 10;
-              if (title.contains('forced')) value -= 80;
-              if (title.contains('commentary')) value -= 120;
-              return value;
-            }
+      if (preferredTracks.isNotEmpty) {
+        preferredTracks.sort((a, b) {
+          int score(mk.SubtitleTrack track) {
+            final title = (track.title ?? '').toLowerCase();
+            var value = _isImageSubtitleTrack(track) ? 0 : 20;
+            if (title.contains('full')) value += 10;
+            return value;
+          }
 
-            return score(b).compareTo(score(a));
-          });
-          chosen = preferredTracks.first;
-        }
+          return score(b).compareTo(score(a));
+        });
+        chosen = preferredTracks.first;
       }
 
-      if (chosen == null) {
-        final unknownText =
-            tracks.where(_isUnlabeledTextTrack).toList(growable: false);
+      if (chosen == null && preferred == 'eng') {
+        final unknownText = tracks
+            .where(_isLikelyFullSubtitleTrack)
+            .where(_isUnlabeledTextTrack)
+            .toList(growable: false);
         if (unknownText.length == 1) chosen = unknownText.first;
       }
 
@@ -2592,11 +2755,40 @@ class _PlayerScreenState extends State<PlayerScreen> {
         }
       }
 
+      if (attempt == 4 && widget.item != null) {
+        _normalOnlineSubtitleSearch ??= OnlineSubtitleService.search(
+          item: widget.item!,
+          episode: widget.episode,
+          releaseHint: widget.releaseHint,
+          videoSize: widget.expectedSizeBytes,
+          videoHash: widget.expectedVideoHash,
+          preferredLanguage: preferred,
+        );
+      }
+
+      if (attempt == 12 && _normalOnlineSubtitleSearch != null) {
+        if (await _tryNormalOnlineSubtitleFallback(
+          _normalOnlineSubtitleSearch!,
+          preferred,
+        )) {
+          return;
+        }
+      }
+
       await Future<void>.delayed(const Duration(milliseconds: 250));
     }
 
-    // Even when no selectable track exists, keep the native renderer enabled
-    // so a container-selected/default track is never hidden by Orvix.
+    if (_normalOnlineSubtitleSearch != null) {
+      if (await _tryNormalOnlineSubtitleFallback(
+        _normalOnlineSubtitleSearch!,
+        preferred,
+      )) {
+        return;
+      }
+    }
+
+    // Even when neither embedded nor online subtitles are available, leave the
+    // native renderer enabled so a late/default MPV track can still appear.
     await _setNativeSubtitleVisibility(true);
     await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
   }
@@ -2985,6 +3177,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (audioSrt != null) {
       try {
         if (await audioSrt.exists()) await audioSrt.delete();
+      } catch (_) {}
+    }
+    final normalOnlineSubtitle = _normalOnlineSubtitleFile;
+    _normalOnlineSubtitleFile = null;
+    _normalOnlineSubtitleSearch = null;
+    if (normalOnlineSubtitle != null) {
+      try {
+        if (await normalOnlineSubtitle.exists()) {
+          await normalOnlineSubtitle.delete();
+        }
       } catch (_) {}
     }
     if (Platform.isWindows && _localP2pStream) {
@@ -4490,14 +4692,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     .setPreferredLanguage(
                                   subtitle.language,
                                 );
-                                await _activateNativeSubtitle(
-                                  mk.SubtitleTrack.uri(
-                                    subtitle.url,
-                                    title:
-                                        '${subtitle.languageLabel} • ${subtitle.provider}',
-                                    language: subtitle.language,
-                                  ),
+                                final attached = await _attachOnlineSubtitle(
+                                  subtitle,
+                                  userOverride: true,
                                 );
+                                if (!attached && mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Could not load this online subtitle.',
+                                      ),
+                                    ),
+                                  );
+                                }
                                 if (sheetContext.mounted) {
                                   Navigator.pop(sheetContext);
                                 }

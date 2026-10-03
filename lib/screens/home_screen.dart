@@ -358,20 +358,27 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: EdgeInsets.zero,
             children: [
               if (hero != null)
-                _Hero(item: hero, onOpen: () => _openItem(hero)),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(32, 18, 32, 0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: _customizeHome,
-                      icon: const Icon(Icons.tune_rounded),
-                      label: const Text('Customize Home'),
-                    ),
-                  ],
+                _Hero(
+                  item: hero,
+                  onOpen: () => _openItem(hero),
+                  onCustomize: PlatformProfile.isAndroidMobile
+                      ? _customizeHome
+                      : null,
                 ),
-              ),
+              if (!PlatformProfile.isAndroidMobile)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(32, 18, 32, 0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _customizeHome,
+                        icon: const Icon(Icons.tune_rounded),
+                        label: const Text('Customize Home'),
+                      ),
+                    ],
+                  ),
+                ),
               for (final section in data.sections)
                 if (section == HomeSectionId.continueWatching)
                   if (data.continueWatching.isNotEmpty)
@@ -1189,13 +1196,19 @@ class _ContinueWideCardState extends State<_ContinueWideCard> {
 }
 
 class _Hero extends StatelessWidget {
-  const _Hero({required this.item, required this.onOpen});
+  const _Hero({
+    required this.item,
+    required this.onOpen,
+    this.onCustomize,
+  });
   final MediaItem item;
   final VoidCallback onOpen;
+  final VoidCallback? onCustomize;
 
   @override
   Widget build(BuildContext context) {
     final tv = PlatformProfile.isAndroidTv;
+    final mobile = PlatformProfile.isAndroidMobile;
     return SizedBox(
       height: tv ? 330 : 430,
       child: Stack(
@@ -1229,9 +1242,9 @@ class _Hero extends StatelessWidget {
           ),
           Padding(
             padding: EdgeInsets.fromLTRB(
-              tv ? 28 : 40,
+              tv ? 28 : (mobile ? 24 : 40),
               tv ? 40 : 70,
-              tv ? 28 : 40,
+              tv ? 28 : (mobile ? 24 : 40),
               tv ? 28 : 44,
             ),
             child: Align(
@@ -1271,10 +1284,52 @@ class _Hero extends StatelessWidget {
                       ),
                     ],
                     const SizedBox(height: 20),
-                    FilledButton.icon(
-                      onPressed: onOpen,
-                      icon: const Icon(Icons.play_arrow_rounded),
-                      label: const Text('View & Play'),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: onOpen,
+                            style: FilledButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 12,
+                              ),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            icon: const Icon(
+                              Icons.play_arrow_rounded,
+                              size: 18,
+                            ),
+                            label: const FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text('View & Play'),
+                            ),
+                          ),
+                        ),
+                        if (onCustomize != null) ...[
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: onCustomize,
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 12,
+                                ),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              icon: const Icon(
+                                Icons.tune_rounded,
+                                size: 18,
+                              ),
+                              label: const FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text('Customize Home'),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ],
                 ),
