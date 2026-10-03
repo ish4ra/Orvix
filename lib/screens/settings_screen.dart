@@ -242,7 +242,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const SizedBox(height: 12),
                     const Text(
-                      'Auto: ExoPlayer for normal Android HTTP/HLS/cloud streams; MPV for local P2P and complex/subtitle-heavy releases. If ExoPlayer fails in Auto, Orvix falls back to MPV. Manual ExoPlayer playback also offers a clean “Use MPV” action.',
+                      'Auto: MPV on Android so embedded, external, and AI subtitles all use the subtitle-capable player path. If MPV cannot start, Orvix can fall back to ExoPlayer. Manual ExoPlayer remains a compatibility option for sources that need it, but subtitle features require MPV.',
                       style: TextStyle(
                         color: Color(0xFF9CA99E),
                         fontSize: 12.5,

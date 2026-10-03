@@ -4298,9 +4298,11 @@ class DetailsScreenState extends State<DetailsScreen> {
         aiSinhalaEnabled: aiEnabled && !useLocalMediaBridge,
       );
 
-      final tvFreeP2pAuto = PlatformProfile.isAndroidTv &&
-          source?.isMagnet == true &&
-          preference == PlayerEnginePreference.auto;
+      final androidAutoFallbackToExo = Platform.isAndroid &&
+          preference == PlayerEnginePreference.auto &&
+          !aiSettingEnabled &&
+          !useLocalMediaBridge &&
+          source?.isMagnet != true;
 
       if (engine == PlayerEngineKind.exoPlayer && Platform.isAndroid) {
         final result = await _openExoPlayer(
@@ -4343,7 +4345,7 @@ class DetailsScreenState extends State<DetailsScreen> {
         preparedAiSubtitleFile: preparedAiSubtitleFile,
         aiPreflightAttempted: useLocalMediaBridge ? false : aiPreflightAttempted,
         aiPreflightFailure: useLocalMediaBridge ? null : aiPreflightFailure,
-        fallbackToExo: tvFreeP2pAuto,
+        fallbackToExo: androidAutoFallbackToExo,
         releaseLocalP2pOnExit: originalLocalP2p,
       );
     } finally {

@@ -1601,6 +1601,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
         }
       } else {
         await _setNativeSubtitleVisibility(true);
+        // Normal playback must not depend on the container marking a subtitle
+        // track as default. Apply the user's preferred language as soon as the
+        // native track list becomes available.
+        unawaited(_ensureNormalSubtitleSelection());
       }
 
       if (aiPreferred &&
@@ -1789,7 +1793,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return tracks.first;
   }
 
-  mk.SubtitleTrack? _bestNativeEnglishTextTrack() {
+  mk.SubtitleTrack? _bestNativeEnglishTextTrack({
+    bool allowUnlabeledFallback = true,
+  }) {
     final tracks = widget.playback.player.state.tracks.subtitle
         .where(_isRealSubtitleTrack)
         .where((track) => !_isImageSubtitleTrack(track))
@@ -1797,6 +1803,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     final english = tracks.where(_isEnglishTrack).toList(growable: false);
     if (english.isEmpty) {
+      if (!allowUnlabeledFallback) return null;
       // A surprising number of MKV releases tag their real English text
       // subtitle as "und" (or leave both language/title blank). Do not reject
       // that source outright when it is the only unlabeled text track.
@@ -2498,6 +2505,100 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _preferredSubtitleLanguage =
           OnlineSubtitleService.normalizeLanguage(language);
     });
+  }
+
+  Future<void> _ensureNormalSubtitleSelection() async {
+    if (_closing || _aiPreferenceEnabled || _subtitleChoiceOverridden) return;
+
+    final player = widget.playback.player;
+    final preferred = OnlineSubtitleService.normalizeLanguage(
+      await SubtitlePreferencesService.preferredLanguage(),
+    );
+    _preferredSubtitleLanguage = preferred;
+
+    bool languageMatchesPreference(mk.SubtitleTrack track) {
+      final raw = (track.language ?? '').trim().toLowerCase();
+      if (raw.isEmpty) return false;
+      final exact = OnlineSubtitleService.normalizeLanguage(raw);
+      if (exact == preferred) return true;
+      if (preferred.contains('-')) return false;
+      final base = raw.split(RegExp(r'[-_]')).first;
+      return OnlineSubtitleService.normalizeLanguage(base) == preferred;
+    }
+
+    // Remote/P2P containers can publish subtitle metadata well after video
+    // playback has already started. Keep a lightweight bounded watcher alive
+    // for 30 seconds instead of assuming the first two seconds are enough.
+    for (var attempt = 0; attempt < 120 && mounted && !_closing; attempt++) {
+      if (_aiPreferenceEnabled || _subtitleChoiceOverridden) return;
+
+      final current = player.state.track.subtitle;
+      if (_isRealSubtitleTrack(current)) {
+        await _setNativeSubtitleVisibility(true);
+        await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
+        return;
+      }
+
+      final tracks = player.state.tracks.subtitle
+          .where(_isRealSubtitleTrack)
+          .toList(growable: false);
+      mk.SubtitleTrack? chosen;
+
+      if (preferred == 'eng') {
+        // Prefer an explicitly English text track, then an explicitly English
+        // bitmap track. Only after both fail may a sole unlabeled text track
+        // stand in for English.
+        chosen = _bestNativeEnglishTextTrack(
+              allowUnlabeledFallback: false,
+            ) ??
+            _bestNativeEnglishBitmapTrack();
+      } else {
+        final preferredTracks = tracks
+            .where(languageMatchesPreference)
+            .toList(growable: false);
+
+        if (preferredTracks.isNotEmpty) {
+          preferredTracks.sort((a, b) {
+            int score(mk.SubtitleTrack track) {
+              final title = (track.title ?? '').toLowerCase();
+              var value = _isImageSubtitleTrack(track) ? 0 : 20;
+              if (title.contains('full')) value += 10;
+              if (title.contains('forced')) value -= 80;
+              if (title.contains('commentary')) value -= 120;
+              return value;
+            }
+
+            return score(b).compareTo(score(a));
+          });
+          chosen = preferredTracks.first;
+        }
+      }
+
+      if (chosen == null) {
+        final unknownText =
+            tracks.where(_isUnlabeledTextTrack).toList(growable: false);
+        if (unknownText.length == 1) chosen = unknownText.first;
+      }
+
+      if (chosen != null) {
+        try {
+          await player.setSubtitleTrack(chosen);
+          await _setNativeSubtitleVisibility(true);
+          await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
+          return;
+        } catch (_) {
+          // Track metadata can arrive before the native player accepts the
+          // selection. Keep watching while playback remains active.
+        }
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+
+    // Even when no selectable track exists, keep the native renderer enabled
+    // so a container-selected/default track is never hidden by Orvix.
+    await _setNativeSubtitleVisibility(true);
+    await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
   }
 
   Future<void> _setNativeSubtitleVisibility(bool visible) async {
