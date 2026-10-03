@@ -63,34 +63,11 @@ class PlayerEngineRouter {
         break;
     }
 
-    final uri = Uri.tryParse(url);
-    final localP2p = uri != null &&
-        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
-        uri.port == 11470;
-
-    // Free/local P2P is intentionally MPV-first on Android TV. In real TV
-    // testing MPV has been the more tolerant path for the local torrent HTTP
-    // stream, while ordinary remote/debrid HTTP streams remain Exo-first.
-    // Android mobile keeps Exo-first local P2P behavior.
-    if (localP2p && isAndroidTv) return PlayerEngineKind.mpv;
-    if (localP2p) return PlayerEngineKind.exoPlayer;
-
-    final hint = '${releaseHint ?? ''} ${uri?.path ?? ''}'.toLowerCase();
-    final complex = RegExp(
-      r'\b(?:hi10p|10bit|10-bit|av1|av01|dovi|dolby[ ._-]?vision|'
-      r'truehd|dts-hd|dts:x|flac)\b',
-    ).hasMatch(hint);
-    final containerPrefersMpv = RegExp(
-      r'\.(?:mkv|avi|m2ts|ts|wmv)(?:\?|$)',
-    ).hasMatch(uri?.path.toLowerCase() ?? '') ||
-        RegExp(r'\b(?:mkv|matroska)\b').hasMatch(hint);
-    if (complex || containerPrefersMpv) return PlayerEngineKind.mpv;
-
-    final scheme = uri?.scheme.toLowerCase();
-    if (scheme == 'http' || scheme == 'https') {
-      return PlayerEngineKind.exoPlayer;
-    }
-
+    // The Flutter video_player/ExoPlayer compatibility screen does not expose
+    // embedded or external subtitle tracks to Orvix. Auto therefore uses the
+    // subtitle-capable MPV path on Android mobile and Android TV as well.
+    // ExoPlayer remains available as an explicit manual compatibility choice,
+    // and Auto can fall back to it only when MPV itself cannot start.
     return PlayerEngineKind.mpv;
   }
 }
