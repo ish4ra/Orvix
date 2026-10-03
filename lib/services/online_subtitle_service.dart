@@ -305,7 +305,7 @@ class OnlineSubtitleService {
       );
     }
 
-    var bytes = response.bodyBytes;
+    List<int> bytes = response.bodyBytes;
     var extension = _subtitleExtension(result.url, result.label);
 
     if (bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
