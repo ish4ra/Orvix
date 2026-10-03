@@ -167,4 +167,17 @@ void main() {
     expect(player, contains('isBitmapTrack: _isImageSubtitleTrack(selected)'));
   });
 
+  test('Android text subtitles use direct Orvix sizing and selected MPV track id', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(player, contains('textScaler: TextScaler.noScaling'));
+    expect(player, contains("'current-tracks/sub/id'"));
+    expect(player, contains("for (final property in const <String>['current-tracks/sub/id', 'sid'])"));
+    expect(player, contains('selected: activeSubtitleId == track.id'));
+    expect(
+      player,
+      contains('Android text subtitles use Orvix styling for consistent size.'),
+    );
+  });
+
 }

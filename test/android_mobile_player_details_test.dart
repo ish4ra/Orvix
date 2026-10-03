@@ -3,12 +3,17 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('Android mobile playback fills the physical display', () {
+  test('Player defaults to aspect-preserving Fit with user resize modes', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
-    expect(player, contains('PlatformProfile.isAndroidMobile'));
-    expect(player, contains('? BoxFit.cover'));
-    expect(player, contains(': BoxFit.contain'));
+    expect(player, contains('PlayerResizeMode _resizeMode = PlayerResizeMode.fit'));
+    expect(player, contains('fit: _resizeMode.boxFit'));
+    expect(player, contains('_resizeModeMenu()'));
+    expect(player, contains('_resizeModeSelectedByUser = true'));
+    expect(
+      player,
+      contains('if (!mounted || _closing || _resizeModeSelectedByUser) return;'),
+    );
   });
 
   test('Mobile season controls stay compact and Play uses Orvix lime family', () {

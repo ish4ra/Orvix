@@ -20,6 +20,7 @@ import '../services/native_subtitle_event_parser.dart';
 import '../services/online_subtitle_service.dart';
 import '../services/playback_service.dart';
 import '../services/platform_profile.dart';
+import '../services/player_resize_preferences_service.dart';
 import '../services/subtitle_preferences_service.dart';
 import '../services/subtitle_render_policy.dart';
 import '../services/skip_segment_service.dart';
@@ -169,6 +170,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<List<OnlineSubtitleResult>>? _normalOnlineSubtitleSearch;
   bool _androidMobilePlayerMode = false;
   bool _mobilePortraitPlayer = false;
+  PlayerResizeMode _resizeMode = PlayerResizeMode.fit;
+  bool _resizeModeSelectedByUser = false;
   bool _tvControlFocused = false;
 
   bool get _desktop =>
@@ -792,6 +795,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _preparedAiSubtitle = null;
     _aiState = const AiSinhalaRuntimeState.native();
     unawaited(_loadSubtitlePreferences());
+    unawaited(_loadResizePreference());
     unawaited(_loadSkipSegments());
     _playbackErrorSubscription =
         widget.playback.player.stream.error.listen(_onPlaybackError);
@@ -2491,6 +2495,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
       });
       unawaited(_discoverNativeCueAiAfterPlayback());
     }
+  }
+
+  Future<void> _loadResizePreference() async {
+    final mode = await PlayerResizePreferencesService.load();
+    if (!mounted || _closing || _resizeModeSelectedByUser) return;
+    setState(() => _resizeMode = mode);
+  }
+
+  Future<void> _setResizeMode(PlayerResizeMode mode) async {
+    _resizeModeSelectedByUser = true;
+    if (mounted) setState(() => _resizeMode = mode);
+    await PlayerResizePreferencesService.save(mode);
+    if (mounted) _showControls();
   }
 
   Future<void> _loadSubtitlePreferences() async {
@@ -4914,6 +4931,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
         .where((track) => track.id.toLowerCase() != 'no')
         .toList(growable: false);
 
+    var activeSubtitleId = player.state.track.subtitle.id.trim();
+    final nativePlatform = player.platform;
+    if (nativePlatform is mk.NativePlayer) {
+      for (final property in const <String>['current-tracks/sub/id', 'sid']) {
+        try {
+          final value = (await nativePlatform.getProperty(
+            property,
+            waitForInitialization: false,
+          ))
+              .trim();
+          if (value.isNotEmpty && value.toLowerCase() != 'auto') {
+            activeSubtitleId = value;
+            break;
+          }
+        } catch (_) {}
+      }
+    }
+
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF0D120E),
@@ -5036,9 +5071,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     _subtitleAppearanceControls(setSheetState),
                     const SizedBox(height: 12),
                   ] else ...[
-                    const _EmptyTrackMessage(
-                      'Source subtitle appearance is preserved by the native player.',
-                    ),
+                    if (Platform.isAndroid) ...[
+                      const _EmptyTrackMessage(
+                        'Android text subtitles use Orvix styling for consistent size. '
+                        'Image-based subtitles such as PGS keep their source styling.',
+                      ),
+                      const SizedBox(height: 12),
+                      _subtitleAppearanceControls(setSheetState),
+                    ] else
+                      const _EmptyTrackMessage(
+                        'Source subtitle appearance is preserved by the native player.',
+                      ),
                     const SizedBox(height: 12),
                     _subtitleSyncControls(setSheetState),
                     const SizedBox(height: 12),
@@ -5144,7 +5187,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     (track) => _TrackTile(
                       title: _trackLabel(track.title, track.language, track.id),
                       detail: track.codec ?? 'Embedded subtitle',
-                      selected: player.state.track.subtitle.id == track.id,
+                      selected: activeSubtitleId == track.id ||
+                          player.state.track.subtitle.id == track.id,
                       onTap: () async {
                         await _activateNativeSubtitle(track);
                         if (sheetContext.mounted) Navigator.pop(sheetContext);
@@ -5234,12 +5278,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 if (_error == null)
                   Video(
                     controller: widget.playback.controller,
-                    // On phones, fill the physical display and crop only the
-                    // excess edge when the source aspect ratio differs. The
-                    // previous contain fit letterboxed inside both dimensions.
-                    fit: PlatformProfile.isAndroidMobile
-                        ? BoxFit.cover
-                        : BoxFit.contain,
+                    // Match Nuvio's resize model. Fit is the default and
+                    // preserves the source aspect ratio; Fill stretches to the
+                    // viewport; Zoom fills while preserving aspect ratio and
+                    // crops only the excess edge.
+                    fit: _resizeMode.boxFit,
                     controls: NoVideoControls,
                     subtitleViewConfiguration: SubtitleViewConfiguration(
                       // media_kit's default libass=false mode renders text
@@ -5253,6 +5296,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         isNativePlayer:
                             widget.playback.player.platform is mk.NativePlayer,
                       ),
+                      // media_kit otherwise scales subtitle text again from a
+                      // 1920x1080 reference. On Android logical pixels this can
+                      // shrink an 18-26sp subtitle into single-digit text.
+                      textScaler: TextScaler.noScaling,
                       style: TextStyle(
                         height: 1.35,
                         fontSize: _effectiveSubtitleFontSize(context),
@@ -5615,6 +5662,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     onPressed: _showTracks,
                                     onFocusChange: _handleTvControlFocus,
                                   ),
+                                  const SizedBox(width: 14),
+                                  _TvPlayerAction(
+                                    icon: Icons.aspect_ratio_rounded,
+                                    label: _resizeMode.label,
+                                    semanticLabel:
+                                        'Video size ${_resizeMode.label}',
+                                    onPressed: () =>
+                                        _setResizeMode(_resizeMode.next),
+                                    onFocusChange: _handleTvControlFocus,
+                                  ),
                                 ],
                               ),
                             ],
@@ -5629,6 +5686,34 @@ class _PlayerScreenState extends State<PlayerScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _resizeModeMenu() {
+    return PopupMenuButton<PlayerResizeMode>(
+      tooltip: 'Video size • ${_resizeMode.label}',
+      initialValue: _resizeMode,
+      onSelected: _setResizeMode,
+      itemBuilder: (_) => PlayerResizeMode.values
+          .map(
+            (mode) => PopupMenuItem<PlayerResizeMode>(
+              value: mode,
+              child: Row(
+                children: [
+                  Icon(
+                    mode == _resizeMode
+                        ? Icons.check_rounded
+                        : Icons.aspect_ratio_rounded,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(mode.label),
+                ],
+              ),
+            ),
+          )
+          .toList(growable: false),
+      icon: const Icon(Icons.aspect_ratio_rounded),
     );
   }
 
@@ -5850,6 +5935,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                 onPressed: _showTracks,
                                 icon: const Icon(Icons.subtitles_rounded),
                               ),
+                              _resizeModeMenu(),
                               if (_androidMobilePlayerMode)
                                 IconButton(
                                   tooltip: _mobilePortraitPlayer
@@ -5966,6 +6052,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           onPressed: _showTracks,
           icon: const Icon(Icons.subtitles_rounded),
         ),
+        _resizeModeMenu(),
         if (_androidMobilePlayerMode)
           IconButton(
             tooltip: _mobilePortraitPlayer
