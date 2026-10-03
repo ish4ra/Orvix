@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
@@ -44,10 +45,13 @@ enum AppUpdateInstallResult {
 }
 
 class AppUpdateService {
-  AppUpdateService({http.Client? client}) : _client = client ?? http.Client();
+  AppUpdateService({
+    http.Client? client,
+    Future<String> Function()? installedVersionLoader,
+  })  : _client = client ?? http.Client(),
+        _installedVersionLoader =
+            installedVersionLoader ?? installedVersion;
 
-  // Keep this synchronized with pubspec.yaml; CI regression coverage enforces it.
-  static const currentVersion = '0.7.9-beta.41';
   static const _releasesBaseUrl =
       'https://api.github.com/repos/ish4ra/Orvix/releases';
   static const _releaseAssetFetchAttempts = 5;
@@ -55,6 +59,35 @@ class AppUpdateService {
       MethodChannel('orvix/app_update');
 
   http.Client _client;
+  final Future<String> Function() _installedVersionLoader;
+  String? _installedVersionCache;
+
+  static Future<String>? _installedVersionFuture;
+
+  static Future<String> installedVersion() {
+    return _installedVersionFuture ??= _loadInstalledVersion();
+  }
+
+  static Future<String> _loadInstalledVersion() async {
+    final info = await PackageInfo.fromPlatform();
+    final version = info.version.trim();
+    if (version.isEmpty) {
+      throw StateError('Installed Orvix version is unavailable.');
+    }
+    return version;
+  }
+
+  Future<String> _currentVersion() async {
+    final cached = _installedVersionCache;
+    if (cached != null && cached.isNotEmpty) return cached;
+
+    final version = (await _installedVersionLoader()).trim();
+    if (version.isEmpty) {
+      throw StateError('Installed Orvix version is unavailable.');
+    }
+    _installedVersionCache = version;
+    return version;
+  }
 
   void _resetClient() {
     _client.close();
@@ -76,6 +109,7 @@ class AppUpdateService {
       final parts = raw.split('|');
       if (parts.length < 3) return null;
       final version = parts.sublist(2).join('|');
+      final currentVersion = await _currentVersion();
       // A manual/newer install may leave an old helper status file behind.
       // Never surface a stale failure for an older target version.
       if (isVersionNewer(currentVersion, version)) return null;
@@ -117,6 +151,7 @@ class AppUpdateService {
       final decoded = jsonDecode(response.body);
       if (decoded is! List) return null;
 
+      final currentVersion = await _currentVersion();
       AppUpdateInfo? best;
       for (final raw in decoded) {
         if (raw is! Map<String, dynamic>) continue;

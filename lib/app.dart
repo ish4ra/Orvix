@@ -736,12 +736,20 @@ class _AboutScreen extends StatelessWidget {
                 showWordmark: true,
               ),
               const SizedBox(height: 26),
-              Text(
-                'Orvix v${AppUpdateService.currentVersion}',
-                style: Theme.of(context)
-                    .textTheme
-                    .headlineMedium
-                    ?.copyWith(fontWeight: FontWeight.w900),
+              FutureBuilder<String>(
+                future: AppUpdateService.installedVersion(),
+                builder: (context, snapshot) {
+                  final version = snapshot.data?.trim();
+                  return Text(
+                    version == null || version.isEmpty
+                        ? 'Orvix'
+                        : 'Orvix v$version',
+                    style: Theme.of(context)
+                        .textTheme
+                        .headlineMedium
+                        ?.copyWith(fontWeight: FontWeight.w900),
+                  );
+                },
               ),
               const SizedBox(height: 12),
               const Text(

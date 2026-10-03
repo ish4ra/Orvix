@@ -7,7 +7,6 @@ void main() {
     final app = File('lib/app.dart').readAsStringSync();
     final update =
         File('lib/services/app_update_service.dart').readAsStringSync();
-    final pubspec = File('pubspec.yaml').readAsStringSync();
     final gate =
         File('lib/widgets/orvix_update_gate.dart').readAsStringSync();
     final torrent =
@@ -36,15 +35,15 @@ void main() {
     expect(app, contains('AppLifecycleState.detached'));
     expect(app, contains('OrvixUpdateGate'));
 
-    final packageVersion = RegExp(
-      r'^version:\s*([^+\s]+)',
-      multiLine: true,
-    ).firstMatch(pubspec)?.group(1);
-    final updaterVersion = RegExp(
-      r"currentVersion\s*=\s*'([^']+)'",
-    ).firstMatch(update)?.group(1);
-    expect(packageVersion, isNotNull);
-    expect(updaterVersion, packageVersion);
+    // The updater reads the installed app version from platform package
+    // metadata, so a release bump cannot leave a stale hard-coded beta behind.
+    expect(
+      update,
+      contains("package:package_info_plus/package_info_plus.dart"),
+    );
+    expect(update, contains('PackageInfo.fromPlatform()'));
+    expect(update, contains('final currentVersion = await _currentVersion();'));
+    expect(update, isNot(contains('static const currentVersion')));
     expect(update, contains("name.contains('Windows-x64')"));
     expect(update, contains('Android-TV.apk'));
     expect(update, contains('Android-Mobile.apk'));

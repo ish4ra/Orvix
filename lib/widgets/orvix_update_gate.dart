@@ -250,20 +250,38 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
                                 ),
                               ),
                               const SizedBox(height: 2),
-                              Text(
-                                _applying
-                                    ? 'Orvix will close; finish setup in the Windows installer'
-                                    : _installing
-                                        ? '${(_progress * 100).round()}% downloaded'
-                                        : 'Installed: ${AppUpdateService.currentVersion} • View what changed',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Color(0xFFAEB7B0),
-                                  fontSize: 11.5,
-                                  fontWeight: FontWeight.w600,
+                              if (_applying || _installing)
+                                Text(
+                                  _applying
+                                      ? 'Orvix will close; finish setup in the Windows installer'
+                                      : '${(_progress * 100).round()}% downloaded',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Color(0xFFAEB7B0),
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                )
+                              else
+                                FutureBuilder<String>(
+                                  future: AppUpdateService.installedVersion(),
+                                  builder: (context, snapshot) {
+                                    final version = snapshot.data?.trim();
+                                    return Text(
+                                      version == null || version.isEmpty
+                                          ? 'View what changed'
+                                          : 'Installed: $version • View what changed',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Color(0xFFAEB7B0),
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    );
+                                  },
                                 ),
-                              ),
                             ],
                           ),
                         ),
