@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import 'platform_profile.dart';
 
 class PlaybackService {
   PlaybackService()
@@ -14,6 +15,20 @@ class PlaybackService {
             bufferSize: Platform.isAndroid
                 ? 96 * 1024 * 1024
                 : 512 * 1024 * 1024,
+            // Android Mobile must use media_kit's supported libass setup as a
+            // complete unit. Enabling libass without the Android asset font
+            // makes Video hide Flutter SubtitleView while libass has no usable
+            // font configuration, which was the beta.46 disappearing-sub bug.
+            //
+            // With the asset font configured, libass can render the embedded
+            // subtitle track itself and preserve ASS/SSA authored styling,
+            // sizing, positioning and embedded font attachments.
+            libass: PlatformProfile.isAndroidMobile,
+            libassAndroidFont: PlatformProfile.isAndroidMobile
+                ? 'assets/fonts/NotoSansSinhala-Regular.ttf'
+                : null,
+            libassAndroidFontName:
+                PlatformProfile.isAndroidMobile ? 'Noto Sans Sinhala' : null,
           ),
         ) {
     controller = VideoController(player);
