@@ -1,30 +1,36 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:orvix/main.dart';
+import 'package:orvix/services/supporters_service.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  group('OrvixSupporter', () {
+    test('maps provider data without exposing missing names', () {
+      final supporter = OrvixSupporter.fromJson({
+        'display_name': '  ',
+        'provider': 'kofi',
+        'support_type': 'Member',
+        'tier': 'Bronze',
+        'supporter_since': '2026-09-30T00:00:00Z',
+      });
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+      expect(supporter.name, 'Anonymous supporter');
+      expect(supporter.providerLabel, 'Ko-fi');
+      expect(supporter.supportType, 'Member');
+      expect(supporter.tier, 'Bronze');
+      expect(supporter.since.toUtc(), DateTime.utc(2026, 9, 30));
+    });
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+  group('OrvixContributor', () {
+    test('maps GitHub contributor data', () {
+      final contributor = OrvixContributor.fromJson({
+        'login': 'contributor',
+        'contributions': 7,
+        'avatar_url': 'https://example.com/avatar.png',
+      });
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+      expect(contributor.login, 'contributor');
+      expect(contributor.contributions, 7);
+      expect(contributor.avatarUrl, 'https://example.com/avatar.png');
+    });
   });
 }
