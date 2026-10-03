@@ -2581,6 +2581,33 @@ class _PlayerScreenState extends State<PlayerScreen> {
           await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
           return true;
         }
+
+        // Embedded metadata can arrive while the online request is in flight.
+        // Re-check the complete native track list before attaching a download
+        // so a release-authored preferred-language subtitle always wins.
+        final nativePreferred = player.state.tracks.subtitle
+            .where(_isLikelyFullSubtitleTrack)
+            .where((track) => _subtitleLanguageMatches(track, preferred))
+            .toList(growable: false);
+        if (nativePreferred.isNotEmpty) {
+          nativePreferred.sort((a, b) {
+            int score(mk.SubtitleTrack track) {
+              final title = (track.title ?? '').toLowerCase();
+              var value = _isImageSubtitleTrack(track) ? 0 : 20;
+              if (title.contains('full')) value += 10;
+              return value;
+            }
+
+            return score(b).compareTo(score(a));
+          });
+          try {
+            await player.setSubtitleTrack(nativePreferred.first);
+            if (await file.exists()) await file.delete();
+          } catch (_) {}
+          await _setNativeSubtitleVisibility(true);
+          await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
+          return true;
+        }
       }
 
       final uri = Platform.isWindows
