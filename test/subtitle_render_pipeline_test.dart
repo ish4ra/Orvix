@@ -190,4 +190,15 @@ void main() {
     );
   });
 
+  test('Android Mobile embedded subtitle selection reaches native sid', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(player, contains('Future<bool> _selectEmbeddedSubtitleReliably('));
+    expect(player, contains("'current-tracks/sub/id'"));
+    expect(player, contains("await platform.setProperty(\n            'sid',"));
+    expect(player, contains("'sub-visibility',\n            'yes'"));
+    expect(player, contains("'sub-ass-override',\n            'no'"));
+    expect(player, contains('fallbackTracks.first'));
+  });
+
 }
