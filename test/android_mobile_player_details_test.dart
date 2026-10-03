@@ -7,10 +7,13 @@ void main() {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(player, contains('PlayerResizeMode _resizeMode = PlayerResizeMode.fit'));
-    expect(player, contains('PlayerResizeMode.fit => BoxFit.contain'));
-    expect(player, contains('PlayerResizeMode.fill => BoxFit.fill'));
-    expect(player, contains('PlayerResizeMode.zoom => BoxFit.cover'));
+    expect(player, contains('fit: _resizeMode.boxFit'));
     expect(player, contains('_resizeModeMenu()'));
+    expect(player, contains('_resizeModeSelectedByUser = true'));
+    expect(
+      player,
+      contains('if (!mounted || _closing || _resizeModeSelectedByUser) return;'),
+    );
   });
 
   test('Mobile season controls stay compact and Play uses Orvix lime family', () {
