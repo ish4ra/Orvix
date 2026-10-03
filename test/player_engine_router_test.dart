@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:orvix/services/player_engine_preferences_service.dart';
 
 void main() {
-  test('Auto uses ExoPlayer first for local P2P stream-server URLs', () {
+  test('Auto keeps Android mobile local P2P on subtitle-capable MPV', () {
     final engine = PlayerEngineRouter.choose(
       preference: PlayerEnginePreference.auto,
       isAndroid: true,
@@ -10,10 +10,10 @@ void main() {
       releaseHint: 'Prison.Break.S01E01.1080p.WEB-DL.x264.mkv',
     );
 
-    expect(engine, PlayerEngineKind.exoPlayer);
+    expect(engine, PlayerEngineKind.mpv);
   });
 
-  test('Auto uses MPV first for Android TV local P2P', () {
+  test('Auto keeps Android TV local P2P on subtitle-capable MPV', () {
     final engine = PlayerEngineRouter.choose(
       preference: PlayerEnginePreference.auto,
       isAndroid: true,
@@ -25,7 +25,7 @@ void main() {
     expect(engine, PlayerEngineKind.mpv);
   });
 
-  test('Android TV debrid/remote HTTP still uses ExoPlayer first', () {
+  test('Auto keeps Android TV remote HTTP on subtitle-capable MPV', () {
     final engine = PlayerEngineRouter.choose(
       preference: PlayerEnginePreference.auto,
       isAndroid: true,
@@ -34,10 +34,10 @@ void main() {
       releaseHint: 'Episode 1',
     );
 
-    expect(engine, PlayerEngineKind.exoPlayer);
+    expect(engine, PlayerEngineKind.mpv);
   });
 
-  test('Auto uses ExoPlayer for ordinary Android HTTP streams', () {
+  test('Auto keeps ordinary Android HTTP streams on subtitle-capable MPV', () {
     final engine = PlayerEngineRouter.choose(
       preference: PlayerEnginePreference.auto,
       isAndroid: true,
@@ -45,7 +45,7 @@ void main() {
       releaseHint: 'Episode 1',
     );
 
-    expect(engine, PlayerEngineKind.exoPlayer);
+    expect(engine, PlayerEngineKind.mpv);
   });
 
   test('Auto uses MPV for complex release hints', () {
@@ -54,17 +54,6 @@ void main() {
       isAndroid: true,
       url: 'https://cdn.example.com/movie.mkv',
       releaseHint: '2160p.DV.TrueHD.DTS-HD',
-    );
-
-    expect(engine, PlayerEngineKind.mpv);
-  });
-
-  test('Auto keeps MKV on MPV for advanced tracks and subtitles', () {
-    final engine = PlayerEngineRouter.choose(
-      preference: PlayerEnginePreference.auto,
-      isAndroid: true,
-      url: 'https://cdn.example.com/movie.mkv',
-      releaseHint: 'Movie.1080p.WEB-DL.x264.mkv',
     );
 
     expect(engine, PlayerEngineKind.mpv);
@@ -89,7 +78,7 @@ void main() {
     expect(tv, PlayerEngineKind.mpv);
   });
 
-  test('Manual engine preference overrides Auto rules on Android', () {
+  test('Manual ExoPlayer remains an explicit Android compatibility choice', () {
     final forcedExo = PlayerEngineRouter.choose(
       preference: PlayerEnginePreference.exoPlayer,
       isAndroid: true,
