@@ -30,7 +30,7 @@ extension PlayerResizeModeLabel on PlayerResizeMode {
 class PlayerResizePreferencesService {
   PlayerResizePreferencesService._();
 
-  static const _key = 'orvix_player_resize_mode_v1';
+  static const _key = 'orvix_player_resize_mode_v2';
 
   static Future<PlayerResizeMode> load({
     PlayerResizeMode fallback = PlayerResizeMode.fit,

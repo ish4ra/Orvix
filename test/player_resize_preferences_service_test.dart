@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:orvix/services/player_resize_preferences_service.dart';
@@ -6,6 +8,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+  });
+
+  test('beta.48 uses a fresh resize preference generation', () {
+    final service =
+        File('lib/services/player_resize_preferences_service.dart').readAsStringSync();
+    expect(service, contains('orvix_player_resize_mode_v2'));
+    expect(service, isNot(contains('orvix_player_resize_mode_v1')));
   });
 
   test('player resize mode defaults to Fit', () async {

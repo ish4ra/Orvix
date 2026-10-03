@@ -5,9 +5,10 @@ class SubtitleRenderPolicy {
     required bool aiSinhalaRequested,
     required bool isAndroid,
     required bool isNativePlayer,
+    required bool nativeStyledSubtitles,
   }) {
     if (aiSinhalaRequested) return false;
-    if (isAndroid) return true;
+    if (isAndroid) return !nativeStyledSubtitles;
     return !isNativePlayer;
   }
 
@@ -16,10 +17,13 @@ class SubtitleRenderPolicy {
     required bool aiSinhalaRequested,
     required bool isAndroid,
     required bool isBitmapTrack,
+    required bool nativeStyledSubtitles,
   }) {
     if (!requestedVisible) return false;
     if (aiSinhalaRequested) return true;
-    if (isAndroid) return isBitmapTrack;
+    if (isAndroid) {
+      return nativeStyledSubtitles || isBitmapTrack;
+    }
     return true;
   }
 }
