@@ -22,10 +22,13 @@ void main() {
     final hero = home.substring(heroStart, heroEnd);
 
     expect(hero, contains('Row('));
-    expect(hero, contains("label: const Text('View & Play')"));
+    expect(hero, contains("child: Text('View & Play')"));
     expect(hero, contains('if (onCustomize != null)'));
-    expect(hero, contains('const Spacer()'));
-    expect(hero, contains("label: const Text('Customize Home')"));
+    expect(hero, contains('const SizedBox(width: 10)'));
+    expect(hero, contains("child: Text('Customize Home')"));
+    expect(hero, contains('Expanded('));
+    expect(hero, contains('FittedBox('));
+    expect(hero, contains('visualDensity: VisualDensity.compact'));
     expect(hero, contains('tv ? 28 : (mobile ? 24 : 40)'));
   });
 }
