@@ -56,7 +56,12 @@ void main() {
     expect(
       player,
       contains(
-        'Source subtitle appearance, font size, positioning and embedded '
+        'Source subtitle appearance, font size, positioning and embedded ',
+      ),
+    );
+    expect(
+      player,
+      contains(
         'font styling are preserved by the native libass renderer.',
       ),
     );
