@@ -460,6 +460,7 @@ class _DesktopHomeView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final featured = hero;
     return ColoredBox(
       color: const Color(0xFF060807),
       child: ListView(
@@ -467,11 +468,11 @@ class _DesktopHomeView extends StatelessWidget {
         cacheExtent: 1900,
         padding: const EdgeInsets.only(bottom: 72),
         children: [
-          if (hero != null)
+          if (featured != null)
             _DesktopFeaturedHero(
-              item: hero,
-              onOpen: () => onOpen(hero),
-              onPreview: () => onPrefetch(hero),
+              item: featured,
+              onOpen: () => onOpen(featured),
+              onPreview: () => onPrefetch(featured),
               onCustomize: onCustomize,
             ),
           if (data.continueWatching.isNotEmpty)
@@ -1548,6 +1549,7 @@ class _TvHomeView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final featured = hero;
     return ColoredBox(
       color: const Color(0xFF080A09),
       child: ListView(
@@ -1555,10 +1557,10 @@ class _TvHomeView extends StatelessWidget {
         cacheExtent: 1500,
         padding: const EdgeInsets.only(bottom: 54),
         children: [
-          if (hero != null)
+          if (featured != null)
             _TvFeaturedHero(
-              item: hero,
-              onOpen: () => onOpen(hero),
+              item: featured,
+              onOpen: () => onOpen(featured),
             ),
           if (data.continueWatching.isNotEmpty)
             _TvContinueLandscapeRail(
