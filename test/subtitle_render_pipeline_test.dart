@@ -73,6 +73,10 @@ void main() {
     expect(player, contains('attempt == 12'));
     expect(player, contains('_tryNormalOnlineSubtitleFallback('));
     expect(player, contains('OnlineSubtitleService.materialize(subtitle)'));
+    expect(player, contains("preferred == 'eng' && _isEnglishTrack(track)"));
+    expect(player, contains('for (final candidate in candidates)'));
+    expect(player, contains('final nativePreferred = player.state.tracks.subtitle'));
+    expect(player, contains('await _activateNativeSubtitle(track);'));
     expect(player, contains('unawaited(_ensureNormalSubtitleSelection());'));
     expect(playback, contains("'slang': 'eng,en,en-US,en-GB'"));
   });
@@ -107,6 +111,34 @@ void main() {
       if (file != null && await file.exists()) {
         await file.delete();
       }
+      await server.close(force: true);
+    }
+  });
+
+  test('online subtitle materialization rejects non-subtitle payloads', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      request.response.headers.contentType = ContentType.html;
+      request.response.write('<html><body>temporary provider error</body></html>');
+      await request.response.close();
+    });
+
+    final result = OnlineSubtitleResult(
+      id: 'invalid-test',
+      url: 'http://127.0.0.1:${server.port}/subtitle.srt',
+      language: 'eng',
+      languageLabel: 'English',
+      label: 'Invalid English',
+      provider: 'test',
+      score: 100,
+    );
+
+    try {
+      await expectLater(
+        OnlineSubtitleService.materialize(result),
+        throwsA(isA<StateError>()),
+      );
+    } finally {
       await server.close(force: true);
     }
   });
