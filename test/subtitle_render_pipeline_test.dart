@@ -76,7 +76,7 @@ void main() {
     expect(player, contains("preferred == 'eng' && _isEnglishTrack(track)"));
     expect(player, contains('for (final candidate in candidates)'));
     expect(player, contains('final nativePreferred = player.state.tracks.subtitle'));
-    expect(player, contains('var nativeSelected = false;'));
+    expect(player, contains('_selectEmbeddedSubtitleReliably(nativePreferred.first)'));
     expect(player, contains('if (nativeSelected)'));
     expect(
       player,
