@@ -4300,7 +4300,9 @@ class DetailsScreenState extends State<DetailsScreen> {
 
       final androidAutoFallbackToExo = Platform.isAndroid &&
           preference == PlayerEnginePreference.auto &&
-          !aiSettingEnabled;
+          !aiSettingEnabled &&
+          !useLocalMediaBridge &&
+          source?.isMagnet != true;
 
       if (engine == PlayerEngineKind.exoPlayer && Platform.isAndroid) {
         final result = await _openExoPlayer(
