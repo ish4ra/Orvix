@@ -1793,7 +1793,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return tracks.first;
   }
 
-  mk.SubtitleTrack? _bestNativeEnglishTextTrack() {
+  mk.SubtitleTrack? _bestNativeEnglishTextTrack({
+    bool allowUnlabeledFallback = true,
+  }) {
     final tracks = widget.playback.player.state.tracks.subtitle
         .where(_isRealSubtitleTrack)
         .where((track) => !_isImageSubtitleTrack(track))
@@ -1801,6 +1803,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     final english = tracks.where(_isEnglishTrack).toList(growable: false);
     if (english.isEmpty) {
+      if (!allowUnlabeledFallback) return null;
       // A surprising number of MKV releases tag their real English text
       // subtitle as "und" (or leave both language/title blank). Do not reject
       // that source outright when it is the only unlabeled text track.
@@ -2513,7 +2516,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
     _preferredSubtitleLanguage = preferred;
 
-    for (var attempt = 0; attempt < 16 && mounted && !_closing; attempt++) {
+    bool languageMatchesPreference(mk.SubtitleTrack track) {
+      final raw = (track.language ?? '').trim().toLowerCase();
+      if (raw.isEmpty) return false;
+      final exact = OnlineSubtitleService.normalizeLanguage(raw);
+      if (exact == preferred) return true;
+      if (preferred.contains('-')) return false;
+      final base = raw.split(RegExp(r'[-_]')).first;
+      return OnlineSubtitleService.normalizeLanguage(base) == preferred;
+    }
+
+    // Remote/P2P containers can publish subtitle metadata well after video
+    // playback has already started. Keep a lightweight bounded watcher alive
+    // for 30 seconds instead of assuming the first two seconds are enough.
+    for (var attempt = 0; attempt < 120 && mounted && !_closing; attempt++) {
       if (_aiPreferenceEnabled || _subtitleChoiceOverridden) return;
 
       final current = player.state.track.subtitle;
@@ -2529,15 +2545,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
       mk.SubtitleTrack? chosen;
 
       if (preferred == 'eng') {
-        chosen = _bestNativeEnglishTextTrack() ??
+        // Prefer an explicitly English text track, then an explicitly English
+        // bitmap track. Only after both fail may a sole unlabeled text track
+        // stand in for English.
+        chosen = _bestNativeEnglishTextTrack(
+              allowUnlabeledFallback: false,
+            ) ??
             _bestNativeEnglishBitmapTrack();
       } else {
-        final preferredTracks = tracks.where((track) {
-          final language = OnlineSubtitleService.normalizeLanguage(
-            (track.language ?? '').trim(),
-          );
-          return language == preferred;
-        }).toList(growable: false);
+        final preferredTracks = tracks
+            .where(languageMatchesPreference)
+            .toList(growable: false);
 
         if (preferredTracks.isNotEmpty) {
           preferredTracks.sort((a, b) {
@@ -2570,15 +2588,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
           return;
         } catch (_) {
           // Track metadata can arrive before the native player accepts the
-          // selection. Retry briefly without interrupting playback.
+          // selection. Keep watching while playback remains active.
         }
       }
 
-      await Future<void>.delayed(const Duration(milliseconds: 125));
+      await Future<void>.delayed(const Duration(milliseconds: 250));
     }
 
     // Even when no selectable track exists, keep the native renderer enabled
-    // so late/default tracks are never hidden by Orvix.
+    // so a container-selected/default track is never hidden by Orvix.
     await _setNativeSubtitleVisibility(true);
     await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
   }
