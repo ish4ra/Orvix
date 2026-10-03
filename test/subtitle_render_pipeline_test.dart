@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:orvix/services/online_subtitle_service.dart';
 
 void main() {
   test('whole subtitle translation is parallel-batched and must finish before SRT write', () {
@@ -57,20 +58,57 @@ void main() {
       contains('Source subtitle appearance is preserved by the native player.'),
     );
   });
-  test('normal playback auto-selects a preferred native subtitle when AI is off', () {
+  test('normal playback prefers full native subtitles and falls back online', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
+    final playback =
+        File('lib/services/playback_service.dart').readAsStringSync();
 
     expect(player, contains('Future<void> _ensureNormalSubtitleSelection()'));
-    expect(
-      player,
-      contains('SubtitlePreferencesService.preferredLanguage()'),
-    );
-    expect(player, contains('_bestNativeEnglishTextTrack('));
-    expect(player, contains('allowUnlabeledFallback: false'));
-    expect(player, contains('_bestNativeEnglishBitmapTrack()'));
-    expect(player, contains('attempt < 120'));
-    expect(player, contains("raw.split(RegExp(r'[-_]')).first"));
+    expect(player, contains('bool _isLikelyFullSubtitleTrack'));
+    expect(player, contains("!title.contains('forced')"));
+    expect(player, contains("!title.contains('commentary')"));
+    expect(player, contains('_normalOnlineSubtitleSearch ??='));
+    expect(player, contains('OnlineSubtitleService.search('));
+    expect(player, contains('attempt == 4'));
+    expect(player, contains('attempt == 12'));
+    expect(player, contains('_tryNormalOnlineSubtitleFallback('));
+    expect(player, contains('OnlineSubtitleService.materialize(subtitle)'));
     expect(player, contains('unawaited(_ensureNormalSubtitleSelection());'));
+    expect(playback, contains("'slang': 'eng,en,en-US,en-GB'"));
+  });
+
+  test('online subtitle materialization gives MPV a local text file', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((request) async {
+      request.response.headers.contentType = ContentType.text;
+      request.response.write(
+        '1\\n00:00:01,000 --> 00:00:03,000\\nHello there.\\n',
+      );
+      await request.response.close();
+    });
+
+    final result = OnlineSubtitleResult(
+      id: 'local-test',
+      url: 'http://127.0.0.1:${server.port}/subtitle.srt',
+      language: 'eng',
+      languageLabel: 'English',
+      label: 'Test English',
+      provider: 'test',
+      score: 100,
+    );
+
+    File? file;
+    try {
+      file = await OnlineSubtitleService.materialize(result);
+      expect(await file.exists(), isTrue);
+      expect(await file.readAsString(), contains('Hello there.'));
+      expect(file.path.toLowerCase(), endsWith('.srt'));
+    } finally {
+      if (file != null && await file.exists()) {
+        await file.delete();
+      }
+      await server.close(force: true);
+    }
   });
 
 }
