@@ -5288,15 +5288,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     controller: widget.playback.controller,
                     width: double.infinity,
                     height: double.infinity,
-                    // On Android Mobile the viewport itself must match the
-                    // physical player area. The previous source-sized viewport
-                    // could be fitted a second time and leave black space on
-                    // both axes. Fit now means one source-preserving fit into
-                    // the full player viewport: one axis touches the screen and
-                    // only the other axis may letterbox when aspect ratios differ.
-                    aspectRatio: PlatformProfile.isAndroidMobile
-                        ? MediaQuery.sizeOf(context).aspectRatio
-                        : null,
+                    // Make the viewport fill the player surface, then let
+                    // BoxFit.contain use the video's own decoded display size.
+                    // Do not override aspectRatio here: doing so replaces the
+                    // source DAR with the phone DAR and is not "original".
                     fit: _resizeMode.boxFit,
                     controls: NoVideoControls,
                     subtitleViewConfiguration: SubtitleViewConfiguration(
