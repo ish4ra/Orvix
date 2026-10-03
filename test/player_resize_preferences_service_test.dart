@@ -15,6 +15,19 @@ void main() {
     );
   });
 
+  test('caller can choose a mobile default without persisting it', () async {
+    expect(
+      await PlayerResizePreferencesService.load(
+        fallback: PlayerResizeMode.zoom,
+      ),
+      PlayerResizeMode.zoom,
+    );
+    expect(
+      await PlayerResizePreferencesService.load(),
+      PlayerResizeMode.fit,
+    );
+  });
+
   test('player resize mode persists the user choice', () async {
     await PlayerResizePreferencesService.save(PlayerResizeMode.zoom);
     expect(
