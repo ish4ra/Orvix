@@ -20,6 +20,7 @@ import '../services/native_subtitle_event_parser.dart';
 import '../services/online_subtitle_service.dart';
 import '../services/playback_service.dart';
 import '../services/platform_profile.dart';
+import '../services/player_resize_preferences_service.dart';
 import '../services/subtitle_preferences_service.dart';
 import '../services/subtitle_render_policy.dart';
 import '../services/skip_segment_service.dart';
@@ -169,6 +170,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<List<OnlineSubtitleResult>>? _normalOnlineSubtitleSearch;
   bool _androidMobilePlayerMode = false;
   bool _mobilePortraitPlayer = false;
+  PlayerResizeMode _resizeMode = PlayerResizeMode.fit;
   bool _tvControlFocused = false;
 
   bool get _desktop =>
@@ -792,6 +794,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _preparedAiSubtitle = null;
     _aiState = const AiSinhalaRuntimeState.native();
     unawaited(_loadSubtitlePreferences());
+    unawaited(_loadResizePreference());
     unawaited(_loadSkipSegments());
     _playbackErrorSubscription =
         widget.playback.player.stream.error.listen(_onPlaybackError);
@@ -2492,6 +2495,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
       unawaited(_discoverNativeCueAiAfterPlayback());
     }
   }
+
+  Future<void> _loadResizePreference() async {
+    final mode = await PlayerResizePreferencesService.load();
+    if (!mounted || _closing) return;
+    setState(() => _resizeMode = mode);
+  }
+
+  Future<void> _setResizeMode(PlayerResizeMode mode) async {
+    if (mounted) setState(() => _resizeMode = mode);
+    await PlayerResizePreferencesService.save(mode);
+    if (mounted) _showControls();
+  }
+
+  BoxFit get _videoBoxFit => switch (_resizeMode) {
+        PlayerResizeMode.fit => BoxFit.contain,
+        PlayerResizeMode.fill => BoxFit.fill,
+        PlayerResizeMode.zoom => BoxFit.cover,
+      };
 
   Future<void> _loadSubtitlePreferences() async {
     final fontSize = await SubtitlePreferencesService.fontSize();
@@ -5234,12 +5255,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 if (_error == null)
                   Video(
                     controller: widget.playback.controller,
-                    // On phones, fill the physical display and crop only the
-                    // excess edge when the source aspect ratio differs. The
-                    // previous contain fit letterboxed inside both dimensions.
-                    fit: PlatformProfile.isAndroidMobile
-                        ? BoxFit.cover
-                        : BoxFit.contain,
+                    // Match Nuvio's resize model. Fit is the default and
+                    // preserves the source aspect ratio; Fill stretches to the
+                    // viewport; Zoom fills while preserving aspect ratio and
+                    // crops only the excess edge.
+                    fit: _videoBoxFit,
                     controls: NoVideoControls,
                     subtitleViewConfiguration: SubtitleViewConfiguration(
                       // media_kit's default libass=false mode renders text
@@ -5253,6 +5273,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         isNativePlayer:
                             widget.playback.player.platform is mk.NativePlayer,
                       ),
+                      // media_kit otherwise scales subtitle text again from a
+                      // 1920x1080 reference. On Android logical pixels this can
+                      // shrink an 18-26sp subtitle into single-digit text.
+                      textScaler: TextScaler.noScaling,
                       style: TextStyle(
                         height: 1.35,
                         fontSize: _effectiveSubtitleFontSize(context),
