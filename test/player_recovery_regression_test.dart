@@ -48,9 +48,10 @@ void main() {
     );
     expect(app, contains("key: ValueKey('media-library-\$_libraryRevision')"));
 
-    // TV free P2P starts on MPV, can hand off safely to Exo, and Exo fully
-    // disposes its controller before a reverse engine switch.
-    expect(details, contains('fallbackToExo: tvFreeP2pAuto'));
+    // Android Auto starts on subtitle-capable MPV, can hand off safely to Exo
+    // when MPV itself cannot start, and Exo fully disposes its controller
+    // before a reverse engine switch.
+    expect(details, contains('fallbackToExo: androidAutoFallbackToExo'));
     expect(player, contains('_runStartupFallback'));
     expect(player, contains('await _preparePlayerExit();'));
     expect(exo, contains('await controller.dispose();'));
