@@ -45,6 +45,10 @@ class PlaybackService {
       // Prefer English whenever the file exposes language-tagged audio tracks.
       // Users can still switch to any other track from Audio & Subtitles.
       'alang': 'eng,en,en-US,en-GB',
+      // Let libmpv prefer English subtitles too. The player screen still
+      // validates the selected track and replaces forced/commentary tracks
+      // with a better embedded or online subtitle when needed.
+      'slang': 'eng,en,en-US,en-GB',
       'stream-lavf-o':
           'reconnect=1,reconnect_on_network_error=1,reconnect_on_http_error=5xx,reconnect_delay_max=10',
     };
