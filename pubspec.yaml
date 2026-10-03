@@ -56,3 +56,5 @@ flutter:
   uses-material-design: true
   assets:
     - assets/branding/orvix_logo.webp
+    - assets/fonts/NotoSansSinhala-Regular.ttf
+    - assets/fonts/OFL.txt
