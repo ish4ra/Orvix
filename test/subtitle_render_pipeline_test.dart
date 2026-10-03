@@ -152,4 +152,19 @@ void main() {
     }
   });
 
+  test('Android player wires MediaKit text overlay render policy', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(
+      player,
+      contains('SubtitleRenderPolicy.flutterOverlayVisible('),
+    );
+    expect(
+      player,
+      contains('SubtitleRenderPolicy.nativeSubtitleVisible('),
+    );
+    expect(player, contains('isAndroid: Platform.isAndroid'));
+    expect(player, contains('isBitmapTrack: _isImageSubtitleTrack(selected)'));
+  });
+
 }
