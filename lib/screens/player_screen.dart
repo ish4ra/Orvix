@@ -23,6 +23,7 @@ import '../services/platform_profile.dart';
 import '../services/player_resize_preferences_service.dart';
 import '../services/subtitle_preferences_service.dart';
 import '../services/subtitle_render_policy.dart';
+import '../services/video_black_bar_crop_service.dart';
 import '../services/skip_segment_service.dart';
 import '../widgets/player_loading_overlay.dart';
 
@@ -172,6 +173,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _mobilePortraitPlayer = false;
   PlayerResizeMode _resizeMode = PlayerResizeMode.fit;
   bool _resizeModeSelectedByUser = false;
+  bool _mobileBlackBarCropApplied = false;
+  Future<void>? _mobileBlackBarCropWork;
   bool _tvControlFocused = false;
 
   bool get _desktop =>
@@ -1516,6 +1519,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     try {
       _playbackStarted = false;
       _startupFailureVisible = false;
+      _mobileBlackBarCropApplied = false;
       _startupTimer?.cancel();
       if (mounted && _error != null) {
         setState(() => _error = null);
@@ -1662,6 +1666,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
           ),
         );
         await widget.playback.player.play();
+      }
+
+      if (PlatformProfile.isAndroidMobile) {
+        unawaited(_applyAndroidMobileActiveFrameCrop());
       }
 
       if (_hasPlaybackActivity()) {
@@ -2622,13 +2630,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
             return score(b).compareTo(score(a));
           });
-          var nativeSelected = false;
-          try {
-            await player.setSubtitleTrack(nativePreferred.first);
-            nativeSelected = true;
-          } catch (_) {
-            nativeSelected = false;
-          }
+          final nativeSelected =
+              await _selectEmbeddedSubtitleReliably(nativePreferred.first);
           if (nativeSelected) {
             if (await file.exists()) await file.delete();
             await _setNativeSubtitleVisibility(true);
@@ -2760,19 +2763,33 @@ class _PlayerScreenState extends State<PlayerScreen> {
             .where(_isLikelyFullSubtitleTrack)
             .where(_isUnlabeledTextTrack)
             .toList(growable: false);
-        if (unknownText.length == 1) chosen = unknownText.first;
+        if (unknownText.isNotEmpty) {
+          chosen = unknownText.first;
+        }
+      }
+
+      // Some MKVs expose several embedded subtitle tracks with missing/und
+      // language tags. Android Mobile should still show a real embedded track
+      // instead of silently leaving subtitles off.
+      if (chosen == null && PlatformProfile.isAndroidMobile) {
+        final fallbackTracks =
+            tracks.where(_isLikelyFullSubtitleTrack).toList(growable: false);
+        if (fallbackTracks.isNotEmpty) {
+          fallbackTracks.sort((a, b) {
+            final aImage = _isImageSubtitleTrack(a) ? 1 : 0;
+            final bImage = _isImageSubtitleTrack(b) ? 1 : 0;
+            return aImage.compareTo(bImage);
+          });
+          chosen = fallbackTracks.first;
+        }
       }
 
       if (chosen != null) {
-        try {
-          await player.setSubtitleTrack(chosen);
-          await _setNativeSubtitleVisibility(true);
-          await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
+        if (await _selectEmbeddedSubtitleReliably(chosen)) {
           return;
-        } catch (_) {
-          // Track metadata can arrive before the native player accepts the
-          // selection. Keep watching while playback remains active.
         }
+        // Track metadata can arrive before the native player accepts the
+        // selection. Keep watching while playback remains active.
       }
 
       if (attempt == 4 && widget.item != null) {
@@ -2813,6 +2830,162 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
   }
 
+  Future<bool> _selectEmbeddedSubtitleReliably(
+    mk.SubtitleTrack track,
+  ) async {
+    final player = widget.playback.player;
+    try {
+      await player.setSubtitleTrack(track);
+    } catch (_) {
+      return false;
+    }
+
+    await _setNativeSubtitleVisibility(true);
+    await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
+
+    if (!PlatformProfile.isAndroidMobile) return true;
+    final platform = player.platform;
+    if (platform is! mk.NativePlayer) return true;
+
+    final requestedId = track.id.trim();
+    for (var attempt = 0; attempt < 4 && !_closing; attempt++) {
+      String active = '';
+      for (final property in const <String>['current-tracks/sub/id', 'sid']) {
+        try {
+          final value = (await platform.getProperty(
+            property,
+            waitForInitialization: false,
+          ))
+              .trim();
+          if (value.isNotEmpty && value.toLowerCase() != 'auto') {
+            active = value;
+            break;
+          }
+        } catch (_) {}
+      }
+      if (active == requestedId) return true;
+
+      // media_kit can publish track metadata before the high-level selection
+      // reaches libmpv. Embedded MPV subtitle ids are numeric, so force the
+      // native sid only for those tracks; external SRT/ASS tracks stay on the
+      // normal media_kit attach path.
+      if (int.tryParse(requestedId) != null) {
+        try {
+          await platform.setProperty(
+            'sid',
+            requestedId,
+            waitForInitialization: false,
+          );
+          await platform.setProperty(
+            'sub-visibility',
+            'yes',
+            waitForInitialization: false,
+          );
+          await platform.setProperty(
+            'sub-ass-override',
+            'no',
+            waitForInitialization: false,
+          );
+        } catch (_) {}
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 90));
+    }
+
+    // A selected external/non-numeric track cannot be verified through the
+    // embedded sid property, but the high-level attach already succeeded.
+    return int.tryParse(requestedId) == null;
+  }
+
+  Future<void> _applyAndroidMobileActiveFrameCrop() async {
+    if (!PlatformProfile.isAndroidMobile ||
+        _closing ||
+        _mobileBlackBarCropApplied) {
+      return;
+    }
+
+    final existing = _mobileBlackBarCropWork;
+    if (existing != null) {
+      await existing;
+      return;
+    }
+
+    final work = () async {
+      // Let normal playback win the I/O race. The crop probe is deliberately
+      // delayed and short so local P2P/debrid playback is not blocked.
+      await Future<void>.delayed(const Duration(seconds: 2));
+      if (_closing || !mounted) return;
+
+      final player = widget.playback.player;
+      for (var attempt = 0; attempt < 20 && !_closing; attempt++) {
+        if ((player.state.width ?? 0) > 0 && (player.state.height ?? 0) > 0) {
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
+
+      final width = player.state.width;
+      final height = player.state.height;
+      final probeUrl = _localMediaBridgeStream
+          ? (widget.aiSourceUrl?.trim() ?? '')
+          : widget.url.trim();
+      if (probeUrl.isEmpty) return;
+
+      VideoCropRect? crop;
+      try {
+        crop = await VideoBlackBarCropService.detect(
+          url: probeUrl,
+          encodedWidth: width,
+          encodedHeight: height,
+        );
+      } catch (_) {
+        crop = null;
+      }
+      if (crop == null || _closing) return;
+
+      final platform = player.platform;
+      if (platform is! mk.NativePlayer) return;
+
+      var applied = false;
+      try {
+        // Modern mpv applies this at the VO level and keeps hardware decoding.
+        await platform.setProperty(
+          'video-crop',
+          crop.mpvValue,
+          waitForInitialization: false,
+        );
+        applied = true;
+      } catch (_) {}
+
+      if (!applied) {
+        try {
+          // Fallback for older bundled mpv builds.
+          await platform.command(
+            <String>[
+              'vf',
+              'add',
+              '@orvix_autocrop:crop=${crop.ffmpegValue}',
+            ],
+            waitForInitialization: false,
+            throwOnError: true,
+          );
+          applied = true;
+        } catch (_) {}
+      }
+
+      if (applied && mounted && !_closing) {
+        setState(() => _mobileBlackBarCropApplied = true);
+      }
+    }();
+
+    _mobileBlackBarCropWork = work;
+    try {
+      await work;
+    } finally {
+      _mobileBlackBarCropWork = null;
+    }
+  }
+
   Future<void> _setNativeSubtitleVisibility(bool visible) async {
     final player = widget.playback.player;
     final platform = player.platform;
@@ -2834,6 +3007,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
           'no',
           waitForInitialization: false,
         );
+        if (PlatformProfile.isAndroidMobile) {
+          await platform.setProperty(
+            'sub-auto',
+            'all',
+            waitForInitialization: false,
+          );
+        }
       }
       await platform.setProperty(
         'sub-visibility',
@@ -2876,9 +3056,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _aiDisplaySubtitle = '';
       });
     }
-    await widget.playback.player.setSubtitleTrack(track);
-    await _setNativeSubtitleVisibility(true);
-    await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
+    final embedded = int.tryParse(track.id.trim()) != null;
+    if (embedded) {
+      await _selectEmbeddedSubtitleReliably(track);
+    } else {
+      await widget.playback.player.setSubtitleTrack(track);
+      await _setNativeSubtitleVisibility(true);
+      await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
+    }
   }
 
   Future<void> _disableSubtitles() async {

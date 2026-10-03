@@ -12,6 +12,9 @@ void main() {
     expect(player, contains('height: double.infinity'));
     expect(player, isNot(contains('aspectRatio: PlatformProfile.isAndroidMobile')));
     expect(player, contains('_resizeModeMenu()'));
+    expect(player, contains('_applyAndroidMobileActiveFrameCrop()'));
+    expect(player, contains("'video-crop'"));
+    expect(player, contains('@orvix_autocrop:crop='));
     expect(player, contains('_resizeModeSelectedByUser = true'));
     expect(
       player,

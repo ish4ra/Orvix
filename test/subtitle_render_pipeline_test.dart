@@ -76,7 +76,7 @@ void main() {
     expect(player, contains("preferred == 'eng' && _isEnglishTrack(track)"));
     expect(player, contains('for (final candidate in candidates)'));
     expect(player, contains('final nativePreferred = player.state.tracks.subtitle'));
-    expect(player, contains('var nativeSelected = false;'));
+    expect(player, contains('_selectEmbeddedSubtitleReliably(nativePreferred.first)'));
     expect(player, contains('if (nativeSelected)'));
     expect(
       player,
@@ -188,6 +188,17 @@ void main() {
       player,
       contains('Embedded subtitle styling, size, positioning and fonts are '),
     );
+  });
+
+  test('Android Mobile embedded subtitle selection reaches native sid', () {
+    final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(player, contains('Future<bool> _selectEmbeddedSubtitleReliably('));
+    expect(player, contains("'current-tracks/sub/id'"));
+    expect(player, contains("await platform.setProperty(\n            'sid',"));
+    expect(player, contains("'sub-visibility',\n            'yes'"));
+    expect(player, contains("'sub-ass-override',\n            'no'"));
+    expect(player, contains('fallbackTracks.first'));
   });
 
 }
