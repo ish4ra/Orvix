@@ -3,12 +3,35 @@ import 'package:orvix/services/subtitle_render_policy.dart';
 
 void main() {
   group('SubtitleRenderPolicy', () {
-    test('Android normal text subtitles use Flutter overlay only', () {
+    test('Android Mobile text subtitles use configured native styled renderer', () {
       expect(
         SubtitleRenderPolicy.flutterOverlayVisible(
           aiSinhalaRequested: false,
           isAndroid: true,
           isNativePlayer: true,
+          nativeStyledSubtitles: true,
+        ),
+        isFalse,
+      );
+      expect(
+        SubtitleRenderPolicy.nativeSubtitleVisible(
+          requestedVisible: true,
+          aiSinhalaRequested: false,
+          isAndroid: true,
+          isBitmapTrack: false,
+          nativeStyledSubtitles: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('Android fallback path keeps text in Flutter and bitmap native', () {
+      expect(
+        SubtitleRenderPolicy.flutterOverlayVisible(
+          aiSinhalaRequested: false,
+          isAndroid: true,
+          isNativePlayer: true,
+          nativeStyledSubtitles: false,
         ),
         isTrue,
       );
@@ -18,19 +41,9 @@ void main() {
           aiSinhalaRequested: false,
           isAndroid: true,
           isBitmapTrack: false,
+          nativeStyledSubtitles: false,
         ),
         isFalse,
-      );
-    });
-
-    test('Android bitmap subtitles keep native renderer enabled', () {
-      expect(
-        SubtitleRenderPolicy.flutterOverlayVisible(
-          aiSinhalaRequested: false,
-          isAndroid: true,
-          isNativePlayer: true,
-        ),
-        isTrue,
       );
       expect(
         SubtitleRenderPolicy.nativeSubtitleVisible(
@@ -38,6 +51,7 @@ void main() {
           aiSinhalaRequested: false,
           isAndroid: true,
           isBitmapTrack: true,
+          nativeStyledSubtitles: false,
         ),
         isTrue,
       );
@@ -49,6 +63,7 @@ void main() {
           aiSinhalaRequested: false,
           isAndroid: false,
           isNativePlayer: true,
+          nativeStyledSubtitles: false,
         ),
         isFalse,
       );
@@ -58,6 +73,7 @@ void main() {
           aiSinhalaRequested: false,
           isAndroid: false,
           isBitmapTrack: false,
+          nativeStyledSubtitles: false,
         ),
         isTrue,
       );
@@ -69,17 +85,9 @@ void main() {
           aiSinhalaRequested: true,
           isAndroid: true,
           isNativePlayer: true,
+          nativeStyledSubtitles: true,
         ),
         isFalse,
-      );
-      expect(
-        SubtitleRenderPolicy.nativeSubtitleVisible(
-          requestedVisible: true,
-          aiSinhalaRequested: true,
-          isAndroid: true,
-          isBitmapTrack: false,
-        ),
-        isTrue,
       );
     });
 
@@ -90,6 +98,7 @@ void main() {
           aiSinhalaRequested: false,
           isAndroid: true,
           isBitmapTrack: true,
+          nativeStyledSubtitles: true,
         ),
         isFalse,
       );
