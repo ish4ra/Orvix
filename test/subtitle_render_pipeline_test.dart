@@ -55,15 +55,7 @@ void main() {
     expect(player, contains("'no'"));
     expect(
       player,
-      contains(
-        'Source subtitle appearance, font size, positioning and embedded ',
-      ),
-    );
-    expect(
-      player,
-      contains(
-        'font styling are preserved by the native libass renderer.',
-      ),
+      contains('Source subtitle appearance is preserved by the native player.'),
     );
   });
   test('normal playback prefers full native subtitles and falls back online', () {
@@ -160,23 +152,32 @@ void main() {
     }
   });
 
-  test('native players use libass instead of flattening embedded ASS styling', () {
+  test('Android player wires MediaKit text overlay render policy', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
-    final playback = File('lib/services/playback_service.dart').readAsStringSync();
-    expect(player, contains('SubtitleRenderPolicy.flutterOverlayVisible('));
-    expect(player, contains('SubtitleRenderPolicy.nativeSubtitleVisible('));
-    expect(playback, contains('libass: true'));
-    expect(playback, contains("'sub-fonts-dir': '/system/fonts'"));
-    expect(playback, contains("'sub-font': 'Noto Sans Sinhala'"));
-    expect(player, contains("'sub-ass-override'"));
-    expect(player, contains("'no'"));
+
+    expect(
+      player,
+      contains('SubtitleRenderPolicy.flutterOverlayVisible('),
+    );
+    expect(
+      player,
+      contains('SubtitleRenderPolicy.nativeSubtitleVisible('),
+    );
+    expect(player, contains('isAndroid: Platform.isAndroid'));
+    expect(player, contains('isBitmapTrack: _isImageSubtitleTrack(selected)'));
   });
 
-  test('subtitle picker still tracks selected MPV subtitle id', () {
+  test('Android text subtitles use direct Orvix sizing and selected MPV track id', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
+
+    expect(player, contains('textScaler: TextScaler.noScaling'));
     expect(player, contains("'current-tracks/sub/id'"));
     expect(player, contains("for (final property in const <String>['current-tracks/sub/id', 'sid'])"));
     expect(player, contains('selected: activeSubtitleId == track.id'));
+    expect(
+      player,
+      contains('Android text subtitles use Orvix styling for consistent size.'),
+    );
   });
 
 }
