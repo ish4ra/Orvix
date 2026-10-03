@@ -1,3 +1,4 @@
+import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:orvix/services/player_resize_preferences_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -33,4 +34,10 @@ void main() {
     expect(PlayerResizeMode.fill.next, PlayerResizeMode.zoom);
     expect(PlayerResizeMode.zoom.next, PlayerResizeMode.fit);
   });
+  test('resize modes map to the expected rendered fit', () {
+    expect(PlayerResizeMode.fit.boxFit, BoxFit.contain);
+    expect(PlayerResizeMode.fill.boxFit, BoxFit.fill);
+    expect(PlayerResizeMode.zoom.boxFit, BoxFit.cover);
+  });
+
 }
