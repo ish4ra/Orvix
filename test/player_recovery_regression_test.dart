@@ -52,6 +52,8 @@ void main() {
     // when MPV itself cannot start, and Exo fully disposes its controller
     // before a reverse engine switch.
     expect(details, contains('fallbackToExo: androidAutoFallbackToExo'));
+    expect(details, contains('!useLocalMediaBridge'));
+    expect(details, contains('source?.isMagnet != true'));
     expect(player, contains('_runStartupFallback'));
     expect(player, contains('await _preparePlayerExit();'));
     expect(exo, contains('await controller.dispose();'));
