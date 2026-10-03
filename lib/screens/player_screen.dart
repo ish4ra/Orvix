@@ -2602,13 +2602,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
             return score(b).compareTo(score(a));
           });
+          var nativeSelected = false;
           try {
             await player.setSubtitleTrack(nativePreferred.first);
+            nativeSelected = true;
+          } catch (_) {
+            nativeSelected = false;
+          }
+          if (nativeSelected) {
             if (await file.exists()) await file.delete();
-          } catch (_) {}
-          await _setNativeSubtitleVisibility(true);
-          await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
-          return true;
+            await _setNativeSubtitleVisibility(true);
+            await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
+            return true;
+          }
+          // If the late embedded track cannot be selected, continue with the
+          // already-materialized online subtitle instead of reporting success
+          // while leaving the screen subtitle-less.
         }
       }
 
