@@ -154,7 +154,11 @@ void main() {
 
   test('Android player wires MediaKit text overlay render policy', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
+    final playback = File('lib/services/playback_service.dart').readAsStringSync();
 
+    expect(playback, isNot(contains('libass: true')));
+    expect(playback, isNot(contains("'sub-fonts-dir': '/system/fonts'")));
+    expect(playback, isNot(contains("'sub-font': 'Noto Sans Sinhala'")));
     expect(
       player,
       contains('SubtitleRenderPolicy.flutterOverlayVisible('),
