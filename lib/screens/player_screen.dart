@@ -4935,6 +4935,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
         .where((track) => track.id.toLowerCase() != 'no')
         .toList(growable: false);
 
+    var activeSubtitleId = player.state.track.subtitle.id.trim();
+    final nativePlatform = player.platform;
+    if (nativePlatform is mk.NativePlayer) {
+      for (final property in const <String>['current-tracks/sub/id', 'sid']) {
+        try {
+          final value = (await nativePlatform.getProperty(
+            property,
+            waitForInitialization: false,
+          ))
+              .trim();
+          if (value.isNotEmpty && value.toLowerCase() != 'auto') {
+            activeSubtitleId = value;
+            break;
+          }
+        } catch (_) {}
+      }
+    }
+
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF0D120E),
@@ -5057,9 +5075,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     _subtitleAppearanceControls(setSheetState),
                     const SizedBox(height: 12),
                   ] else ...[
-                    const _EmptyTrackMessage(
-                      'Source subtitle appearance is preserved by the native player.',
-                    ),
+                    if (Platform.isAndroid) ...[
+                      const _EmptyTrackMessage(
+                        'Android text subtitles use Orvix styling for consistent size. '
+                        'Image-based subtitles such as PGS keep their source styling.',
+                      ),
+                      const SizedBox(height: 12),
+                      _subtitleAppearanceControls(setSheetState),
+                    ] else
+                      const _EmptyTrackMessage(
+                        'Source subtitle appearance is preserved by the native player.',
+                      ),
                     const SizedBox(height: 12),
                     _subtitleSyncControls(setSheetState),
                     const SizedBox(height: 12),
@@ -5165,7 +5191,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     (track) => _TrackTile(
                       title: _trackLabel(track.title, track.language, track.id),
                       detail: track.codec ?? 'Embedded subtitle',
-                      selected: player.state.track.subtitle.id == track.id,
+                      selected: activeSubtitleId == track.id ||
+                          player.state.track.subtitle.id == track.id,
                       onTap: () async {
                         await _activateNativeSubtitle(track);
                         if (sheetContext.mounted) Navigator.pop(sheetContext);
@@ -5639,6 +5666,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     onPressed: _showTracks,
                                     onFocusChange: _handleTvControlFocus,
                                   ),
+                                  const SizedBox(width: 14),
+                                  _TvPlayerAction(
+                                    icon: Icons.aspect_ratio_rounded,
+                                    label: _resizeMode.label,
+                                    semanticLabel:
+                                        'Video size ${_resizeMode.label}',
+                                    onPressed: () =>
+                                        _setResizeMode(_resizeMode.next),
+                                    onFocusChange: _handleTvControlFocus,
+                                  ),
                                 ],
                               ),
                             ],
@@ -5653,6 +5690,34 @@ class _PlayerScreenState extends State<PlayerScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _resizeModeMenu() {
+    return PopupMenuButton<PlayerResizeMode>(
+      tooltip: 'Video size • ${_resizeMode.label}',
+      initialValue: _resizeMode,
+      onSelected: _setResizeMode,
+      itemBuilder: (_) => PlayerResizeMode.values
+          .map(
+            (mode) => PopupMenuItem<PlayerResizeMode>(
+              value: mode,
+              child: Row(
+                children: [
+                  Icon(
+                    mode == _resizeMode
+                        ? Icons.check_rounded
+                        : Icons.aspect_ratio_rounded,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(mode.label),
+                ],
+              ),
+            ),
+          )
+          .toList(growable: false),
+      icon: const Icon(Icons.aspect_ratio_rounded),
     );
   }
 
@@ -5874,6 +5939,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                 onPressed: _showTracks,
                                 icon: const Icon(Icons.subtitles_rounded),
                               ),
+                              _resizeModeMenu(),
                               if (_androidMobilePlayerMode)
                                 IconButton(
                                   tooltip: _mobilePortraitPlayer
@@ -5990,6 +6056,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           onPressed: _showTracks,
           icon: const Icon(Icons.subtitles_rounded),
         ),
+        _resizeModeMenu(),
         if (_androidMobilePlayerMode)
           IconButton(
             tooltip: _mobilePortraitPlayer
