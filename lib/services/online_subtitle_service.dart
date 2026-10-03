@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:archive/archive.dart';
 import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
 
 import '../models/media_item.dart';
 import 'subdl_transcript_service.dart';
@@ -368,9 +367,9 @@ class OnlineSubtitleService {
       throw StateError('Downloaded subtitle was empty.');
     }
 
-    final temp = await getTemporaryDirectory();
     final dir = Directory(
-      '${temp.path}${Platform.pathSeparator}orvix-online-subs',
+      '${Directory.systemTemp.path}${Platform.pathSeparator}'
+      'orvix-online-subs',
     );
     await dir.create(recursive: true);
 
