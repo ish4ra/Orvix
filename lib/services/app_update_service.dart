@@ -50,7 +50,7 @@ class AppUpdateService {
     Future<String> Function()? installedVersionLoader,
   })  : _client = client ?? http.Client(),
         _installedVersionLoader =
-            installedVersionLoader ?? _loadInstalledVersion;
+            installedVersionLoader ?? installedVersion;
 
   static const _releasesBaseUrl =
       'https://api.github.com/repos/ish4ra/Orvix/releases';
@@ -62,9 +62,19 @@ class AppUpdateService {
   final Future<String> Function() _installedVersionLoader;
   String? _installedVersionCache;
 
+  static Future<String>? _installedVersionFuture;
+
+  static Future<String> installedVersion() {
+    return _installedVersionFuture ??= _loadInstalledVersion();
+  }
+
   static Future<String> _loadInstalledVersion() async {
     final info = await PackageInfo.fromPlatform();
-    return info.version.trim();
+    final version = info.version.trim();
+    if (version.isEmpty) {
+      throw StateError('Installed Orvix version is unavailable.');
+    }
+    return version;
   }
 
   Future<String> _currentVersion() async {
