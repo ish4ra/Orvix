@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -37,14 +38,31 @@ class _HomeScreenState extends State<HomeScreen> {
   final _preferences = HomePreferencesService();
   final Set<String> _warmingTitles = <String>{};
   late Future<_HomeData> _homeFuture;
+  Timer? _heroRotationTimer;
+  int _heroIndex = 0;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _heroRotationTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) {
+        if (mounted) setState(() => _heroIndex++);
+      },
+    );
   }
 
-  void _load() => _homeFuture = _loadHome();
+  @override
+  void dispose() {
+    _heroRotationTimer?.cancel();
+    super.dispose();
+  }
+
+  void _load() {
+    _heroIndex = 0;
+    _homeFuture = _loadHome();
+  }
 
   String _warmKey(MediaItem item) => '${item.kind.name}:${item.id}';
 
@@ -169,10 +187,29 @@ class _HomeScreenState extends State<HomeScreen> {
       _prefetchItem(item);
     }
 
+    final heroCandidates = <MediaItem>[];
+    final seenHero = <String>{};
+    for (final section in sections) {
+      if (section == HomeSectionId.continueWatching) continue;
+      for (final item in (media[section] ?? const <MediaItem>[]).take(10)) {
+        final key = '${item.kind.name}:${item.id}';
+        if (seenHero.add(key)) heroCandidates.add(item);
+      }
+    }
+    if (heroCandidates.isEmpty) {
+      for (final entry in continueWatching) {
+        final item = entry.item;
+        final key = '${item.kind.name}:${item.id}';
+        if (seenHero.add(key)) heroCandidates.add(item);
+      }
+    }
+    heroCandidates.shuffle(Random());
+
     return _HomeData(
       sections: sections,
       media: media,
       continueWatching: continueWatching,
+      heroCandidates: heroCandidates,
     );
   }
 
@@ -329,11 +366,12 @@ class _HomeScreenState extends State<HomeScreen> {
         }
 
         final data = snapshot.data ?? _HomeData.empty();
-        final hero = data.hero;
+        final hero = data.heroAt(_heroIndex);
 
         if (PlatformProfile.isAndroidTv) {
           return _TvHomeView(
             data: data,
+            hero: hero,
             onOpen: _openItem,
             onResume: widget.onResume,
             onPrefetch: _prefetchItem,
@@ -343,6 +381,7 @@ class _HomeScreenState extends State<HomeScreen> {
         if (Platform.isWindows && MediaQuery.sizeOf(context).width >= 900) {
           return _DesktopHomeView(
             data: data,
+            hero: hero,
             onOpen: _openItem,
             onPrefetch: _prefetchItem,
             onCustomize: _customizeHome,
@@ -407,19 +446,21 @@ class _HomeScreenState extends State<HomeScreen> {
 class _DesktopHomeView extends StatelessWidget {
   const _DesktopHomeView({
     required this.data,
+    required this.hero,
     required this.onOpen,
     required this.onPrefetch,
     required this.onCustomize,
   });
 
   final _HomeData data;
+  final MediaItem? hero;
   final ValueChanged<MediaItem> onOpen;
   final ValueChanged<MediaItem> onPrefetch;
   final VoidCallback onCustomize;
 
   @override
   Widget build(BuildContext context) {
-    final hero = data.hero;
+    final featured = hero;
     return ColoredBox(
       color: const Color(0xFF060807),
       child: ListView(
@@ -427,11 +468,11 @@ class _DesktopHomeView extends StatelessWidget {
         cacheExtent: 1900,
         padding: const EdgeInsets.only(bottom: 72),
         children: [
-          if (hero != null)
+          if (featured != null)
             _DesktopFeaturedHero(
-              item: hero,
-              onOpen: () => onOpen(hero),
-              onPreview: () => onPrefetch(hero),
+              item: featured,
+              onOpen: () => onOpen(featured),
+              onPreview: () => onPrefetch(featured),
               onCustomize: onCustomize,
             ),
           if (data.continueWatching.isNotEmpty)
@@ -1467,28 +1508,26 @@ class _HomeData {
     required this.sections,
     required this.media,
     required this.continueWatching,
+    required this.heroCandidates,
   });
 
   factory _HomeData.empty() => const _HomeData(
         sections: <HomeSectionId>[],
         media: <HomeSectionId, List<MediaItem>>{},
         continueWatching: <ContinueWatchingEntry>[],
+        heroCandidates: <MediaItem>[],
       );
 
   final List<HomeSectionId> sections;
   final Map<HomeSectionId, List<MediaItem>> media;
   final List<ContinueWatchingEntry> continueWatching;
+  final List<MediaItem> heroCandidates;
 
   List<MediaItem> items(HomeSectionId section) => media[section] ?? const [];
 
-  MediaItem? get hero {
-    for (final section in sections) {
-      if (section == HomeSectionId.continueWatching) continue;
-      final values = items(section);
-      if (values.isNotEmpty) return values.first;
-    }
-    if (continueWatching.isNotEmpty) return continueWatching.first.item;
-    return null;
+  MediaItem? heroAt(int index) {
+    if (heroCandidates.isEmpty) return null;
+    return heroCandidates[index % heroCandidates.length];
   }
 }
 
@@ -1496,19 +1535,21 @@ class _HomeData {
 class _TvHomeView extends StatelessWidget {
   const _TvHomeView({
     required this.data,
+    required this.hero,
     required this.onOpen,
     required this.onResume,
     required this.onPrefetch,
   });
 
   final _HomeData data;
+  final MediaItem? hero;
   final ValueChanged<MediaItem> onOpen;
   final ValueChanged<ContinueWatchingEntry> onResume;
   final ValueChanged<MediaItem> onPrefetch;
 
   @override
   Widget build(BuildContext context) {
-    final hero = data.hero;
+    final featured = hero;
     return ColoredBox(
       color: const Color(0xFF080A09),
       child: ListView(
@@ -1516,10 +1557,10 @@ class _TvHomeView extends StatelessWidget {
         cacheExtent: 1500,
         padding: const EdgeInsets.only(bottom: 54),
         children: [
-          if (hero != null)
+          if (featured != null)
             _TvFeaturedHero(
-              item: hero,
-              onOpen: () => onOpen(hero),
+              item: featured,
+              onOpen: () => onOpen(featured),
             ),
           if (data.continueWatching.isNotEmpty)
             _TvContinueLandscapeRail(

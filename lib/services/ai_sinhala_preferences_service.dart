@@ -6,8 +6,9 @@ class AiSinhalaPreferencesService {
   // AI Sinhala is opt-in. Fresh installs and users who have never made an
   // explicit choice must start disabled on every platform. Use a new key so
   // older Windows migration behavior cannot silently enable the feature.
-  static const _enabledKey = 'orvix_ai_sinhala_enabled_v4';
-  static const _legacyEnabledKey = 'orvix_ai_sinhala_enabled_v2';
+  // beta.46 uses a fresh opt-in key so an accidental enabled v4 value from
+  // earlier betas cannot silently turn the feature on after updating.
+  static const _enabledKey = 'orvix_ai_sinhala_enabled_v5';
   static const _syncPrefix = 'orvix_ai_sinhala_sync_v1_';
 
   static Future<bool> isEnabled() async {

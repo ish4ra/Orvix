@@ -3,6 +3,14 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('Home hero rotates through a shuffled candidate pool', () {
+    final home = File('lib/screens/home_screen.dart').readAsStringSync();
+    expect(home, contains('Timer.periodic('));
+    expect(home, contains('const Duration(seconds: 15)'));
+    expect(home, contains('heroCandidates.shuffle(Random())'));
+    expect(home, contains('final hero = data.heroAt(_heroIndex)'));
+  });
+
   test('Android mobile keeps Customize Home aligned with View & Play', () {
     final home = File('lib/screens/home_screen.dart').readAsStringSync();
 

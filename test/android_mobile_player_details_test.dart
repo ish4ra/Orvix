@@ -16,6 +16,12 @@ void main() {
     );
   });
 
+  test('Mobile source sheet keeps Quick Play beside Sort and preparation inline', () {
+    final details = File('lib/screens/details_screen.dart').readAsStringSync();
+    expect(details, contains('Flexible(child: quickPlayButton(best))'));
+    expect(details, contains('Preparing playback…'));
+  });
+
   test('Mobile season controls stay compact and Play uses Orvix lime family', () {
     final details = File('lib/screens/details_screen.dart').readAsStringSync();
 
