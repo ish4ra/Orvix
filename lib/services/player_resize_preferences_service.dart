@@ -32,12 +32,14 @@ class PlayerResizePreferencesService {
 
   static const _key = 'orvix_player_resize_mode_v1';
 
-  static Future<PlayerResizeMode> load() async {
+  static Future<PlayerResizeMode> load({
+    PlayerResizeMode fallback = PlayerResizeMode.fit,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     final stored = prefs.getString(_key);
     return PlayerResizeMode.values.firstWhere(
       (mode) => mode.name == stored,
-      orElse: () => PlayerResizeMode.fit,
+      orElse: () => fallback,
     );
   }
 
