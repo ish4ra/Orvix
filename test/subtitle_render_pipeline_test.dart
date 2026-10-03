@@ -65,8 +65,11 @@ void main() {
       player,
       contains('SubtitlePreferencesService.preferredLanguage()'),
     );
-    expect(player, contains('_bestNativeEnglishTextTrack()'));
+    expect(player, contains('_bestNativeEnglishTextTrack('));
+    expect(player, contains('allowUnlabeledFallback: false'));
     expect(player, contains('_bestNativeEnglishBitmapTrack()'));
+    expect(player, contains('attempt < 120'));
+    expect(player, contains("raw.split(RegExp(r'[-_]')).first"));
     expect(player, contains('unawaited(_ensureNormalSubtitleSelection());'));
   });
 
