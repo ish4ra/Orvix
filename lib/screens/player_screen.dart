@@ -1590,6 +1590,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         title: widget.title,
         play: !(aiReady || useProgressiveNativeCueAi),
       );
+      await _applyAndroidMobileNativeResize(_resizeMode);
 
       if (aiReady && _generatedAiSubtitlePath != null) {
         await _setNativeSubtitleVisibility(false);
@@ -2511,11 +2512,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
     if (!mounted || _closing || _resizeModeSelectedByUser) return;
     setState(() => _resizeMode = mode);
+    await _applyAndroidMobileNativeResize(mode);
   }
 
   Future<void> _setResizeMode(PlayerResizeMode mode) async {
     _resizeModeSelectedByUser = true;
     if (mounted) setState(() => _resizeMode = mode);
+    await _applyAndroidMobileNativeResize(mode);
     await PlayerResizePreferencesService.save(mode);
     if (mounted) _showControls();
   }
@@ -2897,6 +2900,38 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return int.tryParse(requestedId) == null;
   }
 
+  Future<void> _applyAndroidMobileNativeResize(
+    PlayerResizeMode mode,
+  ) async {
+    if (!PlatformProfile.isAndroidMobile || _closing) return;
+    final platform = widget.playback.player.platform;
+    if (platform is! mk.NativePlayer) return;
+
+    final panscan = switch (mode) {
+      PlayerResizeMode.fit => '0.0',
+      PlayerResizeMode.fill => '1.0',
+      PlayerResizeMode.zoom => '0.5',
+    };
+
+    try {
+      // Match Nuvio's native libmpv resize model. Keep the source display
+      // aspect ratio untouched and let mpv perform fit/fill/zoom itself.
+      await platform.setProperty(
+        'video-aspect-override',
+        'no',
+        waitForInitialization: false,
+      );
+      await platform.setProperty(
+        'panscan',
+        panscan,
+        waitForInitialization: false,
+      );
+    } catch (_) {
+      // The Flutter texture still remains aspect-preserving if an older mpv
+      // build rejects either property.
+    }
+  }
+
   Future<void> _applyAndroidMobileActiveFrameCrop() async {
     if (!PlatformProfile.isAndroidMobile ||
         _closing ||
@@ -2911,44 +2946,33 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
 
     final work = () async {
-      // Let normal playback win the I/O race. The crop probe is deliberately
-      // delayed and short so local P2P/debrid playback is not blocked.
+      // Let playback settle, then inspect frames from the already-playing
+      // libmpv instance. Do not reopen the URL through FFmpeg: beta.49 proved
+      // that a second network/P2P reader can fail while the player itself is
+      // rendering perfectly.
       await Future<void>.delayed(const Duration(seconds: 2));
       if (_closing || !mounted) return;
 
       final player = widget.playback.player;
-      for (var attempt = 0; attempt < 20 && !_closing; attempt++) {
-        if ((player.state.width ?? 0) > 0 && (player.state.height ?? 0) > 0) {
-          break;
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 150));
-      }
+      final platform = player.platform;
+      if (platform is! mk.NativePlayer) return;
 
-      final width = player.state.width;
-      final height = player.state.height;
-      final probeUrl = _localMediaBridgeStream
-          ? (widget.aiSourceUrl?.trim() ?? '')
-          : widget.url.trim();
-      if (probeUrl.isEmpty) return;
-
+      final tempDirectory = await getTemporaryDirectory();
       VideoCropRect? crop;
       try {
-        crop = await VideoBlackBarCropService.detect(
-          url: probeUrl,
-          encodedWidth: width,
-          encodedHeight: height,
+        crop = await VideoBlackBarCropService.detectFromNativePlayer(
+          platform: platform,
+          directory: tempDirectory,
         );
       } catch (_) {
         crop = null;
       }
       if (crop == null || _closing) return;
 
-      final platform = player.platform;
-      if (platform is! mk.NativePlayer) return;
-
       var applied = false;
       try {
-        // Modern mpv applies this at the VO level and keeps hardware decoding.
+        // VO-level crop keeps hardware decoding and removes only the encoded
+        // black frame. Fit is then applied to the real active picture.
         await platform.setProperty(
           'video-crop',
           crop.mpvValue,
@@ -2959,7 +2983,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       if (!applied) {
         try {
-          // Fallback for older bundled mpv builds.
           await platform.command(
             <String>[
               'vf',
@@ -2973,7 +2996,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
         } catch (_) {}
       }
 
-      if (applied && mounted && !_closing) {
+      if (!applied || _closing) return;
+
+      await _applyAndroidMobileNativeResize(_resizeMode);
+      if (mounted && !_closing) {
         setState(() => _mobileBlackBarCropApplied = true);
       }
     }();
@@ -5477,7 +5503,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     // BoxFit.contain use the video's own decoded display size.
                     // Do not override aspectRatio here: doing so replaces the
                     // source DAR with the phone DAR and is not "original".
-                    fit: _resizeMode.boxFit,
+                    fit: PlatformProfile.isAndroidMobile
+                        ? BoxFit.contain
+                        : _resizeMode.boxFit,
                     controls: NoVideoControls,
                     subtitleViewConfiguration: SubtitleViewConfiguration(
                       // media_kit's default libass=false mode renders text

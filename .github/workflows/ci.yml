@@ -58,7 +58,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile             tools/configure_android_build.py             tools/configure_android_mobile_compat.py             tools/configure_android_signing.py             tools/generate_desktop_branding.py
+          python3 -m py_compile             tools/configure_android_build.py             tools/configure_android_mobile_compat.py             tools/configure_android_mobile_media_kit.py             tools/configure_android_signing.py             tools/generate_desktop_branding.py
           bash -n tools/publish_orvix_release.sh
           bash -n tools/prepare_android_native.sh
       - name: Guard canonical maintenance rules
@@ -142,6 +142,11 @@ jobs:
           python3 tools/configure_android_mobile_compat.py
       - name: Get dependencies
         run: flutter pub get
+      - name: Enable full Android Mobile libmpv codecs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/configure_android_mobile_media_kit.py
       - name: Compile Android mobile
         run: flutter build apk --debug
       - name: Verify APK

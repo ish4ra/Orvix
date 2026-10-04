@@ -201,4 +201,23 @@ void main() {
     expect(player, contains('fallbackTracks.first'));
   });
 
+  test('Android Mobile build swaps media_kit default libmpv for full PGS build', () {
+    final patcher =
+        File('tools/configure_android_mobile_media_kit.py').readAsStringSync();
+
+    expect(patcher, contains('FULL_LIBMPV_VERSION = "1.1.11"'));
+    expect(patcher, contains('FULL_JARS = {'));
+    expect(patcher, contains('"arm64-v8a":'));
+    expect(patcher, contains('"armeabi-v7a":'));
+    expect(patcher, contains('"x86_64":'));
+    expect(patcher, contains('full-{abi}.jar'));
+    expect(
+      patcher,
+      contains('cdb54c5cf24725623ca717bbbd6d991031d625a377460bd128f19c2dffe189bd'),
+    );
+    expect(patcher, contains('SHA-256'));
+    expect(patcher, contains('PGS/HDMV decoder enabled'));
+  });
+
+
 }
