@@ -41,6 +41,11 @@ void main() {
       player,
       isNot(contains("if (chosen == null && preferred == 'eng')")),
     );
+    expect(player, contains('final automaticTrackAllowed ='));
+    expect(
+      player,
+      contains('_subtitleLanguageMatches(track, _preferredSubtitleLanguage)'),
+    );
   });
 
   test('Mobile source sheet keeps Quick Play beside Sort and preparation inline', () {
