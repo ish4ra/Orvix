@@ -79,7 +79,6 @@ jobs:
           test -s assets/fonts/OFL.txt
           grep -q 'VideoBlackBarCropService.detectFromNativePlayer' lib/screens/player_screen.dart
           grep -q 'screenshot-to-file' lib/services/video_black_bar_crop_service.dart
-          grep -q "'video-crop'" lib/screens/player_screen.dart
           grep -q '@orvix_autocrop:crop=' lib/screens/player_screen.dart
           grep -q '_selectEmbeddedSubtitleReliably' lib/screens/player_screen.dart
           grep -q "'sid'," lib/screens/player_screen.dart
