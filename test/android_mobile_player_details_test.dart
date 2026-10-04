@@ -33,7 +33,14 @@ void main() {
 
     // Automatic normal playback must never pick an arbitrary foreign track.
     expect(player, isNot(contains('fallbackTracks =')));
-    expect(player, contains('if (unknownText.length == 1)'));
+    expect(
+      player,
+      contains('Unknown/und tracks are deliberately not guessed as English here.'),
+    );
+    expect(
+      player,
+      isNot(contains("if (chosen == null && preferred == 'eng')")),
+    );
   });
 
   test('Mobile source sheet keeps Quick Play beside Sort and preparation inline', () {
