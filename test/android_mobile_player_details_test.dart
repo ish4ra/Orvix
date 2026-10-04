@@ -7,14 +7,28 @@ void main() {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(player, contains('PlayerResizeMode _resizeMode = PlayerResizeMode.fit'));
-    expect(player, contains('fit: _resizeMode.boxFit'));
+    expect(
+      player,
+      contains(
+        'fit: PlatformProfile.isAndroidMobile\n'
+        '                        ? BoxFit.contain\n'
+        '                        : _resizeMode.boxFit',
+      ),
+    );
     expect(player, contains('width: double.infinity'));
     expect(player, contains('height: double.infinity'));
     expect(player, isNot(contains('aspectRatio: PlatformProfile.isAndroidMobile')));
     expect(player, contains('_resizeModeMenu()'));
     expect(player, contains('_applyAndroidMobileActiveFrameCrop()'));
+    expect(player, contains('detectFromNativePlayer('));
     expect(player, contains("'video-crop'"));
     expect(player, contains('@orvix_autocrop:crop='));
+    expect(player, contains('_applyAndroidMobileNativeResize('));
+    expect(player, contains("'video-aspect-override'"));
+    expect(player, contains("'panscan'"));
+    expect(player, contains("PlayerResizeMode.fit => '0.0'"));
+    expect(player, contains("PlayerResizeMode.fill => '1.0'"));
+    expect(player, contains("PlayerResizeMode.zoom => '0.5'"));
     expect(player, contains('_resizeModeSelectedByUser = true'));
     expect(
       player,
