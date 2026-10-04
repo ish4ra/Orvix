@@ -3,41 +3,37 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('Android Mobile crops encoded bars through MPV and keeps Fit geometry synced', () {
+  test('Android Mobile preserves pixels and covers only verified encoded letterbox', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
+    final pubspec = File('pubspec.yaml').readAsStringSync();
 
     expect(player, contains('PlayerResizeMode _resizeMode = PlayerResizeMode.fit'));
-    expect(player, contains('fit: _resizeMode.boxFit'));
-    expect(player, contains('width: double.infinity'));
-    expect(player, contains('height: double.infinity'));
-    expect(player, contains('_restoreAndroidMobileNativeAspectRatio()'));
-    expect(player, contains('_applyAndroidMobileAutoCrop()'));
+    expect(player, contains('fit: _effectiveVideoFit'));
+    expect(player, contains('_mobileEncodedLetterboxDetected'));
+    expect(player, contains('_detectAndroidMobileEncodedLetterbox()'));
+    expect(player, contains('waitUntilFirstFrameRendered.timeout'));
     expect(player, contains('VideoBlackBarCropService.detectFromNativePlayer'));
-    expect(player, contains("'vf',"));
-    expect(player, contains("'add',"));
-    expect(player, contains('@orvix_autocrop:crop='));
-    expect(player, contains('widget.playback.controller.rect.value'));
-    expect(player, contains('final params = player.state.videoParams'));
+    expect(player, contains('crop.isHorizontalLetterbox('));
+    expect(player, contains('return BoxFit.cover'));
     expect(player, contains("'video-aspect-override': 'no'"));
     expect(player, contains("'video-aspect-method': 'container'"));
     expect(player, contains("'keepaspect': 'yes'"));
     expect(player, contains("'video-crop': ''"));
-    expect(player, contains("'video-zoom': '0'"));
-    expect(player, contains("'panscan': '0'"));
+    expect(player, isNot(contains('@orvix_autocrop:crop=')));
     expect(player, isNot(contains('AndroidVideoSurfaceService')));
-    expect(player, isNot(contains('file-local-options/video-crop')));
     expect(player, isNot(contains('VideoOutputManager.SetSurfaceSize(')));
-    expect(player, isNot(contains('_mobileActiveAspectRatio')));
-    expect(
-      player,
-      isNot(contains('aspectRatio: PlatformProfile.isAndroidMobile')),
-    );
-    expect(player, contains('_resizeModeMenu()'));
-    expect(player, contains('_resizeModeSelectedByUser = true'));
-    expect(
-      player,
-      contains('setState(() => _resizeMode = PlayerResizeMode.fit);'),
-    );
+    expect(player, isNot(contains('file-local-options/video-crop')));
+
+    expect(player, contains('_androidMobileNativeStyledSubtitle'));
+    expect(player, contains('_androidMobileTextSubtitleOverlay()'));
+    expect(player, contains("'sub-font-provider': 'fontconfig'"));
+    expect(player, contains("'embeddedfonts': 'yes'"));
+    expect(player, contains("fontFamily: 'OrvixSubtitle'"));
+    expect(pubspec, contains('family: OrvixSubtitle'));
+
+    // Automatic normal playback must never pick an arbitrary foreign track.
+    expect(player, isNot(contains('fallbackTracks =')));
+    expect(player, contains('if (unknownText.length == 1)'));
   });
 
   test('Mobile source sheet keeps Quick Play beside Sort and preparation inline', () {
