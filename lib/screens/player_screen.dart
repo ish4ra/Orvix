@@ -818,6 +818,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
         widget.playback.player.stream.error.listen(_onPlaybackError);
     _trackSubscription = widget.playback.player.stream.track.listen((_) {
       if (!mounted || _closing) return;
+      if (PlatformProfile.isAndroidMobile) {
+        unawaited(_setNativeSubtitleVisibility(true));
+      }
       setState(() {});
     });
     _startupPlayingSubscription =
@@ -2691,7 +2694,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         await _activateNativeSubtitle(track);
       } else {
         await player.setSubtitleTrack(track);
-        await _setNativeSubtitleVisibility(true);
+        await _setNativeSubtitleVisibility(true, trackOverride: track);
         await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
       }
 
@@ -2758,8 +2761,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       final current = player.state.track.subtitle;
       if (_isLikelyFullSubtitleTrack(current) &&
-          (_subtitleLanguageMatches(current, preferred) ||
-              (preferred == 'eng' && _isUnlabeledTextTrack(current)))) {
+          _subtitleLanguageMatches(current, preferred)) {
         await _setNativeSubtitleVisibility(true);
         await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
         return;
@@ -2789,15 +2791,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
         chosen = preferredTracks.first;
       }
 
-      if (chosen == null && preferred == 'eng') {
-        final unknownText = tracks
-            .where(_isLikelyFullSubtitleTrack)
-            .where(_isUnlabeledTextTrack)
-            .toList(growable: false);
-        if (unknownText.length == 1) {
-          chosen = unknownText.first;
-        }
-      }
+      // Unknown/und tracks are deliberately not guessed as English here.
+      // They remain available in the manual picker. Automatic playback only
+      // chooses a preferred-language match with evidence in language/title.
 
       // Do not auto-select an arbitrary non-preferred track. A foreign or
       // unlabeled track can look like a valid "full" subtitle while containing
@@ -2860,7 +2856,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return false;
     }
 
-    await _setNativeSubtitleVisibility(true);
+    await _setNativeSubtitleVisibility(true, trackOverride: track);
     await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
 
     if (!PlatformProfile.isAndroidMobile) return true;
@@ -2883,7 +2879,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
           }
         } catch (_) {}
       }
-      if (active == requestedId) return true;
+      if (active == requestedId) {
+        await _setNativeSubtitleVisibility(true, trackOverride: track);
+        return true;
+      }
 
       // media_kit can publish track metadata before the high-level selection
       // reaches libmpv. Embedded MPV subtitle ids are numeric, so force the
@@ -2896,16 +2895,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             requestedId,
             waitForInitialization: false,
           );
-          await platform.setProperty(
-            'sub-visibility',
-            'yes',
-            waitForInitialization: false,
-          );
-          await platform.setProperty(
-            'sub-ass-override',
-            'no',
-            waitForInitialization: false,
-          );
+          await _setNativeSubtitleVisibility(true, trackOverride: track);
         } catch (_) {}
       }
 
@@ -3020,12 +3010,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
-  Future<void> _setNativeSubtitleVisibility(bool visible) async {
+  Future<void> _setNativeSubtitleVisibility(
+    bool visible, {
+    mk.SubtitleTrack? trackOverride,
+  }) async {
     final player = widget.playback.player;
     final platform = player.platform;
     if (platform is! mk.NativePlayer) return;
     try {
-      final selected = player.state.track.subtitle;
+      final selected = trackOverride ?? player.state.track.subtitle;
       if (PlatformProfile.isAndroidMobile) {
         // media_kit_video starts Android with sub-font-provider=none. That is
         // intentionally strict and can turn missing ASS fonts into tofu boxes.
@@ -3114,7 +3107,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       await _selectEmbeddedSubtitleReliably(track);
     } else {
       await widget.playback.player.setSubtitleTrack(track);
-      await _setNativeSubtitleVisibility(true);
+      await _setNativeSubtitleVisibility(true, trackOverride: track);
       await _setNativeSubtitleDelayProperty(_subtitleDelaySeconds);
     }
   }
