@@ -11,8 +11,8 @@ def main() -> None:
     if "android.permission.CAMERA" not in text:
         text = text.replace(
             '<manifest xmlns:android="http://schemas.android.com/apk/res/android">',
-            '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\\n'
-            '    <uses-permission android:name="android.permission.CAMERA" />\\n'
+            '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n'
+            '    <uses-permission android:name="android.permission.CAMERA" />\n'
             '    <uses-feature android:name="android.hardware.camera" android:required="false" />',
             1,
         )
