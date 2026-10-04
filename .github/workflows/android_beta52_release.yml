@@ -97,6 +97,8 @@ jobs:
           cp native/libs/rustls-platform-verifier-0.1.1.aar android/app/libs/
           python3 tools/configure_android_build.py
           python3 tools/configure_android_mobile_compat.py
+          grep -q 'android.permission.CAMERA' android/app/src/main/AndroidManifest.xml
+          grep -q 'android.hardware.camera' android/app/src/main/AndroidManifest.xml
           grep -q 'android:extractNativeLibs="true"' android/app/src/main/AndroidManifest.xml
           grep -q 'useLegacyPackaging = true' android/app/build.gradle.kts
           grep -q 'orvix/torrent_engine' android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt
