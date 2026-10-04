@@ -449,9 +449,23 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
         children: [
           FilledButton.icon(onPressed: _busy ? null : _connectDevice, icon: const Icon(Icons.devices_rounded), label: const Text('Sign in with TorBox device code')),
           const Padding(padding: EdgeInsets.symmetric(vertical: 16), child: Row(children: [Expanded(child: Divider()), Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text('OR')), Expanded(child: Divider())])),
-          TextField(controller: _apiKeyController, enabled: !_busy, obscureText: true, decoration: const InputDecoration(labelText: 'TorBox API key', prefixIcon: Icon(Icons.key_rounded))),
+          TextField(
+            controller: _apiKeyController,
+            enabled: !_busy,
+            obscureText: true,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _busy ? null : _connectApiKey(),
+            decoration: const InputDecoration(
+              labelText: 'TorBox API key',
+              prefixIcon: Icon(Icons.key_rounded),
+            ),
+          ),
           const SizedBox(height: 12),
-          OutlinedButton.icon(onPressed: _busy ? null : _connectApiKey, icon: const Icon(Icons.link_rounded), label: const Text('Connect with API key')),
+          OutlinedButton.icon(
+            onPressed: _busy ? null : _connectApiKey,
+            icon: const Icon(Icons.link_rounded),
+            label: const Text('Connect with API key'),
+          ),
           if (_message != null) ...[const SizedBox(height: 12), Text(_message!, textAlign: TextAlign.center)],
         ],
       ),

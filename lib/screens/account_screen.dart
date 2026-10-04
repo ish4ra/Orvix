@@ -914,18 +914,230 @@ class _TvSignedInPane extends StatelessWidget {
 
 class _OrvixTvQrScannerScreen extends StatefulWidget {
   const _OrvixTvQrScannerScreen();
+
   @override
   State<_OrvixTvQrScannerScreen> createState() =>
       _OrvixTvQrScannerScreenState();
 }
 
-class _OrvixTvQrScannerScreenState extends State<_OrvixTvQrScannerScreen> {
+class _OrvixTvQrScannerScreenState extends State<_OrvixTvQrScannerScreen>
+    with WidgetsBindingObserver {
+  final MobileScannerController _scannerController =
+      MobileScannerController(autoStart: false);
   bool _handled = false;
+  bool _cameraStarting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_startCamera());
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!_scannerController.value.hasCameraPermission) return;
+    switch (state) {
+      case AppLifecycleState.resumed:
+        unawaited(_startCamera());
+        break;
+      case AppLifecycleState.inactive:
+        unawaited(_stopCamera());
+        break;
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+        break;
+    }
+  }
+
+  Future<void> _startCamera() async {
+    if (!mounted || _cameraStarting || _scannerController.value.isRunning) {
+      return;
+    }
+    _cameraStarting = true;
+    try {
+      await _scannerController.start();
+    } on MobileScannerException {
+      // MobileScanner's errorBuilder below owns the visible recovery UI.
+    } finally {
+      _cameraStarting = false;
+    }
+  }
+
+  Future<void> _stopCamera() async {
+    if (!_scannerController.value.isRunning) return;
+    try {
+      await _scannerController.stop();
+    } on MobileScannerException {
+      // The scanner can already be stopping during an Android lifecycle change.
+    }
+  }
+
+  Future<void> _retryCamera() async {
+    await _stopCamera();
+    if (mounted) await _startCamera();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(_scannerController.dispose());
+    super.dispose();
+  }
 
   bool _isValidCode(String value) {
     if (value.length != 6) return false;
     return value.codeUnits.every((unit) =>
         (unit >= 48 && unit <= 57) || (unit >= 65 && unit <= 90));
+  }
+
+  String? _normalizeCode(String raw) {
+    final uri = Uri.tryParse(raw.trim());
+    final fromUrl = uri?.queryParameters['code'];
+    final normalized = (fromUrl ?? raw)
+        .replaceAll(RegExp('[^a-zA-Z0-9]'), '')
+        .toUpperCase();
+    return _isValidCode(normalized) ? normalized : null;
+  }
+
+  void _handleCapture(BarcodeCapture capture) {
+    if (_handled) return;
+    for (final barcode in capture.barcodes) {
+      final value = barcode.rawValue?.trim();
+      if (value == null || value.isEmpty || _normalizeCode(value) == null) {
+        continue;
+      }
+      _handled = true;
+      Navigator.of(context).pop(value);
+      return;
+    }
+  }
+
+  Future<void> _enterTvCode() async {
+    final controller = TextEditingController();
+    String? error;
+    final code = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Enter TV login code'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Enter the 6-character code shown below the QR code on your TV.',
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                maxLength: 7,
+                textCapitalization: TextCapitalization.characters,
+                textInputAction: TextInputAction.done,
+                decoration: InputDecoration(
+                  labelText: 'TV code',
+                  hintText: 'ABC-123',
+                  errorText: error,
+                  counterText: '',
+                ),
+                onSubmitted: (value) {
+                  final normalized = _normalizeCode(value);
+                  if (normalized == null) {
+                    setDialogState(() => error = 'Enter the 6-character TV code.');
+                    return;
+                  }
+                  Navigator.pop(dialogContext, normalized);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final normalized = _normalizeCode(controller.text);
+                if (normalized == null) {
+                  setDialogState(() => error = 'Enter the 6-character TV code.');
+                  return;
+                }
+                Navigator.pop(dialogContext, normalized);
+              },
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (code != null && mounted && !_handled) {
+      _handled = true;
+      Navigator.of(context).pop(code);
+    }
+  }
+
+  Widget _cameraError(
+    BuildContext context,
+    MobileScannerException error,
+    Widget? child,
+  ) {
+    return ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 34),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.camera_alt_outlined,
+                color: Color(0xFFCBFF75),
+                size: 48,
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Could not start the camera scanner.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Allow Camera permission for Orvix, then retry. You can also enter the TV code manually.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Color(0xFFB7BDB8), height: 1.4),
+              ),
+              const SizedBox(height: 18),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  FilledButton.icon(
+                    onPressed: _retryCamera,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Retry camera'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _enterTvCode,
+                    icon: const Icon(Icons.dialpad_rounded),
+                    label: const Text('Enter TV code'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -935,27 +1147,21 @@ class _OrvixTvQrScannerScreenState extends State<_OrvixTvQrScannerScreen> {
       appBar: AppBar(
         backgroundColor: Colors.black,
         title: const Text('Scan Orvix TV QR'),
+        actions: [
+          TextButton(
+            onPressed: _enterTvCode,
+            child: const Text('Enter code'),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: Stack(
         fit: StackFit.expand,
         children: [
           MobileScanner(
-            onDetect: (capture) {
-              if (_handled) return;
-              for (final barcode in capture.barcodes) {
-                final value = barcode.rawValue?.trim();
-                if (value == null || value.isEmpty) continue;
-                final uri = Uri.tryParse(value);
-                final code = uri?.queryParameters['code'];
-                final normalized = (code ?? value)
-                    .replaceAll(RegExp('[^a-zA-Z0-9]'), '')
-                    .toUpperCase();
-                if (!_isValidCode(normalized)) continue;
-                _handled = true;
-                Navigator.of(context).pop(value);
-                return;
-              }
-            },
+            controller: _scannerController,
+            errorBuilder: _cameraError,
+            onDetect: _handleCapture,
           ),
           Center(
             child: IgnorePointer(
@@ -989,3 +1195,4 @@ class _OrvixTvQrScannerScreenState extends State<_OrvixTvQrScannerScreen> {
     );
   }
 }
+
