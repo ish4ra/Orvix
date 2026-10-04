@@ -11,7 +11,6 @@ import 'package:window_manager/window_manager.dart';
 
 import '../models/media_item.dart';
 import '../services/ai_audio_stt_service.dart';
-import '../services/android_video_surface_service.dart';
 import '../services/ai_sinhala_preferences_service.dart';
 import '../services/ai_sinhala_runtime_state.dart';
 import '../services/ai_sinhala_trace_service.dart';
@@ -24,7 +23,6 @@ import '../services/platform_profile.dart';
 import '../services/player_resize_preferences_service.dart';
 import '../services/subtitle_preferences_service.dart';
 import '../services/subtitle_render_policy.dart';
-import '../services/video_black_bar_crop_service.dart';
 import '../services/skip_segment_service.dart';
 import '../widgets/player_loading_overlay.dart';
 
@@ -174,8 +172,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _mobilePortraitPlayer = false;
   PlayerResizeMode _resizeMode = PlayerResizeMode.fit;
   bool _resizeModeSelectedByUser = false;
-  bool _mobileBlackBarCropApplied = false;
-  Future<void>? _mobileBlackBarCropWork;
   bool _tvControlFocused = false;
 
   bool get _desktop =>
@@ -1520,7 +1516,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     try {
       _playbackStarted = false;
       _startupFailureVisible = false;
-      _mobileBlackBarCropApplied = false;
       _startupTimer?.cancel();
       if (mounted && _error != null) {
         setState(() => _error = null);
@@ -1670,7 +1665,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
 
       if (PlatformProfile.isAndroidMobile) {
-        unawaited(_applyAndroidMobileActiveFrameCrop());
+        await _restoreAndroidMobileNativeAspectRatio();
       }
 
       if (_hasPlaybackActivity()) {
@@ -2507,6 +2502,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _loadResizePreference() async {
+    // Android Mobile always starts a new playback in Fit so stale Fill/Zoom
+    // choices from earlier testing cannot silently stretch the next video.
+    if (PlatformProfile.isAndroidMobile) {
+      if (!mounted || _closing || _resizeModeSelectedByUser) return;
+      setState(() => _resizeMode = PlayerResizeMode.fit);
+      return;
+    }
+
     final mode = await PlayerResizePreferencesService.load(
       fallback: PlayerResizeMode.fit,
     );
@@ -2517,7 +2520,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _setResizeMode(PlayerResizeMode mode) async {
     _resizeModeSelectedByUser = true;
     if (mounted) setState(() => _resizeMode = mode);
-    await PlayerResizePreferencesService.save(mode);
+    // Keep Fit/Fill/Zoom as a per-playback choice on Android Mobile. Other
+    // platforms retain their existing persisted preference behavior.
+    if (!PlatformProfile.isAndroidMobile) {
+      await PlayerResizePreferencesService.save(mode);
+    }
     if (mounted) _showControls();
   }
 
@@ -2899,129 +2906,35 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
 
-  Future<void> _applyAndroidMobileActiveFrameCrop() async {
-    if (!PlatformProfile.isAndroidMobile ||
-        _closing ||
-        _mobileBlackBarCropApplied) {
-      return;
-    }
+  Future<void> _restoreAndroidMobileNativeAspectRatio() async {
+    if (!PlatformProfile.isAndroidMobile || _closing) return;
+    final platform = widget.playback.player.platform;
+    if (platform is! mk.NativePlayer) return;
 
-    final existing = _mobileBlackBarCropWork;
-    if (existing != null) {
-      await existing;
-      return;
-    }
-
-    final work = () async {
-      // Let playback settle, then inspect frames from the already-playing
-      // libmpv instance. Do not reopen the URL through FFmpeg: beta.49 proved
-      // that a second network/P2P reader can fail while the player itself is
-      // rendering perfectly.
-      await Future<void>.delayed(const Duration(seconds: 2));
-      if (_closing || !mounted) return;
-
-      final player = widget.playback.player;
-      final platform = player.platform;
-      if (platform is! mk.NativePlayer) return;
-
-      final tempDirectory = await getTemporaryDirectory();
-      VideoCropRect? crop;
+    // Match normal MPV behavior on Android Mobile. The source/container owns
+    // the display aspect ratio; Orvix must not crop the decoded frame or resize
+    // media_kit's SurfaceProducer behind MPV's back.
+    const properties = <String, String>{
+      'video-aspect-override': 'no',
+      'video-aspect-method': 'container',
+      'keepaspect': 'yes',
+      'video-crop': '',
+      'video-unscaled': 'no',
+      'video-zoom': '0',
+      'panscan': '0',
+      'video-scale-x': '1',
+      'video-scale-y': '1',
+    };
+    for (final entry in properties.entries) {
       try {
-        crop = await VideoBlackBarCropService.detectFromNativePlayer(
-          platform: platform,
-          directory: tempDirectory,
+        await platform.setProperty(
+          entry.key,
+          entry.value,
+          waitForInitialization: false,
         );
       } catch (_) {
-        crop = null;
+        // A missing optional MPV property must never interrupt playback.
       }
-      if (crop == null || _closing) return;
-
-      var applied = false;
-      var usedVideoCrop = false;
-      var usedFilterCrop = false;
-      try {
-        // Mirror MPV's own autocrop path: make the crop file-local so it
-        // cannot leak into the next episode/source.
-        await platform.command(
-          <String>[
-            'set',
-            'file-local-options/video-crop',
-            crop.mpvValue,
-          ],
-          waitForInitialization: false,
-          throwOnError: true,
-        );
-        applied = true;
-        usedVideoCrop = true;
-      } catch (_) {}
-
-      if (!applied) {
-        try {
-          await platform.command(
-            <String>[
-              'vf',
-              'add',
-              '@orvix_autocrop:crop=${crop.ffmpegValue}',
-            ],
-            waitForInitialization: false,
-            throwOnError: true,
-          );
-          applied = true;
-          usedFilterCrop = true;
-        } catch (_) {}
-      }
-
-      if (!applied || _closing) return;
-
-      // IMPORTANT: do not fake the active DAR with Video.aspectRatio. That
-      // only changes Flutter's box around the existing texture and therefore
-      // stretches the pixels. Instead resize media_kit's Android
-      // SurfaceProducer to the active display dimensions. Its native callback
-      // updates VideoController.rect and MPV receives the matching
-      // android-surface-size, so Fit sees the same geometry as MPV itself.
-      final surfaceResized =
-          await AndroidVideoSurfaceService.resizeToActiveFrame(
-        player: player,
-        cropWidth: crop.width,
-        cropHeight: crop.height,
-      );
-
-      if (!surfaceResized) {
-        // Never leave a half-applied geometry change behind. Falling back to
-        // the original frame is preferable to stretching/corrupting playback.
-        try {
-          if (usedVideoCrop) {
-            await platform.command(
-              const <String>[
-                'set',
-                'file-local-options/video-crop',
-                '',
-              ],
-              waitForInitialization: false,
-              throwOnError: false,
-            );
-          }
-          if (usedFilterCrop) {
-            await platform.command(
-              const <String>['vf', 'remove', '@orvix_autocrop'],
-              waitForInitialization: false,
-              throwOnError: false,
-            );
-          }
-        } catch (_) {}
-        return;
-      }
-
-      if (mounted && !_closing) {
-        setState(() => _mobileBlackBarCropApplied = true);
-      }
-    }();
-
-    _mobileBlackBarCropWork = work;
-    try {
-      await work;
-    } finally {
-      _mobileBlackBarCropWork = null;
     }
   }
 
@@ -5512,11 +5425,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     controller: widget.playback.controller,
                     width: double.infinity,
                     height: double.infinity,
-                    // media_kit applies Fit / Fill / Zoom in Flutter's
-                    // FittedBox. Android Mobile keeps that working layer, but
-                    // after encoded bars are cropped the native texture itself
-                    // is resized to the active frame. Do not use Video.aspectRatio
-                    // here: overriding only the Flutter box stretches pixels.
+                    // Default Fit is BoxFit.contain and uses media_kit/MPV's
+                    // native display geometry. Do not inject a synthetic aspect
+                    // ratio or auto-crop the decoded frame on Android Mobile.
                     fit: _resizeMode.boxFit,
                     controls: NoVideoControls,
                     subtitleViewConfiguration: SubtitleViewConfiguration(
