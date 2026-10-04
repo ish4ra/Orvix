@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:simple_icons/simple_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -246,6 +247,58 @@ class _OrvixShellState extends State<_OrvixShell> {
   int _index = 0;
   int _authRevision = 0;
   int _libraryRevision = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    if (PlatformProfile.isAndroidTv) {
+      HardwareKeyboard.instance.addHandler(_handleTvDirectionalKey);
+    }
+  }
+
+  @override
+  void dispose() {
+    if (PlatformProfile.isAndroidTv) {
+      HardwareKeyboard.instance.removeHandler(_handleTvDirectionalKey);
+    }
+    super.dispose();
+  }
+
+  bool _handleTvDirectionalKey(KeyEvent event) {
+    if (!mounted ||
+        !PlatformProfile.isAndroidTv ||
+        (event is! KeyDownEvent && event is! KeyRepeatEvent)) {
+      return false;
+    }
+
+    // Only own DPAD traversal while the top-level Orvix shell is the active
+    // route. Details, player, dialogs and other pushed routes keep their own
+    // remote-key handling.
+    final route = ModalRoute.of(context);
+    if (route == null || !route.isCurrent) return false;
+
+    final direction = switch (event.logicalKey) {
+      LogicalKeyboardKey.arrowDown => TraversalDirection.down,
+      LogicalKeyboardKey.arrowUp => TraversalDirection.up,
+      _ => null,
+    };
+    if (direction == null) return false;
+
+    final current = FocusManager.instance.primaryFocus;
+    if (current == null) return false;
+
+    // Flutter's default reading-order traversal can leave Android TV focus
+    // trapped in text fields or at the edge of a section. Prefer geometric
+    // DPAD movement, then fall back to sequential traversal so every focusable
+    // control remains reachable with only the remote.
+    var moved = current.focusInDirection(direction);
+    if (!moved) {
+      moved = direction == TraversalDirection.down
+          ? current.nextFocus()
+          : current.previousFocus();
+    }
+    return moved;
+  }
   void _refreshAfterAccountChange() {
     if (!mounted) return;
     setState(() {
@@ -1076,7 +1129,11 @@ class _TvFocusAutoScrollState extends State<_TvFocusAutoScroll> {
         focusContext,
         duration: const Duration(milliseconds: 170),
         curve: Curves.easeOutCubic,
-        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+        // Keep the focused TV control comfortably inside the viewport instead
+        // of waiting until it is clipped at an edge. This mirrors TV-first
+        // source browsers where DPAD focus and smooth scrolling are one action.
+        alignment: 0.30,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
       );
     });
   }
