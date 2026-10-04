@@ -100,6 +100,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<List<String>>? _subtitleTimingSubscription;
   StreamSubscription<String>? _playbackErrorSubscription;
+  StreamSubscription<mk.Track>? _trackSubscription;
   bool _playbackStarted = false;
   bool _successReported = false;
   bool _failureReported = false;
@@ -173,12 +174,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _mobilePortraitPlayer = false;
   PlayerResizeMode _resizeMode = PlayerResizeMode.fit;
   bool _resizeModeSelectedByUser = false;
-  bool _mobileAutoCropApplied = false;
-  Future<void>? _mobileAutoCropWork;
+  bool _mobileEncodedLetterboxDetected = false;
+  Future<void>? _mobileLetterboxDetectionWork;
   bool _tvControlFocused = false;
 
   bool get _desktop =>
       Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+
+  BoxFit get _effectiveVideoFit {
+    if (PlatformProfile.isAndroidMobile &&
+        _resizeMode == PlayerResizeMode.fit &&
+        !_resizeModeSelectedByUser &&
+        _mobileEncodedLetterboxDetected) {
+      // A 16:9 encode can contain a wider active picture plus hard-coded
+      // top/bottom bars. Covering that encoded frame on a wider phone crops
+      // only the redundant bars at the viewport edge while preserving pixels.
+      return BoxFit.cover;
+    }
+    return _resizeMode.boxFit;
+  }
 
   bool get _localP2pStream {
     final uri = Uri.tryParse(widget.url);
@@ -802,6 +816,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     unawaited(_loadSkipSegments());
     _playbackErrorSubscription =
         widget.playback.player.stream.error.listen(_onPlaybackError);
+    _trackSubscription = widget.playback.player.stream.track.listen((_) {
+      if (!mounted || _closing) return;
+      setState(() {});
+    });
     _startupPlayingSubscription =
         widget.playback.player.stream.playing.listen((playing) {
       if (!playing || _closing || _preflightWarmup) return;
@@ -1519,7 +1537,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     try {
       _playbackStarted = false;
       _startupFailureVisible = false;
-      _mobileAutoCropApplied = false;
+      _mobileEncodedLetterboxDetected = false;
       _startupTimer?.cancel();
       if (mounted && _error != null) {
         setState(() => _error = null);
@@ -1670,7 +1688,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       if (PlatformProfile.isAndroidMobile) {
         await _restoreAndroidMobileNativeAspectRatio();
-        unawaited(_applyAndroidMobileAutoCrop());
+        unawaited(_detectAndroidMobileEncodedLetterbox());
       }
 
       if (_hasPlaybackActivity()) {
@@ -2776,26 +2794,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
             .where(_isLikelyFullSubtitleTrack)
             .where(_isUnlabeledTextTrack)
             .toList(growable: false);
-        if (unknownText.isNotEmpty) {
+        if (unknownText.length == 1) {
           chosen = unknownText.first;
         }
       }
 
-      // Some MKVs expose several embedded subtitle tracks with missing/und
-      // language tags. Android Mobile should still show a real embedded track
-      // instead of silently leaving subtitles off.
-      if (chosen == null && PlatformProfile.isAndroidMobile) {
-        final fallbackTracks =
-            tracks.where(_isLikelyFullSubtitleTrack).toList(growable: false);
-        if (fallbackTracks.isNotEmpty) {
-          fallbackTracks.sort((a, b) {
-            final aImage = _isImageSubtitleTrack(a) ? 1 : 0;
-            final bImage = _isImageSubtitleTrack(b) ? 1 : 0;
-            return aImage.compareTo(bImage);
-          });
-          chosen = fallbackTracks.first;
-        }
-      }
+      // Do not auto-select an arbitrary non-preferred track. A foreign or
+      // unlabeled track can look like a valid "full" subtitle while containing
+      // a different script. If preferred embedded metadata is inconclusive,
+      // continue to the validated online preferred-language fallback instead.
 
       if (chosen != null) {
         if (await _selectEmbeddedSubtitleReliably(chosen)) {
@@ -2938,139 +2945,78 @@ class _PlayerScreenState extends State<PlayerScreen> {
         );
       } catch (_) {}
     }
-    try {
-      await platform.command(
-        const <String>['vf', 'remove', '@orvix_autocrop'],
-        waitForInitialization: false,
-        throwOnError: false,
-      );
-    } catch (_) {}
   }
 
-  Future<void> _applyAndroidMobileAutoCrop() async {
+  Future<void> _detectAndroidMobileEncodedLetterbox() async {
     if (!PlatformProfile.isAndroidMobile ||
         _closing ||
-        _mobileAutoCropApplied) {
+        _resizeModeSelectedByUser ||
+        _mobileEncodedLetterboxDetected) {
       return;
     }
 
-    final existing = _mobileAutoCropWork;
+    final existing = _mobileLetterboxDetectionWork;
     if (existing != null) {
       await existing;
       return;
     }
 
     final work = () async {
-      // Let the actual libmpv output settle before sampling. The source is
-      // never reopened, so debrid/P2P headers and localhost bridge state remain
-      // exactly the same as the playing stream.
-      await Future<void>.delayed(const Duration(seconds: 2));
-      if (_closing || !mounted) return;
+      // Do not sample a timer-relative black/loading frame. Wait until
+      // media_kit confirms that Android has rendered a real video frame.
+      try {
+        await widget.playback.controller.waitUntilFirstFrameRendered.timeout(
+          const Duration(seconds: 12),
+        );
+      } catch (_) {
+        // Slow P2P/debrid startup may exceed the first-frame wait. The bounded
+        // retry loop below can still detect letterbox bars once frames arrive.
+      }
 
       final player = widget.playback.player;
       final platform = player.platform;
       if (platform is! mk.NativePlayer) return;
 
-      final tempDirectory = await getTemporaryDirectory();
-      VideoCropRect? crop;
-      try {
-        crop = await VideoBlackBarCropService.detectFromNativePlayer(
-          platform: platform,
-          directory: tempDirectory,
-        );
-      } catch (_) {
-        crop = null;
-      }
-      if (crop == null || _closing) return;
+      for (var pass = 0; pass < 4 && mounted && !_closing; pass++) {
+        if (_resizeModeSelectedByUser) return;
+        if (pass > 0) {
+          await Future<void>.delayed(const Duration(milliseconds: 1400));
+        }
 
-      final beforeRect = widget.playback.controller.rect.value;
-      final beforeParams = player.state.videoParams;
-      final rawPar = beforeParams.par;
-      final pixelAspect =
-          rawPar != null && rawPar.isFinite && rawPar > 0 ? rawPar : 1.0;
-      var expectedWidth = crop.width * pixelAspect;
-      var expectedHeight = crop.height.toDouble();
-      final rotation = ((beforeParams.rotate ?? 0) % 360 + 360) % 360;
-      if (rotation == 90 || rotation == 270) {
-        final swap = expectedWidth;
-        expectedWidth = expectedHeight;
-        expectedHeight = swap;
-      }
-      final expectedRatio = expectedWidth / expectedHeight;
-
-      try {
-        // IMPORTANT: crop only inside MPV's filter graph. Do NOT call
-        // VideoOutputManager.SetSurfaceSize ourselves. media_kit observes
-        // video-out-params and atomically updates both Android Surface size and
-        // VideoController.rect, which keeps Flutter Fit geometry in sync.
-        await platform.command(
-          <String>[
-            'vf',
-            'add',
-            '@orvix_autocrop:crop=${crop.ffmpegValue}',
-          ],
-          waitForInitialization: false,
-          throwOnError: true,
-        );
-      } catch (_) {
-        return;
-      }
-
-      var geometrySynced = false;
-      for (var attempt = 0; attempt < 24 && !_closing; attempt++) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
         final params = player.state.videoParams;
-        final rect = widget.playback.controller.rect.value;
-        final dw = params.dw;
-        final dh = params.dh;
-        if (rect == null ||
-            dw == null ||
-            dh == null ||
-            dw <= 0 ||
-            dh <= 0 ||
-            rect.width <= 1 ||
-            rect.height <= 1) {
-          continue;
-        }
+        final encodedWidth = params.w ?? 0;
+        final encodedHeight = params.h ?? 0;
+        if (encodedWidth <= 0 || encodedHeight <= 0) continue;
 
-        final paramsRatio = dw / dh;
-        final rectRatio = rect.width / rect.height;
-        final expectedError =
-            ((paramsRatio - expectedRatio).abs() / expectedRatio);
-        final rectError = ((rectRatio - paramsRatio).abs() / paramsRatio);
-        final changedFromBefore = beforeRect == null ||
-            (rect.width - beforeRect.width).abs() >= 2 ||
-            (rect.height - beforeRect.height).abs() >= 2;
-
-        if (changedFromBefore && expectedError <= 0.04 && rectError <= 0.01) {
-          geometrySynced = true;
-          break;
-        }
-      }
-
-      if (!geometrySynced) {
-        // Never keep a crop if media_kit did not report the matching output
-        // geometry. Falling back to the uncropped frame is safer than stretch.
+        VideoCropRect? crop;
         try {
-          await platform.command(
-            const <String>['vf', 'remove', '@orvix_autocrop'],
-            waitForInitialization: false,
-            throwOnError: false,
+          final tempDirectory = await getTemporaryDirectory();
+          crop = await VideoBlackBarCropService.detectFromNativePlayer(
+            platform: platform,
+            directory: tempDirectory,
           );
-        } catch (_) {}
-        return;
-      }
+        } catch (_) {
+          crop = null;
+        }
 
-      if (mounted && !_closing) {
-        setState(() => _mobileAutoCropApplied = true);
+        if (crop != null &&
+            crop.isHorizontalLetterbox(
+              encodedWidth: encodedWidth,
+              encodedHeight: encodedHeight,
+            )) {
+          if (mounted && !_closing && !_resizeModeSelectedByUser) {
+            setState(() => _mobileEncodedLetterboxDetected = true);
+          }
+          return;
+        }
       }
     }();
 
-    _mobileAutoCropWork = work;
+    _mobileLetterboxDetectionWork = work;
     try {
       await work;
     } finally {
-      _mobileAutoCropWork = null;
+      _mobileLetterboxDetectionWork = null;
     }
   }
 
@@ -3080,12 +3026,31 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (platform is! mk.NativePlayer) return;
     try {
       final selected = player.state.track.subtitle;
+      if (PlatformProfile.isAndroidMobile) {
+        // media_kit_video starts Android with sub-font-provider=none. That is
+        // intentionally strict and can turn missing ASS fonts into tofu boxes.
+        // Restore fontconfig fallback while keeping the bundled Sinhala font
+        // and embedded MKV font attachments available.
+        for (final entry in const <String, String>{
+          'sub-font-provider': 'fontconfig',
+          'embeddedfonts': 'yes',
+          'sub-font': 'Noto Sans Sinhala',
+        }.entries) {
+          try {
+            await platform.setProperty(
+              entry.key,
+              entry.value,
+              waitForInitialization: false,
+            );
+          } catch (_) {}
+        }
+      }
       final nativeVisible = SubtitleRenderPolicy.nativeSubtitleVisible(
         requestedVisible: visible,
         aiSinhalaRequested: _aiSinhalaRequested,
         isAndroid: Platform.isAndroid,
         isBitmapTrack: _isImageSubtitleTrack(selected),
-        nativeStyledSubtitles: PlatformProfile.isAndroidMobile,
+        nativeStyledSubtitles: _androidMobileNativeStyledSubtitle(selected),
       );
 
       if (nativeVisible && !_aiSinhalaRequested) {
@@ -3458,6 +3423,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       await _positionSubscription?.cancel();
       await _subtitleTimingSubscription?.cancel();
       await _playbackErrorSubscription?.cancel();
+      await _trackSubscription?.cancel();
     } catch (_) {}
 
     try {
@@ -4086,6 +4052,29 @@ class _PlayerScreenState extends State<PlayerScreen> {
         codec.contains('vob');
   }
 
+  bool _isStyledTextSubtitleTrack(dynamic track) {
+    if (!_isRealSubtitleTrack(track) || _isImageSubtitleTrack(track)) {
+      return false;
+    }
+    final codec = (track.codec ?? '').toString().trim().toLowerCase();
+    return codec == 'ass' ||
+        codec == 'ssa' ||
+        codec.contains('substation') ||
+        codec.contains('ass subtitle') ||
+        codec.contains('ssa subtitle');
+  }
+
+  bool _androidMobileNativeStyledSubtitle(dynamic track) =>
+      PlatformProfile.isAndroidMobile && _isStyledTextSubtitleTrack(track);
+
+  bool get _androidMobileFlutterTextSubtitleVisible {
+    if (!PlatformProfile.isAndroidMobile || _aiSinhalaRequested) return false;
+    final track = widget.playback.player.state.track.subtitle;
+    return _isRealSubtitleTrack(track) &&
+        !_isImageSubtitleTrack(track) &&
+        !_androidMobileNativeStyledSubtitle(track);
+  }
+
   bool _isEnglishTextTrack(dynamic track) =>
       _isRealSubtitleTrack(track) &&
       _isEnglishTrack(track) &&
@@ -4628,6 +4617,58 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return (base * heightScale * 1.10).clamp(22.0, 44.0).toDouble();
   }
 
+  Widget _androidMobileTextSubtitleOverlay() {
+    final player = widget.playback.player;
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: StreamBuilder<List<String>>(
+          stream: player.stream.subtitle,
+          initialData: player.state.subtitle,
+          builder: (context, snapshot) {
+            final text = (snapshot.data ?? const <String>[])
+                .map((line) => line.trim())
+                .where((line) => line.isNotEmpty)
+                .join('\n');
+            if (text.isEmpty) return const SizedBox.shrink();
+
+            return AnimatedContainer(
+              duration: const Duration(milliseconds: 100),
+              alignment: Alignment.bottomCenter,
+              padding: EdgeInsets.fromLTRB(
+                20,
+                0,
+                20,
+                _controlsVisible && _subtitleBottomOffset < 110
+                    ? 110
+                    : _subtitleBottomOffset,
+              ),
+              child: Text(
+                text,
+                textAlign: TextAlign.center,
+                textScaler: TextScaler.noScaling,
+                style: TextStyle(
+                  fontFamily: 'OrvixSubtitle',
+                  height: 1.35,
+                  fontSize: _effectiveSubtitleFontSize(context),
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                  backgroundColor: _subtitleBackground
+                      ? Colors.black.withValues(
+                          alpha: _subtitleBackgroundOpacity,
+                        )
+                      : Colors.transparent,
+                  shadows: const [
+                    Shadow(color: Colors.black, blurRadius: 7),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   Widget _aiSubtitleOverlay() {
     final baseBottom = _controlsVisible ? 110.0 : 12.0;
     return AnimatedPositioned(
@@ -4665,6 +4706,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   _aiDisplaySubtitle,
                   textAlign: TextAlign.center,
                   style: TextStyle(
+                    fontFamily: 'OrvixSubtitle',
                     color: Colors.white,
                     fontSize: _effectiveSubtitleFontSize(context),
                     height: 1.35,
@@ -5518,6 +5560,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     unawaited(_positionSubscription?.cancel() ?? Future<void>.value());
     unawaited(_subtitleTimingSubscription?.cancel() ?? Future<void>.value());
     unawaited(_playbackErrorSubscription?.cancel() ?? Future<void>.value());
+    unawaited(_trackSubscription?.cancel() ?? Future<void>.value());
     if (!_exitPrepared) {
       unawaited(
         _persistProgress()
@@ -5561,12 +5604,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     controller: widget.playback.controller,
                     width: double.infinity,
                     height: double.infinity,
-                    // Default Fit is BoxFit.contain. When encoded black bars
-                    // are detected, MPV crops them in its filter graph and
-                    // media_kit updates the native Surface + controller rect
-                    // from video-out-params. Orvix never resizes the Surface
-                    // independently, so the active picture cannot be stretched.
-                    fit: _resizeMode.boxFit,
+                    // Normal content uses contain. If a 16:9 file is verified
+                    // to contain a wider active picture with hard-coded
+                    // horizontal bars, mobile Fit uses cover on the unchanged
+                    // texture. This mirrors local MPV's visible result without
+                    // rewriting MPV crop/Surface geometry.
+                    fit: _effectiveVideoFit,
                     controls: NoVideoControls,
                     subtitleViewConfiguration: SubtitleViewConfiguration(
                       // media_kit's default libass=false mode renders text
@@ -5579,13 +5622,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         isAndroid: Platform.isAndroid,
                         isNativePlayer:
                             widget.playback.player.platform is mk.NativePlayer,
-                        nativeStyledSubtitles: PlatformProfile.isAndroidMobile,
+                        nativeStyledSubtitles: _androidMobileNativeStyledSubtitle(
+                          widget.playback.player.state.track.subtitle,
+                        ),
                       ),
                       // media_kit otherwise scales subtitle text again from a
                       // 1920x1080 reference. On Android logical pixels this can
                       // shrink an 18-26sp subtitle into single-digit text.
                       textScaler: TextScaler.noScaling,
                       style: TextStyle(
+                        fontFamily: 'OrvixSubtitle',
                         height: 1.35,
                         fontSize: _effectiveSubtitleFontSize(context),
                         color: Colors.white,
@@ -5608,8 +5654,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                             : _subtitleBottomOffset,
                       ),
                     ),
-                  )
-                else
+                  ),
+                if (_error == null && _androidMobileFlutterTextSubtitleVisible)
+                  _androidMobileTextSubtitleOverlay(),
+                if (_error != null)
                   _errorView(context),
                 if (_error == null &&
                     !_aiSubtitleLoading &&
