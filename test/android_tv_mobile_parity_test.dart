@@ -15,12 +15,17 @@ void main() {
       contains('onSubmitted: (_) => _busy ? null : _connectApiKey()'),
     );
     expect(library, contains('textInputAction: TextInputAction.done'));
+    expect(library, contains("tv-linear-torbox-device"));
+    expect(library, contains("tv-linear-torbox-api-key"));
+    expect(library, contains("tv-linear-torbox-connect"));
+    expect(library, contains("tv-linear-debrid-token"));
 
     expect(app, contains('HardwareKeyboard.instance.addHandler'));
     expect(app, contains('HardwareKeyboard.instance.removeHandler'));
     expect(app, contains('current.focusInDirection(direction)'));
     expect(app, contains('current.nextFocus()'));
     expect(app, contains('current.previousFocus()'));
+    expect(app, contains("debugLabel?.startsWith('tv-linear-')"));
     expect(app, contains('route == null || !route.isCurrent'));
     expect(app, contains('class _TvFocusAutoScroll'));
     expect(app, contains('Scrollable.ensureVisible'));
@@ -47,6 +52,9 @@ void main() {
     expect(account, contains('errorBuilder: _cameraError'));
     expect(account, contains("'Retry camera'"));
     expect(account, contains("'Enter TV code'"));
+    expect(account, contains("orvix-tv-qr-scanner-"));
+    expect(account, contains("tv-linear-account-sync"));
+    expect(account, contains("tv-linear-account-sign-out"));
     expect(account, contains("'Scan TV QR'"));
     expect(account, contains("'approve_tv_login_session'"));
     expect(account, contains("'p_user_code': code"));
@@ -56,11 +64,24 @@ void main() {
 
     expect(mobileCompat, contains('android.permission.CAMERA'));
     expect(mobileCompat, contains('android.hardware.camera'));
+    expect(mobileCompat, contains('re.search(r"<manifest\\\\b[^>]*>", text)'));
     expect(
       mobileCompat,
       isNot(contains(
         r'<manifest xmlns:android="http://schemas.android.com/apk/res/android">\\n',
       )),
     );
+  });
+
+  test('Android mobile Clouds selector keeps all four providers visible', () {
+    final library = File('lib/screens/library_screen.dart').readAsStringSync();
+
+    expect(library, contains('final mobile = PlatformProfile.isAndroidMobile'));
+    expect(library, contains('expandedInsets: mobile ? EdgeInsets.zero : null'));
+    expect(library, contains("ButtonSegment(value: CloudProvider.pikpak, label: Text('PikPak'))"));
+    expect(library, contains("ButtonSegment(value: CloudProvider.torbox, label: Text('TorBox'))"));
+    expect(library, contains("ButtonSegment(value: CloudProvider.realDebrid, label: Text('Real-Debrid'))"));
+    expect(library, contains("ButtonSegment(value: CloudProvider.premiumize, label: Text('Premiumize'))"));
+    expect(library, contains('SizedBox(width: double.infinity, child: providerSelector)'));
   });
 }

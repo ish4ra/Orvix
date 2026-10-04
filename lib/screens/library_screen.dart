@@ -7,6 +7,7 @@ import '../services/cloud_preferences_service.dart';
 import '../services/pikpak_service.dart';
 import '../services/pikpak_transfer_service.dart';
 import '../services/playback_service.dart';
+import '../services/platform_profile.dart';
 import '../services/player_engine_preferences_service.dart';
 import '../services/torbox_service.dart';
 import '../services/real_debrid_service.dart';
@@ -102,26 +103,68 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final mobile = PlatformProfile.isAndroidMobile;
+    final providerSelector = SegmentedButton<CloudProvider>(
+      segments: mobile
+          ? const [
+              ButtonSegment(value: CloudProvider.pikpak, label: Text('PikPak')),
+              ButtonSegment(value: CloudProvider.torbox, label: Text('TorBox')),
+              ButtonSegment(value: CloudProvider.realDebrid, label: Text('Real-Debrid')),
+              ButtonSegment(value: CloudProvider.premiumize, label: Text('Premiumize')),
+            ]
+          : const [
+              ButtonSegment(value: CloudProvider.pikpak, label: Text('PikPak'), icon: Icon(Icons.cloud_outlined)),
+              ButtonSegment(value: CloudProvider.torbox, label: Text('TorBox'), icon: Icon(Icons.bolt_outlined)),
+              ButtonSegment(value: CloudProvider.realDebrid, label: Text('Real-Debrid'), icon: Icon(Icons.cloud_done_outlined)),
+              ButtonSegment(value: CloudProvider.premiumize, label: Text('Premiumize'), icon: Icon(Icons.cloud_queue_rounded)),
+            ],
+      selected: {_provider},
+      showSelectedIcon: !mobile,
+      expandedInsets: mobile ? EdgeInsets.zero : null,
+      style: mobile
+          ? const ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              padding: WidgetStatePropertyAll(
+                EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+              ),
+              textStyle: WidgetStatePropertyAll(
+                TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+            )
+          : null,
+      onSelectionChanged: (value) => _select(value.first),
+    );
+
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(32, 24, 32, 0),
-          child: Row(
-            children: [
-              Text('Clouds', style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w900)),
-              const Spacer(),
-              SegmentedButton<CloudProvider>(
-                segments: const [
-                  ButtonSegment(value: CloudProvider.pikpak, label: Text('PikPak'), icon: Icon(Icons.cloud_outlined)),
-                  ButtonSegment(value: CloudProvider.torbox, label: Text('TorBox'), icon: Icon(Icons.bolt_outlined)),
-                  ButtonSegment(value: CloudProvider.realDebrid, label: Text('Real-Debrid'), icon: Icon(Icons.cloud_done_outlined)),
-                  ButtonSegment(value: CloudProvider.premiumize, label: Text('Premiumize'), icon: Icon(Icons.cloud_queue_rounded)),
-                ],
-                selected: {_provider},
-                onSelectionChanged: (value) => _select(value.first),
-              ),
-            ],
-          ),
+          padding: EdgeInsets.fromLTRB(mobile ? 20 : 32, 24, mobile ? 20 : 32, 0),
+          child: mobile
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Clouds',
+                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                            fontWeight: FontWeight.w900,
+                          ),
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(width: double.infinity, child: providerSelector),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Text(
+                      'Clouds',
+                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                            fontWeight: FontWeight.w900,
+                          ),
+                    ),
+                    const Spacer(),
+                    Flexible(child: providerSelector),
+                  ],
+                ),
         ),
         Expanded(
           child: AnimatedSwitcher(
@@ -156,6 +199,9 @@ class _PikPakPane extends StatefulWidget {
 class _PikPakPaneState extends State<_PikPakPane> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _usernameFocusNode = FocusNode(debugLabel: 'tv-linear-pikpak-username');
+  final _passwordFocusNode = FocusNode(debugLabel: 'tv-linear-pikpak-password');
+  final _signInFocusNode = FocusNode(debugLabel: 'tv-linear-pikpak-sign-in');
   final List<_FolderCrumb> _crumbs = [const _FolderCrumb('', 'My PikPak')];
   bool _checkingSession = true;
   bool _signedIn = false;
@@ -169,7 +215,14 @@ class _PikPakPaneState extends State<_PikPakPane> {
   @override
   void initState() { super.initState(); _restore(); }
   @override
-  void dispose() { _usernameController.dispose(); _passwordController.dispose(); super.dispose(); }
+  void dispose() {
+    _usernameController.dispose();
+    _passwordController.dispose();
+    _usernameFocusNode.dispose();
+    _passwordFocusNode.dispose();
+    _signInFocusNode.dispose();
+    super.dispose();
+  }
 
   String _formatFileSize(String? raw) {
     final bytes = int.tryParse(raw ?? '');
@@ -256,11 +309,36 @@ class _PikPakPaneState extends State<_PikPakPane> {
         title: 'Connect PikPak',
         subtitle: 'Browse and play your PikPak cloud library directly inside Orvix.',
         children: [
-          TextField(controller: _usernameController, enabled: !_busy, decoration: const InputDecoration(labelText: 'Email / username', prefixIcon: Icon(Icons.person_outline))),
+          TextField(
+            controller: _usernameController,
+            focusNode: _usernameFocusNode,
+            enabled: !_busy,
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(
+              labelText: 'Email / username',
+              prefixIcon: Icon(Icons.person_outline),
+            ),
+          ),
           const SizedBox(height: 12),
-          TextField(controller: _passwordController, enabled: !_busy, obscureText: true, onSubmitted: (_) => _busy ? null : _signIn(), decoration: const InputDecoration(labelText: 'Password', prefixIcon: Icon(Icons.lock_outline))),
+          TextField(
+            controller: _passwordController,
+            focusNode: _passwordFocusNode,
+            enabled: !_busy,
+            obscureText: true,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _busy ? null : _signIn(),
+            decoration: const InputDecoration(
+              labelText: 'Password',
+              prefixIcon: Icon(Icons.lock_outline),
+            ),
+          ),
           const SizedBox(height: 18),
-          FilledButton.icon(onPressed: _busy ? null : _signIn, icon: const Icon(Icons.login), label: const Text('Sign in to PikPak')),
+          FilledButton.icon(
+            focusNode: _signInFocusNode,
+            onPressed: _busy ? null : _signIn,
+            icon: const Icon(Icons.login),
+            label: const Text('Sign in to PikPak'),
+          ),
           if (_message != null) ...[const SizedBox(height: 12), Text(_message!, textAlign: TextAlign.center)],
           if (_verificationUrl != null) ...[const SizedBox(height: 10), OutlinedButton.icon(onPressed: _openVerification, icon: const Icon(Icons.verified_user_outlined), label: const Text('Open verification'))],
         ],
@@ -312,6 +390,9 @@ class _TorBoxPane extends StatefulWidget {
 
 class _TorBoxPaneState extends State<_TorBoxPane> {
   final _apiKeyController = TextEditingController();
+  final _deviceLoginFocusNode = FocusNode(debugLabel: 'tv-linear-torbox-device');
+  final _apiKeyFocusNode = FocusNode(debugLabel: 'tv-linear-torbox-api-key');
+  final _connectFocusNode = FocusNode(debugLabel: 'tv-linear-torbox-connect');
   bool _checking = true;
   bool _connected = false;
   bool _busy = false;
@@ -322,7 +403,13 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
   @override
   void initState() { super.initState(); _restore(); }
   @override
-  void dispose() { _apiKeyController.dispose(); super.dispose(); }
+  void dispose() {
+    _apiKeyController.dispose();
+    _deviceLoginFocusNode.dispose();
+    _apiKeyFocusNode.dispose();
+    _connectFocusNode.dispose();
+    super.dispose();
+  }
 
   Future<void> _restore() async {
     final connected = await widget.torbox.isConnected;
@@ -447,10 +534,16 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
         title: 'Connect TorBox',
         subtitle: 'Use TorBox device login, or paste your API key. Orvix stores the token in secure storage.',
         children: [
-          FilledButton.icon(onPressed: _busy ? null : _connectDevice, icon: const Icon(Icons.devices_rounded), label: const Text('Sign in with TorBox device code')),
+          FilledButton.icon(
+            focusNode: _deviceLoginFocusNode,
+            onPressed: _busy ? null : _connectDevice,
+            icon: const Icon(Icons.devices_rounded),
+            label: const Text('Sign in with TorBox device code'),
+          ),
           const Padding(padding: EdgeInsets.symmetric(vertical: 16), child: Row(children: [Expanded(child: Divider()), Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: Text('OR')), Expanded(child: Divider())])),
           TextField(
             controller: _apiKeyController,
+            focusNode: _apiKeyFocusNode,
             enabled: !_busy,
             obscureText: true,
             textInputAction: TextInputAction.done,
@@ -462,6 +555,7 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
+            focusNode: _connectFocusNode,
             onPressed: _busy ? null : _connectApiKey,
             icon: const Icon(Icons.link_rounded),
             label: const Text('Connect with API key'),
@@ -558,11 +652,13 @@ class _TokenDebridPane extends StatefulWidget {
 
 class _TokenDebridPaneState extends State<_TokenDebridPane> {
   final _controller=TextEditingController();
+  final _tokenFocusNode=FocusNode(debugLabel:'tv-linear-debrid-token');
+  final _connectFocusNode=FocusNode(debugLabel:'tv-linear-debrid-connect');
   bool _connected=false, _busy=true;
   String? _message, _accountLabel;
   bool get _rd=>widget.provider==CloudProvider.realDebrid;
   @override void initState(){super.initState();_restore();}
-  @override void dispose(){_controller.dispose();super.dispose();}
+  @override void dispose(){_controller.dispose();_tokenFocusNode.dispose();_connectFocusNode.dispose();super.dispose();}
   Future<void> _restore() async {
     final connected=_rd?await RealDebridService.instance.isConnected:await PremiumizeService.instance.isConnected;
     if(!mounted)return;setState((){_connected=connected;_busy=false;});
@@ -601,9 +697,17 @@ class _TokenDebridPaneState extends State<_TokenDebridPane> {
           OutlinedButton.icon(onPressed:_busy?null:_disconnect,icon:const Icon(Icons.logout),label:const Text('Disconnect')),
           if(_message!=null) Text(_message!),
         ]:[
-          TextField(controller:_controller,enabled:!_busy,obscureText:true,decoration:InputDecoration(labelText:_rd?'Real-Debrid API token':'Premiumize API key',prefixIcon:const Icon(Icons.key_rounded))),
+          TextField(
+            controller:_controller,
+            focusNode:_tokenFocusNode,
+            enabled:!_busy,
+            obscureText:true,
+            textInputAction:TextInputAction.done,
+            onSubmitted:(_)=>_busy?null:_connect(),
+            decoration:InputDecoration(labelText:_rd?'Real-Debrid API token':'Premiumize API key',prefixIcon:const Icon(Icons.key_rounded)),
+          ),
           const SizedBox(height:12),
-          FilledButton.icon(onPressed:_busy?null:_connect,icon:const Icon(Icons.link_rounded),label:Text('Connect $name')),
+          FilledButton.icon(focusNode:_connectFocusNode,onPressed:_busy?null:_connect,icon:const Icon(Icons.link_rounded),label:Text('Connect $name')),
           if(_message!=null) Padding(padding:const EdgeInsets.only(top:10),child:Text(_message!)),
         ],
       ),

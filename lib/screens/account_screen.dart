@@ -867,7 +867,7 @@ class _TvQrPane extends StatelessWidget {
   }
 }
 
-class _TvSignedInPane extends StatelessWidget {
+class _TvSignedInPane extends StatefulWidget {
   const _TvSignedInPane({
     required this.email,
     required this.busy,
@@ -875,11 +875,37 @@ class _TvSignedInPane extends StatelessWidget {
     required this.onSync,
     required this.onSignOut,
   });
+
   final String email;
   final bool busy;
   final bool syncing;
   final VoidCallback onSync;
   final VoidCallback onSignOut;
+
+  @override
+  State<_TvSignedInPane> createState() => _TvSignedInPaneState();
+}
+
+class _TvSignedInPaneState extends State<_TvSignedInPane> {
+  final _syncFocusNode = FocusNode(debugLabel: 'tv-linear-account-sync');
+  final _signOutFocusNode = FocusNode(debugLabel: 'tv-linear-account-sign-out');
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _syncFocusNode.canRequestFocus) {
+        _syncFocusNode.requestFocus();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _syncFocusNode.dispose();
+    _signOutFocusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -890,19 +916,21 @@ class _TvSignedInPane extends StatelessWidget {
         const SizedBox(height: 18),
         const Text('Account connected', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
         const SizedBox(height: 8),
-        Text(email, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFF9BA69C))),
+        Text(widget.email, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFF9BA69C))),
         const SizedBox(height: 28),
         FilledButton.icon(
+          focusNode: _syncFocusNode,
           autofocus: true,
-          onPressed: busy ? null : onSync,
-          icon: syncing
+          onPressed: widget.busy ? null : widget.onSync,
+          icon: widget.syncing
               ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
               : const Icon(Icons.sync_rounded),
-          label: Text(syncing ? 'Syncing…' : 'Sync now'),
+          label: Text(widget.syncing ? 'Syncing…' : 'Sync now'),
         ),
         const SizedBox(height: 12),
         OutlinedButton.icon(
-          onPressed: busy ? null : onSignOut,
+          focusNode: _signOutFocusNode,
+          onPressed: widget.busy ? null : widget.onSignOut,
           icon: const Icon(Icons.logout_rounded),
           label: const Text('Sign out'),
         ),
@@ -910,7 +938,6 @@ class _TvSignedInPane extends StatelessWidget {
     );
   }
 }
-
 
 class _OrvixTvQrScannerScreen extends StatefulWidget {
   const _OrvixTvQrScannerScreen();
@@ -922,8 +949,9 @@ class _OrvixTvQrScannerScreen extends StatefulWidget {
 
 class _OrvixTvQrScannerScreenState extends State<_OrvixTvQrScannerScreen>
     with WidgetsBindingObserver {
-  final MobileScannerController _scannerController =
+  MobileScannerController _scannerController =
       MobileScannerController(autoStart: false);
+  int _scannerGeneration = 0;
   bool _handled = false;
   bool _cameraStarting = false;
 
@@ -977,7 +1005,23 @@ class _OrvixTvQrScannerScreenState extends State<_OrvixTvQrScannerScreen>
   }
 
   Future<void> _retryCamera() async {
-    await _stopCamera();
+    final previous = _scannerController;
+    try {
+      if (previous.value.isRunning) await previous.stop();
+    } on MobileScannerException {
+      // Replacing the controller below is the recovery path.
+    }
+    try {
+      await previous.dispose();
+    } catch (_) {}
+
+    if (!mounted) return;
+    setState(() {
+      _scannerController = MobileScannerController(autoStart: false);
+      _scannerGeneration++;
+      _handled = false;
+    });
+    await WidgetsBinding.instance.endOfFrame;
     if (mounted) await _startCamera();
   }
 
@@ -1159,6 +1203,7 @@ class _OrvixTvQrScannerScreenState extends State<_OrvixTvQrScannerScreen>
         fit: StackFit.expand,
         children: [
           MobileScanner(
+            key: ValueKey('orvix-tv-qr-scanner-$_scannerGeneration'),
             controller: _scannerController,
             errorBuilder: _cameraError,
             onDetect: _handleCapture,
