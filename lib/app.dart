@@ -821,7 +821,7 @@ class _AboutScreen extends StatelessWidget {
               const _SupportButton(
                 icon: Icons.language_rounded,
                 label: 'isharalakshan.xyz',
-                url: 'https://isharalakshan.xyz',
+                url: 'https://isharalakshan.xyz/orvix/',
               ),
               const SizedBox(height: 28),
               Text(
