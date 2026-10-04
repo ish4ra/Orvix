@@ -94,13 +94,36 @@ class VideoCropRect {
 
     return true;
   }
+
+  bool isHorizontalLetterbox({
+    required int encodedWidth,
+    required int encodedHeight,
+  }) {
+    if (!isMeaningful(
+      encodedWidth: encodedWidth,
+      encodedHeight: encodedHeight,
+    )) {
+      return false;
+    }
+
+    final removedX = (encodedWidth - width) / encodedWidth;
+    final removedY = (encodedHeight - height) / encodedHeight;
+    if (removedY < .08 || removedX > .03) return false;
+
+    final frameAspect = encodedWidth / encodedHeight;
+    final activeAspect = width / height;
+    return activeAspect >= frameAspect * 1.08;
+  }
 }
 
 class VideoBlackBarCropService {
   VideoBlackBarCropService._();
 
-  static const int _nearBlack = 28;
-  static const double _blackLineRatio = .985;
+  // Compressed black bars are not always mathematically 0,0,0. Keep the
+  // threshold conservative, then rely on multi-frame consensus and centered
+  // margins to reject dark scene content.
+  static const int _nearBlack = 36;
+  static const double _blackLineRatio = .96;
 
   static bool _isNearBlack(Uint8List rgba, int offset) {
     return rgba[offset] <= _nearBlack &&
@@ -298,7 +321,8 @@ class VideoBlackBarCropService {
           group.add(samples[j]);
         }
       }
-      if (group.length < 2) continue;
+      final requiredMatches = samples.length >= 4 ? 3 : 2;
+      if (group.length < requiredMatches) continue;
 
       int median(List<int> values) {
         values.sort();
@@ -374,7 +398,7 @@ class VideoBlackBarCropService {
     } catch (_) {}
 
     final samples = <VideoCropRect>[];
-    for (var sample = 0; sample < 3; sample++) {
+    for (var sample = 0; sample < 5; sample++) {
       final file = File(
         '${directory.path}/orvix-active-frame-'
         '${DateTime.now().microsecondsSinceEpoch}-$sample.png',
@@ -402,8 +426,8 @@ class VideoBlackBarCropService {
         } catch (_) {}
       }
 
-      if (sample < 2) {
-        await Future<void>.delayed(const Duration(milliseconds: 320));
+      if (sample < 4) {
+        await Future<void>.delayed(const Duration(milliseconds: 260));
       }
     }
 
