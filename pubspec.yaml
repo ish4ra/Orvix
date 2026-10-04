@@ -58,3 +58,7 @@ flutter:
     - assets/branding/orvix_logo.webp
     - assets/fonts/NotoSansSinhala-Regular.ttf
     - assets/fonts/OFL.txt
+  fonts:
+    - family: OrvixSubtitle
+      fonts:
+        - asset: assets/fonts/NotoSansSinhala-Regular.ttf
