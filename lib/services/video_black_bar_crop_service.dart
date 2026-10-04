@@ -40,8 +40,10 @@ class VideoCropRect {
     }
 
     int even(double value) {
-      final rounded = value.round().clamp(0, 1 << 30);
-      return rounded.isEven ? rounded : (rounded - 1).clamp(0, 1 << 30);
+      final rounded = value.round().clamp(0, 1 << 30).toInt();
+      return rounded.isEven
+          ? rounded
+          : (rounded - 1).clamp(0, 1 << 30).toInt();
     }
 
     final left = even(x * toWidth / fromWidth);
@@ -50,8 +52,8 @@ class VideoCropRect {
     final bottomEdge = even(bottom * toHeight / fromHeight);
 
     return VideoCropRect(
-      width: (rightEdge - left).clamp(2, toWidth),
-      height: (bottomEdge - top).clamp(2, toHeight),
+      width: (rightEdge - left).clamp(2, toWidth).toInt(),
+      height: (bottomEdge - top).clamp(2, toHeight).toInt(),
       x: left,
       y: top,
     );
@@ -268,8 +270,10 @@ class VideoBlackBarCropService {
     int fullWidth,
     int fullHeight,
   ) {
-    final toleranceX = (fullWidth * .025).round().clamp(2, 80);
-    final toleranceY = (fullHeight * .025).round().clamp(2, 80);
+    final toleranceX =
+        (fullWidth * .025).round().clamp(2, 80).toInt();
+    final toleranceY =
+        (fullHeight * .025).round().clamp(2, 80).toInt();
     return (a.x - b.x).abs() <= toleranceX &&
         (a.y - b.y).abs() <= toleranceY &&
         (a.right - b.right).abs() <= toleranceX &&
@@ -326,13 +330,6 @@ class VideoBlackBarCropService {
     required Directory directory,
   }) async {
     if (!Platform.isAndroid) return null;
-
-    int readDimension(List<String> properties) {
-      for (final property in properties) {
-        // Filled below in the async loop.
-      }
-      return 0;
-    }
 
     Future<int> readDimensionAsync(List<String> properties) async {
       for (final property in properties) {
