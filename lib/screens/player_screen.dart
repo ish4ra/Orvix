@@ -3038,13 +3038,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
           } catch (_) {}
         }
       }
-      final nativeVisible = SubtitleRenderPolicy.nativeSubtitleVisible(
-        requestedVisible: visible,
-        aiSinhalaRequested: _aiSinhalaRequested,
-        isAndroid: Platform.isAndroid,
-        isBitmapTrack: _isImageSubtitleTrack(selected),
-        nativeStyledSubtitles: _androidMobileNativeStyledSubtitle(selected),
-      );
+      final automaticTrackAllowed = !PlatformProfile.isAndroidMobile ||
+          _subtitleChoiceOverridden ||
+          _aiSinhalaRequested ||
+          !_isRealSubtitleTrack(selected) ||
+          _subtitleLanguageMatches(selected, _preferredSubtitleLanguage);
+      final nativeVisible = automaticTrackAllowed &&
+          SubtitleRenderPolicy.nativeSubtitleVisible(
+            requestedVisible: visible,
+            aiSinhalaRequested: _aiSinhalaRequested,
+            isAndroid: Platform.isAndroid,
+            isBitmapTrack: _isImageSubtitleTrack(selected),
+            nativeStyledSubtitles: _androidMobileNativeStyledSubtitle(selected),
+          );
 
       if (nativeVisible && !_aiSinhalaRequested) {
         // Preserve authored native styling where the native renderer is used.
@@ -4063,9 +4069,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool get _androidMobileFlutterTextSubtitleVisible {
     if (!PlatformProfile.isAndroidMobile || _aiSinhalaRequested) return false;
     final track = widget.playback.player.state.track.subtitle;
-    return _isRealSubtitleTrack(track) &&
-        !_isImageSubtitleTrack(track) &&
-        !_androidMobileNativeStyledSubtitle(track);
+    if (!_isRealSubtitleTrack(track) ||
+        _isImageSubtitleTrack(track) ||
+        _androidMobileNativeStyledSubtitle(track)) {
+      return false;
+    }
+    if (!_subtitleChoiceOverridden &&
+        !_subtitleLanguageMatches(track, _preferredSubtitleLanguage)) {
+      return false;
+    }
+    return true;
   }
 
   bool _isEnglishTextTrack(dynamic track) =>
