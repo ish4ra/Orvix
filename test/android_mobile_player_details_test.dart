@@ -35,10 +35,7 @@ void main() {
       contains('if (!mounted || _closing || _resizeModeSelectedByUser) return;'),
     );
 
-    expect(
-      surface,
-      contains("MethodChannel('com.alexmercerind.media_kit_video')"),
-    );
+    expect(surface, contains("'com.alexmercerind/media_kit_video'"));
     expect(
       surface,
       contains("'VideoOutputManager.SetSurfaceSize'"),
