@@ -11,6 +11,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../models/media_item.dart';
 import '../services/ai_audio_stt_service.dart';
+import '../services/android_video_surface_service.dart';
 import '../services/ai_sinhala_preferences_service.dart';
 import '../services/ai_sinhala_runtime_state.dart';
 import '../services/ai_sinhala_trace_service.dart';
@@ -174,7 +175,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
   PlayerResizeMode _resizeMode = PlayerResizeMode.fit;
   bool _resizeModeSelectedByUser = false;
   bool _mobileBlackBarCropApplied = false;
-  double? _mobileActiveAspectRatio;
   Future<void>? _mobileBlackBarCropWork;
   bool _tvControlFocused = false;
 
@@ -2937,15 +2937,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (crop == null || _closing) return;
 
       var applied = false;
+      var usedVideoCrop = false;
+      var usedFilterCrop = false;
       try {
-        // VO-level crop keeps hardware decoding and removes only the encoded
-        // black frame. Fit is then applied to the real active picture.
-        await platform.setProperty(
-          'video-crop',
-          crop.mpvValue,
+        // Mirror MPV's own autocrop path: make the crop file-local so it
+        // cannot leak into the next episode/source.
+        await platform.command(
+          <String>[
+            'set',
+            'file-local-options/video-crop',
+            crop.mpvValue,
+          ],
           waitForInitialization: false,
+          throwOnError: true,
         );
         applied = true;
+        usedVideoCrop = true;
       } catch (_) {}
 
       if (!applied) {
@@ -2960,20 +2967,53 @@ class _PlayerScreenState extends State<PlayerScreen> {
             throwOnError: true,
           );
           applied = true;
+          usedFilterCrop = true;
         } catch (_) {}
       }
 
       if (!applied || _closing) return;
 
-      final activeAspectRatio = crop.width / crop.height;
+      // IMPORTANT: do not fake the active DAR with Video.aspectRatio. That
+      // only changes Flutter's box around the existing texture and therefore
+      // stretches the pixels. Instead resize media_kit's Android
+      // SurfaceProducer to the active display dimensions. Its native callback
+      // updates VideoController.rect and MPV receives the matching
+      // android-surface-size, so Fit sees the same geometry as MPV itself.
+      final surfaceResized =
+          await AndroidVideoSurfaceService.resizeToActiveFrame(
+        player: player,
+        cropWidth: crop.width,
+        cropHeight: crop.height,
+      );
+
+      if (!surfaceResized) {
+        // Never leave a half-applied geometry change behind. Falling back to
+        // the original frame is preferable to stretching/corrupting playback.
+        try {
+          if (usedVideoCrop) {
+            await platform.command(
+              const <String>[
+                'set',
+                'file-local-options/video-crop',
+                '',
+              ],
+              waitForInitialization: false,
+              throwOnError: false,
+            );
+          }
+          if (usedFilterCrop) {
+            await platform.command(
+              const <String>['vf', 'remove', '@orvix_autocrop'],
+              waitForInitialization: false,
+              throwOnError: false,
+            );
+          }
+        } catch (_) {}
+        return;
+      }
+
       if (mounted && !_closing) {
-        setState(() {
-          _mobileBlackBarCropApplied = true;
-          _mobileActiveAspectRatio =
-              activeAspectRatio.isFinite && activeAspectRatio > 0
-                  ? activeAspectRatio
-                  : null;
-        });
+        setState(() => _mobileBlackBarCropApplied = true);
       }
     }();
 
@@ -5472,16 +5512,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     controller: widget.playback.controller,
                     width: double.infinity,
                     height: double.infinity,
-                    // media_kit applies resize modes in Flutter's FittedBox.
-                    // Keep that layer authoritative so Fit / Fill / Zoom
-                    // visibly change the texture again. When encoded black
-                    // bars are cropped by libmpv, the native texture may still
-                    // report the old outer frame size, so override only its
-                    // layout DAR with the detected active-picture ratio.
+                    // media_kit applies Fit / Fill / Zoom in Flutter's
+                    // FittedBox. Android Mobile keeps that working layer, but
+                    // after encoded bars are cropped the native texture itself
+                    // is resized to the active frame. Do not use Video.aspectRatio
+                    // here: overriding only the Flutter box stretches pixels.
                     fit: _resizeMode.boxFit,
-                    aspectRatio: PlatformProfile.isAndroidMobile
-                        ? _mobileActiveAspectRatio
-                        : null,
                     controls: NoVideoControls,
                     subtitleViewConfiguration: SubtitleViewConfiguration(
                       // media_kit's default libass=false mode renders text
