@@ -40,6 +40,13 @@ void main() {
       isTrue,
     );
     expect(crop.mpvValue, '1920x816+0+132');
+    expect(
+      crop.isHorizontalLetterbox(
+        encodedWidth: 1920,
+        encodedHeight: 1080,
+      ),
+      isTrue,
+    );
   });
 
   test('decoded frame detector removes real encoded top and bottom bars', () {
@@ -89,13 +96,15 @@ void main() {
     );
   });
 
-  test('crop consensus requires matching decoded frames', () {
+  test('five-sample consensus requires three matching decoded frames', () {
     const a = VideoCropRect(width: 1920, height: 816, x: 0, y: 132);
     const b = VideoCropRect(width: 1920, height: 820, x: 0, y: 130);
-    const outlier = VideoCropRect(width: 1600, height: 900, x: 160, y: 90);
+    const c = VideoCropRect(width: 1918, height: 818, x: 0, y: 131);
+    const outlierA = VideoCropRect(width: 1600, height: 900, x: 160, y: 90);
+    const outlierB = VideoCropRect(width: 1700, height: 900, x: 110, y: 90);
 
     final crop = VideoBlackBarCropService.consensus(
-      const <VideoCropRect>[a, b, outlier],
+      const <VideoCropRect>[a, b, c, outlierA, outlierB],
       sourceWidth: 1920,
       sourceHeight: 1080,
     );
@@ -103,6 +112,17 @@ void main() {
     expect(crop, isNotNull);
     expect(crop!.width, greaterThanOrEqualTo(1918));
     expect(crop.height, inInclusiveRange(816, 822));
+  });
+
+  test('pillarbox is not classified as horizontal letterbox', () {
+    const crop = VideoCropRect(width: 1440, height: 1080, x: 240, y: 0);
+    expect(
+      crop.isHorizontalLetterbox(
+        encodedWidth: 1920,
+        encodedHeight: 1080,
+      ),
+      isFalse,
+    );
   });
 
   test('tiny codec edges are not auto-cropped', () {
