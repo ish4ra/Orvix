@@ -23,6 +23,7 @@ import '../services/platform_profile.dart';
 import '../services/player_resize_preferences_service.dart';
 import '../services/subtitle_preferences_service.dart';
 import '../services/subtitle_render_policy.dart';
+import '../services/video_black_bar_crop_service.dart';
 import '../services/skip_segment_service.dart';
 import '../widgets/player_loading_overlay.dart';
 
@@ -172,6 +173,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _mobilePortraitPlayer = false;
   PlayerResizeMode _resizeMode = PlayerResizeMode.fit;
   bool _resizeModeSelectedByUser = false;
+  bool _mobileAutoCropApplied = false;
+  Future<void>? _mobileAutoCropWork;
   bool _tvControlFocused = false;
 
   bool get _desktop =>
@@ -1516,6 +1519,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     try {
       _playbackStarted = false;
       _startupFailureVisible = false;
+      _mobileAutoCropApplied = false;
       _startupTimer?.cancel();
       if (mounted && _error != null) {
         setState(() => _error = null);
@@ -1666,6 +1670,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       if (PlatformProfile.isAndroidMobile) {
         await _restoreAndroidMobileNativeAspectRatio();
+        unawaited(_applyAndroidMobileAutoCrop());
       }
 
       if (_hasPlaybackActivity()) {
@@ -2911,9 +2916,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final platform = widget.playback.player.platform;
     if (platform is! mk.NativePlayer) return;
 
-    // Match normal MPV behavior on Android Mobile. The source/container owns
-    // the display aspect ratio; Orvix must not crop the decoded frame or resize
-    // media_kit's SurfaceProducer behind MPV's back.
+    // Start every Android Mobile playback from MPV's native/container aspect
+    // ratio with no stale zoom/crop overrides.
     const properties = <String, String>{
       'video-aspect-override': 'no',
       'video-aspect-method': 'container',
@@ -2932,9 +2936,141 @@ class _PlayerScreenState extends State<PlayerScreen> {
           entry.value,
           waitForInitialization: false,
         );
+      } catch (_) {}
+    }
+    try {
+      await platform.command(
+        const <String>['vf', 'remove', '@orvix_autocrop'],
+        waitForInitialization: false,
+        throwOnError: false,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _applyAndroidMobileAutoCrop() async {
+    if (!PlatformProfile.isAndroidMobile ||
+        _closing ||
+        _mobileAutoCropApplied) {
+      return;
+    }
+
+    final existing = _mobileAutoCropWork;
+    if (existing != null) {
+      await existing;
+      return;
+    }
+
+    final work = () async {
+      // Let the actual libmpv output settle before sampling. The source is
+      // never reopened, so debrid/P2P headers and localhost bridge state remain
+      // exactly the same as the playing stream.
+      await Future<void>.delayed(const Duration(seconds: 2));
+      if (_closing || !mounted) return;
+
+      final player = widget.playback.player;
+      final platform = player.platform;
+      if (platform is! mk.NativePlayer) return;
+
+      final tempDirectory = await getTemporaryDirectory();
+      VideoCropRect? crop;
+      try {
+        crop = await VideoBlackBarCropService.detectFromNativePlayer(
+          platform: platform,
+          directory: tempDirectory,
+        );
       } catch (_) {
-        // A missing optional MPV property must never interrupt playback.
+        crop = null;
       }
+      if (crop == null || _closing) return;
+
+      final beforeRect = widget.playback.controller.rect.value;
+      final beforeParams = player.state.videoParams;
+      final rawPar = beforeParams.par;
+      final pixelAspect =
+          rawPar != null && rawPar.isFinite && rawPar > 0 ? rawPar : 1.0;
+      var expectedWidth = crop.width * pixelAspect;
+      var expectedHeight = crop.height.toDouble();
+      final rotation = ((beforeParams.rotate ?? 0) % 360 + 360) % 360;
+      if (rotation == 90 || rotation == 270) {
+        final swap = expectedWidth;
+        expectedWidth = expectedHeight;
+        expectedHeight = swap;
+      }
+      final expectedRatio = expectedWidth / expectedHeight;
+
+      try {
+        // IMPORTANT: crop only inside MPV's filter graph. Do NOT call
+        // VideoOutputManager.SetSurfaceSize ourselves. media_kit observes
+        // video-out-params and atomically updates both Android Surface size and
+        // VideoController.rect, which keeps Flutter Fit geometry in sync.
+        await platform.command(
+          <String>[
+            'vf',
+            'add',
+            '@orvix_autocrop:crop=${crop.ffmpegValue}',
+          ],
+          waitForInitialization: false,
+          throwOnError: true,
+        );
+      } catch (_) {
+        return;
+      }
+
+      var geometrySynced = false;
+      for (var attempt = 0; attempt < 24 && !_closing; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        final params = player.state.videoParams;
+        final rect = widget.playback.controller.rect.value;
+        final dw = params.dw;
+        final dh = params.dh;
+        if (rect == null ||
+            dw == null ||
+            dh == null ||
+            dw <= 0 ||
+            dh <= 0 ||
+            rect.width <= 1 ||
+            rect.height <= 1) {
+          continue;
+        }
+
+        final paramsRatio = dw / dh;
+        final rectRatio = rect.width / rect.height;
+        final expectedError =
+            ((paramsRatio - expectedRatio).abs() / expectedRatio);
+        final rectError = ((rectRatio - paramsRatio).abs() / paramsRatio);
+        final changedFromBefore = beforeRect == null ||
+            (rect.width - beforeRect.width).abs() >= 2 ||
+            (rect.height - beforeRect.height).abs() >= 2;
+
+        if (changedFromBefore && expectedError <= 0.04 && rectError <= 0.01) {
+          geometrySynced = true;
+          break;
+        }
+      }
+
+      if (!geometrySynced) {
+        // Never keep a crop if media_kit did not report the matching output
+        // geometry. Falling back to the uncropped frame is safer than stretch.
+        try {
+          await platform.command(
+            const <String>['vf', 'remove', '@orvix_autocrop'],
+            waitForInitialization: false,
+            throwOnError: false,
+          );
+        } catch (_) {}
+        return;
+      }
+
+      if (mounted && !_closing) {
+        setState(() => _mobileAutoCropApplied = true);
+      }
+    }();
+
+    _mobileAutoCropWork = work;
+    try {
+      await work;
+    } finally {
+      _mobileAutoCropWork = null;
     }
   }
 
@@ -5425,9 +5561,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     controller: widget.playback.controller,
                     width: double.infinity,
                     height: double.infinity,
-                    // Default Fit is BoxFit.contain and uses media_kit/MPV's
-                    // native display geometry. Do not inject a synthetic aspect
-                    // ratio or auto-crop the decoded frame on Android Mobile.
+                    // Default Fit is BoxFit.contain. When encoded black bars
+                    // are detected, MPV crops them in its filter graph and
+                    // media_kit updates the native Surface + controller rect
+                    // from video-out-params. Orvix never resizes the Surface
+                    // independently, so the active picture cannot be stretched.
                     fit: _resizeMode.boxFit,
                     controls: NoVideoControls,
                     subtitleViewConfiguration: SubtitleViewConfiguration(
