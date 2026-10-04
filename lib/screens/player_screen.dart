@@ -174,6 +174,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   PlayerResizeMode _resizeMode = PlayerResizeMode.fit;
   bool _resizeModeSelectedByUser = false;
   bool _mobileBlackBarCropApplied = false;
+  double? _mobileActiveAspectRatio;
   Future<void>? _mobileBlackBarCropWork;
   bool _tvControlFocused = false;
 
@@ -1590,7 +1591,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
         title: widget.title,
         play: !(aiReady || useProgressiveNativeCueAi),
       );
-      await _applyAndroidMobileNativeResize(_resizeMode);
 
       if (aiReady && _generatedAiSubtitlePath != null) {
         await _setNativeSubtitleVisibility(false);
@@ -2512,13 +2512,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
     if (!mounted || _closing || _resizeModeSelectedByUser) return;
     setState(() => _resizeMode = mode);
-    await _applyAndroidMobileNativeResize(mode);
   }
 
   Future<void> _setResizeMode(PlayerResizeMode mode) async {
     _resizeModeSelectedByUser = true;
     if (mounted) setState(() => _resizeMode = mode);
-    await _applyAndroidMobileNativeResize(mode);
     await PlayerResizePreferencesService.save(mode);
     if (mounted) _showControls();
   }
@@ -2900,37 +2898,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return int.tryParse(requestedId) == null;
   }
 
-  Future<void> _applyAndroidMobileNativeResize(
-    PlayerResizeMode mode,
-  ) async {
-    if (!PlatformProfile.isAndroidMobile || _closing) return;
-    final platform = widget.playback.player.platform;
-    if (platform is! mk.NativePlayer) return;
-
-    final panscan = switch (mode) {
-      PlayerResizeMode.fit => '0.0',
-      PlayerResizeMode.fill => '1.0',
-      PlayerResizeMode.zoom => '0.5',
-    };
-
-    try {
-      // Match Nuvio's native libmpv resize model. Keep the source display
-      // aspect ratio untouched and let mpv perform fit/fill/zoom itself.
-      await platform.setProperty(
-        'video-aspect-override',
-        'no',
-        waitForInitialization: false,
-      );
-      await platform.setProperty(
-        'panscan',
-        panscan,
-        waitForInitialization: false,
-      );
-    } catch (_) {
-      // The Flutter texture still remains aspect-preserving if an older mpv
-      // build rejects either property.
-    }
-  }
 
   Future<void> _applyAndroidMobileActiveFrameCrop() async {
     if (!PlatformProfile.isAndroidMobile ||
@@ -2998,9 +2965,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       if (!applied || _closing) return;
 
-      await _applyAndroidMobileNativeResize(_resizeMode);
+      final activeAspectRatio = crop.width / crop.height;
       if (mounted && !_closing) {
-        setState(() => _mobileBlackBarCropApplied = true);
+        setState(() {
+          _mobileBlackBarCropApplied = true;
+          _mobileActiveAspectRatio =
+              activeAspectRatio.isFinite && activeAspectRatio > 0
+                  ? activeAspectRatio
+                  : null;
+        });
       }
     }();
 
@@ -5499,13 +5472,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     controller: widget.playback.controller,
                     width: double.infinity,
                     height: double.infinity,
-                    // Make the viewport fill the player surface, then let
-                    // BoxFit.contain use the video's own decoded display size.
-                    // Do not override aspectRatio here: doing so replaces the
-                    // source DAR with the phone DAR and is not "original".
-                    fit: PlatformProfile.isAndroidMobile
-                        ? BoxFit.contain
-                        : _resizeMode.boxFit,
+                    // media_kit applies resize modes in Flutter's FittedBox.
+                    // Keep that layer authoritative so Fit / Fill / Zoom
+                    // visibly change the texture again. When encoded black
+                    // bars are cropped by libmpv, the native texture may still
+                    // report the old outer frame size, so override only its
+                    // layout DAR with the detected active-picture ratio.
+                    fit: _resizeMode.boxFit,
+                    aspectRatio: PlatformProfile.isAndroidMobile
+                        ? _mobileActiveAspectRatio
+                        : null,
                     controls: NoVideoControls,
                     subtitleViewConfiguration: SubtitleViewConfiguration(
                       // media_kit's default libass=false mode renders text
