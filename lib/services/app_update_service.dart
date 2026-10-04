@@ -124,12 +124,18 @@ class AppUpdateService {
   }
 
   Future<AppUpdateInfo?> checkForUpdate() async {
+    String currentVersion;
+    try {
+      currentVersion = await _currentVersion();
+    } catch (_) {
+      return null;
+    }
+
     try {
       final releasesUri = Uri.parse(_releasesBaseUrl).replace(
         queryParameters: <String, String>{
           'per_page': '30',
-          // GitHub already receives no-cache headers, but a unique query also
-          // prevents an intermediary/CDN from replaying a just-before-release
+          // Prevent an intermediary/CDN from replaying a just-before-release
           // collection response during rapid release publication.
           '_orvix_check': DateTime.now().millisecondsSinceEpoch.toString(),
         },
@@ -146,59 +152,147 @@ class AppUpdateService {
             },
           )
           .timeout(const Duration(seconds: 12));
-      if (response.statusCode < 200 || response.statusCode >= 300) return null;
 
-      final decoded = jsonDecode(response.body);
-      if (decoded is! List) return null;
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is List) {
+          AppUpdateInfo? best;
+          for (final raw in decoded) {
+            if (raw is! Map<String, dynamic>) continue;
+            if (raw['draft'] == true) continue;
+            final tag = raw['tag_name']?.toString().trim() ?? '';
+            if (tag.isEmpty || !isVersionNewer(tag, currentVersion)) continue;
 
-      final currentVersion = await _currentVersion();
-      AppUpdateInfo? best;
-      for (final raw in decoded) {
-        if (raw is! Map<String, dynamic>) continue;
-        if (raw['draft'] == true) continue;
-        final tag = raw['tag_name']?.toString().trim() ?? '';
-        if (tag.isEmpty || !isVersionNewer(tag, currentVersion)) continue;
+            var asset = _selectAsset(raw['assets']);
+            // GitHub can briefly publish a new release in the collection
+            // response with an empty inline assets array even though the
+            // dedicated /releases/{id}/assets endpoint already has the files.
+            if (asset == null) {
+              final assetsUrl = raw['assets_url']?.toString().trim() ?? '';
+              if (assetsUrl.isNotEmpty) {
+                final assets = await _fetchReleaseAssets(
+                  assetsUrl,
+                  attempts: _releaseAssetFetchAttempts,
+                );
+                asset = _selectAsset(assets);
+              }
+            }
+            if (asset == null) continue;
 
-        var asset = _selectAsset(raw['assets']);
-        // GitHub can briefly publish a new release in the collection response
-        // with an empty inline assets array even though the dedicated
-        // /releases/{id}/assets endpoint already contains the uploaded files.
-        // beta.19 -> beta.20 exposed this exact race: the updater saw the
-        // newer tag, found no Windows asset, skipped it, and never retried.
-        if (asset == null) {
-          final assetsUrl = raw['assets_url']?.toString().trim() ?? '';
-          if (assetsUrl.isNotEmpty) {
-            final assets = await _fetchReleaseAssets(
-              assetsUrl,
-              attempts: _releaseAssetFetchAttempts,
+            final candidate = AppUpdateInfo(
+              tag: tag,
+              version: tag.replaceFirst(RegExp(r'^v'), ''),
+              title: raw['name']?.toString().trim().isNotEmpty == true
+                  ? raw['name'].toString().trim()
+                  : tag,
+              notes: raw['body']?.toString() ?? '',
+              releaseUrl: raw['html_url']?.toString() ?? '',
+              assetName: asset['name']?.toString() ?? '',
+              assetUrl: asset['browser_download_url']?.toString() ?? '',
+              assetDigest: asset['digest']?.toString(),
+              assetSize: _asInt(asset['size']),
             );
-            asset = _selectAsset(assets);
+            if (candidate.assetUrl.isEmpty) continue;
+            if (best == null ||
+                isVersionNewer(candidate.version, best.version)) {
+              best = candidate;
+            }
           }
-        }
-        if (asset == null) continue;
-
-        final candidate = AppUpdateInfo(
-          tag: tag,
-          version: tag.replaceFirst(RegExp(r'^v'), ''),
-          title: raw['name']?.toString().trim().isNotEmpty == true
-              ? raw['name'].toString().trim()
-              : tag,
-          notes: raw['body']?.toString() ?? '',
-          releaseUrl: raw['html_url']?.toString() ?? '',
-          assetName: asset['name']?.toString() ?? '',
-          assetUrl: asset['browser_download_url']?.toString() ?? '',
-          assetDigest: asset['digest']?.toString(),
-          assetSize: _asInt(asset['size']),
-        );
-        if (candidate.assetUrl.isEmpty) continue;
-        if (best == null || isVersionNewer(candidate.version, best.version)) {
-          best = candidate;
+          if (best != null) return best;
         }
       }
-      return best;
     } catch (_) {
-      return null;
+      // Fall through to the non-API release feed below. GitHub's unauthenticated
+      // REST API is rate-limited per public IP, which can be hit during rapid
+      // beta testing or on shared/CGNAT connections.
+      _resetClient();
     }
+
+    return _checkReleaseFeedFallback(currentVersion);
+  }
+
+  Future<AppUpdateInfo?> _checkReleaseFeedFallback(
+    String currentVersion,
+  ) async {
+    const sources = <String>[
+      'https://github.com/ish4ra/Orvix/releases.atom',
+      'https://github.com/ish4ra/Orvix/releases',
+    ];
+    final tagPattern = RegExp(
+      r'/ish4ra/Orvix/releases/tag/(v?\d+\.\d+\.\d+(?:-[A-Za-z]+(?:[.-]?\d+)?)?)',
+      caseSensitive: false,
+    );
+
+    for (final source in sources) {
+      try {
+        final response = await _client
+            .get(
+              Uri.parse(source),
+              headers: const {
+                'User-Agent': 'Orvix-Updater',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
+              },
+            )
+            .timeout(const Duration(seconds: 12));
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          continue;
+        }
+
+        String? bestTag;
+        for (final match in tagPattern.allMatches(response.body)) {
+          final tag = match.group(1)?.trim();
+          if (tag == null ||
+              tag.isEmpty ||
+              !isVersionNewer(tag, currentVersion)) {
+            continue;
+          }
+          if (bestTag == null || isVersionNewer(tag, bestTag)) {
+            bestTag = tag;
+          }
+        }
+        if (bestTag == null) continue;
+
+        final version = bestTag.replaceFirst(RegExp(r'^v'), '');
+        final assetName = _expectedAssetName(version);
+        if (assetName == null) return null;
+
+        final releaseUrl =
+            'https://github.com/ish4ra/Orvix/releases/tag/$bestTag';
+        final assetUrl =
+            'https://github.com/ish4ra/Orvix/releases/download/'
+            '$bestTag/$assetName';
+
+        return AppUpdateInfo(
+          tag: bestTag,
+          version: version,
+          title: 'Orvix v$version',
+          notes:
+              'Update details are available on the Orvix GitHub release page.',
+          releaseUrl: releaseUrl,
+          assetName: assetName,
+          assetUrl: assetUrl,
+        );
+      } catch (_) {
+        _resetClient();
+      }
+    }
+    return null;
+  }
+
+  String? _expectedAssetName(String version) {
+    if (Platform.isWindows) {
+      return 'Orvix-Setup-v$version-Windows-x64.exe';
+    }
+    if (Platform.isAndroid) {
+      return PlatformProfile.isAndroidTv
+          ? 'Orvix-v$version-Android-TV.apk'
+          : 'Orvix-v$version-Android-Mobile.apk';
+    }
+    if (Platform.isMacOS) {
+      return 'Orvix-v$version-macOS.zip';
+    }
+    return null;
   }
 
   Future<List<Map<String, dynamic>>> _fetchReleaseAssets(
