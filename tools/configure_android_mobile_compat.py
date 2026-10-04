@@ -10,7 +10,7 @@ def main() -> None:
     # permission after any generated <manifest ...> opener instead of assuming
     # Flutter emitted one exact string.
     if "android.permission.CAMERA" not in text:
-        opener = re.search(r"<manifest\\b[^>]*>", text)
+        opener = re.search(r"<manifest\b[^>]*>", text)
         if opener is None:
             raise SystemExit("Could not find Android manifest opener.")
         camera_declarations = (

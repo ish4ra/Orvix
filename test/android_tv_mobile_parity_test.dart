@@ -64,7 +64,7 @@ void main() {
 
     expect(mobileCompat, contains('android.permission.CAMERA'));
     expect(mobileCompat, contains('android.hardware.camera'));
-    expect(mobileCompat, contains('re.search(r"<manifest\\\\b[^>]*>", text)'));
+    expect(mobileCompat, contains(r're.search(r"<manifest\b[^>]*>", text)'));
     expect(
       mobileCompat,
       isNot(contains(
