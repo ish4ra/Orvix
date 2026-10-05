@@ -4,6 +4,39 @@ import 'local_torrent_service.dart';
 import 'source_provider_service.dart';
 
 class FreeP2pLiveProbeService {
+  FreeP2pLiveProbeService({this.mediaDuration});
+
+  final Duration? mediaDuration;
+
+  static Duration? parseMediaRuntime(String? raw) {
+    final value = raw?.trim().toLowerCase() ?? '';
+    if (value.isEmpty) return null;
+
+    final colon = RegExp(r'^(\d{1,2}):(\d{2})(?::\d{2})?$').firstMatch(value);
+    if (colon != null) {
+      final hours = int.tryParse(colon.group(1) ?? '') ?? 0;
+      final minutes = int.tryParse(colon.group(2) ?? '') ?? 0;
+      final total = hours * 60 + minutes;
+      return total > 0 ? Duration(minutes: total) : null;
+    }
+
+    final hourMatch = RegExp(r'(\d+)\s*(?:h|hr|hrs|hour|hours)\b').firstMatch(value);
+    final minuteMatch =
+        RegExp(r'(\d+)\s*(?:m|min|mins|minute|minutes)\b').firstMatch(value);
+    final hours = int.tryParse(hourMatch?.group(1) ?? '') ?? 0;
+    final minutes = int.tryParse(minuteMatch?.group(1) ?? '') ?? 0;
+    if (hours > 0 || minutes > 0) {
+      return Duration(hours: hours, minutes: minutes);
+    }
+
+    final plainMinutes = int.tryParse(
+      RegExp(r'\b(\d{1,3})\b').firstMatch(value)?.group(1) ?? '',
+    );
+    return plainMinutes != null && plainMinutes > 0
+        ? Duration(minutes: plainMinutes)
+        : null;
+  }
+
   final Map<String, ({DateTime at, LocalTorrentProbeResult result})> _cache =
       <String, ({DateTime at, LocalTorrentProbeResult result})>{};
   Future<void>? _running;
@@ -68,7 +101,9 @@ class FreeP2pLiveProbeService {
       final pa = resultFor(a);
       final pb = resultFor(b);
       if (pa != null && pb != null) {
-        final live = pb.score.compareTo(pa.score);
+        final live = pb
+            .scoreFor(b, mediaDuration: mediaDuration)
+            .compareTo(pa.scoreFor(a, mediaDuration: mediaDuration));
         if (live != 0) return live;
       } else if (pa != null) {
         return pa.playableNow ? -1 : 1;
@@ -94,11 +129,8 @@ class FreeP2pLiveProbeService {
     _rankingReady = false;
     unawaited(() async {
       try {
-        final candidates = sources
-            .sortForFreeStreaming(results)
-            .where((source) => source.isMagnet)
+        final candidates = _probeCandidates(results, sources)
             .where((source) => resultFor(source) == null)
-            .take(6)
             .toList(growable: false);
 
         // Two simultaneous probes keeps the UI responsive without turning a
@@ -131,6 +163,99 @@ class FreeP2pLiveProbeService {
       }
     }());
     return completer.future;
+  }
+
+  List<SourceResult> _probeCandidates(
+    Iterable<SourceResult> results,
+    SourceProviderService sources,
+  ) {
+    final base = sources
+        .sortForFreeStreaming(results)
+        .where((source) => source.isMagnet)
+        .toList(growable: false);
+    if (base.length <= 6) return base;
+
+    final selected = <SourceResult>[];
+    final seen = <String>{};
+
+    void add(SourceResult source) {
+      final key = _key(source);
+      if (seen.add(key) && selected.length < 6) selected.add(source);
+    }
+
+    // Keep most of the proven static order, then deliberately sample the best
+    // raw-seeder and raw-peer alternatives so stale provider metadata cannot
+    // trap live probing inside one narrow static bucket.
+    for (final source in base.take(4)) {
+      add(source);
+    }
+
+    final bySeeders = [...base]
+      ..sort((a, b) => (b.seeders ?? -1).compareTo(a.seeders ?? -1));
+    for (final source in bySeeders) {
+      if (selected.length >= 5) break;
+      add(source);
+    }
+
+    final byPeers = [...base]
+      ..sort((a, b) => (b.peers ?? -1).compareTo(a.peers ?? -1));
+    for (final source in byPeers) {
+      if (selected.length >= 6) break;
+      add(source);
+    }
+
+    for (final source in base) {
+      if (selected.length >= 6) break;
+      add(source);
+    }
+    return selected;
+  }
+
+  Future<SourceResult?> probeBestCandidate(
+    Iterable<SourceResult> results,
+    SourceProviderService sources, {
+    void Function(int completed, int total)? onUpdate,
+  }) async {
+    final base = sources.sortForFreeStreaming(results);
+    if (base.isEmpty) return null;
+
+    // Direct HTTP sources already have a usable transport and the static Free
+    // score deliberately puts them ahead of torrents. Do not delay them with a
+    // torrent-only probe.
+    if (!base.first.isMagnet) return base.first;
+
+    final candidates = _probeCandidates(base, sources);
+    var completed = 0;
+    for (var start = 0; start < candidates.length; start += 2) {
+      final end = (start + 2).clamp(0, candidates.length);
+      final batch = candidates.sublist(start, end);
+      await Future.wait(
+        batch.map((source) async {
+          if (resultFor(source) == null) {
+            final result = await LocalTorrentService.instance.probe(
+              source,
+              retainSession: true,
+            );
+            _cache[_key(source)] = (at: DateTime.now(), result: result);
+          }
+          completed++;
+        }),
+      );
+      onUpdate?.call(completed, candidates.length);
+
+      final best = rank(base, sources).first;
+      final live = resultFor(best);
+      // Stop as soon as one candidate has strong two-window evidence. This
+      // gives Normal Play real swarm validation without forcing the user to
+      // wait for every shortlist entry.
+      if (live?.readyNow == true) {
+        _rankingReady = true;
+        return best;
+      }
+    }
+
+    _rankingReady = true;
+    return rank(base, sources).first;
   }
 
   void freezeRanking(
