@@ -75,14 +75,17 @@ class LocalTorrentProbeResult {
     return '${(speed / 1024).toStringAsFixed(speed >= 100 * 1024 ? 0 : 1)} KB/s';
   }
 
+  bool get readyNow {
+    if (!playableNow) return false;
+    final latencyMs = firstByteLatency?.inMilliseconds ?? 99999;
+    return sampleWindowsPassed >= 2 &&
+        latencyMs <= 1800 &&
+        downloadSpeedBytesPerSecond >= 1500 * 1024;
+  }
+
   String get label {
     if (!playableNow) return 'No live data';
-    final latencyMs = firstByteLatency?.inMilliseconds ?? 99999;
-    if (sampleWindowsPassed >= 2 &&
-        latencyMs <= 1800 &&
-        downloadSpeedBytesPerSecond >= 1500 * 1024) {
-      return 'Ready now';
-    }
+    if (readyNow) return 'Ready now';
     if (sampleWindowsPassed >= 2 &&
         downloadSpeedBytesPerSecond >= 512 * 1024) {
       return 'Fast swarm';
@@ -109,6 +112,48 @@ class LocalTorrentProbeResult {
             5000;
     value += sampleWindowsPassed * 180000000;
     value += bytesReceived.clamp(0, 1536 * 1024) * 100;
+    return value;
+  }
+
+  /// Live speed is more useful when compared with the payload's estimated
+  /// average bitrate. A 2 MB/s swarm is excellent for a compact encode but can
+  /// still be inadequate for a very large remux.
+  int scoreFor(
+    SourceResult source, {
+    Duration? mediaDuration,
+  }) {
+    var value = score;
+    final bytes = source.sizeBytes;
+    final duration = mediaDuration;
+    if (!playableNow ||
+        bytes == null ||
+        bytes <= 0 ||
+        duration == null ||
+        duration.inSeconds <= 0 ||
+        downloadSpeedBytesPerSecond <= 0) {
+      return value;
+    }
+
+    final averageBytesPerSecond = bytes / duration.inSeconds;
+    // Leave room for container overhead and bitrate spikes instead of treating
+    // the file's mathematical average as the exact sustained requirement.
+    final requiredBytesPerSecond = averageBytesPerSecond * 1.25;
+    if (requiredBytesPerSecond <= 0) return value;
+    final headroom = downloadSpeedBytesPerSecond / requiredBytesPerSecond;
+
+    if (headroom >= 3.0) {
+      value += 320000000;
+    } else if (headroom >= 2.0) {
+      value += 240000000;
+    } else if (headroom >= 1.4) {
+      value += 140000000;
+    } else if (headroom >= 1.0) {
+      value += 40000000;
+    } else if (headroom < .75) {
+      value -= 320000000;
+    } else {
+      value -= 140000000;
+    }
     return value;
   }
 }
