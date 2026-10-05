@@ -2063,18 +2063,23 @@ class DetailsScreenState extends State<DetailsScreen> {
             _status = 'Checking the healthiest live P2P sources…';
           });
         }
-        chosen = await autoProbeSession.probeBestCandidate(
-          results,
-          widget.sources,
-          onUpdate: (completed, total) {
-            if (!mounted) return;
-            setState(() {
-              _status = 'Checking live P2P sources… $completed/$total';
-            });
-          },
-        );
-        if (chosen?.isMagnet == true) {
-          await autoProbeSession.prepareForPlayback(chosen!);
+        try {
+          chosen = await autoProbeSession.probeBestCandidate(
+            results,
+            widget.sources,
+            onUpdate: (completed, total) {
+              if (!mounted) return;
+              setState(() {
+                _status = 'Checking live P2P sources… $completed/$total';
+              });
+            },
+          );
+          if (chosen?.isMagnet == true) {
+            await autoProbeSession.prepareForPlayback(chosen!);
+          }
+        } catch (_) {
+          await autoProbeSession.release();
+          rethrow;
         }
       }
 
