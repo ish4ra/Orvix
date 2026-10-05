@@ -112,13 +112,18 @@ void main() {
     expect(torrent, contains('sampleWindowsPassed'));
     expect(torrent, contains('preferredOffset = 8 * 1024 * 1024'));
     expect(live, contains('probeTopCandidates'));
-    expect(live, contains('.take(6)'));
+    expect(live, contains('_probeCandidates'));
+    expect(live, contains('probeBestCandidate'));
     expect(live, contains('retainSession: true'));
+    expect(torrent, contains('scoreFor('));
+    expect(torrent, contains('requiredBytesPerSecond'));
     expect(torrent, contains('prepareRetainedProbeForPlayback'));
     expect(torrent, contains('releaseRetainedProbeSessions'));
     expect(torrent, contains('await process.exitCode.timeout'));
     expect(torrent, contains('Duration(seconds: 3)'));
     expect(details, contains('liveProbe.rank(results, widget.sources)'));
+    expect(details, contains('probeBestCandidate('));
+    expect(details, contains('Checking live P2P sources'));
     expect(tv, contains('_liveProbe.rank(_results, widget.sources)'));
 
     expect(android, contains('REQUEST_INSTALL_PACKAGES'));

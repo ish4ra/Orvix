@@ -57,6 +57,7 @@ class SourceResult {
     this.preferredGroup = false,
     this.cached = false,
     this.seeders,
+    this.peers,
     this.sizeBytes,
     this.torrentFileIndex,
     this.fileNameHint,
@@ -73,7 +74,15 @@ class SourceResult {
   final String? releaseQuality;
   final bool preferredGroup;
   final bool cached;
+
+  /// Provider-reported complete seeds. Keep this separate from peers so a
+  /// provider's active leecher/peer count can never be mistaken for seeds.
   final int? seeders;
+
+  /// Provider-reported non-seed/active peer count when exposed separately.
+  /// Live torrent probing remains the authoritative real-time swarm signal.
+  final int? peers;
+
   final int? sizeBytes;
 
   /// Stremio's torrent file index. This identifies the exact playable file
@@ -482,6 +491,7 @@ class SourceProviderService {
   FreeSourceAssessment assessFreePlayback(SourceResult source) {
     final historyRank = _historyRank(source);
     final seeders = source.seeders ?? 0;
+    final peers = source.peers ?? 0;
     final size = source.sizeBytes ?? 0;
     const mb = 1024 * 1024;
     const gb = 1024 * mb;
@@ -513,15 +523,23 @@ class SourceProviderService {
         warning: true,
       );
     }
-    if (seeders <= 0) {
+    if (seeders <= 0 && peers <= 0) {
       return const FreeSourceAssessment(
-        label: 'NO SEEDS',
-        detail: 'The provider reports no seeders, so P2P startup is unlikely.',
+        label: 'NO SWARM',
+        detail: 'The provider reports neither complete seeds nor active peers.',
         recommended: false,
         warning: true,
       );
     }
-    if (seeders < 3) {
+    if (seeders <= 0 && peers > 0) {
+      return const FreeSourceAssessment(
+        label: 'PEER-ONLY',
+        detail: 'Active peers are reported but no complete seed is confirmed; the live probe decides whether enough pieces are reachable.',
+        recommended: false,
+        warning: true,
+      );
+    }
+    if (seeders < 3 && peers < 3) {
       return const FreeSourceAssessment(
         label: 'WEAK SWARM',
         detail: 'Only a very small reported swarm is available.',
@@ -1034,13 +1052,15 @@ class SourceProviderService {
   int _freeStreamingScore(SourceResult result) {
     final history = _historyRank(result);
     final direct = result.isMagnet ? 0 : 1;
-    final availability = _freeAvailabilityRank(result.seeders);
+    final availability =
+        _freeAvailabilityRank(result.seeders, result.peers);
     final universal = _universalPlaybackRank(result);
     final exactFile = result.torrentFileIndex != null ||
             result.fileNameHint?.trim().isNotEmpty == true
         ? 1
         : 0;
     final seedHealth = _freeSeederHealthRank(result.seeders);
+    final peerHealth = _freePeerHealthRank(result.peers);
     final size = _freeSizeEfficiencyRank(result);
 
     // Real playback history is stronger evidence than a provider's reported
@@ -1056,6 +1076,7 @@ class SourceProviderService {
         universal * 30000000 +
         exactFile * 120000000 +
         seedHealth * 10000000 +
+        peerHealth * 2000000 +
         recentSuccessBoost +
         // Once a swarm is viable, a practical payload matters to real startup
         // more than chasing another raw-seeder bucket. This lets a healthy
@@ -1065,11 +1086,14 @@ class SourceProviderService {
         recentFailurePenalty;
   }
 
-  int _freeAvailabilityRank(int? seeders) {
-    // First separate a dead/unavailable swarm from one that can at least
-    // connect. Once viable, portability and exact file routing matter more
-    // than chasing a larger reported seeder number.
-    return (seeders ?? 0) > 0 ? 1 : 0;
+  int _freeAvailabilityRank(int? seeders, int? peers) {
+    // A complete seed is stronger static evidence than a peer-only swarm.
+    // Peer-only torrents still remain probe candidates because multiple peers
+    // can collectively expose all pieces even when no complete seed is
+    // reported by the addon.
+    if ((seeders ?? 0) > 0) return 2;
+    if ((peers ?? 0) > 0) return 1;
+    return 0;
   }
 
   int _universalPlaybackRank(SourceResult result) {
@@ -1098,6 +1122,19 @@ class SourceProviderService {
 
   int _freeSeederHealthRank(int? seeders) {
     final value = seeders ?? 0;
+    if (value >= 200) return 8;
+    if (value >= 100) return 7;
+    if (value >= 50) return 6;
+    if (value >= 25) return 5;
+    if (value >= 15) return 4;
+    if (value >= 8) return 3;
+    if (value >= 3) return 2;
+    if (value >= 1) return 1;
+    return 0;
+  }
+
+  int _freePeerHealthRank(int? peers) {
+    final value = peers ?? 0;
     if (value >= 200) return 8;
     if (value >= 100) return 7;
     if (value >= 50) return 6;
@@ -1371,6 +1408,7 @@ class SourceProviderService {
         final quality = _guessQuality(metadataText);
         final releaseQuality = _guessReleaseQuality(metadataText);
         final seeders = _guessSeeders(raw, metadataText);
+        final peers = _guessPeers(raw, metadataText);
         final sizeBytes = _guessSizeBytes(raw, metadataText);
 
         String? resource;
@@ -1424,6 +1462,7 @@ class SourceProviderService {
           if (releaseQuality != null) '🎞 $releaseQuality',
           if (quality != null) '📺 $quality',
           '👥 ${seeders?.toString() ?? '—'} seeders',
+          if (peers != null) '🔗 $peers peers',
           '💾 ${_formatSize(sizeBytes) ?? 'size unknown'}',
         ];
         final displayTitle =
@@ -1441,6 +1480,7 @@ class SourceProviderService {
             preferredGroup: preferredGroup,
             cached: cached,
             seeders: seeders,
+            peers: peers,
             sizeBytes: sizeBytes,
             torrentFileIndex: torrentFileIndex,
             fileNameHint: fileNameHint,
@@ -1721,11 +1761,9 @@ class SourceProviderService {
     final candidates = <dynamic>[
       raw['seeders'],
       raw['seeds'],
-      raw['peers'],
       raw['seed'],
       if (hints is Map<String, dynamic>) hints['seeders'],
       if (hints is Map<String, dynamic>) hints['seeds'],
-      if (hints is Map<String, dynamic>) hints['peers'],
     ];
     for (final candidate in candidates) {
       final parsed = candidate is num
@@ -1736,11 +1774,42 @@ class SourceProviderService {
 
     final patterns = <RegExp>[
       RegExp(r'👤\s*(\d[\d,]*)', caseSensitive: false),
-      RegExp(r'👥\s*(\d[\d,]*)', caseSensitive: false),
+      RegExp(r'👥\s*(\d[\d,]*)\s*seed', caseSensitive: false),
       RegExp(r'\bseeders?\s*[:=]?\s*(\d[\d,]*)\b', caseSensitive: false),
       RegExp(r'\bseeds?\s*[:=]?\s*(\d[\d,]*)\b', caseSensitive: false),
-      RegExp(r'\bpeers?\s*[:=]?\s*(\d[\d,]*)\b', caseSensitive: false),
       RegExp(r'\bS\s*[:=]\s*(\d[\d,]*)\b', caseSensitive: false),
+    ];
+    for (final pattern in patterns) {
+      final match = pattern.firstMatch(value);
+      final normalized = match?.group(1)?.replaceAll(',', '');
+      final parsed = normalized == null ? null : int.tryParse(normalized);
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  int? _guessPeers(Map<String, dynamic> raw, String value) {
+    final hints = raw['behaviorHints'];
+    final candidates = <dynamic>[
+      raw['peers'],
+      raw['leechers'],
+      raw['leeches'],
+      if (hints is Map<String, dynamic>) hints['peers'],
+      if (hints is Map<String, dynamic>) hints['leechers'],
+      if (hints is Map<String, dynamic>) hints['leeches'],
+    ];
+    for (final candidate in candidates) {
+      final parsed = candidate is num
+          ? candidate.toInt()
+          : int.tryParse(candidate?.toString().trim() ?? '');
+      if (parsed != null && parsed >= 0) return parsed;
+    }
+
+    final patterns = <RegExp>[
+      RegExp(r'\bpeers?\s*[:=]?\s*(\d[\d,]*)\b', caseSensitive: false),
+      RegExp(r'\bleechers?\s*[:=]?\s*(\d[\d,]*)\b', caseSensitive: false),
+      RegExp(r'\bleeches?\s*[:=]?\s*(\d[\d,]*)\b', caseSensitive: false),
+      RegExp(r'\bP\s*[:=]\s*(\d[\d,]*)\b', caseSensitive: false),
     ];
     for (final pattern in patterns) {
       final match = pattern.firstMatch(value);

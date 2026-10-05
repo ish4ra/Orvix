@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:orvix/services/source_provider_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -5,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 SourceResult torrent({
   required String name,
   required int seeders,
+  int? peers,
   required int sizeBytes,
   String quality = '1080P',
   bool exactFile = false,
@@ -19,6 +22,7 @@ SourceResult torrent({
     quality: quality,
     releaseQuality: 'WEB-DL',
     seeders: seeders,
+    peers: peers,
     sizeBytes: sizeBytes,
     fileNameHint: exactFile ? name : null,
   );
@@ -178,4 +182,64 @@ void main() {
 
     expect(ranked.first, same(viable));
   });
+
+  test('Free keeps provider peers separate from complete seeders', () {
+    final service = SourceProviderService();
+    final oneSeed = torrent(
+      name: 'One.Real.Seed',
+      seeders: 1,
+      peers: 0,
+      sizeBytes: 900 * 1024 * 1024,
+    );
+    final peerOnly = torrent(
+      name: 'Peer.Only.Swarm',
+      seeders: 0,
+      peers: 200,
+      sizeBytes: 900 * 1024 * 1024,
+    );
+
+    final ranked = service.sortForFreeStreaming([peerOnly, oneSeed]);
+
+    // A complete seed is stronger static availability evidence than any raw
+    // peer count. Live probing can still promote the peer-only swarm later if
+    // it proves that the required pieces are actually available.
+    expect(ranked.first, same(oneSeed));
+  });
+
+  test('Free still lets a peer-only swarm outrank a completely dead source', () {
+    final service = SourceProviderService();
+    final dead = torrent(
+      name: 'No.Swarm',
+      seeders: 0,
+      peers: 0,
+      sizeBytes: 900 * 1024 * 1024,
+    );
+    final peerOnly = torrent(
+      name: 'Peer.Only.But.Active',
+      seeders: 0,
+      peers: 8,
+      sizeBytes: 900 * 1024 * 1024,
+    );
+
+    final ranked = service.sortForFreeStreaming([dead, peerOnly]);
+
+    expect(ranked.first, same(peerOnly));
+    expect(service.assessFreePlayback(peerOnly).label, 'PEER-ONLY');
+    expect(service.assessFreePlayback(dead).label, 'NO SWARM');
+  });
+
+  test('Seeder parser no longer aliases provider peer fields to seeds', () {
+    final source =
+        File('lib/services/source_provider_service.dart').readAsStringSync();
+    final start = source.indexOf('int? _guessSeeders');
+    final end = source.indexOf('int? _guessPeers', start);
+    expect(start, greaterThanOrEqualTo(0));
+    expect(end, greaterThan(start));
+    final seederParser = source.substring(start, end);
+
+    expect(seederParser, isNot(contains("raw['peers']")));
+    expect(seederParser, isNot(contains("hints['peers']")));
+    expect(seederParser, isNot(contains(r'\bpeers?')));
+  });
+
 }
