@@ -51,7 +51,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
   String? _providerFilter;
   bool _compatibilityOnly = false;
   late _TvSourceSort _sort;
-  final FreeP2pLiveProbeService _liveProbe = FreeP2pLiveProbeService();
+  late final FreeP2pLiveProbeService _liveProbe;
   bool _liveProbeStarted = false;
   bool _probeHandedToPlayback = false;
 
@@ -63,6 +63,10 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
   @override
   void initState() {
     super.initState();
+    _liveProbe = FreeP2pLiveProbeService(
+      mediaDuration:
+          FreeP2pLiveProbeService.parseMediaRuntime(widget.item.runtime),
+    );
     _sort =
         widget.preferFreeP2p ? _TvSourceSort.free : _TvSourceSort.best;
     unawaited(_load());
@@ -778,6 +782,7 @@ class _TvSourceRowState extends State<_TvSourceRow> {
       if (source.cached) 'Cached',
       if (source.sizeLabel != null) source.sizeLabel!,
       if (source.seeders != null) '${source.seeders} seeders',
+      if (source.peers != null) '${source.peers} peers',
       if (live != null) live.label,
       if (live != null) live.speedLabel,
       if (live != null && live.connections > 0)
