@@ -224,6 +224,8 @@ void main() {
     final ranked = service.sortForFreeStreaming([dead, peerOnly]);
 
     expect(ranked.first, same(peerOnly));
+    expect(service.assessFreePlayback(peerOnly).label, 'PEER-ONLY');
+    expect(service.assessFreePlayback(dead).label, 'NO SWARM');
   });
 
   test('Seeder parser no longer aliases provider peer fields to seeds', () {
