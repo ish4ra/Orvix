@@ -491,6 +491,7 @@ class SourceProviderService {
   FreeSourceAssessment assessFreePlayback(SourceResult source) {
     final historyRank = _historyRank(source);
     final seeders = source.seeders ?? 0;
+    final peers = source.peers ?? 0;
     final size = source.sizeBytes ?? 0;
     const mb = 1024 * 1024;
     const gb = 1024 * mb;
@@ -522,15 +523,23 @@ class SourceProviderService {
         warning: true,
       );
     }
-    if (seeders <= 0) {
+    if (seeders <= 0 && peers <= 0) {
       return const FreeSourceAssessment(
-        label: 'NO SEEDS',
-        detail: 'The provider reports no seeders, so P2P startup is unlikely.',
+        label: 'NO SWARM',
+        detail: 'The provider reports neither complete seeds nor active peers.',
         recommended: false,
         warning: true,
       );
     }
-    if (seeders < 3) {
+    if (seeders <= 0 && peers > 0) {
+      return const FreeSourceAssessment(
+        label: 'PEER-ONLY',
+        detail: 'Active peers are reported but no complete seed is confirmed; the live probe decides whether enough pieces are reachable.',
+        recommended: false,
+        warning: true,
+      );
+    }
+    if (seeders < 3 && peers < 3) {
       return const FreeSourceAssessment(
         label: 'WEAK SWARM',
         detail: 'Only a very small reported swarm is available.',
