@@ -287,15 +287,23 @@ class _OrvixShellState extends State<_OrvixShell> {
     final current = FocusManager.instance.primaryFocus;
     if (current == null) return false;
 
-    // Flutter's default reading-order traversal can leave Android TV focus
-    // trapped in text fields or at the edge of a section. Prefer geometric
-    // DPAD movement, then fall back to sequential traversal so every focusable
-    // control remains reachable with only the remote.
-    var moved = current.focusInDirection(direction);
-    if (!moved) {
+    // TV forms opt into deterministic vertical traversal with a debug label.
+    // This prevents geometric DPAD traversal from skipping editable fields
+    // (for example TorBox API key) while keeping grid/list screens directional.
+    final linearForm = current.debugLabel?.startsWith('tv-linear-') ?? false;
+    var moved = false;
+    if (linearForm) {
       moved = direction == TraversalDirection.down
           ? current.nextFocus()
           : current.previousFocus();
+      if (!moved) moved = current.focusInDirection(direction);
+    } else {
+      moved = current.focusInDirection(direction);
+      if (!moved) {
+        moved = direction == TraversalDirection.down
+            ? current.nextFocus()
+            : current.previousFocus();
+      }
     }
     return moved;
   }
@@ -813,7 +821,7 @@ class _AboutScreen extends StatelessWidget {
               const _SupportButton(
                 icon: Icons.language_rounded,
                 label: 'isharalakshan.xyz',
-                url: 'https://isharalakshan.xyz',
+                url: 'https://isharalakshan.xyz/orvix/',
               ),
               const SizedBox(height: 28),
               Text(

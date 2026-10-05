@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:orvix/services/app_update_service.dart';
 
@@ -31,6 +33,16 @@ void main() {
       ),
       isTrue,
     );
+  });
+
+  test('updater has a non-API fallback for GitHub rate limits', () {
+    final source =
+        File('lib/services/app_update_service.dart').readAsStringSync();
+
+    expect(source, contains('https://github.com/ish4ra/Orvix/releases.atom'));
+    expect(source, contains('https://github.com/ish4ra/Orvix/releases'));
+    expect(source, contains('_checkReleaseFeedFallback'));
+    expect(source, contains('_expectedAssetName'));
   });
 
   test('beta decade boundaries never break update ordering', () {

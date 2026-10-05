@@ -48,15 +48,15 @@ void main() {
     expect(generated, contains('await _setNativeSubtitleVisibility(true);'));
   });
 
-  test('normal source subtitle appearance remains native when AI is off', () {
+  test('normal source subtitle rendering is hybrid on Android Mobile', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
+    expect(player, contains('_androidMobileNativeStyledSubtitle'));
+    expect(player, contains('_androidMobileTextSubtitleOverlay'));
     expect(player, contains("'sub-ass-override'"));
     expect(player, contains("'no'"));
-    expect(
-      player,
-      contains('Source subtitle appearance is preserved by the native player.'),
-    );
+    expect(player, contains("'sub-font-provider': 'fontconfig'"));
+    expect(player, contains("fontFamily: 'OrvixSubtitle'"));
   });
   test('normal playback prefers full native subtitles and falls back online', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
@@ -170,7 +170,9 @@ void main() {
     expect(font.existsSync(), isTrue);
     expect(font.lengthSync(), greaterThan(250000));
 
-    expect(player, contains('nativeStyledSubtitles: PlatformProfile.isAndroidMobile'));
+    expect(player, contains('_androidMobileNativeStyledSubtitle'));
+    expect(player, contains("'sub-font-provider': 'fontconfig'"));
+    expect(player, contains("'embeddedfonts': 'yes'"));
     expect(player, contains("'sub-ass-override'"));
     expect(player, contains("'no'"));
   });
@@ -190,15 +192,22 @@ void main() {
     );
   });
 
-  test('Android Mobile embedded subtitle selection reaches native sid', () {
+  test('Android Mobile embedded selection preserves sid but delegates renderer policy', () {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(player, contains('Future<bool> _selectEmbeddedSubtitleReliably('));
     expect(player, contains("'current-tracks/sub/id'"));
     expect(player, contains("await platform.setProperty(\n            'sid',"));
-    expect(player, contains("'sub-visibility',\n            'yes'"));
-    expect(player, contains("'sub-ass-override',\n            'no'"));
-    expect(player, contains('fallbackTracks.first'));
+    expect(
+      player,
+      contains('_setNativeSubtitleVisibility(true, trackOverride: track)'),
+    );
+    expect(player, contains("'sub-ass-override'"));
+    expect(player, isNot(contains('fallbackTracks.first')));
+    expect(
+      player,
+      contains('Unknown/und tracks are deliberately not guessed as English here.'),
+    );
   });
 
   test('Android Mobile build swaps media_kit default libmpv for full PGS build', () {
