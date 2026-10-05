@@ -2030,6 +2030,7 @@ class DetailsScreenState extends State<DetailsScreen> {
       final hasCloudConnection = pikpakConnected || torboxConnected || realDebridConnected || premiumizeConnected;
 
       SourceResult? chosen;
+      FreeP2pLiveProbeService? autoProbeSession;
       if (autoUsePinned) {
         final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
         final pinned = await widget.sources.getPinnedSourceIdentity(pinKey);
@@ -2046,14 +2047,45 @@ class DetailsScreenState extends State<DetailsScreen> {
           }
         }
       }
-      // With no debrid/cloud connection, Normal Play behaves like a
-      // Stremio-style free path: rank direct and torrent/P2P results together
-      // and pick the healthiest source automatically. Find Sources remains
-      // fully manual.
+      // With no debrid/cloud connection, Normal Play validates the strongest
+      // static candidates against the live swarm before auto-picking. The
+      // probe stops early as soon as a source has strong two-window evidence,
+      // so this is safer than raw seeder ordering without turning Play into a
+      // long benchmark of every torrent.
       if (autoUsePinned && !hasCloudConnection && chosen == null) {
-        final freeResults = widget.sources.sortForFreeStreaming(results);
-        if (chosen == null && freeResults.isNotEmpty) {
-          chosen = freeResults.first;
+        autoProbeSession = FreeP2pLiveProbeService(
+          mediaDuration: FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
+        );
+        if (mounted) {
+          setState(() {
+            _resolving = true;
+            _resolveProgress = null;
+            _status = 'Checking the healthiest live P2P sources…';
+          });
+        }
+        chosen = await autoProbeSession.probeBestCandidate(
+          results,
+          widget.sources,
+          onUpdate: (completed, total) {
+            if (!mounted) return;
+            setState(() {
+              _status = 'Checking live P2P sources… $completed/$total';
+            });
+          },
+        );
+        if (chosen?.isMagnet == true) {
+          await autoProbeSession.prepareForPlayback(chosen!);
+        }
+      }
+
+      if (chosen == null && autoProbeSession != null) {
+        await autoProbeSession.release();
+        autoProbeSession = null;
+        if (mounted) {
+          setState(() {
+            _resolving = false;
+            _resolveProgress = null;
+          });
         }
       }
 
@@ -2063,7 +2095,9 @@ class DetailsScreenState extends State<DetailsScreen> {
         // same in-memory result/probe session when the player returns. To the
         // user this is still one-step navigation:
         // player -> source list -> title, with no provider re-fetch.
-        final probeSession = FreeP2pLiveProbeService();
+        final probeSession = FreeP2pLiveProbeService(
+          mediaDuration: FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
+        );
         try {
           while (mounted) {
             final selected = await _chooseSource(
@@ -2095,12 +2129,16 @@ class DetailsScreenState extends State<DetailsScreen> {
       }
 
       if (!mounted) return;
-      await _playSourceResult(
-        chosen,
-        item,
-        episode,
-        hasCloudConnection: hasCloudConnection,
-      );
+      try {
+        await _playSourceResult(
+          chosen,
+          item,
+          episode,
+          hasCloudConnection: hasCloudConnection,
+        );
+      } finally {
+        await autoProbeSession?.release();
+      }
     } catch (e) {
       _showPlayError(e);
     }
@@ -2649,7 +2687,10 @@ class DetailsScreenState extends State<DetailsScreen> {
     var pinnedIdentity = await widget.sources.getPinnedSourceIdentity(pinKey);
     if (!mounted) return null;
 
-    final liveProbe = probeSession ?? FreeP2pLiveProbeService();
+    final liveProbe = probeSession ??
+        FreeP2pLiveProbeService(
+          mediaDuration: FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
+        );
     final ownsProbeSession = probeSession == null;
     var liveProbeStarted = liveProbe.hasAnyResult;
 
