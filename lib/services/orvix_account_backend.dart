@@ -29,21 +29,57 @@ class OrvixAuthResult {
   final bool hasSession;
 }
 
+/// Backend-neutral classification of an [OrvixAuthException].
+///
+/// Backends map their own error codes to these so the UI can show friendly
+/// text without knowing the provider. [unknown] means "use the message".
+enum OrvixAuthErrorKind {
+  unknown,
+
+  /// The backend could not be reached.
+  network,
+
+  /// Too many requests; see [OrvixAuthException.retryAfterSeconds].
+  rateLimited,
+
+  /// A verification or recovery code is wrong, expired or already used.
+  invalidCode,
+
+  /// The email address was rejected as malformed.
+  invalidEmail,
+
+  /// The new password does not meet the backend's password rules.
+  weakPassword,
+
+  /// The new password is the same as the current one.
+  samePassword,
+
+  /// The session needed for the request is missing or expired.
+  sessionMissing,
+}
+
 /// An authentication failure reported by the account backend.
 ///
 /// [message] is the backend's human-readable message; the account UI maps it
-/// to friendly text.
+/// (or [kind]) to friendly text. Implementations must never put passwords or
+/// codes into it.
 class OrvixAuthException implements Exception {
   const OrvixAuthException(
     this.message, {
     this.code,
     this.statusCode,
+    this.kind = OrvixAuthErrorKind.unknown,
+    this.retryAfterSeconds,
     this.cause,
   });
 
   final String message;
   final String? code;
   final String? statusCode;
+  final OrvixAuthErrorKind kind;
+
+  /// For [OrvixAuthErrorKind.rateLimited]: how long to wait, when known.
+  final int? retryAfterSeconds;
 
   /// The backend-specific error this was translated from, if any.
   final Object? cause;
@@ -88,6 +124,26 @@ abstract interface class OrvixAuthBackend {
   });
 
   Future<void> resendSignupConfirmation({required String email});
+
+  /// Sends a six-digit password recovery code to [email]. Also used to resend
+  /// the code. Completes normally for unknown addresses when the backend does
+  /// not reveal which emails are registered.
+  Future<void> requestPasswordRecovery({required String email});
+
+  /// Verifies a recovery code. On success the backend holds a short-lived
+  /// recovery session that is only used by [updateRecoveredPassword] and
+  /// then discarded with [endPasswordRecovery].
+  Future<void> verifyPasswordRecoveryCode({
+    required String email,
+    required String token,
+  });
+
+  /// Sets the account's new password using the recovery session.
+  Future<void> updateRecoveredPassword({required String newPassword});
+
+  /// Discards the recovery session on this device only. Other devices that
+  /// are signed in to the account are not signed out.
+  Future<void> endPasswordRecovery();
 
   Future<void> signOut();
 }

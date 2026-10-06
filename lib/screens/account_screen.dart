@@ -10,6 +10,9 @@ import '../services/orvix_account_service.dart';
 import '../services/platform_profile.dart';
 import '../services/tv_device_login_service.dart';
 
+/// Steps of the in-app forgot-password flow.
+enum _RecoveryStep { email, code, newPassword, done }
+
 class AccountScreen extends StatefulWidget {
   const AccountScreen({super.key, required this.onAuthChanged});
 
@@ -23,6 +26,9 @@ class _AccountScreenState extends State<AccountScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _verificationCode = TextEditingController();
+  final _recoveryCode = TextEditingController();
+  final _newPassword = TextEditingController();
+  final _confirmPassword = TextEditingController();
 
   bool _busy = false;
   bool _syncing = false;
@@ -31,6 +37,8 @@ class _AccountScreenState extends State<AccountScreen> {
   String? _pendingVerificationEmail;
   Timer? _resendTimer;
   int _resendSeconds = 0;
+  _RecoveryStep? _recoveryStep;
+  String? _recoveryEmail;
   TvDeviceLoginState _tvLogin = const TvDeviceLoginState();
   int _tvLoginGeneration = 0;
 
@@ -71,9 +79,15 @@ class _AccountScreenState extends State<AccountScreen> {
   void dispose() {
     _tvLoginGeneration++;
     _resendTimer?.cancel();
+    if (OrvixAccountService.isPasswordRecoveryVerified) {
+      unawaited(OrvixAccountService.cancelPasswordRecovery());
+    }
     _email.dispose();
     _password.dispose();
     _verificationCode.dispose();
+    _recoveryCode.dispose();
+    _newPassword.dispose();
+    _confirmPassword.dispose();
     super.dispose();
   }
 
@@ -277,6 +291,214 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
+  static final _emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+
+  String _friendlyRecoveryMessage(OrvixAuthException error) {
+    switch (error.kind) {
+      case OrvixAuthErrorKind.network:
+        return 'Could not reach Orvix Cloud. Check your internet connection and try again.';
+      case OrvixAuthErrorKind.rateLimited:
+        final seconds = error.retryAfterSeconds;
+        return seconds == null
+            ? 'Too many attempts. Please wait a minute and try again.'
+            : 'Too many attempts. Please wait $seconds seconds and try again.';
+      case OrvixAuthErrorKind.invalidCode:
+        return 'That code is invalid or has expired. Check the latest Orvix email or request a new code.';
+      case OrvixAuthErrorKind.invalidEmail:
+        return 'Enter a valid email address.';
+      case OrvixAuthErrorKind.weakPassword:
+        return 'That password is too weak. Choose a longer password that is harder to guess.';
+      case OrvixAuthErrorKind.samePassword:
+        return 'Choose a password that is different from your current one.';
+      case OrvixAuthErrorKind.sessionMissing:
+        return 'Your password reset session has expired. Request a new code and try again.';
+      case OrvixAuthErrorKind.unknown:
+        return 'Could not reset your password right now. Please try again.';
+    }
+  }
+
+  void _resetRecoveryState() {
+    _resendTimer?.cancel();
+    _resendSeconds = 0;
+    _recoveryStep = null;
+    _recoveryEmail = null;
+    _recoveryCode.clear();
+    _newPassword.clear();
+    _confirmPassword.clear();
+  }
+
+  void _startRecovery() {
+    _resendTimer?.cancel();
+    setState(() {
+      _resendSeconds = 0;
+      _recoveryStep = _RecoveryStep.email;
+      _message = null;
+    });
+  }
+
+  Future<void> _cancelRecovery() async {
+    setState(() {
+      _resetRecoveryState();
+      _signUp = false;
+      _message = null;
+      // Stay busy until the recovery session is gone, so a sign-in cannot
+      // start before it is discarded.
+      _busy = true;
+    });
+    try {
+      await OrvixAccountService.cancelPasswordRecovery();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _finishRecovery() {
+    setState(() {
+      _resetRecoveryState();
+      _signUp = false;
+      _message = 'Sign in with your new password.';
+    });
+  }
+
+  Future<void> _sendRecoveryCode() async {
+    final resend = _recoveryStep == _RecoveryStep.code;
+    final email = resend ? _recoveryEmail! : _email.text.trim();
+    if (resend && _resendSeconds > 0) return;
+    if (!_emailPattern.hasMatch(email)) {
+      setState(() => _message = 'Enter a valid email address.');
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+
+    try {
+      await OrvixAccountService.requestPasswordRecovery(email: email);
+      if (!mounted) return;
+      _recoveryCode.clear();
+      setState(() {
+        _recoveryEmail = email;
+        _recoveryStep = _RecoveryStep.code;
+        _message = resend ? 'A new reset code was requested for $email.' : null;
+      });
+      _startResendCooldown();
+    } on OrvixAuthException catch (error) {
+      if (!mounted) return;
+      if (error.kind == OrvixAuthErrorKind.rateLimited) {
+        // A code was requested recently, so one may already be on its way.
+        setState(() {
+          _recoveryEmail = email;
+          _recoveryStep = _RecoveryStep.code;
+          _message = _friendlyRecoveryMessage(error);
+        });
+        _startResendCooldown(error.retryAfterSeconds ?? 60);
+      } else {
+        setState(() => _message = _friendlyRecoveryMessage(error));
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _message =
+            'Could not reach Orvix Cloud. Check your internet connection and try again.');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _verifyRecoveryCode() async {
+    final email = _recoveryEmail;
+    final code = _recoveryCode.text.trim();
+    if (email == null) return;
+    if (!RegExp(r'^\d{6}$').hasMatch(code)) {
+      setState(() => _message = 'Enter the 6-digit code from your email.');
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+
+    try {
+      await OrvixAccountService.verifyPasswordRecovery(
+          email: email, token: code);
+      if (!mounted) return;
+      _resendTimer?.cancel();
+      _recoveryCode.clear();
+      setState(() {
+        _resendSeconds = 0;
+        _recoveryStep = _RecoveryStep.newPassword;
+      });
+    } on OrvixAuthException catch (error) {
+      if (mounted) setState(() => _message = _friendlyRecoveryMessage(error));
+    } catch (_) {
+      if (mounted) {
+        setState(() => _message =
+            'Could not verify the code. Check your internet connection and try again.');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  String? _newPasswordProblem() {
+    final password = _newPassword.text;
+    if (password.length < OrvixAccountService.minPasswordLength) {
+      return 'Use at least ${OrvixAccountService.minPasswordLength} characters for your new password.';
+    }
+    if (password.length > OrvixAccountService.maxPasswordLength) {
+      return 'Use at most ${OrvixAccountService.maxPasswordLength} characters for your new password.';
+    }
+    if (password != _confirmPassword.text) {
+      return 'The passwords do not match.';
+    }
+    return null;
+  }
+
+  Future<void> _updatePassword() async {
+    final problem = _newPasswordProblem();
+    if (problem != null) {
+      setState(() => _message = problem);
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+
+    try {
+      await OrvixAccountService.updateRecoveredPassword(
+          newPassword: _newPassword.text);
+      if (!mounted) return;
+      _newPassword.clear();
+      _confirmPassword.clear();
+      _password.clear();
+      _email.text = _recoveryEmail ?? _email.text;
+      setState(() => _recoveryStep = _RecoveryStep.done);
+    } on OrvixAuthException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _message = _friendlyRecoveryMessage(error);
+        if (!OrvixAccountService.isPasswordRecoveryVerified) {
+          // The recovery session is gone; a new code is needed.
+          _newPassword.clear();
+          _confirmPassword.clear();
+          _recoveryStep = _RecoveryStep.code;
+        }
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _message =
+            'Could not update your password. Check your internet connection and try again.');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _syncNow() async {
     if (_syncing) return;
     setState(() {
@@ -367,9 +589,11 @@ class _AccountScreenState extends State<AccountScreen> {
                   border: Border.all(color: const Color(0xFF263627)),
                 ),
                 child: user == null
-                    ? (_pendingVerificationEmail == null
-                        ? _signedOutForm()
-                        : _verificationForm())
+                    ? (_recoveryStep != null
+                        ? _recoveryForm()
+                        : _pendingVerificationEmail == null
+                            ? _signedOutForm()
+                            : _verificationForm())
                     : _signedInCard(user),
               ),
               if (_message != null) ...[
@@ -426,16 +650,23 @@ class _AccountScreenState extends State<AccountScreen> {
           decoration: const InputDecoration(labelText: 'Email'),
         ),
         const SizedBox(height: 12),
-        TextField(
+        _PasswordField(
           controller: _password,
           enabled: !_busy,
-          obscureText: true,
+          label: 'Password',
           autofillHints: _signUp
               ? const [AutofillHints.newPassword]
               : const [AutofillHints.password],
           onSubmitted: (_) => _busy ? null : _submit(),
-          decoration: const InputDecoration(labelText: 'Password'),
         ),
+        if (!_signUp)
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: _busy ? null : _startRecovery,
+              child: const Text('Forgot password?'),
+            ),
+          ),
         const SizedBox(height: 16),
         Row(
           children: [
@@ -541,6 +772,184 @@ class _AccountScreenState extends State<AccountScreen> {
     );
   }
 
+  Widget _recoveryHeader(IconData icon, String title) {
+    return Row(
+      children: [
+        Icon(icon, size: 24),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Text(title,
+              style:
+                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+        ),
+      ],
+    );
+  }
+
+  Widget _recoveryHint(String text) {
+    return Text(
+      text,
+      style: TextStyle(
+          color: Theme.of(context).colorScheme.onSurfaceVariant, height: 1.4),
+    );
+  }
+
+  Widget _busyIcon(IconData icon) => _busy
+      ? const SizedBox(
+          width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+      : Icon(icon);
+
+  Widget _recoveryForm() {
+    final cancel = TextButton(
+      onPressed: _busy ? null : _cancelRecovery,
+      child: const Text('Back to sign in'),
+    );
+    switch (_recoveryStep!) {
+      case _RecoveryStep.email:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _recoveryHeader(Icons.lock_reset_rounded, 'Reset your password'),
+            const SizedBox(height: 10),
+            _recoveryHint(
+                'Enter the email you use for Orvix. We will email you a 6-digit code to reset your password.'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _email,
+              enabled: !_busy,
+              autofocus: true,
+              keyboardType: TextInputType.emailAddress,
+              autofillHints: const [AutofillHints.email],
+              onSubmitted: (_) => _busy ? null : _sendRecoveryCode(),
+              decoration: const InputDecoration(labelText: 'Email'),
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                FilledButton.icon(
+                  onPressed: _busy ? null : _sendRecoveryCode,
+                  icon: _busyIcon(Icons.send_rounded),
+                  label: const Text('Send reset code'),
+                ),
+                cancel,
+              ],
+            ),
+          ],
+        );
+      case _RecoveryStep.code:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _recoveryHeader(Icons.mark_email_read_outlined, 'Check your email'),
+            const SizedBox(height: 10),
+            _recoveryHint(
+                'If an Orvix account uses $_recoveryEmail, we sent it a 6-digit reset code. Enter the code here — you do not need to open a browser link.'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _recoveryCode,
+              enabled: !_busy,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              autofocus: true,
+              autofillHints: const [AutofillHints.oneTimeCode],
+              onSubmitted: (_) => _busy ? null : _verifyRecoveryCode(),
+              decoration: const InputDecoration(
+                labelText: '6-digit reset code',
+                counterText: '',
+              ),
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                FilledButton.icon(
+                  onPressed: _busy ? null : _verifyRecoveryCode,
+                  icon: _busyIcon(Icons.verified_outlined),
+                  label: const Text('Verify code'),
+                ),
+                TextButton(
+                  onPressed:
+                      _busy || _resendSeconds > 0 ? null : _sendRecoveryCode,
+                  child: Text(_resendSeconds > 0
+                      ? 'Resend in ${_resendSeconds}s'
+                      : 'Resend code'),
+                ),
+                cancel,
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'If you do not see the message, also check Spam or Junk.',
+              style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 12.5),
+            ),
+          ],
+        );
+      case _RecoveryStep.newPassword:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _recoveryHeader(Icons.password_rounded, 'Choose a new password'),
+            const SizedBox(height: 10),
+            _recoveryHint(
+                'Use at least ${OrvixAccountService.minPasswordLength} characters. You will sign in with this password from now on.'),
+            const SizedBox(height: 16),
+            _PasswordField(
+              controller: _newPassword,
+              enabled: !_busy,
+              label: 'New password',
+              autofocus: true,
+              autofillHints: const [AutofillHints.newPassword],
+            ),
+            const SizedBox(height: 12),
+            _PasswordField(
+              controller: _confirmPassword,
+              enabled: !_busy,
+              label: 'Confirm new password',
+              autofillHints: const [AutofillHints.newPassword],
+              onSubmitted: (_) => _busy ? null : _updatePassword(),
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                FilledButton.icon(
+                  onPressed: _busy ? null : _updatePassword,
+                  icon: _busyIcon(Icons.check_rounded),
+                  label: const Text('Update password'),
+                ),
+                cancel,
+              ],
+            ),
+          ],
+        );
+      case _RecoveryStep.done:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _recoveryHeader(Icons.check_circle_outline_rounded,
+                'Password updated'),
+            const SizedBox(height: 10),
+            _recoveryHint(
+                'Your Orvix password was changed. Sign in with your new password to turn cloud sync back on.'),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              autofocus: true,
+              onPressed: _finishRecovery,
+              icon: const Icon(Icons.login_rounded),
+              label: const Text('Sign in'),
+            ),
+          ],
+        );
+    }
+  }
+
   Future<void> _approveTvCode(String raw) async {
     if (OrvixAccountService.currentUser == null) {
       setState(() => _message =
@@ -644,6 +1053,60 @@ class _AccountScreenState extends State<AccountScreen> {
           ],
         ),
       ],
+    );
+  }
+}
+
+/// A password text field with a show/hide toggle. The password is hidden by
+/// default; toggling keeps the entered text and cursor position.
+class _PasswordField extends StatefulWidget {
+  const _PasswordField({
+    required this.controller,
+    required this.label,
+    this.enabled = true,
+    this.autofocus = false,
+    this.autofillHints,
+    this.onSubmitted,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final bool enabled;
+  final bool autofocus;
+  final Iterable<String>? autofillHints;
+  final ValueChanged<String>? onSubmitted;
+
+  @override
+  State<_PasswordField> createState() => _PasswordFieldState();
+}
+
+class _PasswordFieldState extends State<_PasswordField> {
+  bool _obscured = true;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: widget.controller,
+      enabled: widget.enabled,
+      autofocus: widget.autofocus,
+      obscureText: _obscured,
+      // Keep revealed passwords out of keyboard suggestions and learning.
+      autocorrect: false,
+      enableSuggestions: false,
+      autofillHints: widget.autofillHints,
+      onSubmitted: widget.onSubmitted,
+      decoration: InputDecoration(
+        labelText: widget.label,
+        suffixIcon: IconButton(
+          tooltip: _obscured ? 'Show password' : 'Hide password',
+          icon: Icon(_obscured
+              ? Icons.visibility_outlined
+              : Icons.visibility_off_outlined),
+          onPressed: widget.enabled
+              ? () => setState(() => _obscured = !_obscured)
+              : null,
+        ),
+      ),
     );
   }
 }
