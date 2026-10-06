@@ -809,10 +809,18 @@ class LocalTorrentService {
 
     var retainedProbe = false;
     try {
-      final response = await _createTorrent(body).timeout(
-        const Duration(milliseconds: 1800),
-      );
-      if (response.statusCode < 200 || response.statusCode >= 300) {
+      http.Response? response;
+      try {
+        response = await _createTorrent(body).timeout(
+          const Duration(milliseconds: 1800),
+        );
+      } catch (_) {
+        // Slow metadata or an engine error is failed live-health evidence for
+        // this candidate only; it must not abort probing the other sources.
+      }
+      if (response == null ||
+          response.statusCode < 200 ||
+          response.statusCode >= 300) {
         return LocalTorrentProbeResult(
           playableNow: false,
           bytesReceived: 0,
