@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:math';
 
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'orvix_account_backend.dart';
+import 'orvix_account_service.dart';
 
 enum TvDeviceLoginPhase { idle, starting, waiting, signingIn, expired, failed }
 
@@ -26,7 +27,7 @@ class TvDeviceLoginState {
 class TvDeviceLoginService {
   TvDeviceLoginService._();
 
-  static final SupabaseClient _client = Supabase.instance.client;
+  static OrvixTvLoginBackend get _backend => OrvixAccountService.backend;
   static final Random _random = Random.secure();
 
   static String _uuidV4() {
@@ -38,6 +39,10 @@ class TvDeviceLoginService {
     return '${s.substring(0, 8)}-${s.substring(8, 12)}-${s.substring(12, 16)}-${s.substring(16, 20)}-${s.substring(20)}';
   }
 
+  /// Approves a TV's QR/user code from a signed-in phone.
+  static Future<bool> approve(String userCode) =>
+      _backend.approveTvLogin(userCode);
+
   static Future<void> run({
     required void Function(TvDeviceLoginState state) onState,
     required bool Function() isCancelled,
@@ -46,22 +51,15 @@ class TvDeviceLoginService {
     final nonce = _uuidV4();
 
     try {
-      final raw = await _client.rpc('start_tv_login_session', params: {
-        'p_device_nonce': nonce,
-        'p_device_name': 'Orvix Android TV',
-      });
+      final start = await _backend.startTvLogin(
+        deviceNonce: nonce,
+        deviceName: 'Orvix Android TV',
+      );
       if (isCancelled()) return;
-      if (raw is! List || raw.isEmpty || raw.first is! Map) {
-        throw StateError('TV login service returned an invalid start response.');
-      }
-      final row = Map<String, dynamic>.from(raw.first as Map);
-      final deviceCode = row['device_code']?.toString();
-      final userCode = row['user_code']?.toString();
-      final verificationUrl = row['verification_uri_complete']?.toString();
-      final interval = int.tryParse(row['poll_interval_seconds']?.toString() ?? '') ?? 3;
-      if (deviceCode == null || userCode == null || verificationUrl == null) {
-        throw StateError('TV login service returned an incomplete start response.');
-      }
+      final deviceCode = start.deviceCode;
+      final userCode = start.userCode;
+      final verificationUrl = start.verificationUrl;
+      final interval = start.pollIntervalSeconds;
 
       onState(TvDeviceLoginState(
         phase: TvDeviceLoginPhase.waiting,
@@ -73,14 +71,10 @@ class TvDeviceLoginService {
         await Future<void>.delayed(Duration(seconds: interval.clamp(2, 10)));
         if (isCancelled()) return;
 
-        final pollRaw = await _client.rpc('poll_tv_login_session', params: {
-          'p_device_code': deviceCode,
-          'p_device_nonce': nonce,
-        });
-        if (pollRaw is! List || pollRaw.isEmpty || pollRaw.first is! Map) {
-          throw StateError('TV login session is no longer available.');
-        }
-        final status = (pollRaw.first as Map)['status']?.toString().toLowerCase();
+        final status = await _backend.pollTvLogin(
+          deviceCode: deviceCode,
+          deviceNonce: nonce,
+        );
         if (status == 'pending') continue;
         if (status == 'expired') {
           onState(const TvDeviceLoginState(
@@ -99,19 +93,12 @@ class TvDeviceLoginService {
           verificationUrl: verificationUrl,
         ));
 
-        final response = await _client.functions.invoke(
-          'tv-login-exchange',
-          body: {'device_code': deviceCode, 'device_nonce': nonce},
+        final sessionToken = await _backend.exchangeTvLogin(
+          deviceCode: deviceCode,
+          deviceNonce: nonce,
         );
         if (isCancelled()) return;
-        if (response.status < 200 || response.status >= 300 || response.data is! Map) {
-          throw StateError('Could not exchange the approved TV login.');
-        }
-        final refreshToken = (response.data as Map)['refresh_token']?.toString();
-        if (refreshToken == null || refreshToken.isEmpty) {
-          throw StateError('TV login did not return a session.');
-        }
-        await _client.auth.setSession(refreshToken);
+        await _backend.signInWithTvLoginToken(sessionToken);
         return;
       }
 

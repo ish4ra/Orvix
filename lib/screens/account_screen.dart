@@ -4,8 +4,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../services/orvix_account_backend.dart';
 import '../services/orvix_account_service.dart';
 import '../services/platform_profile.dart';
 import '../services/tv_device_login_service.dart';
@@ -77,7 +77,7 @@ class _AccountScreenState extends State<AccountScreen> {
     super.dispose();
   }
 
-  String _friendlyAuthMessage(AuthException error) {
+  String _friendlyAuthMessage(OrvixAuthException error) {
     final text = error.message.trim();
     final lower = text.toLowerCase();
 
@@ -166,7 +166,7 @@ class _AccountScreenState extends State<AccountScreen> {
         final response =
             await OrvixAccountService.signUp(email: email, password: password);
         if (!mounted) return;
-        if (response.session == null) {
+        if (!response.hasSession) {
           _showVerificationFor(email, startCooldown: true);
         } else {
           _password.clear();
@@ -182,7 +182,7 @@ class _AccountScreenState extends State<AccountScreen> {
             'Signed in. Your local and cloud Orvix data were merged.');
         widget.onAuthChanged();
       }
-    } on AuthException catch (error) {
+    } on OrvixAuthException catch (error) {
       if (!mounted) return;
       if (error.message.toLowerCase().contains('email not confirmed')) {
         _showVerificationFor(email);
@@ -217,7 +217,7 @@ class _AccountScreenState extends State<AccountScreen> {
         email: email,
         token: code,
       );
-      if (response.session == null) {
+      if (!response.hasSession) {
         await OrvixAccountService.signIn(
           email: email,
           password: _password.text,
@@ -234,7 +234,7 @@ class _AccountScreenState extends State<AccountScreen> {
             'Email verified. Your Orvix account is ready and cloud sync is active.';
       });
       widget.onAuthChanged();
-    } on AuthException catch (error) {
+    } on OrvixAuthException catch (error) {
       if (mounted) setState(() => _message = _friendlyAuthMessage(error));
     } catch (error) {
       if (mounted)
@@ -259,7 +259,7 @@ class _AccountScreenState extends State<AccountScreen> {
       _startResendCooldown();
       setState(
           () => _message = 'A new Orvix verification code was sent to $email.');
-    } on AuthException catch (error) {
+    } on OrvixAuthException catch (error) {
       if (!mounted) return;
       final friendly = _friendlyAuthMessage(error);
       if (error.message.toLowerCase().contains('security purposes') ||
@@ -398,7 +398,7 @@ class _AccountScreenState extends State<AccountScreen> {
     );
   }
 
-  Widget _buildTvAccount(BuildContext context, User? user) {
+  Widget _buildTvAccount(BuildContext context, OrvixAccountUser? user) {
     return _TvAccountLayout(
       user: user,
       loginState: _tvLogin,
@@ -565,12 +565,9 @@ class _AccountScreenState extends State<AccountScreen> {
       _message = 'Approving TV…';
     });
     try {
-      final approved = await Supabase.instance.client.rpc(
-        'approve_tv_login_session',
-        params: {'p_user_code': code},
-      );
+      final approved = await TvDeviceLoginService.approve(code);
       if (!mounted) return;
-      setState(() => _message = approved == true
+      setState(() => _message = approved
           ? 'TV approved. Orvix on your TV will sign in automatically.'
           : 'That TV code expired or was already used. Refresh the QR on the TV.');
     } catch (_) {
@@ -591,7 +588,7 @@ class _AccountScreenState extends State<AccountScreen> {
     if (value != null && mounted) await _approveTvCode(value);
   }
 
-  Widget _signedInCard(User user) {
+  Widget _signedInCard(OrvixAccountUser user) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -684,7 +681,7 @@ class _TvAccountLayout extends StatelessWidget {
     required this.onSignOut,
   });
 
-  final User? user;
+  final OrvixAccountUser? user;
   final TvDeviceLoginState loginState;
   final bool busy;
   final bool syncing;
