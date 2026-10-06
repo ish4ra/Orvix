@@ -9,3 +9,7 @@ Thumbs.db
 .flutter-plugins
 .flutter-plugins-dependencies
 windows/flutter/ephemeral/
+
+# Python cache
+__pycache__/
+*.pyc
