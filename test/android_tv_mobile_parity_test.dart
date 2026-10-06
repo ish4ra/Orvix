@@ -56,8 +56,11 @@ void main() {
     expect(account, contains("tv-linear-account-sync"));
     expect(account, contains("tv-linear-account-sign-out"));
     expect(account, contains("'Scan TV QR'"));
-    expect(account, contains("'approve_tv_login_session'"));
-    expect(account, contains("'p_user_code': code"));
+    expect(account, contains('TvDeviceLoginService.approve(code)'));
+    final backend = File('lib/services/supabase_orvix_account_backend.dart')
+        .readAsStringSync();
+    expect(backend, contains("'approve_tv_login_session'"));
+    expect(backend, contains("'p_user_code': userCode"));
     expect(account, contains("queryParameters['code']"));
     expect(account, contains('final validCode = code.length == 6'));
     expect(account, isNot(contains("RegExp(r'^[A-Z0-9]")));

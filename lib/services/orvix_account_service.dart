@@ -3,13 +3,22 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'orvix_account_backend.dart';
 import 'secure_storage_factory.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'supabase_orvix_account_backend.dart';
 
+/// The account/cloud-sync facade used by the UI and app lifecycle.
+///
+/// Local-first: Orvix data lives in SharedPreferences and secure storage, and
+/// is merged with the cloud copy only while signed in. All backend access goes
+/// through [backend] (see orvix_account_backend.dart).
 class OrvixAccountService {
   OrvixAccountService._();
 
-  static const table = 'orvix_user_state';
+  /// The active account backend. Supabase is the only production backend;
+  /// replace this to move Orvix accounts to another provider (or in tests).
+  static OrvixAccountBackend backend = SupabaseOrvixAccountBackend();
+
   static const _watchlistKey = 'pikora_watchlist_v1';
   static const _libraryKey = 'pikora_media_library_v1';
   static const _progressKey = 'pikora_continue_watching_v1';
@@ -27,15 +36,14 @@ class OrvixAccountService {
   ];
   static final FlutterSecureStorage _secureStorage = createOrvixSecureStorage();
 
-  static SupabaseClient get _client => Supabase.instance.client;
-  static User? get currentUser => _client.auth.currentUser;
+  static OrvixAccountUser? get currentUser => backend.currentUser;
   static bool get isSignedIn => currentUser != null;
 
-  static Future<AuthResponse> signIn({
+  static Future<OrvixAuthResult> signIn({
     required String email,
     required String password,
   }) async {
-    final response = await _client.auth.signInWithPassword(
+    final response = await backend.signInWithPassword(
       email: email.trim(),
       password: password,
     );
@@ -43,49 +51,41 @@ class OrvixAccountService {
     return response;
   }
 
-  static Future<AuthResponse> signUp({
+  static Future<OrvixAuthResult> signUp({
     required String email,
     required String password,
   }) async {
-    final response = await _client.auth.signUp(
+    final response = await backend.signUp(
       email: email.trim(),
       password: password,
     );
-    if (response.session != null) {
+    if (response.hasSession) {
       await mergeCloudIntoLocal();
     }
     return response;
   }
 
-  static Future<AuthResponse> verifySignupOtp({
+  static Future<OrvixAuthResult> verifySignupOtp({
     required String email,
     required String token,
   }) async {
-    // Supabase's six-digit email OTP flow is verified as an email OTP.
-    // `signup` is still required by resend(), but using it here can make a
-    // freshly generated email code fail with the generic otp_expired error.
-    final response = await _client.auth.verifyOTP(
-      type: OtpType.email,
+    final response = await backend.verifySignupCode(
       email: email.trim(),
       token: token.trim(),
     );
-    if (response.session != null) {
+    if (response.hasSession) {
       await mergeCloudIntoLocal();
     }
     return response;
   }
 
-  static Future<ResendResponse> resendSignupConfirmation({
+  static Future<void> resendSignupConfirmation({
     required String email,
   }) {
-    // Supabase resend only accepts the signup type for signup confirmations.
-    return _client.auth.resend(
-      type: OtpType.signup,
-      email: email.trim(),
-    );
+    return backend.resendSignupConfirmation(email: email.trim());
   }
 
-  static Future<void> signOut() => _client.auth.signOut();
+  static Future<void> signOut() => backend.signOut();
 
   static Future<void> restoreSignedInState() async {
     if (!isSignedIn) return;
@@ -109,8 +109,7 @@ class OrvixAccountService {
         prefs.getString(_progressKey), const <String, dynamic>{});
     final preferences = _collectAppPreferences(prefs);
 
-    await _client.from(table).upsert({
-      'user_id': user.id,
+    await backend.saveUserState(user.id, {
       'watchlist': watchlist,
       'library': library,
       'progress': progress,
@@ -119,7 +118,7 @@ class OrvixAccountService {
       'preferred_cloud':
           preferences['orvix_preferred_cloud_v1']?.toString() ?? 'pikpak',
       'preferences': preferences,
-    }, onConflict: 'user_id');
+    });
   }
 
   static Future<void> syncCredentialsIfSignedIn() async {
@@ -130,10 +129,7 @@ class OrvixAccountService {
       if (value != null && value.isNotEmpty) local[key] = value;
     }
 
-    final remoteRaw = await _client.rpc('load_orvix_credentials');
-    final remote = remoteRaw is Map
-        ? remoteRaw.map((key, value) => MapEntry(key.toString(), value?.toString() ?? ''))
-        : <String, String>{};
+    final remote = await backend.loadCredentials();
 
     final merged = <String, String>{...remote, ...local}
       ..removeWhere((_, value) => value.isEmpty);
@@ -143,7 +139,7 @@ class OrvixAccountService {
       }
     }
     if (merged.isNotEmpty) {
-      await _client.rpc('save_orvix_credentials', params: {'p_payload': merged});
+      await backend.saveCredentials(merged);
     }
   }
 
@@ -154,15 +150,14 @@ class OrvixAccountService {
     await syncCredentialsIfSignedIn();
 
     final prefs = await SharedPreferences.getInstance();
-    final rows =
-        await _client.from(table).select().eq('user_id', user.id).limit(1);
+    final stored = await backend.loadUserState(user.id);
 
-    if (rows.isEmpty) {
+    if (stored == null) {
       await pushLocalStateIfSignedIn();
       return;
     }
 
-    final remote = Map<String, dynamic>.from(rows.first);
+    final remote = Map<String, dynamic>.from(stored);
     final localWatchlist = _asList(
         _decodeJsonValue(prefs.getString(_watchlistKey), const <dynamic>[]));
     final localLibrary = _asList(
@@ -192,8 +187,7 @@ class OrvixAccountService {
       ..._collectAppPreferences(prefs),
     };
 
-    await _client.from(table).upsert({
-      'user_id': user.id,
+    await backend.saveUserState(user.id, {
       'watchlist': mergedWatchlist,
       'library': mergedLibrary,
       'progress': mergedProgress,
@@ -202,7 +196,7 @@ class OrvixAccountService {
       'preferred_cloud':
           mergedPreferences['orvix_preferred_cloud_v1']?.toString() ?? 'pikpak',
       'preferences': mergedPreferences,
-    }, onConflict: 'user_id');
+    });
   }
 
   static dynamic _decodeJsonValue(String? raw, dynamic fallback) {
