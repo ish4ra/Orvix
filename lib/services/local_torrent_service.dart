@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
@@ -268,6 +269,11 @@ class LocalTorrentService {
   Process? _process;
   bool _ownsProcess = false;
   Future<void>? _starting;
+
+  /// Replaces the platform engine launch inside [ensureRunning] in tests so
+  /// the shared startup lifecycle can be exercised without a native engine.
+  @visibleForTesting
+  Future<void> Function()? debugStartEngineOverride;
   bool _androidProfileConfigured = false;
   String? _currentInfoHash;
   final Set<String> _retainedProbeInfoHashes = <String>{};
@@ -1017,8 +1023,20 @@ class LocalTorrentService {
 
     final completer = Completer<void>();
     _starting = completer.future;
+    // The initiating call reports a startup failure by rethrowing it below.
+    // Concurrent callers that joined via [_starting] still receive the error
+    // from their own await; this only stops the shared future from also being
+    // reported as an uncaught error when nobody else joined.
+    completer.future.ignore();
 
     try {
+      final startOverride = debugStartEngineOverride;
+      if (startOverride != null) {
+        await startOverride();
+        completer.complete();
+        return;
+      }
+
       if (Platform.isAndroid) {
         _androidProfileConfigured = false;
         try {
