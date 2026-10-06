@@ -46,4 +46,38 @@ void main() {
     // The temporary probe session is still cleaned up, not retained.
     expect(removed, contains('/$infoHash/remove'));
   });
+
+  test(
+      'probe engine startup failure is a failed probe, not an escaped exception',
+      () async {
+    // No engine is listening on the local port and this host has no bundled
+    // engine to start, so ensureRunning() throws LocalTorrentException.
+    const source = SourceResult(
+      provider: 'Test',
+      title: 'Engine unavailable',
+      resource: 'magnet:?xt=urn:btih:89abcdef0123456789abcdef0123456789abcdef',
+      isMagnet: true,
+      sortMode: SourceSortMode.seeders,
+    );
+
+    // ensureRunning() also fails its internal shared start future, which has
+    // no listener when probe() is the only caller. Keep that stray error out
+    // of the test zone so only probe()'s own outcome is asserted here.
+    final done = Completer<LocalTorrentProbeResult>();
+    runZonedGuarded(() {
+      LocalTorrentService.instance
+          .probe(source, retainSession: true)
+          .then(done.complete, onError: done.completeError);
+    }, (error, stackTrace) {
+      if (error is! LocalTorrentException) {
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+    });
+    final result = await done.future;
+
+    expect(result.playableNow, isFalse);
+    expect(result.bytesReceived, 0);
+    expect(result.sampleWindowsPassed, 0);
+    expect(result.label, 'No live data');
+  });
 }

@@ -790,7 +790,22 @@ class LocalTorrentService {
       );
     }
 
-    await ensureRunning();
+    try {
+      await ensureRunning();
+    } catch (_) {
+      // An engine that cannot start is failed live-health evidence for this
+      // candidate only; playback resolve() still surfaces the real error.
+      return LocalTorrentProbeResult(
+        playableNow: false,
+        bytesReceived: 0,
+        elapsed: timeout,
+        firstByteLatency: null,
+        peers: 0,
+        connections: 0,
+        downloadSpeedBytesPerSecond: 0,
+        sampleWindowsPassed: 0,
+      );
+    }
     final engineMagnet = normalizeMagnetForEngine(source.resource);
     final trackerUrls = trackerUrlsForMagnet(engineMagnet);
     final fileHint = source.fileNameHint?.trim();
