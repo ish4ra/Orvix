@@ -228,5 +228,35 @@ void main() {
     expect(patcher, contains('PGS/HDMV decoder enabled'));
   });
 
+  test('Android Mobile prerelease build applies the full libmpv patch like CI', () {
+    String job(String workflow, String name, String next) {
+      final start = workflow.indexOf('\n  $name:\n');
+      final end = workflow.indexOf('\n  $next:\n', start + 1);
+      expect(start, isNonNegative);
+      expect(end, greaterThan(start));
+      return workflow.substring(start, end);
+    }
+
+    const patchStep = 'python3 tools/configure_android_mobile_media_kit.py';
+    final ci = File('.github/workflows/ci.yml').readAsStringSync();
+    final release = File('.github/workflows/prerelease.yml').readAsStringSync();
+
+    for (final mobile in [
+      job(ci, 'android-mobile', 'android-tv'),
+      job(release, 'android-mobile', 'android-tv'),
+    ]) {
+      final pubGet = mobile.indexOf('flutter pub get');
+      final patch = mobile.indexOf(patchStep);
+      final build = mobile.indexOf('flutter build apk');
+      expect(pubGet, isNonNegative);
+      expect(patch, greaterThan(pubGet));
+      expect(build, greaterThan(patch));
+    }
+
+    // Android TV keeps the default media_kit libmpv build.
+    expect(job(ci, 'android-tv', 'macos'), isNot(contains(patchStep)));
+    expect(job(release, 'android-tv', 'release'), isNot(contains(patchStep)));
+  });
+
 
 }

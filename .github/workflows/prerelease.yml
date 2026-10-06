@@ -76,6 +76,7 @@ jobs:
           python3 -m py_compile \
             tools/configure_android_build.py \
             tools/configure_android_mobile_compat.py \
+            tools/configure_android_mobile_media_kit.py \
             tools/configure_android_signing.py \
             tools/generate_desktop_branding.py
           bash -n tools/publish_orvix_release.sh
@@ -1063,6 +1064,12 @@ jobs:
 
       - name: Get dependencies
         run: flutter pub get
+
+      - name: Enable full Android Mobile libmpv codecs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/configure_android_mobile_media_kit.py
 
       - name: Build Android mobile APKs
         run: |
