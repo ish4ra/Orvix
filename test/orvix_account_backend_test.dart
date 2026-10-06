@@ -26,6 +26,9 @@ class _FakeBackend implements OrvixAccountBackend {
   OrvixAuthException? authError;
   final pollStatuses = <String>['approved'];
   String? tvToken;
+  OrvixAuthException? recoveryVerifyError;
+  final recoveryUpdateErrors = <OrvixAuthException>[];
+  final updatedPasswords = <String>[];
 
   @override
   OrvixAccountUser? get currentUser => user;
@@ -63,6 +66,34 @@ class _FakeBackend implements OrvixAccountBackend {
   @override
   Future<void> resendSignupConfirmation({required String email}) async {
     calls.add('resend:$email');
+  }
+
+  @override
+  Future<void> requestPasswordRecovery({required String email}) async {
+    calls.add('recover:$email');
+  }
+
+  @override
+  Future<void> verifyPasswordRecoveryCode({
+    required String email,
+    required String token,
+  }) async {
+    calls.add('verifyRecovery:$email:$token');
+    if (recoveryVerifyError != null) throw recoveryVerifyError!;
+    user = OrvixAccountUser(id: 'recovered-user', email: email);
+  }
+
+  @override
+  Future<void> updateRecoveredPassword({required String newPassword}) async {
+    calls.add('updatePassword');
+    if (recoveryUpdateErrors.isNotEmpty) throw recoveryUpdateErrors.removeAt(0);
+    updatedPasswords.add(newPassword);
+  }
+
+  @override
+  Future<void> endPasswordRecovery() async {
+    calls.add('endRecovery');
+    user = null;
   }
 
   @override
@@ -243,6 +274,147 @@ void main() {
       await OrvixAccountService.signOut();
       expect(OrvixAccountService.isSignedIn, isFalse);
       expect(backend.calls, ['signOut']);
+    });
+  });
+
+  group('password recovery through the backend abstraction', () {
+    tearDown(OrvixAccountService.cancelPasswordRecovery);
+
+    test('request trims the email and never syncs', () async {
+      await OrvixAccountService.requestPasswordRecovery(
+          email: ' r@example.com ');
+      expect(backend.calls, ['recover:r@example.com']);
+      expect(OrvixAccountService.isSignedIn, isFalse);
+    });
+
+    test('verified code, new password, then signed out with nothing synced',
+        () async {
+      await OrvixAccountService.verifyPasswordRecovery(
+          email: ' r@example.com', token: ' 123456 ');
+      expect(OrvixAccountService.isPasswordRecoveryVerified, isTrue);
+      // The recovery session is not a sign-in: nothing syncs into it.
+      expect(backend.user, isNotNull);
+      expect(OrvixAccountService.currentUser, isNull);
+      await OrvixAccountService.pushLocalStateIfSignedIn();
+      await OrvixAccountService.mergeCloudIntoLocal();
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getBool('orvix_password_recovery_pending_v1'), isTrue);
+
+      await OrvixAccountService.updateRecoveredPassword(
+          newPassword: 'new-secret');
+      expect(backend.updatedPasswords, ['new-secret']);
+      expect(backend.calls, [
+        'verifyRecovery:r@example.com:123456',
+        'updatePassword',
+        'endRecovery',
+      ]);
+      expect(OrvixAccountService.isPasswordRecoveryVerified, isFalse);
+      expect(OrvixAccountService.currentUser, isNull);
+      expect(prefs.containsKey('orvix_password_recovery_pending_v1'), isFalse);
+
+      // Signing in afterwards is the normal path.
+      await OrvixAccountService.signIn(
+          email: 'r@example.com', password: 'new-secret');
+      expect(OrvixAccountService.isSignedIn, isTrue);
+    });
+
+    for (final message in [
+      'Token has expired or is invalid',
+      'Invalid token',
+    ]) {
+      test('rejected code ($message) leaves no recovery session', () async {
+        backend.recoveryVerifyError = OrvixAuthException(message,
+            code: 'otp_expired', kind: OrvixAuthErrorKind.invalidCode);
+        await expectLater(
+          OrvixAccountService.verifyPasswordRecovery(
+              email: 'r@example.com', token: '000000'),
+          throwsA(isA<OrvixAuthException>().having(
+              (e) => e.kind, 'kind', OrvixAuthErrorKind.invalidCode)),
+        );
+        expect(OrvixAccountService.isPasswordRecoveryVerified, isFalse);
+        await expectLater(
+          OrvixAccountService.updateRecoveredPassword(newPassword: 'abcdef'),
+          throwsA(isA<OrvixAuthException>().having(
+              (e) => e.kind, 'kind', OrvixAuthErrorKind.sessionMissing)),
+        );
+        expect(backend.calls, contains('endRecovery'));
+        expect(backend.calls, isNot(contains('updatePassword')));
+      });
+    }
+
+    test('a rejected new password keeps the session for another try',
+        () async {
+      await OrvixAccountService.verifyPasswordRecovery(
+          email: 'r@example.com', token: '123456');
+      backend.recoveryUpdateErrors.add(const OrvixAuthException('weak',
+          kind: OrvixAuthErrorKind.weakPassword));
+      await expectLater(
+        OrvixAccountService.updateRecoveredPassword(newPassword: 'abcdef'),
+        throwsA(isA<OrvixAuthException>()),
+      );
+      expect(OrvixAccountService.isPasswordRecoveryVerified, isTrue);
+      expect(OrvixAccountService.currentUser, isNull);
+
+      await OrvixAccountService.updateRecoveredPassword(
+          newPassword: 'longer-secret');
+      expect(backend.updatedPasswords, ['longer-secret']);
+      expect(OrvixAccountService.isPasswordRecoveryVerified, isFalse);
+    });
+
+    test('an expired recovery session ends recovery', () async {
+      await OrvixAccountService.verifyPasswordRecovery(
+          email: 'r@example.com', token: '123456');
+      backend.recoveryUpdateErrors.add(const OrvixAuthException('gone',
+          kind: OrvixAuthErrorKind.sessionMissing));
+      await expectLater(
+        OrvixAccountService.updateRecoveredPassword(newPassword: 'abcdef'),
+        throwsA(isA<OrvixAuthException>()),
+      );
+      expect(OrvixAccountService.isPasswordRecoveryVerified, isFalse);
+      expect(backend.calls.last, 'endRecovery');
+    });
+
+    test('cancel discards the recovery session', () async {
+      await OrvixAccountService.verifyPasswordRecovery(
+          email: 'r@example.com', token: '123456');
+      await OrvixAccountService.cancelPasswordRecovery();
+      expect(OrvixAccountService.isPasswordRecoveryVerified, isFalse);
+      expect(backend.user, isNull);
+      expect(backend.calls.last, 'endRecovery');
+      expect(backend.updatedPasswords, isEmpty);
+    });
+
+    test('recovery is refused while signed in', () async {
+      backend.user = const OrvixAccountUser(id: 'user-1');
+      await expectLater(
+        OrvixAccountService.verifyPasswordRecovery(
+            email: 'r@example.com', token: '123456'),
+        throwsStateError,
+      );
+      expect(backend.user?.id, 'user-1');
+      expect(backend.calls, isEmpty);
+    });
+
+    test('a recovery interrupted by closing the app is discarded on start',
+        () async {
+      SharedPreferences.setMockInitialValues(
+          {'orvix_password_recovery_pending_v1': true});
+      backend.user = const OrvixAccountUser(id: 'recovered-user');
+      await OrvixAccountService.restoreSignedInState();
+      expect(backend.calls, ['endRecovery']);
+      expect(OrvixAccountService.isSignedIn, isFalse);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.containsKey('orvix_password_recovery_pending_v1'), isFalse);
+    });
+
+    test('the recovery marker never syncs to the cloud', () async {
+      SharedPreferences.setMockInitialValues(
+          {'orvix_password_recovery_pending_v1': true, 'orvix_theme_v1': 'x'});
+      backend.user = const OrvixAccountUser(id: 'user-1');
+      await OrvixAccountService.pushLocalStateIfSignedIn();
+      final preferences =
+          backend.savedStates.single['preferences'] as Map<String, dynamic>;
+      expect(preferences, {'orvix_theme_v1': 'x'});
     });
   });
 
@@ -433,7 +605,10 @@ void main() {
       final client = SupabaseClient(
         'https://orvix.test',
         'publishable-test-key',
-        authOptions: const AuthClientOptions(autoRefreshToken: false),
+        authOptions: AuthClientOptions(
+          autoRefreshToken: false,
+          pkceAsyncStorage: _MemoryAuthStorage(),
+        ),
         httpClient: MockClient((request) async {
           requests.add(request);
           final response = respond(request);
@@ -588,6 +763,165 @@ void main() {
       expect(requests.single.url.path, '/auth/v1/verify');
       expect(jsonDecode(requests.single.body)['type'], 'email');
     });
+
+    final sessionJson = {
+      'access_token': 'recovery-access',
+      'token_type': 'bearer',
+      'expires_in': 3600,
+      'refresh_token': 'recovery-refresh',
+      'user': {
+        'id': 'u1',
+        'aud': 'authenticated',
+        'email': 'a@example.com',
+        'created_at': '2026-01-01T00:00:00Z',
+        'app_metadata': {},
+        'user_metadata': {},
+      },
+    };
+
+    http.Response apiError(int status, String code, String message) =>
+        http.Response(
+          jsonEncode({'code': code, 'msg': message}),
+          status,
+          headers: {
+            'content-type': 'application/json',
+            'x-supabase-api-version': '2024-01-01',
+          },
+        );
+
+    test('password recovery request posts the email without a redirect link',
+        () async {
+      final backend = adapter((_) => json({}));
+      await backend.requestPasswordRecovery(email: 'a@example.com');
+      final request = requests.single;
+      expect(request.method, 'POST');
+      expect(request.url.path, '/auth/v1/recover');
+      expect(request.url.queryParameters.containsKey('redirect_to'), isFalse);
+      expect(jsonDecode(request.body)['email'], 'a@example.com');
+    });
+
+    test('recovery code is verified as a recovery OTP', () async {
+      final backend = adapter((_) => json(sessionJson));
+      await backend.verifyPasswordRecoveryCode(
+          email: 'a@example.com', token: '123456');
+      final body = jsonDecode(requests.single.body);
+      expect(requests.single.url.path, '/auth/v1/verify');
+      expect(body['type'], 'recovery');
+      expect(body['email'], 'a@example.com');
+      expect(body['token'], '123456');
+      expect(backend.currentUser?.id, 'u1');
+    });
+
+    test('recovery verification without a session is a session failure',
+        () async {
+      final backend = adapter((_) => json({'user': null, 'session': null}));
+      await expectLater(
+        backend.verifyPasswordRecoveryCode(
+            email: 'a@example.com', token: '123456'),
+        throwsA(isA<OrvixAuthException>().having(
+            (e) => e.kind, 'kind', OrvixAuthErrorKind.sessionMissing)),
+      );
+    });
+
+    test('new password is set with the recovery session, then ended locally',
+        () async {
+      final backend = adapter((request) => request.url.path == '/auth/v1/user'
+          ? json(sessionJson['user'])
+          : json(sessionJson));
+      await backend.verifyPasswordRecoveryCode(
+          email: 'a@example.com', token: '123456');
+      await backend.updateRecoveredPassword(newPassword: 'new-secret');
+      final update = requests.last;
+      expect(update.method, 'PUT');
+      expect(update.url.path, '/auth/v1/user');
+      expect(update.headers['Authorization'], 'Bearer recovery-access');
+      expect(jsonDecode(update.body), {'password': 'new-secret'});
+
+      await backend.endPasswordRecovery();
+      expect(backend.currentUser, isNull);
+      expect(requests.last.url.path, '/auth/v1/logout');
+      expect(requests.last.url.queryParameters['scope'], 'local');
+    });
+
+    test('updating the password without a recovery session fails cleanly',
+        () async {
+      final backend = adapter((_) => json({}));
+      await expectLater(
+        backend.updateRecoveredPassword(newPassword: 'new-secret'),
+        throwsA(isA<OrvixAuthException>().having(
+            (e) => e.kind, 'kind', OrvixAuthErrorKind.sessionMissing)),
+      );
+      expect(requests, isEmpty);
+    });
+
+    final errorKinds = <String, (http.Response, OrvixAuthErrorKind)>{
+      'expired or invalid code': (
+        apiError(403, 'otp_expired', 'Token has expired or is invalid'),
+        OrvixAuthErrorKind.invalidCode
+      ),
+      'email rate limit': (
+        apiError(429, 'over_email_send_rate_limit',
+            'For security purposes, you can only request this after 42 seconds.'),
+        OrvixAuthErrorKind.rateLimited
+      ),
+      'malformed email': (
+        apiError(400, 'validation_failed',
+            'Unable to validate email address: invalid format'),
+        OrvixAuthErrorKind.invalidEmail
+      ),
+      'weak password': (
+        apiError(422, 'weak_password', 'Password should be at least 6 characters.'),
+        OrvixAuthErrorKind.weakPassword
+      ),
+      'same password': (
+        apiError(422, 'same_password',
+            'New password should be different from the old password.'),
+        OrvixAuthErrorKind.samePassword
+      ),
+      'other backend error': (
+        apiError(400, 'unexpected_failure', 'Something went wrong'),
+        OrvixAuthErrorKind.unknown
+      ),
+    };
+    errorKinds.forEach((name, expected) {
+      test('Supabase $name maps to ${expected.$2.name}', () async {
+        final backend = adapter((_) => expected.$1);
+        await expectLater(
+          backend.requestPasswordRecovery(email: 'a@example.com'),
+          throwsA(isA<OrvixAuthException>()
+              .having((e) => e.kind, 'kind', expected.$2)),
+        );
+      });
+    });
+
+    test('rate limits carry the wait time', () async {
+      final backend = adapter((_) => apiError(429, 'over_email_send_rate_limit',
+          'For security purposes, you can only request this after 42 seconds.'));
+      await expectLater(
+        backend.requestPasswordRecovery(email: 'a@example.com'),
+        throwsA(isA<OrvixAuthException>()
+            .having((e) => e.retryAfterSeconds, 'retryAfterSeconds', 42)),
+      );
+    });
+
+    test('unreachable backend maps to a network error', () async {
+      final client = SupabaseClient(
+        'https://orvix.test',
+        'publishable-test-key',
+        authOptions: AuthClientOptions(
+          autoRefreshToken: false,
+          pkceAsyncStorage: _MemoryAuthStorage(),
+        ),
+        httpClient: MockClient(
+            (_) async => throw http.ClientException('Failed host lookup')),
+      );
+      await expectLater(
+        SupabaseOrvixAccountBackend(client: client)
+            .requestPasswordRecovery(email: 'a@example.com'),
+        throwsA(isA<OrvixAuthException>()
+            .having((e) => e.kind, 'kind', OrvixAuthErrorKind.network)),
+      );
+    });
   });
 }
 
@@ -600,4 +934,18 @@ class _ThrowingCloudBackend extends _FakeBackend {
   @override
   Future<Map<String, String>> loadCredentials() async =>
       throw StateError('offline');
+}
+
+class _MemoryAuthStorage extends GotrueAsyncStorage {
+  final _values = <String, String>{};
+
+  @override
+  Future<String?> getItem({required String key}) async => _values[key];
+
+  @override
+  Future<void> setItem({required String key, required String value}) async =>
+      _values[key] = value;
+
+  @override
+  Future<void> removeItem({required String key}) async => _values.remove(key);
 }

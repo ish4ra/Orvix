@@ -22,10 +22,20 @@ class OrvixAccountService {
   static const _watchlistKey = 'pikora_watchlist_v1';
   static const _libraryKey = 'pikora_media_library_v1';
   static const _progressKey = 'pikora_continue_watching_v1';
+  static const _recoveryPendingKey = 'orvix_password_recovery_pending_v1';
   static const _localOnlyPreferenceKeys = <String>{
     'pikora_source_addons',
     'pikora_integrated_torrentio_url_v1',
+    _recoveryPendingKey,
   };
+
+  /// Password rules checked before asking the backend. Six characters is the
+  /// existing sign-up minimum; 72 is the longest password Supabase accepts.
+  static const minPasswordLength = 6;
+  static const maxPasswordLength = 72;
+
+  /// True between a verified recovery code and the end of password recovery.
+  static bool _recoverySessionActive = false;
 
   static const _credentialKeys = <String>[
     'orvix_torbox_api_token_v1',
@@ -36,7 +46,10 @@ class OrvixAccountService {
   ];
   static final FlutterSecureStorage _secureStorage = createOrvixSecureStorage();
 
-  static OrvixAccountUser? get currentUser => backend.currentUser;
+  /// The signed-in user. A password recovery session is not a sign-in: while
+  /// one is active this stays null, so nothing syncs into that account.
+  static OrvixAccountUser? get currentUser =>
+      _recoverySessionActive ? null : backend.currentUser;
   static bool get isSignedIn => currentUser != null;
 
   static Future<OrvixAuthResult> signIn({
@@ -87,7 +100,107 @@ class OrvixAccountService {
 
   static Future<void> signOut() => backend.signOut();
 
+  /// Whether a recovery code was verified and a new password can be set.
+  static bool get isPasswordRecoveryVerified => _recoverySessionActive;
+
+  /// Sends (or resends) a password recovery code to [email].
+  static Future<void> requestPasswordRecovery({required String email}) {
+    return backend.requestPasswordRecovery(email: email.trim());
+  }
+
+  /// Verifies the recovery code. The recovery session that this starts never
+  /// counts as signed in; finish with [updateRecoveredPassword] or
+  /// [cancelPasswordRecovery].
+  static Future<void> verifyPasswordRecovery({
+    required String email,
+    required String token,
+  }) async {
+    await _endRecoverySession();
+    if (backend.currentUser != null) {
+      throw StateError('Sign out before resetting the account password.');
+    }
+    // Set before the request so nothing syncs into the account the moment
+    // the session appears, and marked on disk so a recovery interrupted by
+    // the app closing is discarded on the next start.
+    _recoverySessionActive = true;
+    await _setRecoveryPending(true);
+    try {
+      await backend.verifyPasswordRecoveryCode(
+        email: email.trim(),
+        token: token.trim(),
+      );
+    } catch (_) {
+      await _endRecoverySession();
+      rethrow;
+    }
+  }
+
+  /// Sets the new password and ends the recovery session, leaving this device
+  /// signed out so the user signs in with the new password.
+  ///
+  /// When the backend rejects the password itself (too weak, unchanged) the
+  /// recovery session is kept so another password can be tried without a new
+  /// code. When the session is gone the user has to request a new code.
+  static Future<void> updateRecoveredPassword({
+    required String newPassword,
+  }) async {
+    if (!_recoverySessionActive) {
+      throw const OrvixAuthException(
+        'Password recovery session is missing.',
+        kind: OrvixAuthErrorKind.sessionMissing,
+      );
+    }
+    try {
+      await backend.updateRecoveredPassword(newPassword: newPassword);
+    } on OrvixAuthException catch (error) {
+      if (error.kind == OrvixAuthErrorKind.sessionMissing) {
+        await _endRecoverySession();
+      }
+      rethrow;
+    }
+    await _endRecoverySession();
+  }
+
+  /// Abandons password recovery and discards any recovery session.
+  static Future<void> cancelPasswordRecovery() => _endRecoverySession();
+
+  static Future<void> _endRecoverySession() async {
+    if (_recoverySessionActive) {
+      try {
+        await backend.endPasswordRecovery();
+      } catch (_) {
+        // The local session is discarded even when the server call fails.
+      }
+      _recoverySessionActive = false;
+    }
+    await _setRecoveryPending(false);
+  }
+
+  static Future<void> _setRecoveryPending(bool pending) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (pending) {
+        await prefs.setBool(_recoveryPendingKey, true);
+      } else if (prefs.containsKey(_recoveryPendingKey)) {
+        await prefs.remove(_recoveryPendingKey);
+      }
+    } catch (_) {}
+  }
+
+  /// Discards a recovery session left behind when the app closed mid-reset.
+  static Future<void> _discardInterruptedRecovery() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(_recoveryPendingKey) != true) return;
+      if (backend.currentUser != null) {
+        await backend.endPasswordRecovery();
+      }
+      await prefs.remove(_recoveryPendingKey);
+    } catch (_) {}
+  }
+
   static Future<void> restoreSignedInState() async {
+    await _discardInterruptedRecovery();
     if (!isSignedIn) return;
     try {
       await mergeCloudIntoLocal();

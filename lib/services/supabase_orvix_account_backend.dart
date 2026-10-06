@@ -35,9 +35,62 @@ class SupabaseOrvixAccountBackend implements OrvixAccountBackend {
         error.message,
         code: error.code,
         statusCode: error.statusCode,
+        kind: _kindOf(error),
+        retryAfterSeconds: _retryAfterSeconds(error.message),
         cause: error,
       );
     }
+  }
+
+  static OrvixAuthErrorKind _kindOf(AuthException error) {
+    final message = error.message.toLowerCase();
+    // A retryable error without an HTTP status never reached Supabase.
+    if (error is AuthRetryableFetchException && error.statusCode == null) {
+      return OrvixAuthErrorKind.network;
+    }
+    if (error is AuthSessionMissingException) {
+      return OrvixAuthErrorKind.sessionMissing;
+    }
+    switch (error.code) {
+      case 'over_email_send_rate_limit':
+      case 'over_request_rate_limit':
+        return OrvixAuthErrorKind.rateLimited;
+      // Supabase reports wrong, used and expired codes all as otp_expired.
+      case 'otp_expired':
+        return OrvixAuthErrorKind.invalidCode;
+      case 'email_address_invalid':
+        return OrvixAuthErrorKind.invalidEmail;
+      case 'weak_password':
+        return OrvixAuthErrorKind.weakPassword;
+      case 'same_password':
+        return OrvixAuthErrorKind.samePassword;
+      case 'session_not_found':
+      case 'session_expired':
+      case 'bad_jwt':
+        return OrvixAuthErrorKind.sessionMissing;
+    }
+    if (error.statusCode == '429' || message.contains('security purposes')) {
+      return OrvixAuthErrorKind.rateLimited;
+    }
+    if (message.contains('token has expired') ||
+        message.contains('invalid token') ||
+        message.contains('otp expired') ||
+        message.contains('invalid otp')) {
+      return OrvixAuthErrorKind.invalidCode;
+    }
+    if (message.contains('validate email') ||
+        message.contains('invalid email') ||
+        (message.contains('email address') && message.contains('invalid'))) {
+      return OrvixAuthErrorKind.invalidEmail;
+    }
+    return OrvixAuthErrorKind.unknown;
+  }
+
+  /// Reads the wait time from Supabase's "you can only request this after
+  /// N seconds" message.
+  static int? _retryAfterSeconds(String message) {
+    final match = RegExp(r'after (\d+) seconds?').firstMatch(message);
+    return match == null ? null : int.tryParse(match.group(1)!);
   }
 
   @override
@@ -81,6 +134,42 @@ class SupabaseOrvixAccountBackend implements OrvixAccountBackend {
   Future<void> resendSignupConfirmation({required String email}) =>
       // Supabase resend only accepts the signup type for signup confirmations.
       _guard(() => _client.auth.resend(type: OtpType.signup, email: email));
+
+  @override
+  Future<void> requestPasswordRecovery({required String email}) =>
+      // Sends the "Reset Password" email template, which shows {{ .Token }}
+      // as a six-digit code (supabase/email-templates/reset-password.html).
+      // No redirect URL: the code is entered in the app, not opened as a link.
+      // Supabase answers the same way for unknown addresses.
+      _guard(() => _client.auth.resetPasswordForEmail(email));
+
+  @override
+  Future<void> verifyPasswordRecoveryCode({
+    required String email,
+    required String token,
+  }) =>
+      _guard(() async {
+        final response = await _client.auth.verifyOTP(
+          type: OtpType.recovery,
+          email: email,
+          token: token,
+        );
+        if (response.session == null) {
+          throw AuthSessionMissingException(
+              'Password recovery did not start a session.');
+        }
+      });
+
+  @override
+  Future<void> updateRecoveredPassword({required String newPassword}) =>
+      _guard(() async {
+        await _client.auth.updateUser(UserAttributes(password: newPassword));
+      });
+
+  @override
+  Future<void> endPasswordRecovery() =>
+      // Local scope: only this device's recovery session is revoked.
+      _guard(() => _client.auth.signOut(scope: SignOutScope.local));
 
   @override
   Future<void> signOut() => _guard(() => _client.auth.signOut());
