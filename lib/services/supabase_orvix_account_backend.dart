@@ -11,11 +11,19 @@ import 'orvix_account_backend.dart';
 class SupabaseOrvixAccountBackend implements OrvixAccountBackend {
   /// Uses [client] when given, otherwise the app-wide client created by
   /// `Supabase.initialize` in main.dart (resolved lazily on each call).
-  SupabaseOrvixAccountBackend({SupabaseClient? client}) : _injected = client;
+  /// [passwordCheckAuth] creates the separate auth client used by
+  /// [verifyCurrentPassword]; tests replace it.
+  SupabaseOrvixAccountBackend({
+    SupabaseClient? client,
+    GoTrueClient Function()? passwordCheckAuth,
+  })  : _injected = client,
+        _passwordCheckAuth = passwordCheckAuth;
 
   static const userStateTable = 'orvix_user_state';
+  static const deleteAccountFunction = 'delete-account';
 
   final SupabaseClient? _injected;
+  final GoTrueClient Function()? _passwordCheckAuth;
 
   SupabaseClient get _client => _injected ?? Supabase.instance.client;
 
@@ -66,6 +74,8 @@ class SupabaseOrvixAccountBackend implements OrvixAccountBackend {
         return OrvixAuthErrorKind.samePassword;
       case 'reauthentication_needed':
         return OrvixAuthErrorKind.reauthenticationRequired;
+      case 'invalid_credentials':
+        return OrvixAuthErrorKind.invalidCredentials;
       // Wrong, used or expired reauthentication code.
       case 'reauthentication_not_valid':
         return OrvixAuthErrorKind.invalidCode;
@@ -79,6 +89,9 @@ class SupabaseOrvixAccountBackend implements OrvixAccountBackend {
     }
     if (message.contains('requires reauthentication')) {
       return OrvixAuthErrorKind.reauthenticationRequired;
+    }
+    if (message.contains('invalid login credentials')) {
+      return OrvixAuthErrorKind.invalidCredentials;
     }
     if (message.contains('nonce has expired') ||
         message.contains('token has expired') ||
@@ -203,6 +216,154 @@ class SupabaseOrvixAccountBackend implements OrvixAccountBackend {
       // (supabase/email-templates/reauthentication.html).
       _guard(() => _client.auth.reauthenticate());
 
+  /// The Auth URL of the project whose REST URL is [restUrl]; SupabaseClient
+  /// serves both from one base URL (<url>/rest/v1 and <url>/auth/v1).
+  static String authUrlFor(String restUrl) {
+    const rest = '/rest/v1';
+    final base = restUrl.endsWith(rest)
+        ? restUrl.substring(0, restUrl.length - rest.length)
+        : restUrl;
+    return '$base/auth/v1';
+  }
+
+  /// A separate, non-persisted auth client for checking the current password.
+  /// Signing in with it never replaces or refreshes the app's own session, so
+  /// a failed or mismatched check cannot change who is signed in.
+  GoTrueClient _newPasswordCheckAuth() {
+    final factory = _passwordCheckAuth;
+    if (factory != null) return factory();
+    return GoTrueClient(
+      url: authUrlFor(_client.rest.url),
+      headers: _client.auth.headers,
+      autoRefreshToken: false,
+      flowType: AuthFlowType.implicit,
+    );
+  }
+
+  @override
+  Future<OrvixPasswordProof> verifyCurrentPassword({
+    required String email,
+    required String password,
+  }) =>
+      // Supabase's reauthenticate() nonce only authorizes a password update,
+      // so the current password is confirmed with a normal password sign-in.
+      // Its fresh access token carries a "password" amr entry, which the
+      // delete-account Edge Function requires to be recent.
+      _guard(() async {
+        final auth = _newPasswordCheckAuth();
+        try {
+          final response = await auth.signInWithPassword(
+            email: email,
+            password: password,
+          );
+          final session = response.session;
+          final user = response.user ?? session?.user;
+          if (session == null || user == null) {
+            throw AuthSessionMissingException(
+                'Password confirmation did not start a session.');
+          }
+          return _SupabasePasswordProof(
+            userId: user.id,
+            auth: auth,
+            accessToken: session.accessToken,
+          );
+        } catch (_) {
+          auth.dispose();
+          rethrow;
+        }
+      });
+
+  @override
+  Future<void> discardPasswordProof(OrvixPasswordProof proof) async {
+    if (proof is! _SupabasePasswordProof || proof.discarded) return;
+    proof.discarded = true;
+    try {
+      // Revokes only the confirmation session. After a deletion the user no
+      // longer exists, which signOut already ignores.
+      await proof.auth.signOut(scope: SignOutScope.local);
+    } catch (_) {
+    } finally {
+      proof.auth.dispose();
+    }
+  }
+
+  @override
+  Future<void> deleteAccount(OrvixPasswordProof proof) async {
+    if (proof is! _SupabasePasswordProof || proof.discarded) {
+      throw const OrvixAuthException(
+        'Confirm the current password before deleting the account.',
+        kind: OrvixAuthErrorKind.sessionMissing,
+      );
+    }
+    try {
+      // No body: the function deletes the user of this access token only.
+      await _client.functions.invoke(
+        deleteAccountFunction,
+        headers: {'Authorization': 'Bearer ${proof.accessToken}'},
+      );
+    } on FunctionException catch (error) {
+      if (!_alreadyDeleted(error)) throw _deletionFailure(error);
+    } catch (error) {
+      // The request may have reached the server before the connection
+      // failed; only a confirmed missing account counts as deleted.
+      if (!await _accountIsGone(proof)) {
+        throw OrvixAuthException(
+          'Could not reach the account deletion service.',
+          kind: OrvixAuthErrorKind.network,
+          cause: error,
+        );
+      }
+    }
+    await _signOutDeletedAccount();
+  }
+
+  static String? _functionError(FunctionException error) {
+    final details = error.details;
+    return details is Map ? details['error']?.toString() : null;
+  }
+
+  /// A retry after a deletion whose response was lost.
+  static bool _alreadyDeleted(FunctionException error) =>
+      error.status == 410 && _functionError(error) == 'account_not_found';
+
+  static OrvixAuthException _deletionFailure(FunctionException error) {
+    final code = _functionError(error);
+    final kind = switch ((error.status, code)) {
+      (401, 'reauthentication_required') =>
+        OrvixAuthErrorKind.reauthenticationRequired,
+      (401, _) => OrvixAuthErrorKind.sessionMissing,
+      (429, _) => OrvixAuthErrorKind.rateLimited,
+      _ => OrvixAuthErrorKind.unknown,
+    };
+    // Only the function's short error code is kept, never response bodies.
+    return OrvixAuthException(
+      'Account deletion failed.',
+      code: code ?? 'account_deletion_failed',
+      statusCode: '${error.status}',
+      kind: kind,
+    );
+  }
+
+  static Future<bool> _accountIsGone(_SupabasePasswordProof proof) async {
+    try {
+      await proof.auth.getUser(proof.accessToken);
+      return false;
+    } on AuthException catch (error) {
+      return error.code == 'user_not_found';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Clears this device's session for an account that no longer exists.
+  /// The local session is removed before signOut contacts the server, so a
+  /// failed server call still leaves this device signed out.
+  Future<void> _signOutDeletedAccount() async {
+    try {
+      await _client.auth.signOut(scope: SignOutScope.local);
+    } catch (_) {}
+  }
+
   @override
   Future<void> signOut() => _guard(() => _client.auth.signOut());
 
@@ -317,4 +478,17 @@ class SupabaseOrvixAccountBackend implements OrvixAccountBackend {
         ));
     return approved == true;
   }
+}
+
+class _SupabasePasswordProof extends OrvixPasswordProof {
+  _SupabasePasswordProof({
+    required super.userId,
+    required this.auth,
+    required this.accessToken,
+  });
+
+  /// The confirmation session's own client; never the app's client.
+  final GoTrueClient auth;
+  final String accessToken;
+  bool discarded = false;
 }

@@ -36,6 +36,8 @@ class _AccountScreenState extends State<AccountScreen> {
   final _changeNewPassword = TextEditingController();
   final _changeConfirmPassword = TextEditingController();
   final _changeCode = TextEditingController();
+  final _deleteConfirm = TextEditingController();
+  final _deletePassword = TextEditingController();
 
   bool _busy = false;
   bool _syncing = false;
@@ -48,6 +50,7 @@ class _AccountScreenState extends State<AccountScreen> {
   String? _recoveryEmail;
   _ChangePasswordStep? _changeStep;
   String? _changeUserId;
+  String? _deleteUserId;
   TvDeviceLoginState _tvLogin = const TvDeviceLoginState();
   int _tvLoginGeneration = 0;
 
@@ -100,6 +103,8 @@ class _AccountScreenState extends State<AccountScreen> {
     _changeNewPassword.dispose();
     _changeConfirmPassword.dispose();
     _changeCode.dispose();
+    _deleteConfirm.dispose();
+    _deletePassword.dispose();
     super.dispose();
   }
 
@@ -325,6 +330,8 @@ class _AccountScreenState extends State<AccountScreen> {
       case OrvixAuthErrorKind.sessionMissing:
         return 'Your password reset session has expired. Request a new code and try again.';
       case OrvixAuthErrorKind.reauthenticationRequired:
+      case OrvixAuthErrorKind.invalidCredentials:
+      case OrvixAuthErrorKind.accountChanged:
       case OrvixAuthErrorKind.unknown:
         return 'Could not reset your password right now. Please try again.';
     }
@@ -534,6 +541,8 @@ class _AccountScreenState extends State<AccountScreen> {
       case OrvixAuthErrorKind.reauthenticationRequired:
         return 'For your security, enter the code we email you before changing your password.';
       case OrvixAuthErrorKind.invalidEmail:
+      case OrvixAuthErrorKind.invalidCredentials:
+      case OrvixAuthErrorKind.accountChanged:
       case OrvixAuthErrorKind.unknown:
         return 'Could not change your password right now. Please try again.';
     }
@@ -694,6 +703,116 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
+  /// The word typed to confirm account deletion.
+  static const _deleteConfirmation = 'DELETE';
+
+  String _friendlyDeleteAccountMessage(OrvixAuthException error) {
+    switch (error.kind) {
+      case OrvixAuthErrorKind.invalidCredentials:
+        return 'That password is not correct. Your account was not deleted.';
+      case OrvixAuthErrorKind.network:
+        return 'Could not reach Orvix Cloud, so your account was not deleted. Check your internet connection and try again.';
+      case OrvixAuthErrorKind.rateLimited:
+        final seconds = error.retryAfterSeconds;
+        return seconds == null
+            ? 'Too many attempts. Please wait a minute and try again.'
+            : 'Too many attempts. Please wait $seconds seconds and try again.';
+      case OrvixAuthErrorKind.sessionMissing:
+        return 'Your sign-in has expired. Sign out, sign in again, then delete your account.';
+      case OrvixAuthErrorKind.reauthenticationRequired:
+        return 'For your security, enter your current password again to delete your account.';
+      case OrvixAuthErrorKind.accountChanged:
+        return 'The signed-in account changed, so nothing was deleted. Check which account you are signed in to and try again.';
+      case OrvixAuthErrorKind.invalidCode:
+      case OrvixAuthErrorKind.invalidEmail:
+      case OrvixAuthErrorKind.weakPassword:
+      case OrvixAuthErrorKind.samePassword:
+      case OrvixAuthErrorKind.unknown:
+        return 'Could not delete your account right now, so it was not deleted. Please try again later.';
+    }
+  }
+
+  void _clearDeleteAccountState() {
+    _deleteUserId = null;
+    _deleteConfirm.clear();
+    _deletePassword.clear();
+  }
+
+  void _startDeleteAccount(OrvixAccountUser user) {
+    setState(() {
+      _clearChangePasswordState();
+      _clearDeleteAccountState();
+      _deleteUserId = user.id;
+      _message = null;
+    });
+  }
+
+  void _closeDeleteAccount() {
+    setState(() {
+      _clearDeleteAccountState();
+      _message = null;
+    });
+  }
+
+  bool get _deleteAccountConfirmed =>
+      _deleteConfirm.text.trim() == _deleteConfirmation &&
+      _deletePassword.text.isNotEmpty;
+
+  Future<void> _submitDeleteAccount() async {
+    if (_busy) return;
+    final user = OrvixAccountService.currentUser;
+    if (user == null || user.id != _deleteUserId) {
+      setState(() {
+        _clearDeleteAccountState();
+        _message =
+            'You are no longer signed in to that account, so nothing was deleted.';
+      });
+      return;
+    }
+    if (_deleteConfirm.text.trim() != _deleteConfirmation) {
+      setState(() => _message =
+          'Type $_deleteConfirmation to confirm that you want to delete your account.');
+      return;
+    }
+    final password = _deletePassword.text;
+    if (password.isEmpty) {
+      setState(() => _message = 'Enter your current password.');
+      return;
+    }
+    // The password only lives in this call; it is never kept in state.
+    _deletePassword.clear();
+    setState(() {
+      _busy = true;
+      _message = 'Deleting your Orvix account…';
+    });
+
+    try {
+      await OrvixAccountService.deleteAccount(currentPassword: password);
+      if (!mounted) return;
+      setState(() {
+        _clearDeleteAccountState();
+        _message =
+            'Your Orvix account was permanently deleted. Orvix keeps working on this device without an account, and the library, progress and settings on this device are still here.';
+      });
+      widget.onAuthChanged();
+    } on OrvixAuthException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        if (OrvixAccountService.currentUser?.id != _deleteUserId) {
+          _clearDeleteAccountState();
+        }
+        _message = _friendlyDeleteAccountMessage(error);
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _message =
+            'Could not delete your account right now, so it was not deleted. Please try again later.');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _syncNow() async {
     if (_syncing) return;
     setState(() {
@@ -791,7 +910,9 @@ class _AccountScreenState extends State<AccountScreen> {
                             : _verificationForm())
                     : (_changeStep != null && _changeUserId == user.id
                         ? _changePasswordForm(user)
-                        : _signedInCard(user)),
+                        : _deleteUserId == user.id
+                            ? _deleteAccountForm(user)
+                            : _signedInCard(user)),
               ),
               if (_message != null) ...[
                 const SizedBox(height: 16),
@@ -1275,6 +1396,78 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
+  Widget _deleteAccountForm(OrvixAccountUser user) {
+    final colors = Theme.of(context).colorScheme;
+    final email = user.email ?? 'this account';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _recoveryHeader(Icons.warning_amber_rounded, 'Delete account'),
+        const SizedBox(height: 10),
+        _recoveryHint(
+            'This permanently deletes the Orvix account $email. It cannot be undone. Deleting it removes:'),
+        const SizedBox(height: 8),
+        for (final line in const [
+          'Your Orvix account and its sign-in',
+          'Your cloud-synced library, watchlist, Continue Watching progress and preferences',
+          'Debrid and cloud-service credentials synced to your account (stored encrypted)',
+          'TV sign-ins and TV login codes linked to this account',
+        ])
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 4),
+            child: _recoveryHint('•  $line'),
+          ),
+        const SizedBox(height: 8),
+        _recoveryHint(
+            'Orvix data on this device is not erased. Your library, watchlist, progress, settings and the service connections saved on this device stay here, and Orvix keeps working without an account. Other devices signed in to this account will be signed out.'),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _deleteConfirm,
+          enabled: !_busy,
+          autocorrect: false,
+          enableSuggestions: false,
+          textCapitalization: TextCapitalization.characters,
+          decoration: const InputDecoration(
+              labelText: 'Type $_deleteConfirmation to confirm'),
+        ),
+        const SizedBox(height: 12),
+        _PasswordField(
+          controller: _deletePassword,
+          enabled: !_busy,
+          label: 'Current password',
+          autofillHints: const [AutofillHints.password],
+          onSubmitted: (_) =>
+              _busy || !_deleteAccountConfirmed ? null : _submitDeleteAccount(),
+        ),
+        const SizedBox(height: 16),
+        ListenableBuilder(
+          listenable: Listenable.merge([_deleteConfirm, _deletePassword]),
+          builder: (context, _) => Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: colors.error,
+                  foregroundColor: colors.onError,
+                ),
+                onPressed: _busy || !_deleteAccountConfirmed
+                    ? null
+                    : _submitDeleteAccount,
+                icon: _busyIcon(Icons.delete_forever_rounded),
+                label: const Text('Delete permanently'),
+              ),
+              TextButton(
+                onPressed: _busy ? null : _closeDeleteAccount,
+                child: const Text('Cancel'),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Future<void> _approveTvCode(String raw) async {
     if (OrvixAccountService.currentUser == null) {
       setState(() => _message =
@@ -1382,6 +1575,30 @@ class _AccountScreenState extends State<AccountScreen> {
             ),
           ],
         ),
+        // Account deletion is managed from phones and desktops; Android TV
+        // stays QR/device-login only.
+        if (!PlatformProfile.isAndroidTv) ...[
+          const SizedBox(height: 22),
+          const Divider(height: 1),
+          const SizedBox(height: 16),
+          Text('Delete account',
+              style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  color: Theme.of(context).colorScheme.error)),
+          const SizedBox(height: 6),
+          _recoveryHint(
+              'Permanently delete your Orvix account and its cloud data. Data on this device stays.'),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+              side: BorderSide(color: Theme.of(context).colorScheme.error),
+            ),
+            onPressed: _busy ? null : () => _startDeleteAccount(user),
+            icon: const Icon(Icons.delete_forever_outlined),
+            label: const Text('Delete account'),
+          ),
+        ],
       ],
     );
   }

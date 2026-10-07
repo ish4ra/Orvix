@@ -39,9 +39,14 @@ class TvDeviceLoginService {
     return '${s.substring(0, 8)}-${s.substring(8, 12)}-${s.substring(12, 16)}-${s.substring(16, 20)}-${s.substring(20)}';
   }
 
-  /// Approves a TV's QR/user code from a signed-in phone.
-  static Future<bool> approve(String userCode) =>
-      _backend.approveTvLogin(userCode);
+  /// Approves a TV's QR/user code from a signed-in phone. Refused while the
+  /// account is being deleted.
+  static Future<bool> approve(String userCode) async {
+    if (OrvixAccountService.isDeletingAccount) {
+      throw StateError('The account is being deleted.');
+    }
+    return _backend.approveTvLogin(userCode);
+  }
 
   static Future<void> run({
     required void Function(TvDeviceLoginState state) onState,

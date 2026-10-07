@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -31,6 +32,14 @@ class _FakeBackend implements OrvixAccountBackend {
   final updatedPasswords = <String>[];
   final changePasswordErrors = <OrvixAuthException>[];
   final passwordChanges = <(String, String?)>[];
+  OrvixAuthException? verifyPasswordError;
+  String? proofUserId;
+  void Function()? onVerifyPassword;
+  Object? deleteError;
+  Completer<void>? deleteGate;
+  Completer<void>? loadCredentialsGate;
+  bool clearSessionOnDelete = true;
+  final discardedProofs = <OrvixPasswordProof>[];
 
   @override
   OrvixAccountUser? get currentUser => user;
@@ -114,6 +123,31 @@ class _FakeBackend implements OrvixAccountBackend {
   }
 
   @override
+  Future<OrvixPasswordProof> verifyCurrentPassword({
+    required String email,
+    required String password,
+  }) async {
+    calls.add('verifyPassword:$email:$password');
+    if (verifyPasswordError != null) throw verifyPasswordError!;
+    onVerifyPassword?.call();
+    return _FakeProof(proofUserId ?? user!.id);
+  }
+
+  @override
+  Future<void> discardPasswordProof(OrvixPasswordProof proof) async {
+    calls.add('discardProof:${proof.userId}');
+    discardedProofs.add(proof);
+  }
+
+  @override
+  Future<void> deleteAccount(OrvixPasswordProof proof) async {
+    calls.add('deleteAccount:${proof.userId}');
+    if (deleteGate != null) await deleteGate!.future;
+    if (deleteError != null) throw deleteError!;
+    if (clearSessionOnDelete) user = null;
+  }
+
+  @override
   Future<void> signOut() async {
     calls.add('signOut');
     user = null;
@@ -134,6 +168,7 @@ class _FakeBackend implements OrvixAccountBackend {
   @override
   Future<Map<String, String>> loadCredentials() async {
     calls.add('loadCredentials');
+    if (loadCredentialsGate != null) await loadCredentialsGate!.future;
     return storedCredentials;
   }
 
@@ -186,6 +221,10 @@ class _FakeBackend implements OrvixAccountBackend {
     calls.add('approveTv:$userCode');
     return userCode == 'ABC123';
   }
+}
+
+class _FakeProof extends OrvixPasswordProof {
+  _FakeProof(String userId) : super(userId: userId);
 }
 
 void main() {
@@ -500,6 +539,231 @@ void main() {
             (e) => e.kind, 'kind', OrvixAuthErrorKind.sessionMissing)),
       );
       expect(backend.calls, isNot(contains('changePassword')));
+    });
+  });
+
+  group('account deletion through the backend abstraction', () {
+    const me = OrvixAccountUser(id: 'user-1', email: 'a@example.com');
+
+    bool cloudCall(String call) =>
+        call.startsWith('loadUserState') ||
+        call.startsWith('saveUserState') ||
+        call == 'loadCredentials' ||
+        call == 'saveCredentials' ||
+        call.startsWith('approveTv');
+
+    test('is refused while signed out without calling the backend', () async {
+      await expectLater(
+        OrvixAccountService.deleteAccount(currentPassword: 'secret'),
+        throwsA(isA<OrvixAuthException>().having(
+            (e) => e.kind, 'kind', OrvixAuthErrorKind.sessionMissing)),
+      );
+      expect(backend.calls, isEmpty);
+      expect(OrvixAccountService.isDeletingAccount, isFalse);
+    });
+
+    test('is refused during password recovery', () async {
+      await OrvixAccountService.verifyPasswordRecovery(
+          email: 'a@example.com', token: '123456');
+      backend.calls.clear();
+      await expectLater(
+        OrvixAccountService.deleteAccount(currentPassword: 'secret'),
+        throwsA(isA<OrvixAuthException>().having(
+            (e) => e.kind, 'kind', OrvixAuthErrorKind.sessionMissing)),
+      );
+      expect(backend.calls, isEmpty);
+      await OrvixAccountService.cancelPasswordRecovery();
+    });
+
+    test('confirms the password for the signed-in email, deletes, signs out',
+        () async {
+      backend.user = me;
+      await OrvixAccountService.deleteAccount(currentPassword: 'secret');
+      expect(backend.calls, [
+        'verifyPassword:a@example.com:secret',
+        'deleteAccount:user-1',
+        'discardProof:user-1',
+      ]);
+      expect(OrvixAccountService.currentUser, isNull);
+      expect(OrvixAccountService.isSignedIn, isFalse);
+      expect(OrvixAccountService.isDeletingAccount, isFalse);
+    });
+
+    test('a wrong password deletes nothing and keeps the sign-in', () async {
+      backend.user = me;
+      backend.verifyPasswordError = const OrvixAuthException(
+          'Invalid login credentials',
+          kind: OrvixAuthErrorKind.invalidCredentials);
+      await expectLater(
+        OrvixAccountService.deleteAccount(currentPassword: 'wrong'),
+        throwsA(isA<OrvixAuthException>().having(
+            (e) => e.kind, 'kind', OrvixAuthErrorKind.invalidCredentials)),
+      );
+      expect(backend.calls, ['verifyPassword:a@example.com:wrong']);
+      expect(OrvixAccountService.currentUser?.id, 'user-1');
+      expect(OrvixAccountService.isDeletingAccount, isFalse);
+    });
+
+    test('a password verified for another account aborts the deletion',
+        () async {
+      backend.user = me;
+      backend.proofUserId = 'someone-else';
+      await expectLater(
+        OrvixAccountService.deleteAccount(currentPassword: 'secret'),
+        throwsA(isA<OrvixAuthException>().having(
+            (e) => e.kind, 'kind', OrvixAuthErrorKind.accountChanged)),
+      );
+      expect(backend.calls.where((c) => c.startsWith('deleteAccount')),
+          isEmpty);
+      expect(backend.calls.last, 'discardProof:someone-else');
+      expect(OrvixAccountService.currentUser?.id, 'user-1');
+    });
+
+    test('an account switch during verification aborts the deletion',
+        () async {
+      backend.user = me;
+      backend.onVerifyPassword = () => backend.user =
+          const OrvixAccountUser(id: 'user-2', email: 'b@example.com');
+      backend.proofUserId = 'user-1';
+      await expectLater(
+        OrvixAccountService.deleteAccount(currentPassword: 'secret'),
+        throwsA(isA<OrvixAuthException>().having(
+            (e) => e.kind, 'kind', OrvixAuthErrorKind.accountChanged)),
+      );
+      expect(backend.calls.where((c) => c.startsWith('deleteAccount')),
+          isEmpty);
+      expect(backend.discardedProofs, hasLength(1));
+      expect(OrvixAccountService.currentUser?.id, 'user-2');
+    });
+
+    test('a failed server deletion is not reported as deleted', () async {
+      backend.user = me;
+      backend.deleteError = const OrvixAuthException('Account deletion failed.',
+          code: 'delete_failed', statusCode: '500');
+      await expectLater(
+        OrvixAccountService.deleteAccount(currentPassword: 'secret'),
+        throwsA(isA<OrvixAuthException>()),
+      );
+      expect(backend.calls.last, 'discardProof:user-1');
+      expect(OrvixAccountService.currentUser?.id, 'user-1');
+      expect(OrvixAccountService.isDeletingAccount, isFalse);
+
+      // Sync resumes for the account that still exists.
+      await OrvixAccountService.pushLocalStateIfSignedIn();
+      expect(backend.calls.last, 'saveUserState:user-1');
+    });
+
+    test('cloud sync, credential sync and TV approval wait while deleting',
+        () async {
+      backend.user = me;
+      backend.deleteGate = Completer<void>();
+      final deletion =
+          OrvixAccountService.deleteAccount(currentPassword: 'secret');
+      await Future<void>.delayed(Duration.zero);
+      expect(OrvixAccountService.isDeletingAccount, isTrue);
+      backend.calls.clear();
+
+      await OrvixAccountService.pushLocalStateIfSignedIn();
+      await OrvixAccountService.syncCredentialsIfSignedIn();
+      await OrvixAccountService.mergeCloudIntoLocal();
+      await OrvixAccountService.restoreSignedInState();
+      await expectLater(
+          TvDeviceLoginService.approve('ABC123'), throwsStateError);
+      await expectLater(
+        OrvixAccountService.deleteAccount(currentPassword: 'secret'),
+        throwsStateError,
+      );
+      expect(backend.calls.where(cloudCall), isEmpty);
+
+      backend.deleteGate!.complete();
+      await deletion;
+      expect(OrvixAccountService.isDeletingAccount, isFalse);
+      expect(OrvixAccountService.currentUser, isNull);
+    });
+
+    test('a sync already running when deletion starts writes nothing more',
+        () async {
+      backend.user = me;
+      FlutterSecureStorage.setMockInitialValues(
+          {'orvix_torbox_api_token_v1': 'local-torbox'});
+      backend.loadCredentialsGate = Completer<void>();
+      final merge = OrvixAccountService.mergeCloudIntoLocal();
+      await Future<void>.delayed(Duration.zero);
+      backend.deleteGate = Completer<void>();
+      final deletion =
+          OrvixAccountService.deleteAccount(currentPassword: 'secret');
+      await Future<void>.delayed(Duration.zero);
+
+      backend.loadCredentialsGate!.complete();
+      await merge;
+      backend.deleteGate!.complete();
+      await deletion;
+
+      expect(
+          backend.calls.where((c) =>
+              c == 'saveCredentials' ||
+              c.startsWith('saveUserState') ||
+              c.startsWith('loadUserState')),
+          isEmpty);
+    });
+
+    test('local-first data stays and nothing syncs after deletion', () async {
+      final watchlist = [
+        {'id': 'tt1', 'kind': 'movie', 'title': 'Local'}
+      ];
+      SharedPreferences.setMockInitialValues({
+        'pikora_watchlist_v1': jsonEncode(watchlist),
+        'pikora_media_library_v1': jsonEncode(watchlist),
+        'pikora_continue_watching_v1': jsonEncode({
+          'movie:tt1': {'position': 42}
+        }),
+        'orvix_theme_v1': 'dark',
+      });
+      FlutterSecureStorage.setMockInitialValues(
+          {'orvix_torbox_api_token_v1': 'local-torbox'});
+      backend.user = me;
+
+      await OrvixAccountService.deleteAccount(currentPassword: 'secret');
+      backend.calls.clear();
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(jsonDecode(prefs.getString('pikora_watchlist_v1')!), watchlist);
+      expect(jsonDecode(prefs.getString('pikora_media_library_v1')!),
+          watchlist);
+      expect(prefs.getString('pikora_continue_watching_v1'), isNotNull);
+      expect(prefs.getString('orvix_theme_v1'), 'dark');
+      expect(
+          await const FlutterSecureStorage()
+              .read(key: 'orvix_torbox_api_token_v1'),
+          'local-torbox');
+
+      await OrvixAccountService.pushLocalStateIfSignedIn();
+      await OrvixAccountService.mergeCloudIntoLocal();
+      await OrvixAccountService.restoreSignedInState();
+      expect(backend.calls.where(cloudCall), isEmpty);
+    });
+
+    test('a stale session for the deleted account never counts as signed in',
+        () async {
+      backend.user = me;
+      backend.clearSessionOnDelete = false;
+      await OrvixAccountService.deleteAccount(currentPassword: 'secret');
+      backend.calls.clear();
+
+      expect(backend.currentUser?.id, 'user-1');
+      expect(OrvixAccountService.currentUser, isNull);
+      await OrvixAccountService.pushLocalStateIfSignedIn();
+      await OrvixAccountService.mergeCloudIntoLocal();
+      expect(backend.calls.where(cloudCall), isEmpty);
+
+      // A different account can still sign in afterwards.
+      backend.signInResult = const OrvixAuthResult(
+        user: OrvixAccountUser(id: 'user-2', email: 'b@example.com'),
+        hasSession: true,
+      );
+      await OrvixAccountService.signIn(
+          email: 'b@example.com', password: 'other');
+      expect(OrvixAccountService.currentUser?.id, 'user-2');
     });
   });
 
@@ -981,6 +1245,233 @@ void main() {
       expect(request.method, 'GET');
       expect(request.url.path, '/auth/v1/reauthenticate');
       expect(request.headers['Authorization'], 'Bearer signed-in-access');
+    });
+
+    group('account deletion', () {
+      final confirmSession = {
+        ...sessionJson,
+        'access_token': 'confirm-access',
+        'refresh_token': 'confirm-refresh',
+      };
+
+      late List<http.Request> checkRequests;
+      late http.Response Function(http.Request request) checkRespond;
+
+      GoTrueClient passwordCheckAuth() => GoTrueClient(
+            url: 'https://orvix.test/auth/v1',
+            headers: {'apikey': 'publishable-test-key'},
+            autoRefreshToken: false,
+            httpClient: MockClient((request) async {
+              checkRequests.add(request);
+              final response = checkRespond(request);
+              return http.Response(response.body, response.statusCode,
+                  headers: response.headers, request: request);
+            }),
+          );
+
+      /// A signed-in adapter whose password checks go to [check] and whose
+      /// app client requests go to [respond].
+      Future<SupabaseOrvixAccountBackend> deletionAdapter({
+        http.Response Function(http.Request request)? check,
+        http.Response Function(http.Request request)? respond,
+      }) async {
+        checkRequests = [];
+        checkRespond = check ??
+            (request) => request.url.path == '/auth/v1/token'
+                ? json(confirmSession)
+                : json({});
+        requests = [];
+        final reply = respond ?? (_) => json({'deleted': true});
+        final client = SupabaseClient(
+          'https://orvix.test',
+          'publishable-test-key',
+          authOptions: AuthClientOptions(
+            autoRefreshToken: false,
+            pkceAsyncStorage: _MemoryAuthStorage(),
+          ),
+          httpClient: MockClient((request) async {
+            requests.add(request);
+            final response = request.url.path == '/auth/v1/token'
+                ? json({...sessionJson, 'access_token': 'signed-in-access'})
+                : reply(request);
+            return http.Response(response.body, response.statusCode,
+                headers: response.headers, request: request);
+          }),
+        );
+        final backend = SupabaseOrvixAccountBackend(
+            client: client, passwordCheckAuth: passwordCheckAuth);
+        await backend.signInWithPassword(
+            email: 'a@example.com', password: 'old-secret');
+        requests.clear();
+        return backend;
+      }
+
+      test('the auth URL is derived from the project URL', () {
+        expect(
+            SupabaseOrvixAccountBackend.authUrlFor('https://x.supabase.co/rest/v1'),
+            'https://x.supabase.co/auth/v1');
+      });
+
+      test('the password is checked on a separate client', () async {
+        final backend = await deletionAdapter();
+        final proof = await backend.verifyCurrentPassword(
+            email: 'a@example.com', password: 'current-secret');
+        expect(proof.userId, 'u1');
+        final check = checkRequests.single;
+        expect(check.url.path, '/auth/v1/token');
+        expect(check.url.queryParameters['grant_type'], 'password');
+        expect(jsonDecode(check.body),
+            containsPair('password', 'current-secret'));
+        // The app's own session is untouched.
+        expect(requests, isEmpty);
+        expect(backend.currentUser?.id, 'u1');
+        await backend.discardPasswordProof(proof);
+      });
+
+      test('a wrong password is invalidCredentials and keeps the session',
+          () async {
+        final backend = await deletionAdapter(
+            check: (_) => apiError(
+                400, 'invalid_credentials', 'Invalid login credentials'));
+        await expectLater(
+          backend.verifyCurrentPassword(
+              email: 'a@example.com', password: 'wrong-secret'),
+          throwsA(isA<OrvixAuthException>()
+              .having((e) => e.kind, 'kind',
+                  OrvixAuthErrorKind.invalidCredentials)
+              .having((e) => e.message, 'message',
+                  isNot(contains('wrong-secret')))),
+        );
+        expect(requests, isEmpty);
+        expect(backend.currentUser?.id, 'u1');
+      });
+
+      test('a rate-limited password check is rateLimited', () async {
+        final backend = await deletionAdapter(
+            check: (_) => apiError(
+                429, 'over_request_rate_limit', 'Request rate limit reached'));
+        await expectLater(
+          backend.verifyCurrentPassword(
+              email: 'a@example.com', password: 'current-secret'),
+          throwsA(isA<OrvixAuthException>().having(
+              (e) => e.kind, 'kind', OrvixAuthErrorKind.rateLimited)),
+        );
+      });
+
+      test('deletion calls the Edge Function as the confirmed session only',
+          () async {
+        final backend = await deletionAdapter();
+        final proof = await backend.verifyCurrentPassword(
+            email: 'a@example.com', password: 'current-secret');
+        await backend.deleteAccount(proof);
+
+        final call = requests.first;
+        expect(call.method, 'POST');
+        expect(call.url.toString(),
+            'https://orvix.test/functions/v1/delete-account');
+        expect(call.headers['Authorization'], 'Bearer confirm-access');
+        // The client never names an account to delete.
+        expect(call.body, isEmpty);
+        expect(backend.currentUser, isNull);
+
+        await backend.discardPasswordProof(proof);
+        expect(checkRequests.last.url.path, '/auth/v1/logout');
+        expect(checkRequests.last.headers['Authorization'],
+            'Bearer confirm-access');
+      });
+
+      test('an already deleted account counts as deleted', () async {
+        final backend = await deletionAdapter(
+            respond: (_) => json({'error': 'account_not_found'}, 410));
+        final proof = await backend.verifyCurrentPassword(
+            email: 'a@example.com', password: 'current-secret');
+        await backend.deleteAccount(proof);
+        expect(backend.currentUser, isNull);
+      });
+
+      final failures = <String, (http.Response, OrvixAuthErrorKind)>{
+        'a stale password check': (
+          json({'error': 'reauthentication_required'}, 401),
+          OrvixAuthErrorKind.reauthenticationRequired
+        ),
+        'a rejected token': (
+          json({'error': 'not_authenticated'}, 401),
+          OrvixAuthErrorKind.sessionMissing
+        ),
+        'a server failure': (
+          json({'error': 'delete_failed'}, 500),
+          OrvixAuthErrorKind.unknown
+        ),
+        'a cleanup failure': (
+          json({'error': 'cleanup_failed'}, 500),
+          OrvixAuthErrorKind.unknown
+        ),
+        'a rate limit': (
+          json({'error': 'rate_limited'}, 429),
+          OrvixAuthErrorKind.rateLimited
+        ),
+      };
+      failures.forEach((name, expected) {
+        test('$name keeps the session and maps to ${expected.$2.name}',
+            () async {
+          final backend = await deletionAdapter(respond: (_) => expected.$1);
+          final proof = await backend.verifyCurrentPassword(
+              email: 'a@example.com', password: 'current-secret');
+          await expectLater(
+            backend.deleteAccount(proof),
+            throwsA(isA<OrvixAuthException>()
+                .having((e) => e.kind, 'kind', expected.$2)
+                .having((e) => e.message, 'message', 'Account deletion failed.')),
+          );
+          expect(backend.currentUser?.id, 'u1');
+          expect(requests.where((r) => r.url.path == '/auth/v1/logout'),
+              isEmpty);
+        });
+      });
+
+      test('a lost response counts as deleted only when the account is gone',
+          () async {
+        var accountGone = false;
+        final backend = await deletionAdapter(
+          respond: (request) =>
+              throw http.ClientException('Connection closed'),
+          check: (request) {
+            if (request.url.path == '/auth/v1/token') {
+              return json(confirmSession);
+            }
+            return accountGone
+                ? apiError(403, 'user_not_found',
+                    'User from sub claim in JWT does not exist')
+                : json(sessionJson['user']);
+          },
+        );
+        final proof = await backend.verifyCurrentPassword(
+            email: 'a@example.com', password: 'current-secret');
+        await expectLater(
+          backend.deleteAccount(proof),
+          throwsA(isA<OrvixAuthException>()
+              .having((e) => e.kind, 'kind', OrvixAuthErrorKind.network)),
+        );
+        expect(backend.currentUser?.id, 'u1');
+
+        accountGone = true;
+        await backend.deleteAccount(proof);
+        expect(backend.currentUser, isNull);
+      });
+
+      test('a discarded proof cannot delete', () async {
+        final backend = await deletionAdapter();
+        final proof = await backend.verifyCurrentPassword(
+            email: 'a@example.com', password: 'current-secret');
+        await backend.discardPasswordProof(proof);
+        await expectLater(
+          backend.deleteAccount(proof),
+          throwsA(isA<OrvixAuthException>().having(
+              (e) => e.kind, 'kind', OrvixAuthErrorKind.sessionMissing)),
+        );
+        expect(requests, isEmpty);
+        expect(backend.currentUser?.id, 'u1');
+      });
     });
 
     test('password change without a session fails before any request',
