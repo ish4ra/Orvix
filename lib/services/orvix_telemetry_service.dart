@@ -71,11 +71,13 @@ class OrvixTelemetryService with WidgetsBindingObserver {
             'auth_signed_in',
             category: 'account',
           ));
+          break;
         case AuthChangeEvent.signedOut:
           unawaited(track(
             'auth_signed_out',
             category: 'account',
           ));
+          break;
         default:
           break;
       }
@@ -128,6 +130,7 @@ class OrvixTelemetryService with WidgetsBindingObserver {
         _foreground = true;
         _startHeartbeat();
         unawaited(track('app_resumed'));
+        break;
       case AppLifecycleState.inactive:
       case AppLifecycleState.hidden:
       case AppLifecycleState.paused:
@@ -141,12 +144,14 @@ class OrvixTelemetryService with WidgetsBindingObserver {
             'event_category': 'app',
           },
         ));
+        break;
       case AppLifecycleState.detached:
         _foreground = false;
         _heartbeatTimer?.cancel();
         _heartbeatTimer = null;
         _ended = true;
         unawaited(_send(type: 'session_end', allowEnded: true));
+        break;
     }
   }
 
