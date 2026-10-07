@@ -38,6 +38,7 @@ Rules for Claude Code sessions in this repository. They exist to stop working Or
 - **`pubspec.yaml` is the version source of truth.**
   - Format: `X.Y.Z-stage.N+BUILD`. Tag = `v` plus the version without `+BUILD`.
   - `+BUILD` must increase on every release.
+  - `+BUILD` is also the Android versionCode of every Android APK, and must stay above 4205 (the highest versionCode the old ABI-specific APKs used); `prerelease.yml` fails otherwise. See `tools/verify_android_apk.py`.
   - The in-app updater reads GitHub releases (prereleases included), matches on asset names, and compares versions.
 
 ## Scope rules
