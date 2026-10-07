@@ -29,6 +29,8 @@ class _FakeBackend implements OrvixAccountBackend {
   OrvixAuthException? recoveryVerifyError;
   final recoveryUpdateErrors = <OrvixAuthException>[];
   final updatedPasswords = <String>[];
+  final changePasswordErrors = <OrvixAuthException>[];
+  final passwordChanges = <(String, String?)>[];
 
   @override
   OrvixAccountUser? get currentUser => user;
@@ -94,6 +96,21 @@ class _FakeBackend implements OrvixAccountBackend {
   Future<void> endPasswordRecovery() async {
     calls.add('endRecovery');
     user = null;
+  }
+
+  @override
+  Future<void> changePassword({
+    required String newPassword,
+    String? verificationCode,
+  }) async {
+    calls.add('changePassword');
+    if (changePasswordErrors.isNotEmpty) throw changePasswordErrors.removeAt(0);
+    passwordChanges.add((newPassword, verificationCode));
+  }
+
+  @override
+  Future<void> requestReauthentication() async {
+    calls.add('reauthenticate');
   }
 
   @override
@@ -415,6 +432,74 @@ void main() {
       final preferences =
           backend.savedStates.single['preferences'] as Map<String, dynamic>;
       expect(preferences, {'orvix_theme_v1': 'x'});
+    });
+  });
+
+  group('signed-in password change through the backend abstraction', () {
+    const signedIn = OrvixAccountUser(id: 'user-1', email: 'a@example.com');
+
+    test('changes the password without syncing or signing out', () async {
+      backend.user = signedIn;
+      await OrvixAccountService.changePassword(newPassword: 'new-secret');
+      expect(backend.calls, ['changePassword']);
+      expect(backend.passwordChanges, [('new-secret', null)]);
+      expect(OrvixAccountService.currentUser?.id, 'user-1');
+    });
+
+    test('a verification code is trimmed and blank codes are not sent',
+        () async {
+      backend.user = signedIn;
+      await OrvixAccountService.changePassword(
+          newPassword: 'new-secret', verificationCode: ' 123456 ');
+      await OrvixAccountService.changePassword(
+          newPassword: 'new-secret', verificationCode: '  ');
+      expect(backend.passwordChanges,
+          [('new-secret', '123456'), ('new-secret', null)]);
+    });
+
+    test('the code request goes through the backend', () async {
+      backend.user = signedIn;
+      await OrvixAccountService.requestPasswordChangeCode();
+      expect(backend.calls, ['reauthenticate']);
+    });
+
+    test('backend rejections reach the caller unchanged', () async {
+      backend.user = signedIn;
+      backend.changePasswordErrors.add(const OrvixAuthException('reauth',
+          kind: OrvixAuthErrorKind.reauthenticationRequired));
+      await expectLater(
+        OrvixAccountService.changePassword(newPassword: 'new-secret'),
+        throwsA(isA<OrvixAuthException>().having((e) => e.kind, 'kind',
+            OrvixAuthErrorKind.reauthenticationRequired)),
+      );
+      expect(OrvixAccountService.currentUser?.id, 'user-1');
+      expect(backend.calls, ['changePassword']);
+    });
+
+    test('is refused while signed out without calling the backend', () async {
+      await expectLater(
+        OrvixAccountService.changePassword(newPassword: 'new-secret'),
+        throwsA(isA<OrvixAuthException>().having(
+            (e) => e.kind, 'kind', OrvixAuthErrorKind.sessionMissing)),
+      );
+      await expectLater(
+        OrvixAccountService.requestPasswordChangeCode(),
+        throwsA(isA<OrvixAuthException>().having(
+            (e) => e.kind, 'kind', OrvixAuthErrorKind.sessionMissing)),
+      );
+      expect(backend.calls, isEmpty);
+    });
+
+    test('never uses a password recovery session', () async {
+      await OrvixAccountService.verifyPasswordRecovery(
+          email: 'r@example.com', token: '123456');
+      addTearDown(OrvixAccountService.cancelPasswordRecovery);
+      await expectLater(
+        OrvixAccountService.changePassword(newPassword: 'new-secret'),
+        throwsA(isA<OrvixAuthException>().having(
+            (e) => e.kind, 'kind', OrvixAuthErrorKind.sessionMissing)),
+      );
+      expect(backend.calls, isNot(contains('changePassword')));
     });
   });
 
@@ -852,6 +937,153 @@ void main() {
             (e) => e.kind, 'kind', OrvixAuthErrorKind.sessionMissing)),
       );
       expect(requests, isEmpty);
+    });
+
+    Future<SupabaseOrvixAccountBackend> signedInAdapter(
+        http.Response Function(http.Request request) respond) async {
+      final backend = adapter((request) => request.url.path == '/auth/v1/token'
+          ? json({...sessionJson, 'access_token': 'signed-in-access'})
+          : respond(request));
+      await backend.signInWithPassword(
+          email: 'a@example.com', password: 'old-secret');
+      requests.clear();
+      return backend;
+    }
+
+    test('password change updates the signed-in user and keeps the session',
+        () async {
+      final backend =
+          await signedInAdapter((_) => json(sessionJson['user']));
+      await backend.changePassword(newPassword: 'new-secret');
+      final update = requests.single;
+      expect(update.method, 'PUT');
+      expect(update.url.path, '/auth/v1/user');
+      expect(update.headers['Authorization'], 'Bearer signed-in-access');
+      expect(jsonDecode(update.body), {'password': 'new-secret'});
+      expect(backend.currentUser?.id, 'u1');
+    });
+
+    test('password change sends the verification code as the nonce',
+        () async {
+      final backend =
+          await signedInAdapter((_) => json(sessionJson['user']));
+      await backend.changePassword(
+          newPassword: 'new-secret', verificationCode: '123456');
+      expect(jsonDecode(requests.single.body),
+          {'password': 'new-secret', 'nonce': '123456'});
+      expect(backend.currentUser?.id, 'u1');
+    });
+
+    test('verification code request uses reauthenticate', () async {
+      final backend = await signedInAdapter((_) => json({}));
+      await backend.requestReauthentication();
+      final request = requests.single;
+      expect(request.method, 'GET');
+      expect(request.url.path, '/auth/v1/reauthenticate');
+      expect(request.headers['Authorization'], 'Bearer signed-in-access');
+    });
+
+    test('password change without a session fails before any request',
+        () async {
+      final backend = adapter((_) => json({}));
+      for (final request in [
+        () => backend.changePassword(newPassword: 'new-secret'),
+        backend.requestReauthentication,
+      ]) {
+        await expectLater(
+          request(),
+          throwsA(isA<OrvixAuthException>().having(
+              (e) => e.kind, 'kind', OrvixAuthErrorKind.sessionMissing)),
+        );
+      }
+      expect(requests, isEmpty);
+    });
+
+    final changeErrorKinds = <String, (http.Response, OrvixAuthErrorKind)>{
+      'reauthentication needed': (
+        apiError(400, 'reauthentication_needed',
+            'Password update requires reauthentication'),
+        OrvixAuthErrorKind.reauthenticationRequired
+      ),
+      'invalid or expired reauthentication code': (
+        apiError(422, 'reauthentication_not_valid',
+            'Nonce has expired or is invalid'),
+        OrvixAuthErrorKind.invalidCode
+      ),
+      'same password': (
+        apiError(422, 'same_password',
+            'New password should be different from the old password.'),
+        OrvixAuthErrorKind.samePassword
+      ),
+      'weak password': (
+        apiError(422, 'weak_password', 'Password should be at least 6 characters.'),
+        OrvixAuthErrorKind.weakPassword
+      ),
+      'expired session': (
+        apiError(403, 'session_not_found',
+            'Session from session_id claim in JWT does not exist'),
+        OrvixAuthErrorKind.sessionMissing
+      ),
+      'rate limit': (
+        apiError(429, 'over_request_rate_limit', 'Request rate limit reached'),
+        OrvixAuthErrorKind.rateLimited
+      ),
+    };
+    changeErrorKinds.forEach((name, expected) {
+      test('password change: Supabase $name maps to ${expected.$2.name}',
+          () async {
+        final backend = await signedInAdapter((_) => expected.$1);
+        await expectLater(
+          backend.changePassword(
+              newPassword: 'new-secret', verificationCode: '123456'),
+          throwsA(isA<OrvixAuthException>()
+              .having((e) => e.kind, 'kind', expected.$2)
+              .having((e) => e.message, 'message',
+                  isNot(contains('new-secret')))),
+        );
+        expect(backend.currentUser?.id, 'u1');
+      });
+    });
+
+    test('verification code rate limits carry the wait time', () async {
+      final backend = await signedInAdapter((_) => apiError(
+          429,
+          'over_email_send_rate_limit',
+          'For security purposes, you can only request this after 37 seconds.'));
+      await expectLater(
+        backend.requestReauthentication(),
+        throwsA(isA<OrvixAuthException>()
+            .having((e) => e.kind, 'kind', OrvixAuthErrorKind.rateLimited)
+            .having((e) => e.retryAfterSeconds, 'retryAfterSeconds', 37)),
+      );
+    });
+
+    test('password change that cannot reach Supabase is a network error',
+        () async {
+      var offline = false;
+      final client = SupabaseClient(
+        'https://orvix.test',
+        'publishable-test-key',
+        authOptions: AuthClientOptions(
+          autoRefreshToken: false,
+          pkceAsyncStorage: _MemoryAuthStorage(),
+        ),
+        httpClient: MockClient((request) async {
+          if (offline) throw http.ClientException('Failed host lookup');
+          return http.Response(jsonEncode(sessionJson), 200,
+              headers: {'content-type': 'application/json'}, request: request);
+        }),
+      );
+      final offlineBackend = SupabaseOrvixAccountBackend(client: client);
+      await offlineBackend.signInWithPassword(
+          email: 'a@example.com', password: 'old-secret');
+      offline = true;
+      await expectLater(
+        offlineBackend.changePassword(newPassword: 'new-secret'),
+        throwsA(isA<OrvixAuthException>()
+            .having((e) => e.kind, 'kind', OrvixAuthErrorKind.network)),
+      );
+      expect(offlineBackend.currentUser?.id, 'u1');
     });
 
     final errorKinds = <String, (http.Response, OrvixAuthErrorKind)>{

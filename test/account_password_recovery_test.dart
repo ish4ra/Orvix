@@ -79,6 +79,19 @@ class _RecoveryFakeBackend implements OrvixAccountBackend {
   }
 
   @override
+  Future<void> changePassword({
+    required String newPassword,
+    String? verificationCode,
+  }) async {
+    calls.add('changePassword');
+  }
+
+  @override
+  Future<void> requestReauthentication() async {
+    calls.add('reauthenticate');
+  }
+
+  @override
   Future<void> signOut() async {
     calls.add('signOut');
     user = null;

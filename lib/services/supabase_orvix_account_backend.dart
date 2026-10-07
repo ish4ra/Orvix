@@ -64,6 +64,11 @@ class SupabaseOrvixAccountBackend implements OrvixAccountBackend {
         return OrvixAuthErrorKind.weakPassword;
       case 'same_password':
         return OrvixAuthErrorKind.samePassword;
+      case 'reauthentication_needed':
+        return OrvixAuthErrorKind.reauthenticationRequired;
+      // Wrong, used or expired reauthentication code.
+      case 'reauthentication_not_valid':
+        return OrvixAuthErrorKind.invalidCode;
       case 'session_not_found':
       case 'session_expired':
       case 'bad_jwt':
@@ -72,7 +77,11 @@ class SupabaseOrvixAccountBackend implements OrvixAccountBackend {
     if (error.statusCode == '429' || message.contains('security purposes')) {
       return OrvixAuthErrorKind.rateLimited;
     }
-    if (message.contains('token has expired') ||
+    if (message.contains('requires reauthentication')) {
+      return OrvixAuthErrorKind.reauthenticationRequired;
+    }
+    if (message.contains('nonce has expired') ||
+        message.contains('token has expired') ||
         message.contains('invalid token') ||
         message.contains('otp expired') ||
         message.contains('invalid otp')) {
@@ -170,6 +179,29 @@ class SupabaseOrvixAccountBackend implements OrvixAccountBackend {
   Future<void> endPasswordRecovery() =>
       // Local scope: only this device's recovery session is revoked.
       _guard(() => _client.auth.signOut(scope: SignOutScope.local));
+
+  @override
+  Future<void> changePassword({
+    required String newPassword,
+    String? verificationCode,
+  }) =>
+      // With "Secure password change" on, Supabase Auth accepts a password
+      // update without a nonce only while the session is less than 24 hours
+      // old; otherwise it answers reauthentication_needed. The nonce is the
+      // code sent by reauthenticate(). Supabase keeps this session and signs
+      // the account out of its other sessions.
+      _guard(() async {
+        await _client.auth.updateUser(UserAttributes(
+          password: newPassword,
+          nonce: verificationCode,
+        ));
+      });
+
+  @override
+  Future<void> requestReauthentication() =>
+      // Sends the "Reauthentication" email template, which shows {{ .Token }}
+      // (supabase/email-templates/reauthentication.html).
+      _guard(() => _client.auth.reauthenticate());
 
   @override
   Future<void> signOut() => _guard(() => _client.auth.signOut());

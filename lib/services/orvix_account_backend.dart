@@ -56,6 +56,11 @@ enum OrvixAuthErrorKind {
 
   /// The session needed for the request is missing or expired.
   sessionMissing,
+
+  /// The backend wants the signed-in user to confirm a verification code
+  /// before the password can be changed; see
+  /// [OrvixAuthBackend.requestReauthentication].
+  reauthenticationRequired,
 }
 
 /// An authentication failure reported by the account backend.
@@ -144,6 +149,20 @@ abstract interface class OrvixAuthBackend {
   /// Discards the recovery session on this device only. Other devices that
   /// are signed in to the account are not signed out.
   Future<void> endPasswordRecovery();
+
+  /// Changes the signed-in user's password. This device stays signed in.
+  ///
+  /// Throws [OrvixAuthErrorKind.reauthenticationRequired] when the backend
+  /// needs a fresh verification first; call [requestReauthentication] and
+  /// retry with the code the user received as [verificationCode].
+  Future<void> changePassword({
+    required String newPassword,
+    String? verificationCode,
+  });
+
+  /// Sends the signed-in user a security verification code for
+  /// [changePassword]. Also used to resend the code.
+  Future<void> requestReauthentication();
 
   Future<void> signOut();
 }
