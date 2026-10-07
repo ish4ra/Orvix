@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/cloud_preferences_service.dart';
+import '../services/orvix_account_service.dart';
 import '../services/pikpak_service.dart';
 import '../services/pikpak_transfer_service.dart';
 import '../services/playback_service.dart';
@@ -618,6 +620,31 @@ Widget _tvLibraryHeader({
 
 /// On TV, moves focus to [node] once the next frame has built it (used when
 /// a form is replaced by the connected view).
+/// Mirrors a provider connect or disconnect on this device into the signed-in
+/// Orvix account right away. The provider's own state on this device is
+/// already final; when only the account update fails, the user is told and
+/// the next sync retries. [messenger] is looked up before any await, so the
+/// message still shows when the pane was rebuilt meanwhile.
+void _syncProviderCredentials(
+  ScaffoldMessengerState? messenger,
+  CloudProvider provider, {
+  required bool connected,
+}) {
+  final sync = connected
+      ? OrvixAccountService.providerConnected(provider)
+      : OrvixAccountService.providerDisconnected(provider);
+  unawaited(sync.then((result) {
+    if (result != ProviderCredentialSyncResult.failed) return;
+    if (messenger == null || !messenger.mounted) return;
+    final name = provider.label;
+    messenger.showSnackBar(SnackBar(
+      content: Text(connected
+          ? '$name is connected on this device, but your Orvix account could not be updated. It will sync next time.'
+          : '$name is disconnected on this device. Your Orvix account will be updated on the next sync.'),
+    ));
+  }));
+}
+
 void _tvFocusAfterBuild(State state, FocusNode node) {
   if (!PlatformProfile.isAndroidTv) return;
   WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -654,9 +681,14 @@ class _PikPakPaneState extends State<_PikPakPane> {
   String get _parentId => _crumbs.last.id;
 
   @override
-  void initState() { super.initState(); _restore(); }
+  void initState() {
+    super.initState();
+    OrvixAccountService.providerCredentialRevision.addListener(_onCredentialsSynced);
+    _restore();
+  }
   @override
   void dispose() {
+    OrvixAccountService.providerCredentialRevision.removeListener(_onCredentialsSynced);
     _usernameController.dispose();
     _passwordController.dispose();
     _usernameFocusNode.dispose();
@@ -681,10 +713,25 @@ class _PikPakPaneState extends State<_PikPakPane> {
     if (signedIn) await _refreshLibrary();
   }
 
+  /// An Orvix account sync restored or replaced credentials on this device.
+  Future<void> _onCredentialsSynced() async {
+    final signedIn = await widget.pikpak.isSignedIn;
+    if (!mounted || signedIn == _signedIn) return;
+    final hadFocus = [_usernameFocusNode, _passwordFocusNode, _signInFocusNode].any((n) => n.hasFocus);
+    final username = await widget.pikpak.signedInUsername;
+    if (!mounted) return;
+    setState(() { _signedIn = signedIn; _checkingSession = false; _message = null; _verificationUrl = null; if (username != null) _usernameController.text = username; if (!signedIn) _files = const []; });
+    if (!signedIn) return;
+    if (hadFocus) _tvFocusAfterBuild(this, _refreshFocusNode);
+    await _refreshLibrary();
+  }
+
   Future<void> _signIn() async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
     setState(() { _busy = true; _message = null; _verificationUrl = null; });
     try {
       final result = await widget.pikpak.login(_usernameController.text, _passwordController.text);
+      if (result.ok) _syncProviderCredentials(messenger, CloudProvider.pikpak, connected: true);
       if (!mounted) return;
       setState(() { _busy = false; _message = result.message; _verificationUrl = result.verificationUrl; _signedIn = result.ok; if (result.ok) _passwordController.clear(); });
       if (result.ok) { widget.onAuthChanged(); _tvFocusAfterBuild(this, _refreshFocusNode); await _refreshLibrary(); }
@@ -724,7 +771,9 @@ class _PikPakPaneState extends State<_PikPakPane> {
   }
 
   Future<void> _signOut() async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
     await widget.pikpak.logout();
+    _syncProviderCredentials(messenger, CloudProvider.pikpak, connected: false);
     if (!mounted) return;
     setState(() { _signedIn = false; _files = const []; _crumbs..clear()..add(const _FolderCrumb('', 'My PikPak')); _message = 'Signed out.'; });
     widget.onAuthChanged();
@@ -985,9 +1034,14 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
   List<TorBoxItem> _items = const [];
 
   @override
-  void initState() { super.initState(); _restore(); }
+  void initState() {
+    super.initState();
+    OrvixAccountService.providerCredentialRevision.addListener(_onCredentialsSynced);
+    _restore();
+  }
   @override
   void dispose() {
+    OrvixAccountService.providerCredentialRevision.removeListener(_onCredentialsSynced);
     _apiKeyController.dispose();
     _deviceLoginFocusNode.dispose();
     _apiKeyFocusNode.dispose();
@@ -1003,10 +1057,23 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
     if (connected) await _refresh();
   }
 
+  /// An Orvix account sync restored or replaced credentials on this device.
+  Future<void> _onCredentialsSynced() async {
+    final connected = await widget.torbox.isConnected;
+    if (!mounted || connected == _connected) return;
+    final hadFocus = [_deviceLoginFocusNode, _apiKeyFocusNode, _connectFocusNode].any((n) => n.hasFocus);
+    setState(() { _connected = connected; _checking = false; _message = null; if (!connected) { _account = null; _items = const []; } });
+    if (!connected) return;
+    if (hadFocus) _tvFocusAfterBuild(this, _refreshFocusNode);
+    await _refresh();
+  }
+
   Future<void> _connectApiKey() async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
     setState(() { _busy = true; _message = null; });
     try {
       await widget.torbox.connectWithApiKey(_apiKeyController.text);
+      _syncProviderCredentials(messenger, CloudProvider.torbox, connected: true);
       _apiKeyController.clear();
       if (!mounted) return;
       setState(() => _connected = true);
@@ -1017,6 +1084,7 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
   }
 
   Future<void> _connectDevice() async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
     setState(() { _busy = true; _message = 'Starting TorBox device login…'; });
     try {
       final auth = await widget.torbox.startDeviceAuthorization();
@@ -1050,7 +1118,7 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
       var ok = false;
       for (var i = 0; i < attempts && mounted; i++) {
         try { ok = await widget.torbox.redeemDeviceAuthorization(auth.deviceCode); } catch (_) { ok = false; }
-        if (ok) break;
+        if (ok) { _syncProviderCredentials(messenger, CloudProvider.torbox, connected: true); break; }
         await Future<void>.delayed(Duration(seconds: auth.intervalSeconds));
       }
       if (!mounted) return;
@@ -1094,7 +1162,9 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
   }
 
   Future<void> _logout() async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
     await widget.torbox.logout();
+    _syncProviderCredentials(messenger, CloudProvider.torbox, connected: false);
     if (!mounted) return;
     setState(() { _connected = false; _account = null; _items = const []; _message = 'Signed out.'; });
     widget.onAuthChanged();
@@ -1381,12 +1451,22 @@ class _TokenDebridPaneState extends State<_TokenDebridPane> {
   bool _connected=false, _busy=true;
   String? _message, _accountLabel;
   bool get _rd=>widget.provider==CloudProvider.realDebrid;
-  @override void initState(){super.initState();_restore();}
-  @override void dispose(){_controller.dispose();_tokenFocusNode.dispose();_connectFocusNode.dispose();_disconnectFocusNode.dispose();super.dispose();}
+  @override void initState(){super.initState();OrvixAccountService.providerCredentialRevision.addListener(_onCredentialsSynced);_restore();}
+  @override void dispose(){OrvixAccountService.providerCredentialRevision.removeListener(_onCredentialsSynced);_controller.dispose();_tokenFocusNode.dispose();_connectFocusNode.dispose();_disconnectFocusNode.dispose();super.dispose();}
   Future<void> _restore() async {
     final connected=_rd?await RealDebridService.instance.isConnected:await PremiumizeService.instance.isConnected;
     if(!mounted)return;setState((){_connected=connected;_busy=false;});
     if(connected)await _loadAccount();
+  }
+  /// An Orvix account sync restored or replaced credentials on this device.
+  Future<void> _onCredentialsSynced() async {
+    final connected=_rd?await RealDebridService.instance.isConnected:await PremiumizeService.instance.isConnected;
+    if(!mounted||connected==_connected)return;
+    final hadFocus=_tokenFocusNode.hasFocus||_connectFocusNode.hasFocus;
+    setState((){_connected=connected;_busy=false;_message=null;if(!connected)_accountLabel=null;});
+    if(!connected)return;
+    if(hadFocus)_tvFocusAfterBuild(this,_disconnectFocusNode);
+    await _loadAccount();
   }
   Future<void> _loadAccount() async {
     try{
@@ -1396,14 +1476,18 @@ class _TokenDebridPaneState extends State<_TokenDebridPane> {
     }catch(e){if(mounted)setState(()=>_message='Could not load account: $e');}
   }
   Future<void> _connect() async {
+    final messenger=ScaffoldMessenger.maybeOf(context);
     setState((){_busy=true;_message=null;});
     try{
       if(_rd){await RealDebridService.instance.connectWithToken(_controller.text);}else{await PremiumizeService.instance.connectWithApiKey(_controller.text);}
+      _syncProviderCredentials(messenger,widget.provider,connected:true);
       _controller.clear();if(!mounted)return;setState((){_connected=true;_busy=false;_message='Connected successfully.';});widget.onAuthChanged();_tvFocusAfterBuild(this,_disconnectFocusNode);await _loadAccount();
     }catch(e){if(mounted)setState((){_busy=false;_message='Connection failed: $e';});}
   }
   Future<void> _disconnect() async {
+    final messenger=ScaffoldMessenger.maybeOf(context);
     if(_rd){await RealDebridService.instance.logout();}else{await PremiumizeService.instance.logout();}
+    _syncProviderCredentials(messenger,widget.provider,connected:false);
     if(!mounted)return;setState((){_connected=false;_accountLabel=null;_message='Disconnected.';});widget.onAuthChanged();_tvFocusAfterBuild(this,_tokenFocusNode);
   }
   Widget _buildTv(String name){
@@ -1412,7 +1496,7 @@ class _TokenDebridPaneState extends State<_TokenDebridPane> {
       title:_connected?(_accountLabel??name):'Connect $name',
       text:_connected
         ? '$name is ready for torrent source playback. AI Sinhala remains disabled for debrid sources while the feature is in beta.'
-        : (_rd?'Enter your Real-Debrid API token. Orvix stores it only in secure device storage.':'Enter your Premiumize API key. Orvix stores it only in secure device storage.'),
+        : (_rd?'Enter your Real-Debrid API token. Orvix stores it in secure storage.':'Enter your Premiumize API key. Orvix stores it in secure storage.'),
     );
     return _tvForm(key: PageStorageKey('debrid-login-${widget.provider.name}'), entry: _connected ? _disconnectFocusNode : _tokenFocusNode, _connected?[
       intro,
@@ -1465,7 +1549,7 @@ class _TokenDebridPaneState extends State<_TokenDebridPane> {
         title:_connected?(_accountLabel??name):'Connect $name',
         subtitle:_connected
           ? '$name is ready for torrent source playback. AI Sinhala remains disabled for debrid sources while the feature is in beta.'
-          : (_rd?'Paste your Real-Debrid API token. Orvix stores it only in secure device storage.':'Paste your Premiumize API key. Orvix stores it only in secure device storage.'),
+          : (_rd?'Paste your Real-Debrid API token. Orvix stores it in secure storage.':'Paste your Premiumize API key. Orvix stores it in secure storage.'),
         children:_connected?[
           OutlinedButton.icon(onPressed:_busy?null:_disconnect,icon:const Icon(Icons.logout),label:const Text('Disconnect')),
           if(_message!=null) Text(_message!),
