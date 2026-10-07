@@ -331,6 +331,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         'Torrentio-compatible results plus the default Comet and MediaFusion provider pool. AIOStreams remains optional.',
                   ),
                 ]),
+                _tvSection('Diagnostics', const [
+                  TvInfoCard(
+                    icon: Icons.shield_outlined,
+                    title: 'Diagnostics',
+                    text:
+                        'Orvix uses limited technical diagnostics to improve reliability, performance, and compatibility across devices. Orvix does not store raw IP addresses, precise location, or unique hardware identifiers.',
+                  ),
+                ]),
               ],
             ),
           ),
@@ -653,6 +661,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       title: 'Torrentio + provider pool',
                       detail:
                           'Torrentio-compatible results plus the default Comet and MediaFusion provider pool. AIOStreams remains optional.',
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 22),
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0D120E),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFF263827)),
+                ),
+                child: const Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.shield_outlined),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Diagnostics',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 16,
+                            ),
+                          ),
+                          SizedBox(height: 6),
+                          Text(
+                            'Orvix uses limited technical diagnostics to improve reliability, performance, and compatibility across devices. Orvix does not store raw IP addresses, precise location, or unique hardware identifiers.',
+                            style: TextStyle(
+                              color: Color(0xFF9CA99E),
+                              height: 1.45,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),

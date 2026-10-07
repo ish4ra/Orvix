@@ -275,6 +275,30 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
+            "orvix/device_info"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getDeviceInfo" -> {
+                    val deviceType =
+                        if (packageManager.hasSystemFeature("android.software.leanback")) {
+                            "TV"
+                        } else {
+                            "Mobile"
+                        }
+                    result.success(
+                        mapOf(
+                            "manufacturer" to Build.MANUFACTURER,
+                            "model" to Build.MODEL,
+                            "type" to deviceType
+                        )
+                    )
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
             "orvix/torrent_engine"
         ).setMethodCallHandler { call, result ->
             when (call.method) {
