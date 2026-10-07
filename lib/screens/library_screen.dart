@@ -104,67 +104,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
   @override
   Widget build(BuildContext context) {
     final mobile = PlatformProfile.isAndroidMobile;
-    final providerSelector = SegmentedButton<CloudProvider>(
-      segments: mobile
-          ? const [
-              ButtonSegment(value: CloudProvider.pikpak, label: Text('PikPak')),
-              ButtonSegment(value: CloudProvider.torbox, label: Text('TorBox')),
-              ButtonSegment(value: CloudProvider.realDebrid, label: Text('Real-Debrid')),
-              ButtonSegment(value: CloudProvider.premiumize, label: Text('Premiumize')),
-            ]
-          : const [
-              ButtonSegment(value: CloudProvider.pikpak, label: Text('PikPak'), icon: Icon(Icons.cloud_outlined)),
-              ButtonSegment(value: CloudProvider.torbox, label: Text('TorBox'), icon: Icon(Icons.bolt_outlined)),
-              ButtonSegment(value: CloudProvider.realDebrid, label: Text('Real-Debrid'), icon: Icon(Icons.cloud_done_outlined)),
-              ButtonSegment(value: CloudProvider.premiumize, label: Text('Premiumize'), icon: Icon(Icons.cloud_queue_rounded)),
-            ],
-      selected: {_provider},
-      showSelectedIcon: !mobile,
-      expandedInsets: mobile ? EdgeInsets.zero : null,
-      style: mobile
-          ? const ButtonStyle(
-              visualDensity: VisualDensity.compact,
-              padding: WidgetStatePropertyAll(
-                EdgeInsets.symmetric(horizontal: 4, vertical: 0),
-              ),
-              textStyle: WidgetStatePropertyAll(
-                TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-              ),
-            )
-          : null,
-      onSelectionChanged: (value) => _select(value.first),
-    );
-
     return Column(
       children: [
-        Padding(
-          padding: EdgeInsets.fromLTRB(mobile ? 20 : 32, 24, mobile ? 20 : 32, 0),
-          child: mobile
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Clouds',
-                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                            fontWeight: FontWeight.w900,
-                          ),
-                    ),
-                    const SizedBox(height: 14),
-                    SizedBox(width: double.infinity, child: providerSelector),
-                  ],
-                )
-              : Row(
-                  children: [
-                    Text(
-                      'Clouds',
-                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                            fontWeight: FontWeight.w900,
-                          ),
-                    ),
-                    const Spacer(),
-                    Flexible(child: providerSelector),
-                  ],
-                ),
+        CloudsHeader(
+          provider: _provider,
+          onSelected: _select,
+          mobile: mobile,
+          tv: PlatformProfile.isAndroidTv,
         ),
         Expanded(
           child: AnimatedSwitcher(
@@ -182,6 +128,250 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// How the Clouds title and provider selector are arranged.
+enum CloudsHeaderLayout {
+  /// Title on the left, labelled selector on the right (wide desktop).
+  inline,
+
+  /// Labelled selector on its own line below the title.
+  stacked,
+
+  /// A dropdown below the title, for windows too narrow for the selector.
+  menu,
+}
+
+/// The "Clouds" title and the provider selector.
+///
+/// Android Mobile and Android TV keep their fixed layouts. Desktop picks a
+/// layout from the width it is actually given, so a narrow Windows or macOS
+/// window never squeezes the labelled segments until their labels wrap one
+/// character per line.
+class CloudsHeader extends StatelessWidget {
+  const CloudsHeader({
+    super.key,
+    required this.provider,
+    required this.onSelected,
+    required this.mobile,
+    required this.tv,
+  });
+
+  final CloudProvider provider;
+  final ValueChanged<CloudProvider> onSelected;
+  final bool mobile;
+  final bool tv;
+
+  static const _inlineGap = 24.0;
+
+  static IconData iconFor(CloudProvider provider) {
+    switch (provider) {
+      case CloudProvider.pikpak:
+        return Icons.cloud_outlined;
+      case CloudProvider.torbox:
+        return Icons.bolt_outlined;
+      case CloudProvider.realDebrid:
+        return Icons.cloud_done_outlined;
+      case CloudProvider.premiumize:
+        return Icons.cloud_queue_rounded;
+    }
+  }
+
+  static TextStyle? _headingStyle(BuildContext context) =>
+      Theme.of(context).textTheme.headlineMedium?.copyWith(
+            fontWeight: FontWeight.w900,
+          );
+
+  static double _textWidth(BuildContext context, String text, TextStyle? style) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    final width = painter.width;
+    painter.dispose();
+    return width;
+  }
+
+  /// Picks the desktop layout for [maxWidth], measuring the real labels with
+  /// the current font and text scale instead of guessing pixel breakpoints.
+  static CloudsHeaderLayout layoutFor(BuildContext context, double maxWidth) {
+    final labelStyle = Theme.of(context).textTheme.labelLarge;
+    var widestLabel = 0.0;
+    for (final provider in CloudProvider.values) {
+      final width = _textWidth(context, provider.label, labelStyle);
+      if (width > widestLabel) widestLabel = width;
+    }
+    // Segments share the widest segment's width: an 18px icon, an 8px gap,
+    // 12px padding per side, plus slack for borders and density.
+    final selectorWidth =
+        CloudProvider.values.length * (widestLabel + 18 + 8 + 24 + 16);
+    final headingWidth =
+        _textWidth(context, 'Clouds', _headingStyle(context));
+    if (headingWidth + _inlineGap + selectorWidth <= maxWidth) {
+      return CloudsHeaderLayout.inline;
+    }
+    if (selectorWidth <= maxWidth) return CloudsHeaderLayout.stacked;
+    return CloudsHeaderLayout.menu;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mobile = this.mobile;
+    final providerSelector = SegmentedButton<CloudProvider>(
+      segments: mobile
+          ? const [
+              ButtonSegment(value: CloudProvider.pikpak, label: Text('PikPak')),
+              ButtonSegment(value: CloudProvider.torbox, label: Text('TorBox')),
+              ButtonSegment(value: CloudProvider.realDebrid, label: Text('Real-Debrid')),
+              ButtonSegment(value: CloudProvider.premiumize, label: Text('Premiumize')),
+            ]
+          : const [
+              ButtonSegment(value: CloudProvider.pikpak, label: Text('PikPak'), icon: Icon(Icons.cloud_outlined)),
+              ButtonSegment(value: CloudProvider.torbox, label: Text('TorBox'), icon: Icon(Icons.bolt_outlined)),
+              ButtonSegment(value: CloudProvider.realDebrid, label: Text('Real-Debrid'), icon: Icon(Icons.cloud_done_outlined)),
+              ButtonSegment(value: CloudProvider.premiumize, label: Text('Premiumize'), icon: Icon(Icons.cloud_queue_rounded)),
+            ],
+      selected: {provider},
+      showSelectedIcon: !mobile,
+      expandedInsets: mobile ? EdgeInsets.zero : null,
+      style: mobile
+          ? const ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              padding: WidgetStatePropertyAll(
+                EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+              ),
+              textStyle: WidgetStatePropertyAll(
+                TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+            )
+          : null,
+      onSelectionChanged: (value) => onSelected(value.first),
+    );
+    final heading = Text('Clouds', style: _headingStyle(context));
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(mobile ? 20 : 32, 24, mobile ? 20 : 32, 0),
+      child: mobile
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                heading,
+                const SizedBox(height: 14),
+                SizedBox(width: double.infinity, child: providerSelector),
+              ],
+            )
+          : tv
+              ? Row(
+                  children: [
+                    heading,
+                    const Spacer(),
+                    Flexible(child: providerSelector),
+                  ],
+                )
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    switch (layoutFor(context, constraints.maxWidth)) {
+                      case CloudsHeaderLayout.inline:
+                        // No Flexible here: beside a Spacer it would cap the
+                        // selector at half the free width and squeeze its
+                        // labels long before the window is actually narrow.
+                        // Inline is only chosen when the selector fits.
+                        return Row(
+                          children: [
+                            heading,
+                            const Spacer(),
+                            providerSelector,
+                          ],
+                        );
+                      case CloudsHeaderLayout.stacked:
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            heading,
+                            const SizedBox(height: 14),
+                            providerSelector,
+                          ],
+                        );
+                      case CloudsHeaderLayout.menu:
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            heading,
+                            const SizedBox(height: 14),
+                            _CloudProviderMenu(
+                              provider: provider,
+                              onSelected: onSelected,
+                            ),
+                          ],
+                        );
+                    }
+                  },
+                ),
+    );
+  }
+}
+
+/// Compact provider picker used when the window is too narrow for the
+/// labelled segments. Every provider stays listed and the selected one stays
+/// visible, with its icon, in the field.
+class _CloudProviderMenu extends StatelessWidget {
+  const _CloudProviderMenu({required this.provider, required this.onSelected});
+
+  final CloudProvider provider;
+  final ValueChanged<CloudProvider> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return InputDecorator(
+      decoration: InputDecoration(
+        labelText: 'Cloud provider',
+        prefixIcon: Icon(CloudsHeader.iconFor(provider)),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<CloudProvider>(
+          key: const ValueKey('clouds-provider-menu'),
+          value: provider,
+          isDense: true,
+          isExpanded: true,
+          items: [
+            for (final option in CloudProvider.values)
+              DropdownMenuItem(
+                value: option,
+                child: Row(
+                  children: [
+                    Icon(CloudsHeader.iconFor(option), size: 18),
+                    const SizedBox(width: 10),
+                    Flexible(
+                      child: Text(
+                        option.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+          selectedItemBuilder: (context) => [
+            for (final option in CloudProvider.values)
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Text(
+                  option.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+          ],
+          onChanged: (value) {
+            if (value != null) onSelected(value);
+          },
+        ),
+      ),
     );
   }
 }
@@ -350,14 +540,14 @@ class _PikPakPaneState extends State<_PikPakPane> {
   Widget _buildLibrary(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Row(children: [
+      LayoutBuilder(builder: (context, constraints) => Row(children: [
         if (_crumbs.length > 1) IconButton.filledTonal(onPressed: _busy ? null : () async { _crumbs.removeLast(); await _refreshLibrary(); }, icon: const Icon(Icons.arrow_back_rounded)),
         if (_crumbs.length > 1) const SizedBox(width: 10),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(_crumbs.last.name, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900)), Text(_crumbs.map((e) => e.name).join(' / '), style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant))])),
-        OutlinedButton.icon(onPressed: _busy ? null : _refreshLibrary, icon: const Icon(Icons.refresh), label: const Text('Refresh')),
+        _cloudRefreshButton(constraints, _busy ? null : _refreshLibrary),
         const SizedBox(width: 8),
         TextButton(onPressed: _busy ? null : _signOut, child: const Text('Sign out')),
-      ]),
+      ])),
       if (_message != null) ...[const SizedBox(height: 12), Text(_message!)],
       const SizedBox(height: 18),
       Expanded(child: ListView.separated(
@@ -570,15 +760,15 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
   Widget _buildLibrary(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Row(children: [
+      LayoutBuilder(builder: (context, constraints) => Row(children: [
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(_account?.email ?? 'TorBox', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900)),
           Text([if ((_account?.plan ?? '').isNotEmpty) _account!.plan!, '${_items.length} cloud item${_items.length == 1 ? '' : 's'}'].join(' • '), style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
         ])),
-        OutlinedButton.icon(onPressed: _busy ? null : _refresh, icon: const Icon(Icons.refresh), label: const Text('Refresh')),
+        _cloudRefreshButton(constraints, _busy ? null : _refresh),
         const SizedBox(width: 8),
         TextButton(onPressed: _busy ? null : _logout, child: const Text('Sign out')),
-      ]),
+      ])),
       if (_message != null) ...[const SizedBox(height: 12), Text(_message!)],
       const SizedBox(height: 18),
       Expanded(child: _items.isEmpty && !_busy ? const Center(child: Text('No TorBox items yet.')) : ListView.separated(
@@ -597,6 +787,29 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
         },
       )),
     ],
+  );
+}
+
+/// Below this header width a desktop window shows Refresh as an icon button,
+/// leaving the library title room instead of squeezing it into a sliver.
+const double _cloudHeaderCompactWidth = 520;
+
+/// Refresh action for a PikPak / TorBox library header. Android keeps the
+/// labelled button it always had; narrow desktop windows get a tooltip icon.
+Widget _cloudRefreshButton(BoxConstraints constraints, VoidCallback? onPressed) {
+  final compact = !Platform.isAndroid &&
+      constraints.maxWidth < _cloudHeaderCompactWidth;
+  if (compact) {
+    return IconButton.outlined(
+      tooltip: 'Refresh',
+      onPressed: onPressed,
+      icon: const Icon(Icons.refresh),
+    );
+  }
+  return OutlinedButton.icon(
+    onPressed: onPressed,
+    icon: const Icon(Icons.refresh),
+    label: const Text('Refresh'),
   );
 }
 

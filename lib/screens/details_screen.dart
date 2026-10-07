@@ -1025,171 +1025,188 @@ class DetailsScreenState extends State<DetailsScreen> {
 
   Widget _hero(MediaItem item) {
     final tv = PlatformProfile.isAndroidTv;
+    // On a narrow desktop window the title, pills and actions wrap onto extra
+    // lines, so the hero grows past its usual height instead of clipping the
+    // action buttons. Android Mobile and Android TV keep their fixed height.
+    final growable = !Platform.isAndroid;
+    final layers = <Widget>[
+      if (item.background != null)
+        CachedNetworkImage(
+          imageUrl: item.background!,
+          fit: BoxFit.cover,
+          errorWidget: (_, __, ___) => const SizedBox.shrink(),
+        ),
+      const DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0x2207090E), Color(0xFF050806)],
+            stops: [.16, 1],
+          ),
+        ),
+      ),
+      const DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+            colors: [
+              Color(0xFA07090E),
+              Color(0xB807090E),
+              Color(0x0007090E),
+            ],
+            stops: [0, .48, .92],
+          ),
+        ),
+      ),
+    ];
+    final content = Padding(
+        padding: EdgeInsets.fromLTRB(
+          tv ? 30 : 42,
+          tv ? 64 : 100,
+          tv ? 30 : 42,
+          tv ? 34 : 52,
+        ),
+        child: Align(
+          alignment: Alignment.bottomLeft,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (item.logo?.trim().isNotEmpty == true)
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxWidth: 360,
+                      maxHeight: 115,
+                    ),
+                    child: CachedNetworkImage(
+                      imageUrl: item.logo!,
+                      fit: BoxFit.contain,
+                      alignment: Alignment.centerLeft,
+                      fadeInDuration: Duration.zero,
+                      errorWidget: (_, __, ___) => Text(
+                        item.title,
+                        style: Theme.of(context)
+                            .textTheme
+                            .displaySmall
+                            ?.copyWith(
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -.9,
+                            ),
+                      ),
+                    ),
+                  )
+                else
+                  Text(
+                    item.title,
+                    style:
+                        Theme.of(context).textTheme.displaySmall?.copyWith(
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -.9,
+                            ),
+                  ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 9,
+                  runSpacing: 8,
+                  children: [
+                    _MetaPill(item.typeLabel),
+                    if (item.year != null) _MetaPill(item.year!),
+                    if (item.runtime != null) _MetaPill(item.runtime!),
+                    if (item.rating != null)
+                      _MetaPill('★ ${item.rating!.toStringAsFixed(1)}'),
+                    ...item.genres.take(4).map(_MetaPill.new),
+                  ],
+                ),
+                if (item.description?.isNotEmpty == true) ...[
+                  const SizedBox(height: 18),
+                  Text(
+                    item.description!,
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 15, height: 1.55),
+                  ),
+                ],
+                const SizedBox(height: 24),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 10,
+                  children: [
+                    if (item.kind == MediaKind.movie)
+                      FilledButton.icon(
+                        onPressed: _resolving ? null : () => _play(item),
+                        icon: const Icon(Icons.play_arrow_rounded),
+                        label: const Text('Play'),
+                      )
+                    else
+                      FilledButton.tonalIcon(
+                        onPressed: null,
+                        icon: const Icon(Icons.video_library_outlined),
+                        label: const Text('Choose an episode below'),
+                      ),
+                    if (item.kind == MediaKind.movie)
+                      OutlinedButton.icon(
+                        onPressed: _resolving
+                            ? null
+                            : () => _findSourcesAndPlay(item),
+                        icon: const Icon(Icons.travel_explore_rounded),
+                        label: const Text('Find Sources'),
+                      ),
+                    FilledButton.tonalIcon(
+                      onPressed: () => _toggleLibrary(item),
+                      icon: Icon(
+                        _inLibrary
+                            ? Icons.video_library_rounded
+                            : Icons.library_add_outlined,
+                      ),
+                      label: Text(
+                        _inLibrary ? 'In Library' : 'Add to Library',
+                      ),
+                      style: _inLibrary
+                          ? FilledButton.styleFrom(
+                              backgroundColor: const Color(0xFFB9FF45),
+                              foregroundColor: Colors.black,
+                            )
+                          : null,
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () => _toggleWatchlist(item),
+                      icon: Icon(
+                        _watchlisted
+                            ? Icons.bookmark_rounded
+                            : Icons.bookmark_add_outlined,
+                      ),
+                      label: Text(
+                        _watchlisted ? 'In Watchlist' : 'Watchlist',
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    if (growable) {
+      return ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 560),
+        child: Stack(
+          alignment: Alignment.bottomLeft,
+          children: [
+            for (final layer in layers) Positioned.fill(child: layer),
+            content,
+          ],
+        ),
+      );
+    }
     return SizedBox(
       height: tv ? 400 : 560,
       child: Stack(
         fit: StackFit.expand,
-        children: [
-          if (item.background != null)
-            CachedNetworkImage(
-              imageUrl: item.background!,
-              fit: BoxFit.cover,
-              errorWidget: (_, __, ___) => const SizedBox.shrink(),
-            ),
-          const DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [Color(0x2207090E), Color(0xFF050806)],
-                stops: [.16, 1],
-              ),
-            ),
-          ),
-          const DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.centerLeft,
-                end: Alignment.centerRight,
-                colors: [
-                  Color(0xFA07090E),
-                  Color(0xB807090E),
-                  Color(0x0007090E),
-                ],
-                stops: [0, .48, .92],
-              ),
-            ),
-          ),
-          Padding(
-            padding: EdgeInsets.fromLTRB(
-              tv ? 30 : 42,
-              tv ? 64 : 100,
-              tv ? 30 : 42,
-              tv ? 34 : 52,
-            ),
-            child: Align(
-              alignment: Alignment.bottomLeft,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 760),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (item.logo?.trim().isNotEmpty == true)
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(
-                          maxWidth: 360,
-                          maxHeight: 115,
-                        ),
-                        child: CachedNetworkImage(
-                          imageUrl: item.logo!,
-                          fit: BoxFit.contain,
-                          alignment: Alignment.centerLeft,
-                          fadeInDuration: Duration.zero,
-                          errorWidget: (_, __, ___) => Text(
-                            item.title,
-                            style: Theme.of(context)
-                                .textTheme
-                                .displaySmall
-                                ?.copyWith(
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: -.9,
-                                ),
-                          ),
-                        ),
-                      )
-                    else
-                      Text(
-                        item.title,
-                        style:
-                            Theme.of(context).textTheme.displaySmall?.copyWith(
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: -.9,
-                                ),
-                      ),
-                    const SizedBox(height: 14),
-                    Wrap(
-                      spacing: 9,
-                      runSpacing: 8,
-                      children: [
-                        _MetaPill(item.typeLabel),
-                        if (item.year != null) _MetaPill(item.year!),
-                        if (item.runtime != null) _MetaPill(item.runtime!),
-                        if (item.rating != null)
-                          _MetaPill('★ ${item.rating!.toStringAsFixed(1)}'),
-                        ...item.genres.take(4).map(_MetaPill.new),
-                      ],
-                    ),
-                    if (item.description?.isNotEmpty == true) ...[
-                      const SizedBox(height: 18),
-                      Text(
-                        item.description!,
-                        maxLines: 4,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 15, height: 1.55),
-                      ),
-                    ],
-                    const SizedBox(height: 24),
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 10,
-                      children: [
-                        if (item.kind == MediaKind.movie)
-                          FilledButton.icon(
-                            onPressed: _resolving ? null : () => _play(item),
-                            icon: const Icon(Icons.play_arrow_rounded),
-                            label: const Text('Play'),
-                          )
-                        else
-                          FilledButton.tonalIcon(
-                            onPressed: null,
-                            icon: const Icon(Icons.video_library_outlined),
-                            label: const Text('Choose an episode below'),
-                          ),
-                        if (item.kind == MediaKind.movie)
-                          OutlinedButton.icon(
-                            onPressed: _resolving
-                                ? null
-                                : () => _findSourcesAndPlay(item),
-                            icon: const Icon(Icons.travel_explore_rounded),
-                            label: const Text('Find Sources'),
-                          ),
-                        FilledButton.tonalIcon(
-                          onPressed: () => _toggleLibrary(item),
-                          icon: Icon(
-                            _inLibrary
-                                ? Icons.video_library_rounded
-                                : Icons.library_add_outlined,
-                          ),
-                          label: Text(
-                            _inLibrary ? 'In Library' : 'Add to Library',
-                          ),
-                          style: _inLibrary
-                              ? FilledButton.styleFrom(
-                                  backgroundColor: const Color(0xFFB9FF45),
-                                  foregroundColor: Colors.black,
-                                )
-                              : null,
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: () => _toggleWatchlist(item),
-                          icon: Icon(
-                            _watchlisted
-                                ? Icons.bookmark_rounded
-                                : Icons.bookmark_add_outlined,
-                          ),
-                          label: Text(
-                            _watchlisted ? 'In Watchlist' : 'Watchlist',
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
+        children: [...layers, content],
       ),
     );
   }

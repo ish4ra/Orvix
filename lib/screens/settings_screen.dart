@@ -287,13 +287,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   value: enabled ?? false,
                   onChanged: enabled == null ? null : _setAiSinhala,
                   secondary: const Icon(Icons.translate_rounded),
-                  title: const Row(
+                  title: const Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Text(
                         'AI Sinhala subtitles',
                         style: TextStyle(fontWeight: FontWeight.w900),
                       ),
-                      SizedBox(width: 8),
                       _BetaBadge(),
                     ],
                   ),
@@ -373,11 +375,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       children: [
                         Icon(Icons.closed_caption_rounded),
                         SizedBox(width: 10),
-                        Text(
-                          'Online subtitle language',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w900,
-                            fontSize: 16,
+                        Flexible(
+                          child: Text(
+                            'Online subtitle language',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 16,
+                            ),
                           ),
                         ),
                       ],
