@@ -16,7 +16,7 @@ void main() {
     expect(
       source,
       contains(
-        'Raw IP addresses, precise location, and unique hardware identifiers are not stored.',
+        'Orvix does not store raw IP addresses, precise location, or unique hardware identifiers.',
       ),
     );
   });
