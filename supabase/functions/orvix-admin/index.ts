@@ -54,7 +54,15 @@ function friendlyDeviceName(
   const rawModel = typeof model === "string" ? model.trim() : "";
   const normalizedModel = rawModel.toUpperCase();
 
-  if (/^SM-S928(B|U|U1|W|N|0)?$/.test(normalizedModel)) {
+  const s24UltraModels = new Set([
+    "SM-S928B",
+    "SM-S928U",
+    "SM-S928U1",
+    "SM-S928W",
+    "SM-S928N",
+    "SM-S9280",
+  ]);
+  if (s24UltraModels.has(normalizedModel)) {
     return "Samsung Galaxy S24 Ultra";
   }
 
