@@ -4,21 +4,32 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('Orvix device telemetry wiring', () {
-    test('client sends privacy-safe device make, model and type', () {
+    test('client reads Android make/model through the existing native layer', () {
       final source =
           File('lib/services/orvix_telemetry_service.dart').readAsStringSync();
+      final androidBuild =
+          File('tools/configure_android_build.py').readAsStringSync();
 
-      expect(source, contains("package:device_info_plus/device_info_plus.dart"));
+      expect(source, contains('orvix/device_info'));
       expect(source, contains("'device_manufacturer'"));
       expect(source, contains("'device_model'"));
       expect(source, contains("'device_type'"));
+      expect(androidBuild, contains('"orvix/device_info"'));
+      expect(androidBuild, contains('Build.MANUFACTURER'));
+      expect(androidBuild, contains('Build.MODEL'));
 
       // Do not add stable hardware/user identifiers to analytics.
-      expect(source, isNot(contains("'serial_number'")));
-      expect(source, isNot(contains("'imei'")));
-      expect(source, isNot(contains("'android_id'")));
-      expect(source, isNot(contains("'mac_address'")));
-      expect(source, isNot(contains("'computer_name'")));
+      for (final forbidden in <String>[
+        'serial_number',
+        'imei',
+        'android_id',
+        'mac_address',
+        'Build.SERIAL',
+        'Settings.Secure.ANDROID_ID',
+      ]) {
+        expect(source.toLowerCase(), isNot(contains(forbidden.toLowerCase())));
+        expect(androidBuild.toLowerCase(), isNot(contains(forbidden.toLowerCase())));
+      }
     });
 
     test('backend stores device fields and dashboard exposes a device column', () {
