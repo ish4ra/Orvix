@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:ui' as ui;
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -27,6 +28,7 @@ class OrvixTelemetryService with WidgetsBindingObserver {
   static const _installationKey = 'orvix_analytics_installation_id_v1';
   static const _functionName = 'orvix-telemetry';
   static const _heartbeatInterval = Duration(seconds: 60);
+  static const _deviceInfoChannel = MethodChannel('orvix/device_info');
 
   final Random _random = Random.secure();
 
@@ -36,6 +38,9 @@ class OrvixTelemetryService with WidgetsBindingObserver {
   String? _sessionId;
   String? _appVersion;
   String? _buildNumber;
+  String? _deviceManufacturer;
+  String? _deviceModel;
+  String? _deviceType;
   bool _initialized = false;
   bool _foreground = true;
   bool _ended = false;
@@ -53,6 +58,8 @@ class OrvixTelemetryService with WidgetsBindingObserver {
     }
 
     final package = await PackageInfo.fromPlatform();
+    await _loadDeviceInfo();
+
     _installationId = installationId;
     _sessionId = _uuidV4();
     _appVersion = package.version;
@@ -190,6 +197,9 @@ class OrvixTelemetryService with WidgetsBindingObserver {
       'locale': ui.PlatformDispatcher.instance.locale.toLanguageTag(),
       'app_version': appVersion,
       'build_number': _buildNumber,
+      'device_manufacturer': _deviceManufacturer,
+      'device_model': _deviceModel,
+      'device_type': _deviceType,
       'is_foreground': _foreground,
       ...extra,
     };
@@ -202,6 +212,37 @@ class OrvixTelemetryService with WidgetsBindingObserver {
     } catch (_) {
       // Telemetry must never affect the app's primary behavior.
     }
+  }
+
+  Future<void> _loadDeviceInfo() async {
+    _deviceType = PlatformProfile.isAndroidTv
+        ? 'TV'
+        : (Platform.isAndroid || Platform.isIOS
+            ? 'Mobile'
+            : (Platform.isWindows || Platform.isMacOS || Platform.isLinux
+                ? 'Desktop'
+                : null));
+
+    if (!Platform.isAndroid) return;
+
+    try {
+      final info =
+          await _deviceInfoChannel.invokeMapMethod<String, dynamic>(
+        'getDeviceInfo',
+      );
+      _deviceManufacturer = _cleanDeviceValue(info?['manufacturer']);
+      _deviceModel = _cleanDeviceValue(info?['model']);
+      _deviceType = _cleanDeviceValue(info?['type']) ?? _deviceType;
+    } catch (_) {
+      // Device metadata is optional and must never block Orvix startup.
+    }
+  }
+
+  String? _cleanDeviceValue(Object? value) {
+    if (value is! String) return null;
+    final cleaned = value.trim();
+    if (cleaned.isEmpty || cleaned.toLowerCase() == 'unknown') return null;
+    return cleaned.length > 120 ? cleaned.substring(0, 120) : cleaned;
   }
 
   String _platformName() {
