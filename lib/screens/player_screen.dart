@@ -7,7 +7,6 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart' as mk;
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:window_manager/window_manager.dart';
 
 import '../models/media_item.dart';
 import '../services/ai_audio_stt_service.dart';
@@ -15,11 +14,13 @@ import '../services/ai_sinhala_preferences_service.dart';
 import '../services/ai_sinhala_runtime_state.dart';
 import '../services/ai_sinhala_trace_service.dart';
 import '../services/ai_sinhala_subtitle_service.dart';
+import '../services/desktop_fullscreen_service.dart';
 import '../services/media_state_service.dart';
 import '../services/native_subtitle_event_parser.dart';
 import '../services/online_subtitle_service.dart';
 import '../services/playback_service.dart';
 import '../services/platform_profile.dart';
+import '../services/player_exit_controller.dart';
 import '../services/player_resize_preferences_service.dart';
 import '../services/subtitle_preferences_service.dart';
 import '../services/subtitle_render_policy.dart';
@@ -107,8 +108,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _startupFailureVisible = false;
   bool _preflightWarmup = false;
   bool _exitPrepared = false;
-  Future<void>? _exitPreparation;
-  bool _backNavigationInProgress = false;
+  // One logical exit: _preparePlayerExitInternal runs once and the route pops
+  // at most once, whatever mix of Back/Escape/next/fallback requests arrives.
+  late final PlayerExitController _exit = PlayerExitController(
+    teardown: _preparePlayerExitInternal,
+    popRoute: _popPlayerRoute,
+    desktop: _desktop,
+    trace: _traceExit,
+  );
   bool _closing = false;
   List<SkipSegment> _skipSegments = const [];
   SkipSegment? _activeSkipSegment;
@@ -996,9 +1003,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     String message,
     Future<void> Function(String message) fallback,
   ) async {
-    await _preparePlayerExit();
-    if (!mounted) return;
-    Navigator.of(context).pop();
+    if (!await _exit.leave(PlayerExitIntent.startupFallback)) return;
     await Future<void>.delayed(const Duration(milliseconds: 180));
     await fallback(message);
   }
@@ -1548,6 +1553,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       final aiSettingEnabled =
           await AiSinhalaPreferencesService.isEnabled();
+      if (_closing) return;
       if (mounted) {
         setState(() => _aiPreferenceEnabled = aiSettingEnabled);
       } else {
@@ -1606,11 +1612,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
       // Keep the player paused for at most a couple of seconds while MPV
       // publishes its real track list. Unlike the old architecture, this does
       // not download/translate the entire episode before playback.
+      // Back can land while the source is still opening. The exit stops the
+      // shared player; nothing below may load, seek, play or pick subtitles
+      // on it afterwards, or a slow source starts again behind the source
+      // list (and a later open/stop can hit the next player session).
       await widget.playback.open(
         widget.url,
         title: widget.title,
         play: !(aiReady || useProgressiveNativeCueAi),
+        isCancelled: () => _closing,
       );
+      if (_closing) {
+        _traceExit('open-returned-after-exit');
+        return;
+      }
 
       if (aiReady && _generatedAiSubtitlePath != null) {
         await _setNativeSubtitleVisibility(false);
@@ -1664,17 +1679,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
         );
       }
 
+      if (_closing) return;
       Duration? resume;
       if (widget.item != null && widget.mediaState != null) {
         resume = await widget.mediaState!.resumePosition(
           widget.item!,
           episode: widget.episode,
         );
+        if (_closing) return;
         if (resume != null && resume > const Duration(seconds: 10)) {
           await widget.playback.player.seek(resume);
         }
       }
 
+      if (_closing) return;
       if (!reopenedAfterAiFailure) {
         // AI startup opens the player paused. Whether Sinhala preparation
         // succeeds or falls back to native subtitles, playback must always be
@@ -1688,11 +1706,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
         );
         await widget.playback.player.play();
       }
+      if (_closing) return;
 
       if (PlatformProfile.isAndroidMobile) {
         await _restoreAndroidMobileNativeAspectRatio();
         unawaited(_detectAndroidMobileEncodedLetterbox());
       }
+      if (_closing) return;
 
       if (_hasPlaybackActivity()) {
         _markPlaybackStarted();
@@ -1719,6 +1739,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final currentVolume = widget.playback.player.state.volume;
       if (currentVolume > 0) _lastVolume = currentVolume;
     } catch (e) {
+      // A failure caused by (or after) the exit stopping the player is not a
+      // playback failure: never show the error card under a closing route.
+      if (_closing) {
+        _traceExit('open-error-after-exit type=${e.runtimeType}');
+        return;
+      }
       final message = e.toString();
       final switchingEngine = _reportStartupFailure(message);
       if (mounted && !switchingEngine) {
@@ -3337,8 +3363,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _toggleFullscreen() async {
-    if (!_desktop) return;
-    await windowManager.setFullScreen(!(await windowManager.isFullScreen()));
+    if (!_desktop || _exit.exiting) return;
+    await DesktopFullscreenService.instance.toggle();
+    if (!mounted || _closing) return;
     _showControls();
   }
 
@@ -3380,22 +3407,28 @@ class _PlayerScreenState extends State<PlayerScreen> {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
 
-  Future<void> _preparePlayerExit() async {
-    if (_exitPrepared) return;
+  bool _popPlayerRoute() {
+    if (!mounted) return false;
+    Navigator.of(context).pop();
+    return true;
+  }
 
-    final existing = _exitPreparation;
-    if (existing != null) {
-      await existing;
-      return;
-    }
+  String get _sourceKind => _localP2pStream
+      ? 'p2p'
+      : _localMediaBridgeStream
+          ? 'bridge'
+          : 'remote';
 
-    final future = _preparePlayerExitInternal();
-    _exitPreparation = future;
-    try {
-      await future;
-    } finally {
-      if (!_exitPrepared) _exitPreparation = null;
-    }
+  /// Windows-only, synchronous so the last stage reached before a native
+  /// teardown crash survives in the log. Records the source class and host
+  /// only: never paths, query strings or tokens.
+  void _traceExit(String event) {
+    if (!Platform.isWindows) return;
+    AiSinhalaTraceService.writeCrashSync(
+      'player-exit $event source=$_sourceKind '
+      'started=$_playbackStarted error=${_error != null} '
+      'host=${AiSinhalaTraceService.safeHost(widget.url)}',
+    );
   }
 
   Future<void> _preparePlayerExitInternal() async {
@@ -3433,12 +3466,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // torrent endpoint. Pause first, then stop, and give libmpv one short
     // settle window before Flutter disposes the Video surface during route pop.
     // This avoids a stop/surface-destroy race on Back.
+    _traceExit('teardown-stop');
     try {
       await widget.playback.player.pause();
     } catch (_) {}
     try {
       await widget.playback.stop();
-    } catch (_) {}
+    } catch (error) {
+      _traceExit('teardown-stop-error type=${error.runtimeType}');
+    }
     final audioSrt = _audioAiSrtFile;
     _audioAiSrtFile = null;
     _audioAiNativeAttached = false;
@@ -3462,21 +3498,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
 
     _exitPrepared = true;
+    _traceExit('teardown-done');
   }
 
-  Future<void> _handleEscape() async {
-    // A Windows key/button event can be delivered more than once while the
-    // native player teardown is still completing. Guard the route transition
-    // itself (not only the teardown future) so one user Back action can pop
-    // exactly one route.
-    if (_backNavigationInProgress || _closing) return;
-    if (_desktop && await windowManager.isFullScreen()) {
-      await windowManager.setFullScreen(false);
-      return;
-    }
-    _backNavigationInProgress = true;
-    await _preparePlayerExit();
-    if (mounted) Navigator.of(context).pop();
+  /// Visible Back button (desktop, mobile and TV). One press leaves the
+  /// player; on desktop it leaves fullscreen as part of the same action.
+  /// Repeated or duplicated presses share the one exit and never pop twice.
+  Future<void> _handleBackButton() async {
+    await _exit.leave(PlayerExitIntent.backButton);
+  }
+
+  /// Keyboard Escape. In desktop fullscreen it only leaves fullscreen and
+  /// stays in playback; Escape in a window leaves the player.
+  Future<void> _handleEscapeKey() async {
+    await _exit.escape();
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
@@ -3522,7 +3557,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.escape) {
-      _handleEscape();
+      _handleEscapeKey();
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -3566,14 +3601,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _playNext() async {
-    if (widget.onNext == null || _advancing) return;
+    final onNext = widget.onNext;
+    // Never launch the next episode once Back (or any other exit) started.
+    if (onNext == null || _advancing || _exit.exiting) return;
     _advancing = true;
     _nextTimer?.cancel();
-    await _preparePlayerExit();
-    if (!mounted) return;
-    Navigator.of(context).pop();
+    if (!await _exit.leave(PlayerExitIntent.nextEpisode)) return;
     await Future<void>.delayed(const Duration(milliseconds: 120));
-    await widget.onNext!();
+    await onNext();
   }
 
   int get _effectiveSyncOffsetMs =>
@@ -5567,7 +5602,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     unawaited(_subtitleTimingSubscription?.cancel() ?? Future<void>.value());
     unawaited(_playbackErrorSubscription?.cancel() ?? Future<void>.value());
     unawaited(_trackSubscription?.cancel() ?? Future<void>.value());
-    if (!_exitPrepared) {
+    // Only when the route went away without any exit (for example removed by
+    // an outer navigation). An exit already in flight does its own stop; a
+    // second stop here could hit the next player session.
+    if (!_exitPrepared && !_exit.teardownStarted) {
       unawaited(
         _persistProgress()
             .catchError((_) {})
@@ -5584,10 +5622,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final player = widget.playback.player;
     return WillPopScope(
       onWillPop: () async {
-        if (_backNavigationInProgress || _closing) return false;
-        _backNavigationInProgress = true;
-        await _preparePlayerExit();
-        return true;
+        if (_closing) return false;
+        return _exit.allowSystemPop();
       },
       child: Scaffold(
       backgroundColor: Colors.black,
@@ -5663,7 +5699,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ),
                 if (_error == null && _androidMobileFlutterTextSubtitleVisible)
                   _androidMobileTextSubtitleOverlay(),
-                if (_error != null)
+                if (_error != null && PlatformProfile.isAndroidTv)
                   _errorView(context),
                 if (_error == null &&
                     !_aiSubtitleLoading &&
@@ -5716,6 +5752,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     child: _controls(context),
                   ),
                 ),
+                // Keep the failure card above the controls overlay. The
+                // overlay's full-screen gradient otherwise takes the first
+                // click on the card's Back button and only hides the
+                // controls, so Back needed a second click.
+                if (_error != null && !PlatformProfile.isAndroidTv)
+                  _errorView(context),
                 if (_activeSkipSegment != null && !_skipSegmentDismissed)
                   _skipSegmentOverlay(),
                 if (_nextCountdown > 0) _nextEpisodeOverlay(),
@@ -5818,7 +5860,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 _TvPlayerAction(
                   icon: Icons.arrow_back_rounded,
                   label: 'Back to sources',
-                  onPressed: _handleEscape,
+                  onPressed: _handleBackButton,
                   onFocusChange: _handleTvControlFocus,
                 ),
               ],
@@ -5842,7 +5884,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             Text(_error!, textAlign: TextAlign.center),
             const SizedBox(height: 18),
             OutlinedButton.icon(
-              onPressed: _handleEscape,
+              onPressed: _handleBackButton,
               icon: const Icon(Icons.arrow_back_rounded),
               label: const Text('Back'),
             ),
@@ -5878,7 +5920,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   _TvPlayerAction(
                     icon: Icons.arrow_back_rounded,
                     semanticLabel: 'Back',
-                    onPressed: _handleEscape,
+                    onPressed: _handleBackButton,
                     onFocusChange: _handleTvControlFocus,
                   ),
                   const SizedBox(width: 16),
@@ -6077,7 +6119,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 children: [
                   IconButton.filledTonal(
                     tooltip: 'Back (Esc)',
-                    onPressed: _handleEscape,
+                    onPressed: _handleBackButton,
                     icon: const Icon(Icons.arrow_back_rounded),
                   ),
                   const SizedBox(width: 12),
