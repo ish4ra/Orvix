@@ -264,10 +264,34 @@ class _SourceResolveCacheEntry {
   const _SourceResolveCacheEntry({
     required this.createdAt,
     required this.results,
+    required this.complete,
   });
 
   final DateTime createdAt;
   final List<SourceResult> results;
+
+  /// True when every configured provider answered. A partial answer (one
+  /// provider timed out or errored) is kept only briefly so a later request
+  /// can pick up the provider that failed.
+  final bool complete;
+
+  Duration get ttl => complete
+      ? SourceProviderService.resolveCacheTtl
+      : SourceProviderService.partialResolveCacheTtl;
+}
+
+/// One provider's answer. [failed] means the provider did not answer usefully
+/// (timeout, network error, non-200 status or malformed body), as opposed to
+/// answering successfully with zero streams.
+class _AddonResolveOutcome {
+  const _AddonResolveOutcome(this.results) : failed = false;
+
+  const _AddonResolveOutcome.failed()
+      : results = const [],
+        failed = true;
+
+  final List<SourceResult> results;
+  final bool failed;
 }
 
 class PinnedSourcePreference {
@@ -330,6 +354,10 @@ class SourceProviderService {
       <String, _SourceResolveCacheEntry>{};
   final Map<String, Future<List<SourceResult>>> _resolveInFlight =
       <String, Future<List<SourceResult>>>{};
+  final Map<String, bool> _lastResolveHadProviderFailures = <String, bool>{};
+
+  static const resolveCacheTtl = Duration(minutes: 5);
+  static const partialResolveCacheTtl = Duration(minutes: 1);
 
   Future<void> _ensurePlaybackHistoryLoaded() async {
     if (_playbackHistoryLoaded) return;
@@ -1239,16 +1267,17 @@ class SourceProviderService {
     final cached = _resolveCache[cacheKey];
     if (!forceRefresh &&
         cached != null &&
-        DateTime.now().difference(cached.createdAt) <
-            const Duration(minutes: 5)) {
+        DateTime.now().difference(cached.createdAt) < cached.ttl) {
       return [...cached.results];
     }
 
     final running = _resolveInFlight[cacheKey];
     if (!forceRefresh && running != null) return [...await running];
 
+    final failureKey = '$type::$mediaId';
+    var providerFailed = false;
     final future = (() async {
-      final groups = await Future.wait(
+      final outcomes = await Future.wait(
         addons.map(
           (addon) => _resolveAddon(
             addon,
@@ -1263,10 +1292,12 @@ class SourceProviderService {
         ),
       );
 
+      providerFailed = outcomes.any((outcome) => outcome.failed);
+
       final out = <SourceResult>[];
       final seen = <String>{};
-      for (final group in groups) {
-        for (final result in group) {
+      for (final outcome in outcomes) {
+        for (final result in outcome.results) {
           final dedupeKey = '${result.provider}\u0000${result.resource}';
           if (seen.add(dedupeKey)) out.add(result);
         }
@@ -1294,13 +1325,31 @@ class SourceProviderService {
     _resolveInFlight[cacheKey] = future;
     try {
       final results = await future;
-      _resolveCache[cacheKey] = _SourceResolveCacheEntry(
-        createdAt: DateTime.now(),
-        results: results,
-      );
+      _lastResolveHadProviderFailures[failureKey] = providerFailed;
+      if (!providerFailed) {
+        _resolveCache[cacheKey] = _SourceResolveCacheEntry(
+          createdAt: DateTime.now(),
+          results: results,
+          complete: true,
+        );
+      } else if (results.isNotEmpty) {
+        _resolveCache[cacheKey] = _SourceResolveCacheEntry(
+          createdAt: DateTime.now(),
+          results: results,
+          complete: false,
+        );
+      } else {
+        // Every answer that came back was empty and at least one provider
+        // failed. That is not a real "no sources" answer, so it must not be
+        // served from cache: the next request asks the providers again.
+        _resolveCache.remove(cacheKey);
+      }
       return [...results];
     } finally {
-      _resolveInFlight.remove(cacheKey);
+      // A forced refresh replaces the in-flight entry; only remove our own.
+      if (identical(_resolveInFlight[cacheKey], future)) {
+        _resolveInFlight.remove(cacheKey);
+      }
       if (_resolveCache.length > 30) {
         final entries = _resolveCache.entries.toList()
           ..sort((a, b) => b.value.createdAt.compareTo(a.value.createdAt));
@@ -1308,6 +1357,17 @@ class SourceProviderService {
         _resolveCache.removeWhere((key, value) => !keep.contains(key));
       }
     }
+  }
+
+  /// Whether the most recent resolve for this title/episode had at least one
+  /// provider that timed out, errored or returned a non-200 response. Lets the
+  /// UI tell "providers did not respond" apart from a genuine "no sources".
+  bool lastResolveHadProviderFailures(MediaItem item, {EpisodeItem? episode}) {
+    final type = item.kind == MediaKind.movie ? 'movie' : 'series';
+    final mediaId = episode == null
+        ? item.id
+        : '${item.id}:${episode.season}:${episode.episode}';
+    return _lastResolveHadProviderFailures['$type::$mediaId'] ?? false;
   }
 
   Future<void> prefetch(
@@ -1332,7 +1392,7 @@ class SourceProviderService {
     return copy.first;
   }
 
-  Future<List<SourceResult>> _resolveAddon(
+  Future<_AddonResolveOutcome> _resolveAddon(
     String addon,
     String type,
     String mediaId,
@@ -1349,12 +1409,16 @@ class SourceProviderService {
       final response = await _client.get(uri, headers: const {
         'Accept': 'application/json'
       }).timeout(const Duration(seconds: 20));
-      if (response.statusCode != 200) return const [];
+      if (response.statusCode != 200) {
+        return const _AddonResolveOutcome.failed();
+      }
 
       final decoded = jsonDecode(response.body);
-      if (decoded is! Map<String, dynamic>) return const [];
+      if (decoded is! Map<String, dynamic>) {
+        return const _AddonResolveOutcome.failed();
+      }
       final streams = decoded['streams'];
-      if (streams is! List) return const [];
+      if (streams is! List) return const _AddonResolveOutcome.failed();
 
       final provider = providerName(addon);
       final out = <SourceResult>[];
@@ -1489,9 +1553,9 @@ class SourceProviderService {
           ),
         );
       }
-      return out;
+      return _AddonResolveOutcome(out);
     } catch (_) {
-      return const [];
+      return const _AddonResolveOutcome.failed();
     }
   }
 

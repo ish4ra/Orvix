@@ -221,6 +221,29 @@ class _OrvixAppState extends State<OrvixApp>
   }
 }
 
+/// Builds the app shell with injected services, for widget tests.
+@visibleForTesting
+Widget debugBuildOrvixShell({
+  required CatalogService catalog,
+  required PikPakService pikpak,
+  required PikPakTransferService transfer,
+  required SourceProviderService sources,
+  required TorBoxService torbox,
+  required CloudPreferencesService cloudPreferences,
+  required PlaybackService playback,
+  required MediaStateService mediaState,
+}) =>
+    _OrvixShell(
+      catalog: catalog,
+      pikpak: pikpak,
+      transfer: transfer,
+      sources: sources,
+      torbox: torbox,
+      cloudPreferences: cloudPreferences,
+      playback: playback,
+      mediaState: mediaState,
+    );
+
 class _OrvixShell extends StatefulWidget {
   const _OrvixShell({
     required this.catalog,
@@ -554,12 +577,13 @@ class _OrvixShellState extends State<_OrvixShell> {
     final windowsDesktop = Platform.isWindows && !compact;
     final railExtended = extended && !windowsDesktop;
 
-    Widget body = AnimatedSwitcher(
-      duration: const Duration(milliseconds: 180),
-      child: KeyedSubtree(
-        key: ValueKey(_index),
-        child: IndexedStack(index: _index, children: screens),
-      ),
+    // One IndexedStack that is never re-keyed: every destination keeps its
+    // State (Home's loaded catalog and scroll position, Search's query and
+    // results) across navigation. Keying it by the selected index used to
+    // remount all destinations on every switch, so Home reloaded its catalog.
+    Widget body = _DestinationFade(
+      index: _index,
+      child: IndexedStack(index: _index, children: screens),
     );
 
     if (compact) {
@@ -700,6 +724,47 @@ class _OrvixShellState extends State<_OrvixShell> {
   }
 }
 
+/// Short fade-in when the selected destination changes. It animates opacity
+/// only and never changes the child's identity, so no destination remounts.
+class _DestinationFade extends StatefulWidget {
+  const _DestinationFade({required this.index, required this.child});
+
+  final int index;
+  final Widget child;
+
+  @override
+  State<_DestinationFade> createState() => _DestinationFadeState();
+}
+
+class _DestinationFadeState extends State<_DestinationFade>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 180),
+    value: 1,
+  );
+  late final Animation<double> _opacity = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeOut,
+  );
+
+  @override
+  void didUpdateWidget(covariant _DestinationFade oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.index != widget.index) _controller.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(opacity: _opacity, child: widget.child);
+  }
+}
 
 class _ContinueResumeHost extends StatefulWidget {
   const _ContinueResumeHost({
