@@ -161,6 +161,40 @@ class OrvixAccountService {
     await _endRecoverySession();
   }
 
+  /// Changes the signed-in user's password; this device stays signed in and
+  /// nothing is synced. When the backend asks for a verification code
+  /// ([OrvixAuthErrorKind.reauthenticationRequired]), send one with
+  /// [requestPasswordChangeCode] and retry with [verificationCode].
+  static Future<void> changePassword({
+    required String newPassword,
+    String? verificationCode,
+  }) async {
+    // currentUser is null during password recovery, so a recovery session is
+    // never used here.
+    if (currentUser == null) {
+      throw const OrvixAuthException(
+        'Sign in before changing the account password.',
+        kind: OrvixAuthErrorKind.sessionMissing,
+      );
+    }
+    final code = verificationCode?.trim();
+    await backend.changePassword(
+      newPassword: newPassword,
+      verificationCode: code == null || code.isEmpty ? null : code,
+    );
+  }
+
+  /// Sends (or resends) the verification code needed by [changePassword].
+  static Future<void> requestPasswordChangeCode() async {
+    if (currentUser == null) {
+      throw const OrvixAuthException(
+        'Sign in before changing the account password.',
+        kind: OrvixAuthErrorKind.sessionMissing,
+      );
+    }
+    await backend.requestReauthentication();
+  }
+
   /// Abandons password recovery and discards any recovery session.
   static Future<void> cancelPasswordRecovery() => _endRecoverySession();
 

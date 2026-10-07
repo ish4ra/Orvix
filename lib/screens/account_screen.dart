@@ -13,6 +13,10 @@ import '../services/tv_device_login_service.dart';
 /// Steps of the in-app forgot-password flow.
 enum _RecoveryStep { email, code, newPassword, done }
 
+/// Steps of the signed-in change-password flow. [code] is only used when the
+/// backend asks the user to confirm a security code first.
+enum _ChangePasswordStep { newPassword, code, done }
+
 class AccountScreen extends StatefulWidget {
   const AccountScreen({super.key, required this.onAuthChanged});
 
@@ -29,6 +33,9 @@ class _AccountScreenState extends State<AccountScreen> {
   final _recoveryCode = TextEditingController();
   final _newPassword = TextEditingController();
   final _confirmPassword = TextEditingController();
+  final _changeNewPassword = TextEditingController();
+  final _changeConfirmPassword = TextEditingController();
+  final _changeCode = TextEditingController();
 
   bool _busy = false;
   bool _syncing = false;
@@ -39,6 +46,8 @@ class _AccountScreenState extends State<AccountScreen> {
   int _resendSeconds = 0;
   _RecoveryStep? _recoveryStep;
   String? _recoveryEmail;
+  _ChangePasswordStep? _changeStep;
+  String? _changeUserId;
   TvDeviceLoginState _tvLogin = const TvDeviceLoginState();
   int _tvLoginGeneration = 0;
 
@@ -88,6 +97,9 @@ class _AccountScreenState extends State<AccountScreen> {
     _recoveryCode.dispose();
     _newPassword.dispose();
     _confirmPassword.dispose();
+    _changeNewPassword.dispose();
+    _changeConfirmPassword.dispose();
+    _changeCode.dispose();
     super.dispose();
   }
 
@@ -312,6 +324,7 @@ class _AccountScreenState extends State<AccountScreen> {
         return 'Choose a password that is different from your current one.';
       case OrvixAuthErrorKind.sessionMissing:
         return 'Your password reset session has expired. Request a new code and try again.';
+      case OrvixAuthErrorKind.reauthenticationRequired:
       case OrvixAuthErrorKind.unknown:
         return 'Could not reset your password right now. Please try again.';
     }
@@ -443,15 +456,17 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  String? _newPasswordProblem() {
-    final password = _newPassword.text;
+  String? _newPasswordProblem() =>
+      _passwordProblem(_newPassword.text, _confirmPassword.text);
+
+  String? _passwordProblem(String password, String confirmation) {
     if (password.length < OrvixAccountService.minPasswordLength) {
       return 'Use at least ${OrvixAccountService.minPasswordLength} characters for your new password.';
     }
     if (password.length > OrvixAccountService.maxPasswordLength) {
       return 'Use at most ${OrvixAccountService.maxPasswordLength} characters for your new password.';
     }
-    if (password != _confirmPassword.text) {
+    if (password != confirmation) {
       return 'The passwords do not match.';
     }
     return null;
@@ -493,6 +508,186 @@ class _AccountScreenState extends State<AccountScreen> {
       if (mounted) {
         setState(() => _message =
             'Could not update your password. Check your internet connection and try again.');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  String _friendlyChangePasswordMessage(OrvixAuthException error) {
+    switch (error.kind) {
+      case OrvixAuthErrorKind.network:
+        return 'Could not reach Orvix Cloud. Check your internet connection and try again.';
+      case OrvixAuthErrorKind.rateLimited:
+        final seconds = error.retryAfterSeconds;
+        return seconds == null
+            ? 'Too many attempts. Please wait a minute and try again.'
+            : 'Too many attempts. Please wait $seconds seconds and try again.';
+      case OrvixAuthErrorKind.invalidCode:
+        return 'That security code is invalid or has expired. Check the latest Orvix email or request a new code.';
+      case OrvixAuthErrorKind.weakPassword:
+        return 'That password is too weak. Choose a longer password that is harder to guess.';
+      case OrvixAuthErrorKind.samePassword:
+        return 'Choose a password that is different from your current one.';
+      case OrvixAuthErrorKind.sessionMissing:
+        return 'Your sign-in has expired. Sign out, sign in again, then change your password.';
+      case OrvixAuthErrorKind.reauthenticationRequired:
+        return 'For your security, enter the code we email you before changing your password.';
+      case OrvixAuthErrorKind.invalidEmail:
+      case OrvixAuthErrorKind.unknown:
+        return 'Could not change your password right now. Please try again.';
+    }
+  }
+
+  void _clearChangePasswordState() {
+    _resendTimer?.cancel();
+    _resendSeconds = 0;
+    _changeStep = null;
+    _changeUserId = null;
+    _changeNewPassword.clear();
+    _changeConfirmPassword.clear();
+    _changeCode.clear();
+  }
+
+  void _startChangePassword(OrvixAccountUser user) {
+    _resendTimer?.cancel();
+    setState(() {
+      _resendSeconds = 0;
+      _changeStep = _ChangePasswordStep.newPassword;
+      _changeUserId = user.id;
+      _message = null;
+    });
+  }
+
+  void _closeChangePassword() {
+    setState(() {
+      _clearChangePasswordState();
+      _message = null;
+    });
+  }
+
+  /// False (and the flow is closed) when the account that started the change
+  /// is no longer the signed-in one.
+  bool _changeAccountStillSignedIn() {
+    final user = OrvixAccountService.currentUser;
+    if (user != null && user.id == _changeUserId) return true;
+    setState(() {
+      _clearChangePasswordState();
+      _message =
+          'You are no longer signed in to that account. Sign in again to change its password.';
+    });
+    return false;
+  }
+
+  /// Asks the backend to email the security code and shows the code step.
+  /// Callers manage [_busy].
+  Future<void> _requestChangePasswordCode({required bool resend}) async {
+    try {
+      await OrvixAccountService.requestPasswordChangeCode();
+      if (!mounted) return;
+      _changeCode.clear();
+      setState(() {
+        _changeStep = _ChangePasswordStep.code;
+        _message = resend ? 'A new security code was sent.' : null;
+      });
+      _startResendCooldown();
+    } on OrvixAuthException catch (error) {
+      if (!mounted) return;
+      if (error.kind == OrvixAuthErrorKind.rateLimited) {
+        // A code was requested recently, so one may already be on its way.
+        setState(() {
+          _changeStep = _ChangePasswordStep.code;
+          _message = _friendlyChangePasswordMessage(error);
+        });
+        _startResendCooldown(error.retryAfterSeconds ?? 60);
+      } else {
+        setState(() => _message = _friendlyChangePasswordMessage(error));
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _message =
+            'Could not reach Orvix Cloud. Check your internet connection and try again.');
+      }
+    }
+  }
+
+  Future<void> _resendChangePasswordCode() async {
+    if (_busy || _resendSeconds > 0 || !_changeAccountStillSignedIn()) return;
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      await _requestChangePasswordCode(resend: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _submitChangePassword() async {
+    final withCode = _changeStep == _ChangePasswordStep.code;
+    final problem = _passwordProblem(
+        _changeNewPassword.text, _changeConfirmPassword.text);
+    if (problem != null) {
+      setState(() => _message = problem);
+      return;
+    }
+    final code = _changeCode.text.trim();
+    if (withCode && !RegExp(r'^\d{6}$').hasMatch(code)) {
+      setState(() => _message = 'Enter the 6-digit security code from your email.');
+      return;
+    }
+    if (!_changeAccountStillSignedIn()) return;
+
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+
+    try {
+      await OrvixAccountService.changePassword(
+        newPassword: _changeNewPassword.text,
+        verificationCode: withCode ? code : null,
+      );
+      if (!mounted) return;
+      _resendTimer?.cancel();
+      _changeNewPassword.clear();
+      _changeConfirmPassword.clear();
+      _changeCode.clear();
+      setState(() {
+        _resendSeconds = 0;
+        _changeStep = _ChangePasswordStep.done;
+      });
+    } on OrvixAuthException catch (error) {
+      if (!mounted) return;
+      switch (error.kind) {
+        case OrvixAuthErrorKind.reauthenticationRequired:
+          if (withCode) {
+            setState(() => _message = _friendlyChangePasswordMessage(error));
+          } else {
+            // Older sessions must confirm a code emailed to the account.
+            await _requestChangePasswordCode(resend: false);
+          }
+        case OrvixAuthErrorKind.weakPassword:
+        case OrvixAuthErrorKind.samePassword:
+          // Start over with a different password; a code that was already
+          // checked cannot be reused, so a new one is sent when needed.
+          _resendTimer?.cancel();
+          _changeNewPassword.clear();
+          _changeConfirmPassword.clear();
+          _changeCode.clear();
+          setState(() {
+            _resendSeconds = 0;
+            _changeStep = _ChangePasswordStep.newPassword;
+            _message = _friendlyChangePasswordMessage(error);
+          });
+        default:
+          setState(() => _message = _friendlyChangePasswordMessage(error));
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _message =
+            'Could not change your password. Check your internet connection and try again.');
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -594,7 +789,9 @@ class _AccountScreenState extends State<AccountScreen> {
                         : _pendingVerificationEmail == null
                             ? _signedOutForm()
                             : _verificationForm())
-                    : _signedInCard(user),
+                    : (_changeStep != null && _changeUserId == user.id
+                        ? _changePasswordForm(user)
+                        : _signedInCard(user)),
               ),
               if (_message != null) ...[
                 const SizedBox(height: 16),
@@ -950,6 +1147,134 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
+  Widget _changePasswordForm(OrvixAccountUser user) {
+    final email = user.email ?? 'your account email';
+    final cancel = TextButton(
+      onPressed: _busy ? null : _closeChangePassword,
+      child: const Text('Cancel'),
+    );
+    final passwordFields = <Widget>[
+      _PasswordField(
+        controller: _changeNewPassword,
+        enabled: !_busy,
+        label: 'New password',
+        autofocus: _changeStep == _ChangePasswordStep.newPassword,
+        autofillHints: const [AutofillHints.newPassword],
+      ),
+      const SizedBox(height: 12),
+      _PasswordField(
+        controller: _changeConfirmPassword,
+        enabled: !_busy,
+        label: 'Confirm new password',
+        autofillHints: const [AutofillHints.newPassword],
+        onSubmitted: (_) => _busy ? null : _submitChangePassword(),
+      ),
+    ];
+    switch (_changeStep!) {
+      case _ChangePasswordStep.newPassword:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _recoveryHeader(Icons.password_rounded, 'Change password'),
+            const SizedBox(height: 10),
+            _recoveryHint(
+                'Choose a new password for $email. Use at least ${OrvixAccountService.minPasswordLength} characters. You will stay signed in on this device.'),
+            const SizedBox(height: 16),
+            ...passwordFields,
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                FilledButton.icon(
+                  onPressed: _busy ? null : _submitChangePassword,
+                  icon: _busyIcon(Icons.check_rounded),
+                  label: const Text('Change password'),
+                ),
+                cancel,
+              ],
+            ),
+          ],
+        );
+      case _ChangePasswordStep.code:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _recoveryHeader(
+                Icons.verified_user_outlined, 'Confirm it\'s you'),
+            const SizedBox(height: 10),
+            _recoveryHint(
+                'For your security, we sent a 6-digit code to $email. Enter it here to finish changing your password.'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _changeCode,
+              enabled: !_busy,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              autofocus: true,
+              autocorrect: false,
+              enableSuggestions: false,
+              autofillHints: const [AutofillHints.oneTimeCode],
+              onSubmitted: (_) => _busy ? null : _submitChangePassword(),
+              decoration: const InputDecoration(
+                labelText: '6-digit security code',
+                counterText: '',
+              ),
+            ),
+            const SizedBox(height: 12),
+            ...passwordFields,
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                FilledButton.icon(
+                  onPressed: _busy ? null : _submitChangePassword,
+                  icon: _busyIcon(Icons.check_rounded),
+                  label: const Text('Change password'),
+                ),
+                TextButton(
+                  onPressed: _busy || _resendSeconds > 0
+                      ? null
+                      : _resendChangePasswordCode,
+                  child: Text(_resendSeconds > 0
+                      ? 'Resend in ${_resendSeconds}s'
+                      : 'Resend code'),
+                ),
+                cancel,
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'If you do not see the message, also check Spam or Junk.',
+              style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 12.5),
+            ),
+          ],
+        );
+      case _ChangePasswordStep.done:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _recoveryHeader(
+                Icons.check_circle_outline_rounded, 'Password changed'),
+            const SizedBox(height: 10),
+            _recoveryHint(
+                'Your Orvix password was changed. You are still signed in on this device. Other devices signed in to this account will need to sign in again with the new password.'),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              autofocus: true,
+              onPressed: _closeChangePassword,
+              icon: const Icon(Icons.done_rounded),
+              label: const Text('Done'),
+            ),
+          ],
+        );
+    }
+  }
+
   Future<void> _approveTvCode(String raw) async {
     if (OrvixAccountService.currentUser == null) {
       setState(() => _message =
@@ -1044,6 +1369,11 @@ class _AccountScreenState extends State<AccountScreen> {
                     )
                   : const Icon(Icons.sync_rounded),
               label: Text(_syncing ? 'Syncing…' : 'Sync now'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : () => _startChangePassword(user),
+              icon: const Icon(Icons.password_rounded),
+              label: const Text('Change password'),
             ),
             OutlinedButton.icon(
               onPressed: _busy ? null : _signOut,
