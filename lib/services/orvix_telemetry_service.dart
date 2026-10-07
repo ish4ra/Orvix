@@ -3,7 +3,6 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:ui' as ui;
 
-import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/widgets.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -37,9 +36,6 @@ class OrvixTelemetryService with WidgetsBindingObserver {
   String? _sessionId;
   String? _appVersion;
   String? _buildNumber;
-  String? _deviceManufacturer;
-  String? _deviceModel;
-  String? _deviceType;
   bool _initialized = false;
   bool _foreground = true;
   bool _ended = false;
@@ -57,8 +53,6 @@ class OrvixTelemetryService with WidgetsBindingObserver {
     }
 
     final package = await PackageInfo.fromPlatform();
-    await _loadDeviceInfo();
-
     _installationId = installationId;
     _sessionId = _uuidV4();
     _appVersion = package.version;
@@ -196,9 +190,6 @@ class OrvixTelemetryService with WidgetsBindingObserver {
       'locale': ui.PlatformDispatcher.instance.locale.toLanguageTag(),
       'app_version': appVersion,
       'build_number': _buildNumber,
-      'device_manufacturer': _deviceManufacturer,
-      'device_model': _deviceModel,
-      'device_type': _deviceType,
       'is_foreground': _foreground,
       ...extra,
     };
@@ -211,57 +202,6 @@ class OrvixTelemetryService with WidgetsBindingObserver {
     } catch (_) {
       // Telemetry must never affect the app's primary behavior.
     }
-  }
-
-  Future<void> _loadDeviceInfo() async {
-    try {
-      final plugin = DeviceInfoPlugin();
-
-      if (Platform.isAndroid) {
-        final info = await plugin.androidInfo;
-        _deviceManufacturer = _cleanDeviceValue(info.manufacturer);
-        _deviceModel = _cleanDeviceValue(info.model);
-        _deviceType = PlatformProfile.isAndroidTv ? 'TV' : 'Mobile';
-        return;
-      }
-
-      if (Platform.isIOS) {
-        final info = await plugin.iosInfo;
-        _deviceManufacturer = 'Apple';
-        _deviceModel = _cleanDeviceValue(info.utsname.machine);
-        _deviceType = 'Mobile';
-        return;
-      }
-
-      if (Platform.isMacOS) {
-        final info = await plugin.macOsInfo;
-        _deviceManufacturer = 'Apple';
-        _deviceModel = _cleanDeviceValue(info.model);
-        _deviceType = 'Desktop';
-        return;
-      }
-
-      if (Platform.isWindows || Platform.isLinux) {
-        _deviceType = 'Desktop';
-      }
-    } catch (_) {
-      // Missing device metadata must never block app startup or telemetry.
-      _deviceManufacturer = null;
-      _deviceModel = null;
-      _deviceType ??= PlatformProfile.isAndroidTv
-          ? 'TV'
-          : (Platform.isAndroid || Platform.isIOS ? 'Mobile' : 'Desktop');
-    }
-  }
-
-  String? _cleanDeviceValue(String? value) {
-    final cleaned = value?.trim();
-    if (cleaned == null ||
-        cleaned.isEmpty ||
-        cleaned.toLowerCase() == 'unknown') {
-      return null;
-    }
-    return cleaned.length > 120 ? cleaned.substring(0, 120) : cleaned;
   }
 
   String _platformName() {
