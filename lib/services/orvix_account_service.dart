@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'cloud_preferences_service.dart';
 import 'orvix_account_backend.dart';
 import 'secure_storage_factory.dart';
 import 'supabase_orvix_account_backend.dart';
@@ -50,14 +54,47 @@ class OrvixAccountService {
   /// treated as signed in again.
   static String? _deletedUserId;
 
-  static const _credentialKeys = <String>[
-    'orvix_torbox_api_token_v1',
-    'pikpak_access_token',
-    'pikpak_refresh_token',
-    'pikpak_username',
-    'pikpak_user_id',
+  /// The secure-storage keys of each provider that follow the Orvix account.
+  ///
+  /// PikPak's CAPTCHA token and device id are deliberately missing: they
+  /// belong to this device and are recreated by PikPak when needed.
+  static const _providerCredentialKeys = <CloudProvider, List<String>>{
+    CloudProvider.torbox: ['orvix_torbox_api_token_v1'],
+    CloudProvider.realDebrid: ['orvix_real_debrid_token_v1'],
+    CloudProvider.premiumize: ['orvix_premiumize_token_v1'],
+    CloudProvider.pikpak: [
+      'pikpak_access_token',
+      'pikpak_refresh_token',
+      'pikpak_username',
+      'pikpak_user_id',
+    ],
+  };
+  static final List<String> _credentialKeys = [
+    for (final keys in _providerCredentialKeys.values) ...keys,
   ];
+
+  /// Device-local bookkeeping for credential sync, kept in secure storage
+  /// and never uploaded. See [_CredentialSyncState].
+  static const _credentialSyncStateKey = 'orvix_credential_sync_state_v1';
   static final FlutterSecureStorage _secureStorage = createOrvixSecureStorage();
+
+  /// Credential syncs run one at a time so a provider change and a full
+  /// merge never read and write the cloud copy over each other.
+  static bool _credentialSyncRunning = false;
+  static final List<Completer<void>> _credentialSyncWaiters = [];
+
+  static final ValueNotifier<int> _providerCredentialRevision =
+      ValueNotifier<int>(0);
+
+  /// Increases whenever a sync restores or replaces a provider credential
+  /// on this device, so provider screens that are already open can check
+  /// their connection again without being rebuilt.
+  static ValueListenable<int> get providerCredentialRevision =>
+      _providerCredentialRevision;
+
+  /// The secure-storage keys of [provider] that sync with the account.
+  static List<String> providerCredentialKeys(CloudProvider provider) =>
+      _providerCredentialKeys[provider]!;
 
   /// The signed-in user. A password recovery session is not a sign-in: while
   /// one is active this stays null, so nothing syncs into that account.
@@ -348,28 +385,208 @@ class OrvixAccountService {
     });
   }
 
+  /// Reconciles this device's provider credentials with the account.
+  ///
+  /// Per credential, against what this device last reconciled:
+  /// * changed here (connected, reconnected or refreshed): this device's
+  ///   value is uploaded;
+  /// * unchanged here but replaced in the cloud by another device: the cloud
+  ///   value is adopted;
+  /// * missing here: the cloud value is restored, unless this device
+  ///   explicitly disconnected the provider ([providerDisconnected]), in
+  ///   which case it is removed from the cloud instead;
+  /// * removed from the cloud by another device: kept here, not re-uploaded.
+  /// Before the first reconciliation for an account every value present
+  /// here counts as changed here.
+  ///
+  /// A failed upload never touches this device's credentials; the next sync
+  /// retries. Credential values are never logged or put into errors.
   static Future<void> syncCredentialsIfSignedIn() async {
     final user = currentUser;
     if (user == null || !_cloudWritesAllowed(user)) return;
+    await _serializeCredentials(() => _syncCredentials(user));
+  }
+
+  /// Uploads [provider]'s credentials right after it was connected on this
+  /// device (its service has already stored them). Never throws: when only
+  /// the upload fails, the provider stays connected here and the next sync
+  /// retries.
+  static Future<ProviderCredentialSyncResult> providerConnected(
+      CloudProvider provider) {
+    return _changeProviderCredentials(provider, disconnected: false);
+  }
+
+  /// Removes [provider]'s credentials from the account right after it was
+  /// disconnected on this device (its service has already deleted them).
+  /// Other providers are untouched. Never throws: when the cloud cannot be
+  /// reached, the removal is remembered and finished by a later sync, so the
+  /// old credential is never restored.
+  static Future<ProviderCredentialSyncResult> providerDisconnected(
+      CloudProvider provider) {
+    return _changeProviderCredentials(provider, disconnected: true);
+  }
+
+  static Future<ProviderCredentialSyncResult> _changeProviderCredentials(
+    CloudProvider provider, {
+    required bool disconnected,
+  }) async {
+    final keys = providerCredentialKeys(provider);
+    final user = currentUser;
+    final signedIn = user != null && _cloudWritesAllowed(user);
+    try {
+      return await _serializeCredentials(() async {
+        final state = await _readCredentialSyncState();
+        final ownState = signedIn && state.userId == user.id;
+        if (disconnected) {
+          // The fingerprints of a disconnected provider are never needed
+          // again; without an account the cloud copy is left alone.
+          state.synced.removeWhere((key, _) => keys.contains(key));
+          if (signedIn) {
+            if (!ownState) {
+              state
+                ..synced.clear()
+                ..removed.clear();
+            }
+            state.removed.addAll(keys);
+            await _writeCredentialSyncState(state, userId: user.id);
+          } else if (state.userId != null) {
+            await _writeCredentialSyncState(state, userId: state.userId!);
+          }
+        } else if (ownState && state.removed.any(keys.contains)) {
+          state.removed.removeWhere(keys.contains);
+          await _writeCredentialSyncState(state, userId: user.id);
+        }
+        if (!signedIn) return ProviderCredentialSyncResult.localOnly;
+        return await _syncCredentials(user)
+            ? ProviderCredentialSyncResult.synced
+            : ProviderCredentialSyncResult.localOnly;
+      });
+    } catch (_) {
+      // The error may come from the backend; it is not passed on so no
+      // response detail can reach the UI next to a credential.
+      return ProviderCredentialSyncResult.failed;
+    }
+  }
+
+  static Future<T> _serializeCredentials<T>(
+      Future<T> Function() action) async {
+    while (_credentialSyncRunning) {
+      final turn = Completer<void>();
+      _credentialSyncWaiters.add(turn);
+      await turn.future;
+    }
+    _credentialSyncRunning = true;
+    try {
+      return await action();
+    } finally {
+      _credentialSyncRunning = false;
+      if (_credentialSyncWaiters.isNotEmpty) {
+        _credentialSyncWaiters.removeAt(0).complete();
+      }
+    }
+  }
+
+  /// Returns false when nothing was synced because the account may no
+  /// longer be written to.
+  static Future<bool> _syncCredentials(OrvixAccountUser user) async {
+    if (!_cloudWritesAllowed(user)) return false;
+    final stored = await _readCredentialSyncState();
+    final state = stored.userId == user.id
+        ? stored
+        : _CredentialSyncState(userId: user.id);
     final local = <String, String>{};
     for (final key in _credentialKeys) {
       final value = await _secureStorage.read(key: key);
       if (value != null && value.isNotEmpty) local[key] = value;
     }
 
-    final remote = await backend.loadCredentials();
-    if (!_cloudWritesAllowed(user)) return;
-
-    final merged = <String, String>{...remote, ...local}
+    final remote = Map<String, String>.from(await backend.loadCredentials())
       ..removeWhere((_, value) => value.isEmpty);
-    for (final entry in merged.entries) {
-      if ((await _secureStorage.read(key: entry.key))?.isNotEmpty != true) {
-        await _secureStorage.write(key: entry.key, value: entry.value);
+    if (!_cloudWritesAllowed(user)) return false;
+
+    // Credentials this version does not know about stay in the cloud as is.
+    final merged = <String, String>{
+      for (final entry in remote.entries)
+        if (!_credentialKeys.contains(entry.key)) entry.key: entry.value,
+    };
+    final restore = <String, String>{};
+    for (final key in _credentialKeys) {
+      final mine = local[key];
+      final cloud = remote[key];
+      final last = state.synced[key];
+      if (mine == null) {
+        if (state.removed.contains(key)) continue;
+        if (cloud != null) merged[key] = restore[key] = cloud;
+        continue;
       }
+      final unchangedHere = last != null && _fingerprint(mine) == last;
+      if (!unchangedHere || cloud == mine) {
+        merged[key] = mine;
+      } else if (cloud != null) {
+        merged[key] = restore[key] = cloud;
+      }
+      // Otherwise another device removed it: keep it here, do not upload.
     }
-    if (merged.isNotEmpty && _cloudWritesAllowed(user)) {
+
+    for (final entry in restore.entries) {
+      await _secureStorage.write(key: entry.key, value: entry.value);
+    }
+    if (restore.isNotEmpty) _providerCredentialRevision.value++;
+
+    if (!mapEquals(merged, remote)) {
+      if (!_cloudWritesAllowed(user)) return false;
       await backend.saveCredentials(merged);
     }
+
+    final now = {...local, ...restore};
+    await _writeCredentialSyncState(
+      _CredentialSyncState(
+        userId: user.id,
+        synced: {
+          for (final entry in now.entries) entry.key: _fingerprint(entry.value),
+        },
+      ),
+      userId: user.id,
+    );
+    return true;
+  }
+
+  static String _fingerprint(String value) =>
+      sha256.convert(utf8.encode(value)).toString();
+
+  static Future<_CredentialSyncState> _readCredentialSyncState() async {
+    try {
+      final raw = await _secureStorage.read(key: _credentialSyncStateKey);
+      if (raw == null || raw.isEmpty) return _CredentialSyncState();
+      final json = jsonDecode(raw);
+      if (json is! Map) return _CredentialSyncState();
+      final synced = json['synced'];
+      final removed = json['removed'];
+      return _CredentialSyncState(
+        userId: json['user']?.toString(),
+        synced: synced is Map
+            ? synced.map((k, v) => MapEntry(k.toString(), v.toString()))
+            : null,
+        removed:
+            removed is List ? removed.map((e) => e.toString()).toSet() : null,
+      );
+    } catch (_) {
+      return _CredentialSyncState();
+    }
+  }
+
+  static Future<void> _writeCredentialSyncState(
+    _CredentialSyncState state, {
+    required String userId,
+  }) {
+    return _secureStorage.write(
+      key: _credentialSyncStateKey,
+      value: jsonEncode({
+        'user': userId,
+        'synced': state.synced,
+        'removed': state.removed.toList()..sort(),
+      }),
+    );
   }
 
   static Future<void> mergeCloudIntoLocal() async {
@@ -540,4 +757,37 @@ class OrvixAccountService {
       }
     }
   }
+}
+
+/// What happened to the account copy of a provider credential change.
+enum ProviderCredentialSyncResult {
+  /// Not signed in: the change stays on this device.
+  localOnly,
+
+  /// The account copy matches this device.
+  synced,
+
+  /// The account could not be updated. This device keeps its credentials
+  /// and the next sync retries.
+  failed,
+}
+
+/// What this device last reconciled with one account's credential cloud
+/// copy. Holds only SHA-256 fingerprints and key names, never values.
+class _CredentialSyncState {
+  _CredentialSyncState({
+    this.userId,
+    Map<String, String>? synced,
+    Set<String>? removed,
+  })  : synced = synced ?? <String, String>{},
+        removed = removed ?? <String>{};
+
+  final String? userId;
+
+  /// Key -> fingerprint of this device's value after the last sync.
+  final Map<String, String> synced;
+
+  /// Keys of providers disconnected here whose removal has not reached the
+  /// cloud yet.
+  final Set<String> removed;
 }
