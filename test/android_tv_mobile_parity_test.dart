@@ -3,41 +3,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('Android TV cloud login remains vertically reachable by DPAD', () {
-    final library = File('lib/screens/library_screen.dart').readAsStringSync();
-    final app = File('lib/app.dart').readAsStringSync();
-
-    expect(library, contains("PageStorageKey('torbox-login-scroll')"));
-    expect(library, contains("PageStorageKey('pikpak-login-scroll')"));
-    expect(library, contains('SingleChildScrollView'));
-    expect(
-      library,
-      contains('onSubmitted: (_) => _busy ? null : _connectApiKey()'),
-    );
-    expect(library, contains('textInputAction: TextInputAction.done'));
-    expect(library, contains("tv-linear-torbox-device"));
-    expect(library, contains("tv-linear-torbox-api-key"));
-    expect(library, contains("tv-linear-torbox-connect"));
-    expect(library, contains("tv-linear-debrid-token"));
-
-    expect(app, contains('HardwareKeyboard.instance.addHandler'));
-    expect(app, contains('HardwareKeyboard.instance.removeHandler'));
-    expect(app, contains('current.focusInDirection(direction)'));
-    expect(app, contains('current.nextFocus()'));
-    expect(app, contains('current.previousFocus()'));
-    expect(app, contains("debugLabel?.startsWith('tv-linear-')"));
-    expect(app, contains('route == null || !route.isCurrent'));
-    expect(app, contains('class _TvFocusAutoScroll'));
-    expect(app, contains('Scrollable.ensureVisible'));
-    expect(app, contains('alignment: 0.30'));
-    expect(
-      app,
-      contains('alignmentPolicy: ScrollPositionAlignmentPolicy.explicit'),
-    );
-    expect(app, contains('return PopScope('));
-    expect(app, contains('canPop: false'));
-    expect(app, contains('_selectDestination(0)'));
-  });
+  // Android TV DPAD reachability of Clouds, Account and the shell is covered
+  // by widget tests in tv_screens_test.dart and tv_shell_navigation_test.dart.
 
   test('Android mobile TV QR scanner owns camera lifecycle and recovery', () {
     final account = File('lib/screens/account_screen.dart').readAsStringSync();
@@ -53,17 +20,18 @@ void main() {
     expect(account, contains("'Retry camera'"));
     expect(account, contains("'Enter TV code'"));
     expect(account, contains("orvix-tv-qr-scanner-"));
-    expect(account, contains("tv-linear-account-sync"));
-    expect(account, contains("tv-linear-account-sign-out"));
     expect(account, contains("'Scan TV QR'"));
-    expect(account, contains('TvDeviceLoginService.approve(code)'));
+    // One scan approves once, after the user confirms the code.
+    expect(account, contains('_scanGate.accept(value)'));
+    expect(account, contains("'Sign in on this TV?'"));
+    expect(account, contains('TvDeviceLoginService.approveScanned(code)'));
     final backend = File('lib/services/supabase_orvix_account_backend.dart')
         .readAsStringSync();
     expect(backend, contains("'approve_tv_login_session'"));
     expect(backend, contains("'p_user_code': userCode"));
-    expect(account, contains("queryParameters['code']"));
-    expect(account, contains('final validCode = code.length == 6'));
-    expect(account, isNot(contains("RegExp(r'^[A-Z0-9]")));
+    final login =
+        File('lib/services/tv_device_login_service.dart').readAsStringSync();
+    expect(login, contains("queryParameters['code']"));
 
     expect(mobileCompat, contains('android.permission.CAMERA'));
     expect(mobileCompat, contains('android.hardware.camera'));

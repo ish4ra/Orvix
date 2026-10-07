@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 class PlatformProfile {
   PlatformProfile._();
 
@@ -7,6 +9,13 @@ class PlatformProfile {
   /// --dart-define=ORVIX_TV=true
   static const bool tvBuild = bool.fromEnvironment('ORVIX_TV');
 
-  static bool get isAndroidTv => Platform.isAndroid && tvBuild;
-  static bool get isAndroidMobile => Platform.isAndroid && !tvBuild;
+  /// Lets widget tests render the Android TV interface on the host platform.
+  /// Always null in the app.
+  @visibleForTesting
+  static bool? debugAndroidTvOverride;
+
+  static bool get isAndroidTv =>
+      debugAndroidTvOverride ?? (Platform.isAndroid && tvBuild);
+  static bool get isAndroidMobile =>
+      debugAndroidTvOverride == true ? false : Platform.isAndroid && !tvBuild;
 }

@@ -8,7 +8,32 @@ import '../services/ai_translation_credentials_service.dart';
 import '../services/online_subtitle_service.dart';
 import '../services/player_engine_preferences_service.dart';
 import '../services/subtitle_preferences_service.dart';
+import '../services/platform_profile.dart';
 import '../services/skip_segment_service.dart';
+import '../tv/tv_focus.dart';
+import '../tv/tv_theme.dart';
+import '../tv/tv_widgets.dart';
+
+/// Preferred online subtitle languages, in picker order.
+const _subtitleLanguages = <(String, String)>[
+  ('eng', 'English'),
+  ('sin', 'Sinhala'),
+  ('tam', 'Tamil'),
+  ('hin', 'Hindi'),
+  ('spa', 'Spanish'),
+  ('fre', 'French'),
+  ('ger', 'German'),
+  ('ita', 'Italian'),
+  ('por', 'Portuguese'),
+  ('dut', 'Dutch'),
+  ('rus', 'Russian'),
+  ('ara', 'Arabic'),
+  ('jpn', 'Japanese'),
+  ('kor', 'Korean'),
+  ('chi', 'Chinese'),
+  ('ind', 'Indonesian'),
+  ('tur', 'Turkish'),
+];
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -144,8 +169,179 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  String _languageLabel(String? code) {
+    final value =
+        code ?? SubtitlePreferencesService.defaultPreferredLanguage;
+    for (final (language, label) in _subtitleLanguages) {
+      if (language == value) return label;
+    }
+    return value.toUpperCase();
+  }
+
+  Future<void> _chooseTvSubtitleLanguage() async {
+    final value = await showTvOptionsDialog<String>(
+      context,
+      title: 'Online subtitle language',
+      options: _subtitleLanguages,
+      selected: _preferredSubtitleLanguage ??
+          SubtitlePreferencesService.defaultPreferredLanguage,
+    );
+    if (value != null && mounted) await _setPreferredSubtitleLanguage(value);
+  }
+
+  Future<void> _manageTvGeminiKey() async {
+    if (!_hasGeminiKey) return _configureGeminiKey();
+    final action = await showTvOptionsDialog<String>(
+      context,
+      title: 'Gemini translation key',
+      options: const [('replace', 'Replace key'), ('remove', 'Remove key')],
+      selected: 'replace',
+    );
+    if (!mounted) return;
+    if (action == 'replace') await _configureGeminiKey();
+    if (action == 'remove') await _removeGeminiKey();
+  }
+
+  Widget _tvSection(String title, List<Widget> tiles) => Padding(
+        padding: const EdgeInsets.only(bottom: 26),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TvSectionHeader(title),
+            const SizedBox(height: 12),
+            for (final tile in tiles) ...[
+              tile,
+              const SizedBox(height: 10),
+            ],
+          ],
+        ),
+      );
+
+  Widget _buildTv(BuildContext context) {
+    final engine = _playerEngine;
+    const engines = [
+      (PlayerEnginePreference.auto, 'Auto', Icons.auto_awesome_rounded),
+      (PlayerEnginePreference.exoPlayer, 'ExoPlayer', Icons.android_rounded),
+      (PlayerEnginePreference.mpv, 'MPV', Icons.movie_filter_rounded),
+    ];
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(
+        TvMetrics.pageHorizontal,
+        TvMetrics.pageTop,
+        TvMetrics.pageHorizontal,
+        TvMetrics.pageBottom,
+      ),
+      children: [
+        Align(
+          alignment: Alignment.topLeft,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 840),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const TvPageHeader(
+                  title: 'Settings',
+                  subtitle: 'Playback and subtitle preferences for Orvix.',
+                ),
+                const SizedBox(height: 24),
+                _tvSection('Player engine', [
+                  TvTabGroup(
+                    child: Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        for (final (value, label, icon) in engines)
+                          TvTab(
+                            key: ValueKey('tv-settings-engine-${value.name}'),
+                            label: label,
+                            icon: icon,
+                            selected: engine == value,
+                            preferred: value == PlayerEnginePreference.auto,
+                            onPressed: () => _setPlayerEngine(value),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const Text(
+                    'Auto: MPV on Android so embedded, external, and AI subtitles all use the subtitle-capable player path. If MPV cannot start, Orvix can fall back to ExoPlayer. Manual ExoPlayer remains a compatibility option for sources that need it, but subtitle features require MPV.',
+                    style: TvText.caption,
+                  ),
+                ]),
+                _tvSection('Playback', [
+                  TvSettingsTile(
+                    key: const ValueKey('tv-settings-skip'),
+                    icon: Icons.fast_forward_rounded,
+                    title: 'Skip intro, recap and outro',
+                    subtitle:
+                        'Use community timestamps from IntroDB to show skip actions during playback. Falls back to normal playback when no timestamp is available.',
+                    toggle: _skipSegments ?? true,
+                    enabled: _skipSegments != null,
+                    onPressed: () => _setSkipSegments(!(_skipSegments ?? true)),
+                  ),
+                ]),
+                _tvSection('Subtitles', [
+                  TvSettingsTile(
+                    key: const ValueKey('tv-settings-language'),
+                    icon: Icons.closed_caption_rounded,
+                    title: 'Online subtitle language',
+                    subtitle:
+                        'Placed first in the online subtitle picker. Every language returned by the addon stays selectable.',
+                    value: _languageLabel(_preferredSubtitleLanguage),
+                    onPressed: _chooseTvSubtitleLanguage,
+                  ),
+                  TvSettingsTile(
+                    key: const ValueKey('tv-settings-ai-sinhala'),
+                    icon: Icons.translate_rounded,
+                    title: 'AI Sinhala subtitles',
+                    badge: 'BETA',
+                    subtitle: AiSinhalaSubtitleService.canTranslate
+                        ? 'Currently available for Free P2P playback only. A Gemini API key is required and uses your own Gemini quota.'
+                        : 'Sign in to your Orvix account first. AI Sinhala is currently limited to Free P2P playback.',
+                    toggle: _aiSinhala ?? false,
+                    enabled: _aiSinhala != null,
+                    onPressed: () => _setAiSinhala(!(_aiSinhala ?? false)),
+                  ),
+                  TvSettingsTile(
+                    key: const ValueKey('tv-settings-gemini'),
+                    icon: Icons.key_rounded,
+                    title: 'Gemini translation key',
+                    subtitle:
+                        'Required for AI Sinhala. Stored in this device’s secure storage.',
+                    value: _hasGeminiKey ? 'Configured' : 'Not set',
+                    onPressed: _manageTvGeminiKey,
+                  ),
+                ]),
+                _tvSection('Built-in addon stack', const [
+                  TvInfoCard(
+                    icon: Icons.movie_filter_outlined,
+                    title: 'AIO Metadata + Cinemeta',
+                    text:
+                        'Rich metadata first, with Cinemeta v3 as the built-in movie/series fallback.',
+                  ),
+                  TvInfoCard(
+                    icon: Icons.subtitles_rounded,
+                    title: 'OpenSubtitles + SubDL fallback',
+                    text:
+                        'OpenSubtitles v3 powers the online picker; AI Sinhala also uses official OpenSubtitles exact-file matching and a server-side SubDL transcript fallback automatically.',
+                  ),
+                  TvInfoCard(
+                    icon: Icons.hub_rounded,
+                    title: 'Torrentio + provider pool',
+                    text:
+                        'Torrentio-compatible results plus the default Comet and MediaFusion provider pool. AIOStreams remains optional.',
+                  ),
+                ]),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (PlatformProfile.isAndroidTv) return _buildTv(context);
     final enabled = _aiSinhala;
     return ListView(
       padding: const EdgeInsets.all(34),
@@ -404,75 +600,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           labelText: 'Preferred language',
                           prefixIcon: Icon(Icons.language_rounded),
                         ),
-                        items: const [
-                          DropdownMenuItem(
-                            value: 'eng',
-                            child: Text('English'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'sin',
-                            child: Text('Sinhala'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'tam',
-                            child: Text('Tamil'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'hin',
-                            child: Text('Hindi'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'spa',
-                            child: Text('Spanish'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'fre',
-                            child: Text('French'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'ger',
-                            child: Text('German'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'ita',
-                            child: Text('Italian'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'por',
-                            child: Text('Portuguese'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'dut',
-                            child: Text('Dutch'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'rus',
-                            child: Text('Russian'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'ara',
-                            child: Text('Arabic'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'jpn',
-                            child: Text('Japanese'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'kor',
-                            child: Text('Korean'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'chi',
-                            child: Text('Chinese'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'ind',
-                            child: Text('Indonesian'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'tur',
-                            child: Text('Turkish'),
-                          ),
+                        items: [
+                          for (final (code, label) in _subtitleLanguages)
+                            DropdownMenuItem(
+                              value: code,
+                              child: Text(label),
+                            ),
                         ],
                         onChanged: (value) {
                           if (value != null) {

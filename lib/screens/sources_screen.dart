@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/platform_profile.dart';
 import '../services/source_provider_service.dart';
+import '../tv/tv_focus.dart';
+import '../tv/tv_theme.dart';
+import '../tv/tv_widgets.dart';
 
 class SourcesScreen extends StatefulWidget {
   const SourcesScreen({super.key, required this.sources});
@@ -202,8 +206,314 @@ class _SourcesScreenState extends State<SourcesScreen> {
     await _reload();
   }
 
+  Future<void> _moveTvCriterion(int index) async {
+    final last = _priority.length - 1;
+    final action = await showTvOptionsDialog<String>(
+      context,
+      title: '${index + 1}. ${_priority[index].label}',
+      options: [
+        if (index > 0) ('top', 'Move to top'),
+        if (index > 0) ('up', 'Move up'),
+        if (index < last) ('down', 'Move down'),
+      ],
+    );
+    if (action == null || !mounted) return;
+    final next = [..._priority];
+    final item = next.removeAt(index);
+    final target = switch (action) {
+      'top' => 0,
+      'up' => index - 1,
+      _ => index + 1,
+    };
+    next.insert(target, item);
+    await _setPriority(next);
+  }
+
+  Future<void> _confirmTvRemove(String url) async {
+    final remove = await showTvOptionsDialog<bool>(
+      context,
+      title: 'Remove ${widget.sources.providerName(url)}?',
+      options: const [(false, 'Keep'), (true, 'Remove provider')],
+      selected: false,
+    );
+    if (remove == true && mounted) await _remove(url);
+  }
+
+  Widget _tvSection(String title, String? text, List<Widget> children) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 28),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TvSectionHeader(title),
+            if (text != null) ...[
+              const SizedBox(height: 6),
+              Text(text, style: TvText.caption.copyWith(fontWeight: FontWeight.w500, height: 1.45)),
+            ],
+            const SizedBox(height: 14),
+            ...children,
+          ],
+        ),
+      );
+
+  Widget _buildTv(BuildContext context) {
+    final torrentio = _torrentioUrl;
+    final aioActive = _aioStreamsUrl != null;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(
+        TvMetrics.pageHorizontal,
+        TvMetrics.pageTop,
+        TvMetrics.pageHorizontal,
+        TvMetrics.pageBottom,
+      ),
+      children: [
+        Align(
+          alignment: Alignment.topLeft,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 840),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TvPageHeader(
+                  title: 'Source Engine',
+                  subtitle:
+                      'Orvix resolves Stremio-compatible stream providers in parallel, ranks results, then plays directly, through local P2P, or through your connected cloud/debrid service.',
+                  trailing: _busy
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2.4),
+                        )
+                      : null,
+                ),
+                if (_message != null) ...[
+                  const SizedBox(height: 14),
+                  Text(_message!,
+                      key: const ValueKey('tv-sources-message'),
+                      style: TvText.body.copyWith(color: TvColors.lime)),
+                ],
+                const SizedBox(height: 24),
+                _tvSection('Engine', null, [
+                  TvInfoCard(
+                    icon: Icons.hub_rounded,
+                    title: torrentio != null
+                        ? 'Torrentio-compatible engine • Active'
+                        : 'Torrentio-compatible engine • Not configured',
+                    text: torrentio != null
+                        ? 'Integrated into Orvix (${Uri.tryParse(torrentio)?.host ?? 'Torrentio'}). Limited profiles are supplemented with a broad request, then merged and de-duplicated.'
+                        : 'Add an authorized Torrentio-compatible endpoint under Provider pool and Orvix will reuse it automatically.',
+                  ),
+                ]),
+                _tvSection(
+                  'AIOStreams ${aioActive ? '• Active' : '• Optional'}',
+                  'The manifest can act like a credential, so Orvix stores it only on this device and never cloud-syncs it.',
+                  [
+                    TvTextField(
+                      controller: _aioStreamsController,
+                      enabled: !_busy,
+                      label: 'AIOStreams manifest URL',
+                      hint: 'https://…/stremio/…/manifest.json',
+                      icon: Icons.link_rounded,
+                      keyboardType: TextInputType.url,
+                    ),
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        TvButton(
+                          kind: TvButtonKind.primary,
+                          icon: Icons.save_outlined,
+                          label: aioActive ? 'Update manifest' : 'Connect manifest',
+                          busy: _busy,
+                          onPressed: _saveAioStreams,
+                        ),
+                        TvButton(
+                          icon: Icons.open_in_new_rounded,
+                          label: 'Open Midnight Stable setup',
+                          enabled: !_busy,
+                          onPressed: _openMidnightAioStreamsSetup,
+                        ),
+                        if (aioActive)
+                          TvButton(
+                            kind: TvButtonKind.quiet,
+                            icon: Icons.link_off_rounded,
+                            label: 'Disconnect',
+                            enabled: !_busy,
+                            onPressed: _clearAioStreams,
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+                _tvSection(
+                  'Source priority',
+                  'How sources are ranked. Press OK on a rule to move it. Default is cache → quality → resolution → file size → seeders.',
+                  [
+                    for (var i = 0; i < _priority.length; i++) ...[
+                      TvListRow(
+                        key: ValueKey('tv-priority-${_priority[i].name}'),
+                        icon: Icons.drag_indicator_rounded,
+                        leading: CircleAvatar(
+                          radius: 19,
+                          backgroundColor: TvColors.primary.withValues(alpha: .14),
+                          child: Text('${i + 1}',
+                              style: const TextStyle(
+                                  color: TvColors.lime,
+                                  fontWeight: FontWeight.w900)),
+                        ),
+                        title: _priority[i].label,
+                        trailingIcon: Icons.swap_vert_rounded,
+                        enabled: !_busy,
+                        onPressed: () => _moveTvCriterion(i),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TvButton(
+                        kind: TvButtonKind.quiet,
+                        icon: Icons.restart_alt_rounded,
+                        label: 'Reset best',
+                        enabled: !_busy,
+                        onPressed: () => _setPriority(
+                            [...SourceProviderService.defaultPriority]),
+                      ),
+                    ),
+                  ],
+                ),
+                _tvSection(
+                  'Result preferences',
+                  'Results shown in the source picker: any number from 1 to 500, or all results.',
+                  [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TvTextField(
+                            controller: _resultLimitController,
+                            enabled: !_busy,
+                            keyboardType: TextInputType.number,
+                            label: _resultLimit == 0 ? 'All results' : 'Top $_resultLimit',
+                            hint: 'e.g. 3',
+                            icon: Icons.numbers_rounded,
+                            onSubmitted: (_) => _saveResultLimit(),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        TvButton(
+                          kind: TvButtonKind.primary,
+                          icon: Icons.check_rounded,
+                          label: 'Apply',
+                          enabled: !_busy,
+                          onPressed: _saveResultLimit,
+                        ),
+                        const SizedBox(width: 12),
+                        TvButton(
+                          label: 'All results',
+                          enabled: !_busy,
+                          onPressed: _showAllResults,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    TvSettingsTile(
+                      icon: Icons.threed_rotation_rounded,
+                      title: 'Show 3D / SBS releases',
+                      subtitle:
+                          'Off by default. Hides SBS/HSBS/3D/top-bottom encodes that appear as a double image on a normal display.',
+                      toggle: _show3D,
+                      enabled: !_busy,
+                      onPressed: () => _setShow3D(!_show3D),
+                    ),
+                    const SizedBox(height: 10),
+                    TvSettingsTile(
+                      icon: Icons.low_priority_rounded,
+                      title: 'Show legacy / low-quality sources',
+                      subtitle:
+                          'Off by default when HD sources exist. Hides CAM, DVD and sub-720p clutter unless they are the only results.',
+                      toggle: _showLowQuality,
+                      enabled: !_busy,
+                      onPressed: () => _setShowLowQuality(!_showLowQuality),
+                    ),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TvTextField(
+                            controller: _preferredGroupsController,
+                            enabled: !_busy,
+                            label: 'Preferred release groups',
+                            hint: 'GROUP-A, GROUP-B',
+                            icon: Icons.star_outline_rounded,
+                            onSubmitted: (_) => _savePreferredGroups(),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        TvButton(
+                          icon: Icons.save_outlined,
+                          label: 'Save',
+                          enabled: !_busy,
+                          onPressed: _savePreferredGroups,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                _tvSection(
+                  'Provider pool',
+                  'Add Stremio-compatible providers you are authorized to use. Orvix queries them in parallel, merges the streams, then removes exact duplicates.',
+                  [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TvTextField(
+                            controller: _controller,
+                            enabled: !_busy,
+                            label: 'Provider manifest URL',
+                            hint: 'https://provider.example/manifest.json',
+                            icon: Icons.extension_outlined,
+                            keyboardType: TextInputType.url,
+                            onSubmitted: (_) => _add(),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        TvButton(
+                          kind: TvButtonKind.primary,
+                          icon: Icons.add_rounded,
+                          label: 'Save',
+                          busy: _busy,
+                          onPressed: _add,
+                        ),
+                      ],
+                    ),
+                    for (final url in _addons) ...[
+                      const SizedBox(height: 10),
+                      TvListRow(
+                        icon: url == _torrentioUrl
+                            ? Icons.bolt_rounded
+                            : Icons.hub_outlined,
+                        title: widget.sources.providerName(url),
+                        subtitle: url == _torrentioUrl
+                            ? 'Integrated • ${Uri.tryParse(url)?.host ?? url}'
+                            : url,
+                        trailingIcon: Icons.delete_outline_rounded,
+                        enabled: !_busy,
+                        onPressed: () => _confirmTvRemove(url),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (PlatformProfile.isAndroidTv) return _buildTv(context);
     final color = Theme.of(context).colorScheme;
     return ListView(
       padding: const EdgeInsets.fromLTRB(34, 30, 34, 60),

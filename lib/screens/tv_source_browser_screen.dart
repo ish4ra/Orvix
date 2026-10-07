@@ -7,6 +7,8 @@ import '../models/media_item.dart';
 import '../services/free_p2p_live_probe_service.dart';
 import '../services/local_torrent_service.dart';
 import '../services/source_provider_service.dart';
+import '../tv/tv_focus.dart';
+import '../tv/tv_theme.dart';
 import '../utils/tv_keys.dart';
 
 /// Android TV source picker.
@@ -549,7 +551,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          height: 42,
+          height: 46,
           child: ListView(
             scrollDirection: Axis.horizontal,
             children: [
@@ -573,7 +575,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
         ),
         const SizedBox(height: 8),
         SizedBox(
-          height: 42,
+          height: 46,
           child: ListView(
             scrollDirection: Axis.horizontal,
             children: [
@@ -688,7 +690,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(2, 2, 2, 30),
       itemCount: visible.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      separatorBuilder: (_, __) => const SizedBox(height: 10),
       itemBuilder: (context, index) {
         final source = visible[index];
         final pinned = widget.sources.matchesPinned(
@@ -775,20 +777,25 @@ class _TvSourceRowState extends State<_TvSourceRow> {
   @override
   Widget build(BuildContext context) {
     final source = widget.source;
-    final quality = source.quality ?? source.releaseQuality ?? '—';
+    final quality = (source.quality ?? source.releaseQuality ?? '—').toUpperCase();
+    final top = quality.contains('2160') || quality.contains('4K');
+    final hd = top || quality.contains('1080');
     final live = widget.liveProbe;
-    final detail = <String>[
-      source.provider,
-      if (source.cached) 'Cached',
-      if (source.sizeLabel != null) source.sizeLabel!,
-      if (source.seeders != null) '${source.seeders} seeders',
-      if (source.peers != null) '${source.peers} peers',
-      if (live != null) live.label,
-      if (live != null) live.speedLabel,
+    final focused = _focused;
+    final facts = <(IconData, String)>[
+      (Icons.extension_rounded, source.provider),
+      if (source.sizeLabel != null) (Icons.sd_storage_rounded, source.sizeLabel!),
+      if (source.seeders != null)
+        (Icons.arrow_upward_rounded, '${source.seeders} seeders'),
+      if (source.peers != null) (Icons.people_alt_rounded, '${source.peers} peers'),
+      if (source.cached) (Icons.bolt_rounded, 'Cached'),
+      (source.isMagnet ? Icons.hub_rounded : Icons.link_rounded,
+          source.isMagnet ? 'P2P' : 'Direct'),
+      if (source.preferredGroup) (Icons.star_rounded, 'Preferred group'),
+      if (live != null) (Icons.speed_rounded, '${live.label} • ${live.speedLabel}'),
       if (live != null && live.connections > 0)
-        '${live.connections} live connections',
-      source.isMagnet ? 'P2P' : 'Direct',
-    ].join('  •  ');
+        (Icons.lan_rounded, '${live.connections} live connections'),
+    ];
 
     return Focus(
       autofocus: widget.autofocus,
@@ -797,16 +804,24 @@ class _TvSourceRowState extends State<_TvSourceRow> {
           _holdOk.reset();
         }
         setState(() => _focused = value);
+        if (value) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _focused) tvReveal(context, margin: 24);
+          });
+        }
       },
       onKeyEvent: _handleKey,
+      child: AnimatedScale(
+      scale: focused ? 1.01 : 1,
+      duration: TvMetrics.focusDuration,
       child: AnimatedContainer(
-      duration: const Duration(milliseconds: 100),
+      duration: TvMetrics.focusDuration,
       decoration: BoxDecoration(
-        color: _focused ? const Color(0xFF222723) : const Color(0xFF141815),
-        borderRadius: BorderRadius.circular(14),
+        color: focused ? TvColors.cardFocused : TvColors.card,
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: _focused ? Colors.white : const Color(0xFF303631),
-          width: _focused ? 2 : 1,
+          color: focused ? TvColors.primary : TvColors.border,
+          width: focused ? TvMetrics.focusBorder : 1,
         ),
       ),
       child: Material(
@@ -818,31 +833,41 @@ class _TvSourceRowState extends State<_TvSourceRow> {
           splashColor: Colors.transparent,
           onTap: widget.busy ? null : widget.onPressed,
           onLongPress: widget.busy ? null : widget.onPinRequest,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(16),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 13, 16, 13),
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
             child: Row(
               children: [
                 Container(
-                  width: 70,
-                  height: 40,
+                  width: 82,
+                  height: 50,
                   alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF0E120F),
-                    borderRadius: BorderRadius.circular(9),
-                    border: Border.all(color: const Color(0xFF343B35)),
+                    color: top ? TvColors.primary : TvColors.surface,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: hd ? TvColors.primary : TvColors.borderStrong,
+                      width: hd ? 1.6 : 1,
+                    ),
                   ),
                   child: Text(
-                    quality.toUpperCase(),
+                    quality,
                     maxLines: 1,
                     overflow: TextOverflow.fade,
-                    style: const TextStyle(
-                      fontSize: 11,
+                    softWrap: false,
+                    style: TextStyle(
+                      color: top
+                          ? TvColors.onPrimary
+                          : hd
+                              ? TvColors.lime
+                              : TvColors.text,
+                      fontSize: 14,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
                 ),
-                const SizedBox(width: 15),
+                const SizedBox(width: 16),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -851,31 +876,47 @@ class _TvSourceRowState extends State<_TvSourceRow> {
                         source.title,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFFF0F2F0),
-                          fontSize: 14,
+                        style: TextStyle(
+                          color: focused ? TvColors.text : const Color(0xFFDCE3DB),
+                          fontSize: 14.5,
                           height: 1.35,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                      const SizedBox(height: 5),
-                      Text(
-                        detail,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFFA5AEA7),
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w600,
-                        ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 14,
+                        runSpacing: 4,
+                        children: [
+                          for (final (icon, label) in facts)
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(icon,
+                                    size: 14,
+                                    color: focused
+                                        ? TvColors.primary
+                                        : TvColors.textDim),
+                                const SizedBox(width: 5),
+                                Text(
+                                  label,
+                                  style: TvText.caption.copyWith(
+                                    color: focused
+                                        ? const Color(0xFFD3DBD2)
+                                        : TvColors.textMuted,
+                                  ),
+                                ),
+                              ],
+                            ),
+                        ],
                       ),
                       if (widget.assessment != null) ...[
-                        const SizedBox(height: 6),
+                        const SizedBox(height: 8),
                         Row(
                           children: [
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 7,
+                                horizontal: 8,
                                 vertical: 3,
                               ),
                               decoration: BoxDecoration(
@@ -901,21 +942,20 @@ class _TvSourceRowState extends State<_TvSourceRow> {
                                       : widget.assessment!.recommended
                                           ? const Color(0xFFC9EAA5)
                                           : const Color(0xFFB2BBB4),
-                                  fontSize: 9,
+                                  fontSize: 10.5,
                                   fontWeight: FontWeight.w900,
                                   letterSpacing: .45,
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 8),
+                            const SizedBox(width: 10),
                             Expanded(
                               child: Text(
                                 widget.assessment!.detail,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Color(0xFF8F9891),
-                                  fontSize: 10.5,
+                                style: TvText.caption.copyWith(
+                                  fontWeight: FontWeight.w500,
                                 ),
                               ),
                             ),
@@ -928,22 +968,29 @@ class _TvSourceRowState extends State<_TvSourceRow> {
                 const SizedBox(width: 14),
                 if (widget.busy)
                   const SizedBox(
-                    width: 26,
-                    height: 26,
+                    width: 28,
+                    height: 28,
                     child: CircularProgressIndicator(strokeWidth: 3),
                   )
                 else
                   Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        Icons.play_arrow_rounded,
-                        size: 32,
-                        color: _focused
-                            ? Colors.white
-                            : const Color(0xFF8F9891),
+                      AnimatedContainer(
+                        duration: TvMetrics.focusDuration,
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: focused ? TvColors.primary : Colors.transparent,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.play_arrow_rounded,
+                          size: 28,
+                          color: focused ? TvColors.onPrimary : TvColors.textMuted,
+                        ),
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 4),
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -953,17 +1000,17 @@ class _TvSourceRowState extends State<_TvSourceRow> {
                                 : Icons.push_pin_outlined,
                             size: 12,
                             color: widget.pinned
-                                ? const Color(0xFFB9FF45)
-                                : const Color(0xFF8F9891),
+                                ? TvColors.primary
+                                : TvColors.textDim,
                           ),
                           const SizedBox(width: 3),
                           Text(
                             widget.pinned ? 'Pinned' : 'Hold OK',
                             style: TextStyle(
                               color: widget.pinned
-                                  ? const Color(0xFFB9FF45)
-                                  : const Color(0xFF8F9891),
-                              fontSize: 9.5,
+                                  ? TvColors.primary
+                                  : TvColors.textDim,
+                              fontSize: 10.5,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
@@ -975,6 +1022,7 @@ class _TvSourceRowState extends State<_TvSourceRow> {
             ),
           ),
         ),
+      ),
       ),
       ),
     );
@@ -1007,17 +1055,21 @@ class _TvFilterChipState extends State<_TvFilterChip> {
   Widget build(BuildContext context) {
     final selected = widget.selected;
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 90),
+      duration: TvMetrics.focusDuration,
       decoration: BoxDecoration(
-        color: selected ? const Color(0xFF263B18) : const Color(0xFF141815),
-        borderRadius: BorderRadius.circular(11),
+        color: _focused
+            ? TvColors.cardFocused
+            : selected
+                ? const Color(0xFF16220F)
+                : TvColors.card,
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: _focused
-              ? Colors.white
+              ? TvColors.primary
               : selected
-                  ? const Color(0xFFB9FF45)
-                  : const Color(0xFF303631),
-          width: _focused ? 2 : 1,
+                  ? TvColors.primary.withValues(alpha: .55)
+                  : TvColors.border,
+          width: _focused ? TvMetrics.focusBorder : 1,
         ),
       ),
       child: Material(
@@ -1030,13 +1082,13 @@ class _TvFilterChipState extends State<_TvFilterChip> {
           onTap: widget.onPressed,
           borderRadius: BorderRadius.circular(11),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
                   selected ? Icons.check_rounded : widget.icon,
-                  size: 17,
+                  size: 18,
                   color: selected
                       ? const Color(0xFFB9FF45)
                       : const Color(0xFFCFD6D0),
@@ -1046,9 +1098,9 @@ class _TvFilterChipState extends State<_TvFilterChip> {
                   widget.label,
                   style: TextStyle(
                     color: selected
-                        ? const Color(0xFFE8FFD0)
+                        ? TvColors.lime
                         : const Color(0xFFE0E5E1),
-                    fontSize: 12,
+                    fontSize: 13,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -1101,8 +1153,8 @@ class _TvHeaderButtonState extends State<_TvHeaderButton> {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: _focused ? Colors.white : const Color(0xFF303731),
-              width: _focused ? 2 : 1,
+              color: _focused ? TvColors.primary : const Color(0xFF303731),
+              width: _focused ? TvMetrics.focusBorder : 1,
             ),
           ),
           alignment: Alignment.center,

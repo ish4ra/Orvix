@@ -439,10 +439,20 @@ class SupabaseOrvixAccountBackend implements OrvixAccountBackend {
           'p_device_code': deviceCode,
           'p_device_nonce': deviceNonce,
         }));
-    if (raw is! List || raw.isEmpty || raw.first is! Map) {
-      throw StateError('TV login session is no longer available.');
-    }
+    // No row: the login does not exist for this device code and nonce.
+    if (raw is! List || raw.isEmpty || raw.first is! Map) return null;
     return (raw.first as Map)['status']?.toString().toLowerCase();
+  }
+
+  @override
+  Future<void> cancelTvLogin({
+    required String deviceCode,
+    required String deviceNonce,
+  }) async {
+    await _guard(() => _client.rpc('cancel_tv_login_session', params: {
+          'p_device_code': deviceCode,
+          'p_device_nonce': deviceNonce,
+        }));
   }
 
   @override
@@ -450,20 +460,39 @@ class SupabaseOrvixAccountBackend implements OrvixAccountBackend {
     required String deviceCode,
     required String deviceNonce,
   }) async {
-    final response = await _guard(() => _client.functions.invoke(
-          'tv-login-exchange',
-          body: {'device_code': deviceCode, 'device_nonce': deviceNonce},
-        ));
+    final FunctionResponse response;
+    try {
+      response = await _guard(() => _client.functions.invoke(
+            'tv-login-exchange',
+            body: {'device_code': deviceCode, 'device_nonce': deviceNonce},
+          ));
+    } on FunctionException catch (error) {
+      throw OrvixTvLoginException(_tvExchangeFailure(error));
+    }
     if (response.status < 200 ||
         response.status >= 300 ||
         response.data is! Map) {
-      throw StateError('Could not exchange the approved TV login.');
+      throw const OrvixTvLoginException(OrvixTvLoginErrorKind.unavailable);
     }
     final refreshToken = (response.data as Map)['refresh_token']?.toString();
     if (refreshToken == null || refreshToken.isEmpty) {
-      throw StateError('TV login did not return a session.');
+      throw const OrvixTvLoginException(OrvixTvLoginErrorKind.unavailable);
     }
     return refreshToken;
+  }
+
+  static OrvixTvLoginErrorKind _tvExchangeFailure(FunctionException error) {
+    final code = _functionError(error);
+    return switch ((error.status, code)) {
+      (409, 'exchange_in_progress') => OrvixTvLoginErrorKind.busy,
+      (409, _) => OrvixTvLoginErrorKind.rejected,
+      // The previous Edge Function reported a database error as claim_failed.
+      (400, 'claim_failed') => OrvixTvLoginErrorKind.unavailable,
+      (400, _) => OrvixTvLoginErrorKind.rejected,
+      (401 || 403 || 404, _) => OrvixTvLoginErrorKind.configuration,
+      (429, _) => OrvixTvLoginErrorKind.busy,
+      _ => OrvixTvLoginErrorKind.unavailable,
+    };
   }
 
   @override
@@ -472,10 +501,18 @@ class SupabaseOrvixAccountBackend implements OrvixAccountBackend {
 
   @override
   Future<bool> approveTvLogin(String userCode) async {
-    final approved = await _guard(() => _client.rpc(
-          'approve_tv_login_session',
-          params: {'p_user_code': userCode},
-        ));
+    final Object? approved;
+    try {
+      approved = await _guard(() => _client.rpc(
+            'approve_tv_login_session',
+            params: {'p_user_code': userCode},
+          ));
+    } on PostgrestException catch (error) {
+      if (error.hint == 'tv_login_rate_limited') {
+        throw const OrvixTvLoginException(OrvixTvLoginErrorKind.rateLimited);
+      }
+      rethrow;
+    }
     return approved == true;
   }
 }

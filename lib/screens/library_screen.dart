@@ -12,6 +12,9 @@ import '../services/player_engine_preferences_service.dart';
 import '../services/torbox_service.dart';
 import '../services/real_debrid_service.dart';
 import '../services/premiumize_service.dart';
+import '../tv/tv_focus.dart';
+import '../tv/tv_theme.dart';
+import '../tv/tv_widgets.dart';
 import 'android_exo_player_screen.dart';
 import 'player_screen.dart';
 
@@ -101,8 +104,43 @@ class _LibraryScreenState extends State<LibraryScreen> {
     await widget.cloudPreferences.setPreferred(provider);
   }
 
+  Widget _pane() {
+    return _provider == CloudProvider.pikpak
+        ? _PikPakPane(
+            key: const ValueKey('pikpak'), pikpak: widget.pikpak, transfer: widget.transfer, playback: widget.playback, onAuthChanged: widget.onAuthChanged)
+        : _provider == CloudProvider.torbox
+            ? _TorBoxPane(key: const ValueKey('torbox'), torbox: widget.torbox, playback: widget.playback, onAuthChanged: widget.onAuthChanged)
+            : _TokenDebridPane(
+                key: ValueKey(_provider.name),
+                provider: _provider,
+                onAuthChanged: widget.onAuthChanged,
+              );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (PlatformProfile.isAndroidTv) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              TvMetrics.pageHorizontal,
+              TvMetrics.pageTop,
+              TvMetrics.pageHorizontal,
+              0,
+            ),
+            child: TvCloudProviderTabs(
+              provider: _provider,
+              onSelected: _select,
+            ),
+          ),
+          // No cross-fade on TV: two panes on screen at once would both
+          // accept focus.
+          Expanded(child: _pane()),
+        ],
+      );
+    }
     final mobile = PlatformProfile.isAndroidMobile;
     return Column(
       children: [
@@ -110,21 +148,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
           provider: _provider,
           onSelected: _select,
           mobile: mobile,
-          tv: PlatformProfile.isAndroidTv,
         ),
         Expanded(
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 180),
-            child: _provider == CloudProvider.pikpak
-                ? _PikPakPane(
-                    key: const ValueKey('pikpak'), pikpak: widget.pikpak, transfer: widget.transfer, playback: widget.playback, onAuthChanged: widget.onAuthChanged)
-                : _provider == CloudProvider.torbox
-                    ? _TorBoxPane(key: const ValueKey('torbox'), torbox: widget.torbox, playback: widget.playback, onAuthChanged: widget.onAuthChanged)
-                    : _TokenDebridPane(
-                        key: ValueKey(_provider.name),
-                        provider: _provider,
-                        onAuthChanged: widget.onAuthChanged,
-                      ),
+            child: _pane(),
           ),
         ),
       ],
@@ -146,23 +174,21 @@ enum CloudsHeaderLayout {
 
 /// The "Clouds" title and the provider selector.
 ///
-/// Android Mobile and Android TV keep their fixed layouts. Desktop picks a
-/// layout from the width it is actually given, so a narrow Windows or macOS
-/// window never squeezes the labelled segments until their labels wrap one
-/// character per line.
+/// Android Mobile keeps its fixed layout. Desktop picks a layout from the
+/// width it is actually given, so a narrow Windows or macOS window never
+/// squeezes the labelled segments until their labels wrap one character per
+/// line. Android TV uses [TvCloudProviderTabs] instead.
 class CloudsHeader extends StatelessWidget {
   const CloudsHeader({
     super.key,
     required this.provider,
     required this.onSelected,
     required this.mobile,
-    required this.tv,
   });
 
   final CloudProvider provider;
   final ValueChanged<CloudProvider> onSelected;
   final bool mobile;
-  final bool tv;
 
   static const _inlineGap = 24.0;
 
@@ -264,15 +290,7 @@ class CloudsHeader extends StatelessWidget {
                 SizedBox(width: double.infinity, child: providerSelector),
               ],
             )
-          : tv
-              ? Row(
-                  children: [
-                    heading,
-                    const Spacer(),
-                    Flexible(child: providerSelector),
-                  ],
-                )
-              : LayoutBuilder(
+          : LayoutBuilder(
                   builder: (context, constraints) {
                     switch (layoutFor(context, constraints.maxWidth)) {
                       case CloudsHeaderLayout.inline:
@@ -376,6 +394,237 @@ class _CloudProviderMenu extends StatelessWidget {
   }
 }
 
+/// Android TV provider selector: four labelled tabs in one row, or a 2x2
+/// grid when the screen is too narrow, so no label is ever squeezed.
+/// Selecting a provider keeps focus on its tab.
+class TvCloudProviderTabs extends StatefulWidget {
+  const TvCloudProviderTabs({
+    super.key,
+    required this.provider,
+    required this.onSelected,
+  });
+
+  final CloudProvider provider;
+  final ValueChanged<CloudProvider> onSelected;
+
+  static const tabWidth = 186.0;
+  static const gap = 12.0;
+
+  @override
+  State<TvCloudProviderTabs> createState() => _TvCloudProviderTabsState();
+}
+
+class _TvCloudProviderTabsState extends State<TvCloudProviderTabs> {
+  late final Map<CloudProvider, FocusNode> _nodes = {
+    for (final provider in CloudProvider.values)
+      provider: FocusNode(debugLabel: 'tv-cloud-${provider.name}'),
+  };
+
+  @override
+  void didUpdateWidget(covariant TvCloudProviderTabs oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The saved provider is restored after the first frame; if focus is
+    // still on the tab that was selected then, follow the selection.
+    if (oldWidget.provider != widget.provider &&
+        _nodes[oldWidget.provider]!.hasPrimaryFocus) {
+      final node = _nodes[widget.provider]!;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && tvCanFocus(node)) tvRequestFocus(node);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final node in _nodes.values) {
+      node.dispose();
+    }
+    super.dispose();
+  }
+
+  /// The tab width that shows every label in full with the current font and
+  /// text scale.
+  double _neededTabWidth(BuildContext context) {
+    var widest = 0.0;
+    final style = DefaultTextStyle.of(context)
+        .style
+        .merge(TvText.label.copyWith(fontWeight: FontWeight.w900));
+    for (final provider in CloudProvider.values) {
+      final painter = TextPainter(
+        text: TextSpan(text: provider.label, style: style),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+        maxLines: 1,
+      )..layout();
+      if (painter.width > widest) widest = painter.width;
+      painter.dispose();
+    }
+    // Padding, icon, gap, selected dot, border, plus a little slack.
+    return widest + 36 + 20 + 10 + 15 + 6 + 8;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const TvPageHeader(
+          title: 'Clouds',
+          subtitle: 'Connect a cloud or debrid service, then play straight from it.',
+        ),
+        const SizedBox(height: 18),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            const count = 4;
+            final tab = _neededTabWidth(context)
+                .clamp(TvCloudProviderTabs.tabWidth, double.infinity);
+            final row = constraints.maxWidth >=
+                tab * count + TvCloudProviderTabs.gap * (count - 1);
+            // Too narrow for one row: a 2x2 grid, never squeezed labels.
+            final width = row
+                ? tab
+                : (constraints.maxWidth - TvCloudProviderTabs.gap) / 2;
+            return TvTabGroup(child: Wrap(
+              spacing: TvCloudProviderTabs.gap,
+              runSpacing: TvCloudProviderTabs.gap,
+              children: [
+                for (final provider in CloudProvider.values)
+                  TvTab(
+                    key: ValueKey('tv-cloud-tab-${provider.name}'),
+                    focusNode: _nodes[provider],
+                    width: width,
+                    icon: CloudsHeader.iconFor(provider),
+                    label: provider.label,
+                    selected: provider == widget.provider,
+                    preferred: provider == widget.provider,
+                    onPressed: () => widget.onSelected(provider),
+                  ),
+              ],
+            ));
+          },
+        ),
+      ],
+    );
+  }
+}
+
+/// Intro block shown above a TV sign-in form.
+Widget _tvCloudIntro({
+  required IconData icon,
+  required String title,
+  required String text,
+}) =>
+    Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                color: TvColors.primary.withValues(alpha: .14),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: TvColors.primary, size: 24),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TvText.section.copyWith(fontSize: 22)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Text(text, style: TvText.body),
+      ],
+    );
+
+/// A TV sign-in form column: readable width, scrolls with focus, entered at
+/// [entry] when focus comes down from the provider tabs.
+Widget _tvForm(List<Widget> children, {Key? key, FocusNode? entry}) =>
+    TvFocusEntry(
+      entry: entry,
+      child: SingleChildScrollView(
+      key: key,
+      padding: const EdgeInsets.fromLTRB(
+        TvMetrics.pageHorizontal,
+        24,
+        TvMetrics.pageHorizontal,
+        TvMetrics.pageBottom,
+      ),
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: children,
+          ),
+        ),
+      ),
+    ),
+    );
+
+Widget _tvMessage(String? message) => message == null
+    ? const SizedBox.shrink()
+    : Padding(
+        padding: const EdgeInsets.only(top: 14),
+        child: Text(
+          message,
+          key: const ValueKey('tv-cloud-message'),
+          maxLines: 4,
+          overflow: TextOverflow.ellipsis,
+          style: TvText.caption.copyWith(fontSize: 13.5),
+        ),
+      );
+
+/// Header of a connected TV cloud library: title, then its actions.
+Widget _tvLibraryHeader({
+  required String title,
+  required String subtitle,
+  required List<Widget> actions,
+}) =>
+    Padding(
+      padding: const EdgeInsets.fromLTRB(
+          TvMetrics.pageHorizontal, 22, TvMetrics.pageHorizontal, 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TvText.section.copyWith(fontSize: 21)),
+                const SizedBox(height: 4),
+                Text(subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TvText.caption),
+              ],
+            ),
+          ),
+          for (final action in actions) ...[
+            const SizedBox(width: 12),
+            action,
+          ],
+        ],
+      ),
+    );
+
+/// On TV, moves focus to [node] once the next frame has built it (used when
+/// a form is replaced by the connected view).
+void _tvFocusAfterBuild(State state, FocusNode node) {
+  if (!PlatformProfile.isAndroidTv) return;
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (state.mounted && tvCanFocus(node)) tvRequestFocus(node);
+  });
+}
+
 class _PikPakPane extends StatefulWidget {
   const _PikPakPane({super.key, required this.pikpak, required this.transfer, required this.playback, required this.onAuthChanged});
   final PikPakService pikpak;
@@ -389,9 +638,11 @@ class _PikPakPane extends StatefulWidget {
 class _PikPakPaneState extends State<_PikPakPane> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _usernameFocusNode = FocusNode(debugLabel: 'tv-linear-pikpak-username');
-  final _passwordFocusNode = FocusNode(debugLabel: 'tv-linear-pikpak-password');
-  final _signInFocusNode = FocusNode(debugLabel: 'tv-linear-pikpak-sign-in');
+  final _usernameFocusNode = FocusNode(debugLabel: 'pikpak-username');
+  final _passwordFocusNode = FocusNode(debugLabel: 'pikpak-password');
+  final _signInFocusNode = FocusNode(debugLabel: 'pikpak-sign-in');
+  final _firstFileFocusNode = FocusNode(debugLabel: 'pikpak-first-file');
+  final _refreshFocusNode = FocusNode(debugLabel: 'pikpak-refresh');
   final List<_FolderCrumb> _crumbs = [const _FolderCrumb('', 'My PikPak')];
   bool _checkingSession = true;
   bool _signedIn = false;
@@ -411,6 +662,8 @@ class _PikPakPaneState extends State<_PikPakPane> {
     _usernameFocusNode.dispose();
     _passwordFocusNode.dispose();
     _signInFocusNode.dispose();
+    _firstFileFocusNode.dispose();
+    _refreshFocusNode.dispose();
     super.dispose();
   }
 
@@ -434,7 +687,7 @@ class _PikPakPaneState extends State<_PikPakPane> {
       final result = await widget.pikpak.login(_usernameController.text, _passwordController.text);
       if (!mounted) return;
       setState(() { _busy = false; _message = result.message; _verificationUrl = result.verificationUrl; _signedIn = result.ok; if (result.ok) _passwordController.clear(); });
-      if (result.ok) { widget.onAuthChanged(); await _refreshLibrary(); }
+      if (result.ok) { widget.onAuthChanged(); _tvFocusAfterBuild(this, _refreshFocusNode); await _refreshLibrary(); }
     } catch (e) { if (mounted) setState(() { _busy = false; _message = 'Sign in failed: $e'; }); }
   }
 
@@ -475,16 +728,156 @@ class _PikPakPaneState extends State<_PikPakPane> {
     if (!mounted) return;
     setState(() { _signedIn = false; _files = const []; _crumbs..clear()..add(const _FolderCrumb('', 'My PikPak')); _message = 'Signed out.'; });
     widget.onAuthChanged();
+    _tvFocusAfterBuild(this, _usernameFocusNode);
+  }
+
+  Future<void> _openFolder(_FolderCrumb crumb) async {
+    _crumbs.add(crumb);
+    await _refreshLibrary();
+    _focusFirstFile();
+  }
+
+  Future<void> _closeFolder() async {
+    _crumbs.removeLast();
+    await _refreshLibrary();
+    _focusFirstFile();
+  }
+
+  /// After a folder change on TV, start at the top of the new list.
+  void _focusFirstFile() {
+    if (!PlatformProfile.isAndroidTv || !mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final target = _files.isNotEmpty ? _firstFileFocusNode : _refreshFocusNode;
+      if (tvCanFocus(target)) tvRequestFocus(target);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     if (_checkingSession) return const Center(child: CircularProgressIndicator());
+    if (PlatformProfile.isAndroidTv) {
+      return _signedIn ? _buildTvLibrary() : _buildTvLogin();
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(32, 24, 32, 32),
       child: _signedIn ? _buildLibrary(context) : _buildLogin(context),
     );
   }
+
+  Widget _buildTvLogin() => _tvForm(key: const PageStorageKey('pikpak-login-scroll'), entry: _usernameFocusNode, [
+    _tvCloudIntro(
+      icon: Icons.cloud_rounded,
+      title: 'Connect PikPak',
+      text: 'Browse and play your PikPak cloud library directly inside Orvix.',
+    ),
+    const SizedBox(height: 22),
+    TvTextField(
+      key: const ValueKey('tv-pikpak-username'),
+      controller: _usernameController,
+      focusNode: _usernameFocusNode,
+      nextFocusNode: _passwordFocusNode,
+      enabled: !_busy,
+      label: 'Email / username',
+      icon: Icons.person_outline,
+      textInputAction: TextInputAction.next,
+    ),
+    const SizedBox(height: 14),
+    TvTextField(
+      key: const ValueKey('tv-pikpak-password'),
+      controller: _passwordController,
+      focusNode: _passwordFocusNode,
+      nextFocusNode: _signInFocusNode,
+      enabled: !_busy,
+      obscureText: true,
+      label: 'Password',
+      icon: Icons.lock_outline,
+    ),
+    const SizedBox(height: 20),
+    TvButton(
+      key: const ValueKey('tv-pikpak-sign-in'),
+      expanded: true,
+      focusNode: _signInFocusNode,
+      kind: TvButtonKind.primary,
+      icon: Icons.login,
+      label: 'Sign in to PikPak',
+      busy: _busy,
+      onPressed: _signIn,
+    ),
+    _tvMessage(_message),
+    if (_verificationUrl != null) ...[
+      const SizedBox(height: 14),
+      TvButton(
+        expanded: true,
+        icon: Icons.verified_user_outlined,
+        label: 'Open verification',
+        onPressed: _openVerification,
+      ),
+    ],
+  ]);
+
+  Widget _buildTvLibrary() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      _tvLibraryHeader(
+        title: _crumbs.last.name,
+        subtitle: _crumbs.map((e) => e.name).join(' / '),
+        actions: [
+          if (_crumbs.length > 1)
+            TvButton(
+              icon: Icons.arrow_back_rounded,
+              label: 'Back',
+              enabled: !_busy,
+              onPressed: _closeFolder,
+            ),
+          TvButton(
+            focusNode: _refreshFocusNode,
+            icon: Icons.refresh,
+            label: 'Refresh',
+            busy: _busy,
+            onPressed: _refreshLibrary,
+          ),
+          TvButton(
+            icon: Icons.logout_rounded,
+            label: 'Sign out',
+            enabled: !_busy,
+            onPressed: _signOut,
+          ),
+        ],
+      ),
+      if (_message != null)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: TvMetrics.pageHorizontal),
+          child: _tvMessage(_message),
+        ),
+      Expanded(
+        child: _files.isEmpty && !_busy
+            ? const TvMessage(
+                icon: Icons.folder_open_rounded,
+                title: 'This folder is empty',
+              )
+            : ListView.separated(
+                padding: const EdgeInsets.fromLTRB(
+                    TvMetrics.pageHorizontal, 10, TvMetrics.pageHorizontal, TvMetrics.pageBottom),
+                itemCount: _files.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 10),
+                itemBuilder: (context, index) {
+                  final file = _files[index];
+                  return TvListRow(
+                    key: ValueKey('tv-pikpak-${file.id}'),
+                    focusNode: index == 0 ? _firstFileFocusNode : null,
+                    icon: file.isFolder ? Icons.folder_rounded : Icons.movie_rounded,
+                    title: file.name,
+                    subtitle: file.isFolder ? 'Folder' : [(file.mimeType ?? file.kind), _formatFileSize(file.size)].where((e) => e.trim().isNotEmpty).join(' • '),
+                    trailingIcon: file.isFolder ? Icons.chevron_right_rounded : Icons.play_circle_fill_rounded,
+                    enabled: !_busy,
+                    onPressed: () async { if (file.isFolder) { await _openFolder(_FolderCrumb(file.id, file.name)); } else { await _playFile(file); } },
+                  );
+                },
+              ),
+      ),
+    ],
+  );
 
   Widget _buildLogin(BuildContext context) => SingleChildScrollView(
     key: const PageStorageKey('pikpak-login-scroll'),
@@ -580,9 +973,10 @@ class _TorBoxPane extends StatefulWidget {
 
 class _TorBoxPaneState extends State<_TorBoxPane> {
   final _apiKeyController = TextEditingController();
-  final _deviceLoginFocusNode = FocusNode(debugLabel: 'tv-linear-torbox-device');
-  final _apiKeyFocusNode = FocusNode(debugLabel: 'tv-linear-torbox-api-key');
-  final _connectFocusNode = FocusNode(debugLabel: 'tv-linear-torbox-connect');
+  final _deviceLoginFocusNode = FocusNode(debugLabel: 'torbox-device');
+  final _apiKeyFocusNode = FocusNode(debugLabel: 'torbox-api-key');
+  final _connectFocusNode = FocusNode(debugLabel: 'torbox-connect');
+  final _refreshFocusNode = FocusNode(debugLabel: 'torbox-refresh');
   bool _checking = true;
   bool _connected = false;
   bool _busy = false;
@@ -598,6 +992,7 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
     _deviceLoginFocusNode.dispose();
     _apiKeyFocusNode.dispose();
     _connectFocusNode.dispose();
+    _refreshFocusNode.dispose();
     super.dispose();
   }
 
@@ -616,6 +1011,7 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
       if (!mounted) return;
       setState(() => _connected = true);
       widget.onAuthChanged();
+      _tvFocusAfterBuild(this, _refreshFocusNode);
       await _refresh();
     } catch (e) { if (mounted) setState(() { _busy = false; _message = '$e'; }); }
   }
@@ -644,7 +1040,7 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
           actions: [
             TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
             OutlinedButton.icon(onPressed: () async { final uri = Uri.tryParse(auth.verificationUrl); if (uri != null) await launchUrl(uri, mode: LaunchMode.externalApplication); }, icon: const Icon(Icons.open_in_new), label: const Text('Open TorBox')),
-            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('I authorized it')),
+            FilledButton(autofocus: PlatformProfile.isAndroidTv, onPressed: () => Navigator.pop(dialogContext, true), child: const Text('I authorized it')),
           ],
         ),
       );
@@ -661,6 +1057,7 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
       if (!ok) { setState(() { _busy = false; _message = 'TorBox authorization is still pending. Try Device Login again.'; }); return; }
       setState(() => _connected = true);
       widget.onAuthChanged();
+      _tvFocusAfterBuild(this, _refreshFocusNode);
       await _refresh();
     } catch (e) { if (mounted) setState(() { _busy = false; _message = '$e'; }); }
   }
@@ -701,16 +1098,129 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
     if (!mounted) return;
     setState(() { _connected = false; _account = null; _items = const []; _message = 'Signed out.'; });
     widget.onAuthChanged();
+    _tvFocusAfterBuild(this, _deviceLoginFocusNode);
   }
 
   @override
   Widget build(BuildContext context) {
     if (_checking) return const Center(child: CircularProgressIndicator());
+    if (PlatformProfile.isAndroidTv) {
+      return _connected ? _buildTvLibrary() : _buildTvLogin();
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(32, 24, 32, 32),
       child: _connected ? _buildLibrary(context) : _buildLogin(context),
     );
   }
+
+  Widget _buildTvLogin() => _tvForm(key: const PageStorageKey('torbox-login-scroll'), entry: _deviceLoginFocusNode, [
+    _tvCloudIntro(
+      icon: Icons.bolt_rounded,
+      title: 'Connect TorBox',
+      text: 'Use TorBox device login, or enter your API key. Orvix stores the token in secure storage.',
+    ),
+    const SizedBox(height: 22),
+    TvButton(
+      key: const ValueKey('tv-torbox-device'),
+      expanded: true,
+      focusNode: _deviceLoginFocusNode,
+      kind: TvButtonKind.primary,
+      icon: Icons.devices_rounded,
+      label: 'Sign in with TorBox device code',
+      busy: _busy,
+      onPressed: _connectDevice,
+    ),
+    const Padding(
+      padding: EdgeInsets.symmetric(vertical: 18),
+      child: Row(children: [
+        Expanded(child: Divider(color: TvColors.border)),
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: 12),
+          child: Text('OR', style: TvText.caption),
+        ),
+        Expanded(child: Divider(color: TvColors.border)),
+      ]),
+    ),
+    TvTextField(
+      key: const ValueKey('tv-torbox-api-key'),
+      controller: _apiKeyController,
+      focusNode: _apiKeyFocusNode,
+      nextFocusNode: _connectFocusNode,
+      enabled: !_busy,
+      obscureText: true,
+      label: 'TorBox API key',
+      icon: Icons.key_rounded,
+    ),
+    const SizedBox(height: 16),
+    TvButton(
+      key: const ValueKey('tv-torbox-connect'),
+      expanded: true,
+      focusNode: _connectFocusNode,
+      icon: Icons.link_rounded,
+      label: 'Connect with API key',
+      busy: _busy,
+      onPressed: _connectApiKey,
+    ),
+    _tvMessage(_message),
+  ]);
+
+  Widget _buildTvLibrary() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      _tvLibraryHeader(
+        title: _account?.email ?? 'TorBox',
+        subtitle: [if ((_account?.plan ?? '').isNotEmpty) _account!.plan!, '${_items.length} cloud item${_items.length == 1 ? '' : 's'}'].join(' • '),
+        actions: [
+          TvButton(
+            key: const ValueKey('tv-torbox-refresh'),
+            focusNode: _refreshFocusNode,
+            icon: Icons.refresh,
+            label: 'Refresh',
+            busy: _busy,
+            onPressed: _refresh,
+          ),
+          TvButton(
+            key: const ValueKey('tv-torbox-sign-out'),
+            icon: Icons.logout_rounded,
+            label: 'Sign out',
+            enabled: !_busy,
+            onPressed: _logout,
+          ),
+        ],
+      ),
+      if (_message != null)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: TvMetrics.pageHorizontal),
+          child: _tvMessage(_message),
+        ),
+      Expanded(
+        child: _items.isEmpty && !_busy
+            ? const TvMessage(
+                icon: Icons.inbox_rounded,
+                title: 'No TorBox items yet',
+              )
+            : ListView.separated(
+                padding: const EdgeInsets.fromLTRB(
+                    TvMetrics.pageHorizontal, 10, TvMetrics.pageHorizontal, TvMetrics.pageBottom),
+                itemCount: _items.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 10),
+                itemBuilder: (context, index) {
+                  final item = _items[index];
+                  final status = item.isReady ? 'Ready' : '${item.state.isEmpty ? 'Preparing' : item.state} • ${item.progress.toStringAsFixed(0)}%';
+                  return TvListRow(
+                    key: ValueKey('tv-torbox-${item.id}'),
+                    icon: item.isReady ? Icons.check_circle_outline_rounded : Icons.downloading_rounded,
+                    title: item.name,
+                    subtitle: '$status • ${_formatBytes(item.size)} • ${item.files.length} file${item.files.length == 1 ? '' : 's'}',
+                    trailingIcon: item.isReady ? Icons.play_circle_fill_rounded : Icons.chevron_right_rounded,
+                    enabled: !_busy,
+                    onPressed: () => _play(item),
+                  );
+                },
+              ),
+      ),
+    ],
+  );
 
   Widget _buildLogin(BuildContext context) => SingleChildScrollView(
     key: const PageStorageKey('torbox-login-scroll'),
@@ -865,13 +1375,14 @@ class _TokenDebridPane extends StatefulWidget {
 
 class _TokenDebridPaneState extends State<_TokenDebridPane> {
   final _controller=TextEditingController();
-  final _tokenFocusNode=FocusNode(debugLabel:'tv-linear-debrid-token');
-  final _connectFocusNode=FocusNode(debugLabel:'tv-linear-debrid-connect');
+  final _tokenFocusNode=FocusNode(debugLabel:'debrid-token');
+  final _connectFocusNode=FocusNode(debugLabel:'debrid-connect');
+  final _disconnectFocusNode=FocusNode(debugLabel:'debrid-disconnect');
   bool _connected=false, _busy=true;
   String? _message, _accountLabel;
   bool get _rd=>widget.provider==CloudProvider.realDebrid;
   @override void initState(){super.initState();_restore();}
-  @override void dispose(){_controller.dispose();_tokenFocusNode.dispose();_connectFocusNode.dispose();super.dispose();}
+  @override void dispose(){_controller.dispose();_tokenFocusNode.dispose();_connectFocusNode.dispose();_disconnectFocusNode.dispose();super.dispose();}
   Future<void> _restore() async {
     final connected=_rd?await RealDebridService.instance.isConnected:await PremiumizeService.instance.isConnected;
     if(!mounted)return;setState((){_connected=connected;_busy=false;});
@@ -888,15 +1399,64 @@ class _TokenDebridPaneState extends State<_TokenDebridPane> {
     setState((){_busy=true;_message=null;});
     try{
       if(_rd){await RealDebridService.instance.connectWithToken(_controller.text);}else{await PremiumizeService.instance.connectWithApiKey(_controller.text);}
-      _controller.clear();if(!mounted)return;setState((){_connected=true;_busy=false;_message='Connected successfully.';});widget.onAuthChanged();await _loadAccount();
+      _controller.clear();if(!mounted)return;setState((){_connected=true;_busy=false;_message='Connected successfully.';});widget.onAuthChanged();_tvFocusAfterBuild(this,_disconnectFocusNode);await _loadAccount();
     }catch(e){if(mounted)setState((){_busy=false;_message='Connection failed: $e';});}
   }
   Future<void> _disconnect() async {
     if(_rd){await RealDebridService.instance.logout();}else{await PremiumizeService.instance.logout();}
-    if(!mounted)return;setState((){_connected=false;_accountLabel=null;_message='Disconnected.';});widget.onAuthChanged();
+    if(!mounted)return;setState((){_connected=false;_accountLabel=null;_message='Disconnected.';});widget.onAuthChanged();_tvFocusAfterBuild(this,_tokenFocusNode);
+  }
+  Widget _buildTv(String name){
+    final intro=_tvCloudIntro(
+      icon:_rd?Icons.cloud_done_outlined:Icons.cloud_queue_rounded,
+      title:_connected?(_accountLabel??name):'Connect $name',
+      text:_connected
+        ? '$name is ready for torrent source playback. AI Sinhala remains disabled for debrid sources while the feature is in beta.'
+        : (_rd?'Enter your Real-Debrid API token. Orvix stores it only in secure device storage.':'Enter your Premiumize API key. Orvix stores it only in secure device storage.'),
+    );
+    return _tvForm(key: PageStorageKey('debrid-login-${widget.provider.name}'), entry: _connected ? _disconnectFocusNode : _tokenFocusNode, _connected?[
+      intro,
+      const SizedBox(height: 22),
+      TvButton(
+        key: ValueKey('tv-${widget.provider.name}-disconnect'),
+        expanded: true,
+        focusNode: _disconnectFocusNode,
+        icon: Icons.logout,
+        label: 'Disconnect',
+        busy: _busy,
+        onPressed: _disconnect,
+      ),
+      _tvMessage(_message),
+    ]:[
+      intro,
+      const SizedBox(height: 22),
+      TvTextField(
+        key: ValueKey('tv-${widget.provider.name}-token'),
+        controller: _controller,
+        focusNode: _tokenFocusNode,
+        nextFocusNode: _connectFocusNode,
+        enabled: !_busy,
+        obscureText: true,
+        label: _rd?'Real-Debrid API token':'Premiumize API key',
+        icon: Icons.key_rounded,
+      ),
+      const SizedBox(height: 16),
+      TvButton(
+        key: ValueKey('tv-${widget.provider.name}-connect'),
+        expanded: true,
+        focusNode: _connectFocusNode,
+        kind: TvButtonKind.primary,
+        icon: Icons.link_rounded,
+        label: 'Connect $name',
+        busy: _busy,
+        onPressed: _connect,
+      ),
+      _tvMessage(_message),
+    ]);
   }
   @override Widget build(BuildContext context){
     final name=_rd?'Real-Debrid':'Premiumize';
+    if (PlatformProfile.isAndroidTv) return _buildTv(name);
     return SingleChildScrollView(
       key: PageStorageKey('debrid-login-${widget.provider.name}'),
       padding: const EdgeInsets.all(32),

@@ -143,6 +143,12 @@ class _DeleteAccountFakeBackend implements OrvixAccountBackend {
       throw UnimplementedError();
 
   @override
+  Future<void> cancelTvLogin({
+    required String deviceCode,
+    required String deviceNonce,
+  }) async {}
+
+  @override
   Future<String> exchangeTvLogin({
     required String deviceCode,
     required String deviceNonce,
@@ -449,7 +455,7 @@ void main() {
     final build = source.indexOf('Widget build(BuildContext context)');
     expect(source.indexOf('return _buildTvAccount(context, user);', build),
         greaterThan(build));
-    final tvLayout = source.substring(source.indexOf('class _TvAccountLayout'),
+    final tvLayout = source.substring(source.indexOf('class _TvAccountView'),
         source.indexOf('class _OrvixTvQrScannerScreen'));
     expect(tvLayout, isNot(contains('Delete account')));
     expect(tvLayout, isNot(contains('deleteAccount')));

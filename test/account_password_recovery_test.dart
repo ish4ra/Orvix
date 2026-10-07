@@ -126,6 +126,12 @@ class _RecoveryFakeBackend implements OrvixAccountBackend {
       throw UnimplementedError();
 
   @override
+  Future<void> cancelTvLogin({
+    required String deviceCode,
+    required String deviceNonce,
+  }) async {}
+
+  @override
   Future<String> exchangeTvLogin({
     required String deviceCode,
     required String deviceNonce,
