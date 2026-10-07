@@ -912,7 +912,7 @@ void main() {
   group('TV device login through the backend abstraction', () {
     TvDeviceLoginController controller() => TvDeviceLoginController(
           delay: (_) async {},
-          syncAfterSignIn: () async {},
+          syncAfterSignIn: () async => OrvixSyncResult.skipped,
         );
 
     test('approved login exchanges and signs in', () async {

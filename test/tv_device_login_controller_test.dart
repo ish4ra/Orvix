@@ -111,6 +111,7 @@ void main() {
   late DateTime clock;
   late int syncs;
   Object? syncError;
+  late OrvixSyncResult syncResult;
 
   TvDeviceLoginController controller({
     TvDeviceLoginPolicy policy = const TvDeviceLoginPolicy(),
@@ -128,6 +129,7 @@ void main() {
       syncAfterSignIn: () async {
         syncs++;
         if (syncError != null) throw syncError!;
+        return syncResult;
       },
     );
     addTearDown(() {
@@ -150,6 +152,10 @@ void main() {
     clock = DateTime(2026, 10, 7, 12);
     syncs = 0;
     syncError = null;
+    syncResult = const OrvixSyncResult(
+      credentials: OrvixSyncStatus.synced,
+      state: OrvixSyncStatus.synced,
+    );
     OrvixAccountService.backend = backend;
   });
 
@@ -260,7 +266,10 @@ void main() {
     final login = TvDeviceLoginController(
       backend: backend,
       delay: (_) async {},
-      syncAfterSignIn: () async => syncs++,
+      syncAfterSignIn: () async {
+        syncs++;
+        return OrvixSyncResult.skipped;
+      },
     );
     var notifications = 0;
     login.addListener(() => notifications++);
@@ -398,6 +407,50 @@ void main() {
     expect(backend.signedOut, isFalse);
     expect(backend.user?.id, 'tv-user');
     expect(login.state.message, contains('Sync now'));
+  });
+
+  test('a credential restore failure keeps the TV signed in with a warning',
+      () async {
+    backend.polls['device-1'] = ['approved'];
+    syncResult = const OrvixSyncResult(
+      credentials: OrvixSyncStatus.failed,
+      state: OrvixSyncStatus.synced,
+    );
+    final login = controller();
+    await login.start();
+    expect(login.state.phase, TvDeviceLoginPhase.syncFailed);
+    expect(login.state.signedIn, isTrue);
+    expect(backend.signedOut, isFalse);
+    expect(login.state.message, contains('cloud provider connections did not'));
+    expect(login.state.message, contains('Sync now'));
+  });
+
+  test('an account data failure keeps the TV signed in with a warning',
+      () async {
+    backend.polls['device-1'] = ['approved'];
+    syncResult = const OrvixSyncResult(
+      credentials: OrvixSyncStatus.synced,
+      state: OrvixSyncStatus.failed,
+    );
+    final login = controller();
+    await login.start();
+    expect(login.state.phase, TvDeviceLoginPhase.syncFailed);
+    expect(login.state.signedIn, isTrue);
+    expect(login.state.message,
+        contains('library, watchlist, progress and settings did not'));
+  });
+
+  test('a sync that failed completely keeps the original message', () async {
+    backend.polls['device-1'] = ['approved'];
+    syncResult = const OrvixSyncResult(
+      credentials: OrvixSyncStatus.failed,
+      state: OrvixSyncStatus.failed,
+    );
+    final login = controller();
+    await login.start();
+    expect(login.state.phase, TvDeviceLoginPhase.syncFailed);
+    expect(login.state.message,
+        'Signed in, but your cloud data did not sync. Choose Sync now to try again.');
   });
 
   group('phone side', () {

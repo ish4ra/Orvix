@@ -68,6 +68,9 @@ class _AccountScreenState extends State<AccountScreen> {
   TvDeviceLoginController? _tvLogin;
   bool _tvSignInReported = false;
 
+  /// Sync now ran after the current TV login, so its sync warning is stale.
+  bool _tvLoginSyncRetried = false;
+
   @override
   void initState() {
     super.initState();
@@ -98,6 +101,7 @@ class _AccountScreenState extends State<AccountScreen> {
     final login = _tvLogin;
     if (!mounted || login == null) return;
     _tvSignInReported = false;
+    _tvLoginSyncRetried = false;
     unawaited(login.start());
   }
 
@@ -226,16 +230,21 @@ class _AccountScreenState extends State<AccountScreen> {
           _showVerificationFor(email, startCooldown: true);
         } else {
           _password.clear();
-          setState(() => _message =
-              'Account created and your local Orvix data was synced.');
+          setState(() => _message = _afterSignInMessage(
+              response.sync,
+              'Account created and your local Orvix data was synced.',
+              'Account created.'));
           widget.onAuthChanged();
         }
       } else {
-        await OrvixAccountService.signIn(email: email, password: password);
+        final response =
+            await OrvixAccountService.signIn(email: email, password: password);
         if (!mounted) return;
         _password.clear();
-        setState(() => _message =
-            'Signed in. Your local and cloud Orvix data were merged.');
+        setState(() => _message = _afterSignInMessage(
+            response.sync,
+            'Signed in. Your local and cloud Orvix data were merged.',
+            'Signed in.'));
         widget.onAuthChanged();
       }
     } on OrvixAuthException catch (error) {
@@ -269,12 +278,12 @@ class _AccountScreenState extends State<AccountScreen> {
     });
 
     try {
-      final response = await OrvixAccountService.verifySignupOtp(
+      var response = await OrvixAccountService.verifySignupOtp(
         email: email,
         token: code,
       );
       if (!response.hasSession) {
-        await OrvixAccountService.signIn(
+        response = await OrvixAccountService.signIn(
           email: email,
           password: _password.text,
         );
@@ -286,8 +295,10 @@ class _AccountScreenState extends State<AccountScreen> {
       setState(() {
         _pendingVerificationEmail = null;
         _resendSeconds = 0;
-        _message =
-            'Email verified. Your Orvix account is ready and cloud sync is active.';
+        _message = _afterSignInMessage(
+            response.sync,
+            'Email verified. Your Orvix account is ready and cloud sync is active.',
+            'Email verified. Your Orvix account is ready.');
       });
       widget.onAuthChanged();
     } on OrvixAuthException catch (error) {
@@ -838,20 +849,34 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
+  /// The message after signing in. Signing in worked even when the sync
+  /// that followed did not, so a sync problem is a warning, never an error.
+  static String _afterSignInMessage(
+      OrvixSyncResult? sync, String synced, String signedIn) {
+    final problem = sync?.problem;
+    if (problem == null) return synced;
+    return '$signedIn $problem Use Sync now to try again.';
+  }
+
   Future<void> _syncNow() async {
     if (_syncing) return;
     setState(() {
       _busy = true;
       _syncing = true;
+      _tvLoginSyncRetried = true;
       _message = 'Syncing your Orvix data…';
     });
     try {
-      await OrvixAccountService.mergeCloudIntoLocal()
+      final result = await OrvixAccountService.mergeCloudIntoLocal()
           .timeout(const Duration(seconds: 20));
       if (mounted) {
         final now = DateTime.now();
         final minute = now.minute.toString().padLeft(2, '0');
-        setState(() => _message = 'Sync complete • ${now.hour}:$minute');
+        final problem = result.problem;
+        setState(() => _message = problem == null
+            ? 'Sync complete • ${now.hour}:$minute'
+            : '$problem Your data on this device is safe; try again later.');
+        // Whatever did sync (a restored provider, merged library) shows now.
         widget.onAuthChanged();
       }
     } on TimeoutException {
@@ -861,8 +886,12 @@ class _AccountScreenState extends State<AccountScreen> {
               'Cloud sync timed out after 20 seconds. Your local data is safe; try again when the connection is stable.';
         });
       }
-    } catch (error) {
-      if (mounted) setState(() => _message = 'Sync failed: $error');
+    } catch (_) {
+      // No backend detail is shown: it may echo request data.
+      if (mounted) {
+        setState(() => _message =
+            'Sync failed. Your data on this device is safe; try again later.');
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -982,7 +1011,8 @@ class _AccountScreenState extends State<AccountScreen> {
       login: login.state,
       busy: _busy,
       syncing: _syncing || login.state.phase == TvDeviceLoginPhase.syncing,
-      message: login.state.phase == TvDeviceLoginPhase.syncFailed && !_syncing
+      message: login.state.phase == TvDeviceLoginPhase.syncFailed &&
+              !_tvLoginSyncRetried
           ? login.state.message
           : _message,
       onNewCode: _startTvLogin,

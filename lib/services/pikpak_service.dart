@@ -14,6 +14,11 @@ class PikPakService {
   })  : _client = client ?? http.Client(),
         _storage = storage ?? createOrvixSecureStorage();
 
+  // PikPak's own public web-client identifiers, the same ones its web app
+  // and other open-source PikPak clients ship. They identify the client
+  // type, not Orvix or a user, and are not Orvix secrets: anything in a
+  // distributed app is readable, so moving them into build variables would
+  // not protect them. The user's own tokens live only in secure storage.
   static const _clientId = 'YUMx5nI8ZU8Ap8pm';
   static const _clientSecret = 'dbw2OtmVEeuUvIptb1Coygx';
   static const _clientVersion = '2.0.0';
