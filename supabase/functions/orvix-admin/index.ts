@@ -97,6 +97,15 @@ async function requireAdmin(req: Request) {
   return data.user;
 }
 
+function classifyReleaseAsset(name: unknown) {
+  const value = String(name ?? "").toLowerCase();
+  if (value.includes("android-mobile")) return "Android Mobile";
+  if (value.includes("android-tv")) return "Android TV";
+  if (value.includes("windows") || value.includes("setup")) return "Windows";
+  if (value.includes("macos")) return "macOS";
+  return "Other";
+}
+
 async function loadGithubReleases() {
   try {
     const response = await fetch(
@@ -111,27 +120,42 @@ async function loadGithubReleases() {
     );
     if (!response.ok) return [];
     const releases = await response.json();
-    return (Array.isArray(releases) ? releases : []).map((release: AnyRow) => ({
-      tag: release.tag_name,
-      name: release.name,
-      published_at: release.published_at,
-      prerelease: release.prerelease === true,
-      draft: release.draft === true,
-      total_downloads: Array.isArray(release.assets)
-        ? release.assets.reduce(
-            (sum: number, asset: AnyRow) =>
-              sum + Number(asset.download_count ?? 0),
-            0,
-          )
-        : 0,
-      assets: Array.isArray(release.assets)
+    return (Array.isArray(releases) ? releases : []).map((release: AnyRow) => {
+      const assets = Array.isArray(release.assets)
         ? release.assets.map((asset: AnyRow) => ({
             name: asset.name,
             downloads: Number(asset.download_count ?? 0),
             size: Number(asset.size ?? 0),
+            asset_platform: classifyReleaseAsset(asset.name),
           }))
-        : [],
-    }));
+        : [];
+
+      const downloadsByPlatform: Record<string, number> = {
+        "Android Mobile": 0,
+        "Android TV": 0,
+        "Windows": 0,
+        "macOS": 0,
+        "Other": 0,
+      };
+      for (const asset of assets) {
+        downloadsByPlatform[asset.asset_platform] =
+          (downloadsByPlatform[asset.asset_platform] ?? 0) + asset.downloads;
+      }
+
+      return {
+        tag: release.tag_name,
+        name: release.name,
+        published_at: release.published_at,
+        prerelease: release.prerelease === true,
+        draft: release.draft === true,
+        total_downloads: assets.reduce(
+          (sum: number, asset: AnyRow) => sum + Number(asset.downloads ?? 0),
+          0,
+        ),
+        downloads_by_platform: downloadsByPlatform,
+        assets,
+      };
+    });
   } catch {
     return [];
   }
