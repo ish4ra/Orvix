@@ -417,13 +417,12 @@ const dashboardHtml = `<!doctype html>
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method === "GET") {
-    return new Response(dashboardHtml, {
+    return new Response(null, {
+      status: 302,
       headers: {
         ...corsHeaders,
-        "Content-Type": "text/html; charset=utf-8",
+        "Location": "https://isharalakshan.xyz/orvix/admin/",
         "Cache-Control": "no-store",
-        "X-Frame-Options": "DENY",
-        "Referrer-Policy": "no-referrer",
       },
     });
   }
