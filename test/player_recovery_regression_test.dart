@@ -55,7 +55,10 @@ void main() {
     expect(details, contains('!useLocalMediaBridge'));
     expect(details, contains('source?.isMagnet != true'));
     expect(player, contains('_runStartupFallback'));
-    expect(player, contains('await _preparePlayerExit();'));
+    expect(
+      player,
+      contains('if (!await _exit.leave(PlayerExitIntent.startupFallback)) return;'),
+    );
     expect(exo, contains('await controller.dispose();'));
     expect(exo, contains('ReadingOrderTraversalPolicy'));
     expect(
@@ -86,7 +89,8 @@ void main() {
 
     // Player Back is serialized so a second Back press cannot pop the route
     // while the first native teardown is still in progress.
-    expect(player, contains('Future<void>? _exitPreparation'));
+    expect(player, contains('late final PlayerExitController _exit'));
+    expect(player, contains('teardown: _preparePlayerExitInternal,'));
     expect(player, contains('await widget.playback.player.pause();'));
     expect(
       player,
@@ -115,12 +119,8 @@ void main() {
     expect(details, contains('Player returned: loop reopens the source picker'));
     expect(details, contains('already-resolved results and cached live-probe ranking'));
     expect(details, isNot(contains('onPlaySource: (selected) async')));
-    expect(player, contains('bool _backNavigationInProgress = false;'));
-    expect(
-      player,
-      contains('if (_backNavigationInProgress || _closing) return;'),
-    );
-    expect(player, contains('_backNavigationInProgress = true;'));
+    expect(player, contains('await _exit.leave(PlayerExitIntent.backButton);'));
+    expect(player, contains('return _exit.allowSystemPop();'));
     expect(player, contains('Navigator.of(context).pop();'));
 
   });

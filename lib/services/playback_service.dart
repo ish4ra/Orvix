@@ -85,8 +85,14 @@ class PlaybackService {
     String? title,
     Map<String, String>? httpHeaders,
     bool play = true,
+    bool Function()? isCancelled,
   }) async {
     await _applySmartStreamingProfile(url);
+    // The player screen may have started its exit (pause + stop) while the
+    // profile was being applied. Loading the media now would run it after
+    // that stop, behind the source list. Checked with no await before
+    // player.open, so an open that passes is queued ahead of the exit's stop.
+    if (isCancelled?.call() == true) return;
     await player.open(
       Media(
         url,
