@@ -304,7 +304,14 @@ async function dashboardData() {
     versions: countBy(installations, "app_version"),
     event_counts: countBy(events, "event_name"),
     users: userRows,
-    installations: installations.slice(0, 500),
+    installations: installations.slice(0, 500).map((row: AnyRow) => ({
+      ...row,
+      device_display_name: friendlyDeviceName(
+        row.device_manufacturer,
+        row.device_model,
+        row.device_type,
+      ),
+    })),
     recent_errors: errors.slice(0, 100),
     recent_events: events.slice(0, 100),
     releases,
@@ -426,7 +433,7 @@ const dashboardHtml = `<!doctype html>
       }).join("") : '<tr><td colspan="7" class="empty">Nobody is online right now</td></tr>';
       bars("countries",data.countries,country);bars("platforms",data.platforms);bars("versions",data.versions);bars("events",data.event_counts);
       el("usersBody").innerHTML = data.users.length ? data.users.map(row => '<tr><td>'+esc(row.display_name)+'</td><td>'+esc(row.email)+'</td><td>'+esc(country(row.country_code))+'</td><td>'+fmt.format(row.installations)+'</td><td>'+esc(row.device_display_name)+'</td><td>'+esc(relative(row.last_active_at))+'</td><td>'+esc(row.app_version)+'</td></tr>').join("") : '<tr><td colspan="7" class="empty">No accounts</td></tr>';
-      el("installsBody").innerHTML = data.installations.length ? data.installations.slice(0,150).map(row => '<tr><td>'+esc(short(row.installation_id))+'</td><td>'+esc(country(row.country_code))+'</td><td>'+esc(row.platform)+(row.is_tv?' TV':'')+'</td><td>'+esc(friendlyDeviceName(row.device_manufacturer,row.device_model,row.device_type))+'</td><td>'+esc(row.app_version)+'</td><td>'+esc(row.locale)+'</td><td>'+esc(relative(row.last_seen_at))+'</td></tr>').join("") : '<tr><td colspan="7" class="empty">No telemetry received yet</td></tr>';
+      el("installsBody").innerHTML = data.installations.length ? data.installations.slice(0,150).map(row => '<tr><td>'+esc(short(row.installation_id))+'</td><td>'+esc(country(row.country_code))+'</td><td>'+esc(row.platform)+(row.is_tv?' TV':'')+'</td><td>'+esc(row.device_display_name)+'</td><td>'+esc(row.app_version)+'</td><td>'+esc(row.locale)+'</td><td>'+esc(relative(row.last_seen_at))+'</td></tr>').join("") : '<tr><td colspan="7" class="empty">No telemetry received yet</td></tr>';
       el("releasesBody").innerHTML = data.releases.length ? data.releases.map(row => '<tr><td>'+esc(row.tag)+'</td><td>'+esc(row.published_at?new Date(row.published_at).toLocaleDateString():"—")+'</td><td>'+fmt.format(row.total_downloads)+'</td><td>'+(row.prerelease?'<span class="pill">Beta</span>':'<span class="pill">Stable</span>')+'</td></tr>').join("") : '<tr><td colspan="4" class="empty">GitHub release data unavailable</td></tr>';
       el("errorsBody").innerHTML = data.recent_errors.length ? data.recent_errors.map(row => '<tr><td>'+esc(relative(row.occurred_at))+'</td><td class="'+(row.fatal?'danger':'')+'">'+esc(row.error_type)+'</td><td>'+esc(row.platform)+'</td><td>'+esc(row.app_version)+'</td><td title="'+esc(row.message)+'">'+esc(String(row.message||"").slice(0,80))+'</td></tr>').join("") : '<tr><td colspan="5" class="empty">No recorded errors</td></tr>';
     }
