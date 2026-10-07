@@ -45,6 +45,8 @@ function nameForUser(user: AnyRow | undefined) {
     (typeof user.email === "string" ? user.email.split("@")[0] : null);
 }
 
+const ownerUserId = "87ac8a23-e207-408c-ab7d-65412353fc72";
+
 async function requireAdmin(req: Request) {
   const auth = req.headers.get("authorization");
   if (!auth?.toLowerCase().startsWith("bearer ")) return null;
@@ -52,15 +54,8 @@ async function requireAdmin(req: Request) {
   if (!token) return null;
 
   const { data, error } = await db.auth.getUser(token);
-  if (error || !data.user) return null;
-
-  const { data: admin } = await db
-    .from("orvix_admins")
-    .select("user_id")
-    .eq("user_id", data.user.id)
-    .maybeSingle();
-
-  return admin ? data.user : null;
+  if (error || !data.user || data.user.id !== ownerUserId) return null;
+  return data.user;
 }
 
 async function loadGithubReleases() {
@@ -421,7 +416,7 @@ Deno.serve(async (req: Request) => {
       status: 302,
       headers: {
         ...corsHeaders,
-        "Location": "https://isharalakshan.xyz/orvix/admin/",
+        "Location": "https://isharalakshan.xyz/orvix/",
         "Cache-Control": "no-store",
       },
     });
