@@ -1249,6 +1249,25 @@ class LocalTorrentService {
     }
   }
 
+  /// Detaches the torrent of a preparation the user cancelled, once its
+  /// [resolve] finishes late. Unlike [releaseCurrentStream] it only touches
+  /// this source's torrent, so a stream the user started afterwards for a
+  /// different torrent stays attached.
+  Future<void> releaseAbandonedStream(SourceResult source) async {
+    if (!source.isMagnet) return;
+    final infoHash = _extractInfoHash(source.resource);
+    if (infoHash == null) return;
+    if (_currentInfoHash == infoHash) _currentInfoHash = null;
+    await _removeEngine(infoHash);
+  }
+
+  /// Whether two magnet sources point at the same torrent.
+  static bool sameTorrent(SourceResult a, SourceResult b) {
+    if (!a.isMagnet || !b.isMagnet) return false;
+    final hashA = instance._extractInfoHash(a.resource);
+    return hashA != null && hashA == instance._extractInfoHash(b.resource);
+  }
+
   static Future<void> purgeWindowsTorrentCache({
     String? localAppData,
     int attempts = 8,

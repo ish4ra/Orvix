@@ -22,9 +22,11 @@ void main() {
 
     expect(catalog, contains('MediaItem? peekDetails(MediaItem item)'));
     expect(catalog, contains('_enrichEpisodeRatingsInBackground'));
+    // Successful source lists stay cached for five minutes; provider
+    // failures are no longer cached as an empty "No sources found".
     expect(
       sources,
-      contains('const Duration(minutes: 5)'),
+      contains('static const resolveCacheTtl = Duration(minutes: 5);'),
     );
 
     expect(details, contains('class _MobileSeasonTileState'));

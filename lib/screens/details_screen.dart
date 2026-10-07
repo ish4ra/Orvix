@@ -20,6 +20,7 @@ import '../services/pikpak_service.dart';
 import '../services/pikpak_transfer_service.dart';
 import '../services/playback_service.dart';
 import '../services/platform_profile.dart';
+import '../services/playback_preparation.dart';
 import '../services/player_engine_preferences_service.dart';
 import '../services/source_provider_service.dart';
 import '../services/torbox_service.dart';
@@ -99,6 +100,14 @@ class DetailsScreenState extends State<DetailsScreen> {
   String _status = '';
   double? _resolveProgress;
   int? _selectedSeason;
+
+  // Source list -> chosen source -> player. The source sheet is closed while a
+  // source is prepared, so the title screen is the top route during that time;
+  // Back must cancel the preparation and return to the same source list
+  // instead of leaving the title.
+  final PlaybackPreparationController _preparation =
+      PlaybackPreparationController();
+  SourceResult? _preparingSource;
 
   // Legacy complete-file pre-player AI is intentionally disabled while the
   // progressive native-cue architecture is validated. Keep this as a runtime
@@ -195,8 +204,43 @@ class DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
+  void _onPreparationChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Back while a chosen source is still being prepared: abandon it. The
+  /// source loop then shows the same source list again.
+  void _cancelPreparation() {
+    if (!_preparation.cancelActive()) return;
+    setState(() {
+      _resolving = false;
+      _resolveProgress = null;
+      _status = '';
+    });
+  }
+
+  /// Detach a local torrent whose resolve finished after its preparation was
+  /// cancelled, unless the user has since chosen the same torrent again.
+  Future<void> _releaseAbandonedLocalStream(SourceResult source) async {
+    final newer = _preparation.isPreparing ? _preparingSource : null;
+    if (newer != null && LocalTorrentService.sameTorrent(newer, source)) {
+      return;
+    }
+    await LocalTorrentService.instance.releaseAbandonedStream(source);
+  }
+
   @override
   Widget build(BuildContext context) {
+    return PopScope(
+      canPop: !_preparation.isPreparing,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _cancelPreparation();
+      },
+      child: _buildScaffold(context),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF050806),
       body: FutureBuilder<MediaItem>(
@@ -238,7 +282,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                 child: SafeArea(
                   child: IconButton.filledTonal(
                     tooltip: 'Back',
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: () => Navigator.of(context).maybePop(),
                     icon: const Icon(Icons.arrow_back_rounded),
                   ),
                 ),
@@ -286,7 +330,7 @@ class DetailsScreenState extends State<DetailsScreen> {
           child: SafeArea(
             child: IconButton.filled(
               tooltip: 'Back',
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(context).maybePop(),
               style: IconButton.styleFrom(
                 backgroundColor: const Color(0xC9141816),
                 foregroundColor: Colors.white,
@@ -1935,6 +1979,7 @@ class DetailsScreenState extends State<DetailsScreen> {
     MediaItem item, {
     EpisodeItem? episode,
     bool autoUsePinned = false,
+    bool forceRefresh = false,
   }) async {
     if (!mounted) return;
 
@@ -2006,6 +2051,9 @@ class DetailsScreenState extends State<DetailsScreen> {
         // Lower-resolution releases stay visible because they may be the most
         // portable source on real Android/TV hardware.
         includeLowQuality: true,
+        // "Try Again" must ask the providers again, not replay the answer
+        // that just came back empty.
+        forceRefresh: forceRefresh,
       );
       if (!mounted) return;
       setState(() => _resolving = false);
@@ -2096,29 +2144,30 @@ class DetailsScreenState extends State<DetailsScreen> {
           mediaDuration: FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
         );
         try {
-          while (mounted) {
-            final selected = await _chooseSource(
+          // Player returned, or Back cancelled the preparation: the loop
+          // reopens the source picker using the same
+          // already-resolved results and cached live-probe ranking.
+          await runSourcePlaybackLoop<SourceResult>(
+            controller: _preparation,
+            isActive: () => mounted,
+            chooseSource: () => _chooseSource(
               results,
               item,
               episode,
               probeSession: probeSession,
-            );
-            if (selected == null || !mounted) return;
-
-            try {
+            ),
+            prepareAndPlay: (selected) async {
+              _preparingSource = selected;
               await _playSourceResult(
                 selected,
                 item,
                 episode,
                 hasCloudConnection: hasCloudConnection,
               );
-            } catch (error) {
-              _showPlayError(error);
-            }
-            if (!mounted) return;
-            // Player returned: loop reopens the source picker using the same
-            // already-resolved results and cached live-probe ranking.
-          }
+            },
+            onError: _showPlayError,
+            onPreparationChanged: _onPreparationChanged,
+          );
         } finally {
           await probeSession.release();
         }
@@ -2185,15 +2234,21 @@ class DetailsScreenState extends State<DetailsScreen> {
         _resolveProgress = null;
         _status = 'Starting local P2P torrent stream…';
       });
+      final preparation = PlaybackPreparation.current;
       late final String localUrl;
       try {
         localUrl = await LocalTorrentService.instance.resolve(
           chosen,
           onProgress: (message) {
-            if (mounted) setState(() => _status = message);
+            if (mounted && preparation?.isCancelled != true) {
+              setState(() => _status = message);
+            }
           },
         );
       } catch (error) {
+        if (preparation?.isCancelled == true) {
+          throw const PlaybackPreparationCancelled();
+        }
         unawaited(
           widget.sources.recordPlaybackOutcome(
             chosen,
@@ -2202,6 +2257,12 @@ class DetailsScreenState extends State<DetailsScreen> {
           ),
         );
         rethrow;
+      }
+      if (preparation?.isCancelled == true) {
+        // Back was pressed while the torrent was resolving. Do not open the
+        // player for it, and do not leave its torrent attached.
+        await _releaseAbandonedLocalStream(chosen);
+        throw const PlaybackPreparationCancelled();
       }
       if (!mounted) return;
       setState(() => _status = 'P2P stream ready — opening player…');
@@ -2219,6 +2280,7 @@ class DetailsScreenState extends State<DetailsScreen> {
 
     final cloud = await _chooseCloudProvider();
     if (cloud == null || !mounted) return;
+    PlaybackPreparation.throwIfCurrentCancelled();
     if (cloud == CloudProvider.torbox) {
       await _sendSourceToTorBox(chosen, item, episode);
     } else if (cloud == CloudProvider.realDebrid) {
@@ -2312,6 +2374,10 @@ class DetailsScreenState extends State<DetailsScreen> {
     EpisodeItem? episode,
   }) async {
     final configured = await widget.sources.getAddonUrls();
+    final providersFailed = widget.sources.lastResolveHadProviderFailures(
+      item,
+      episode: episode,
+    );
     if (!mounted) return;
 
     final openSources = await showDialog<bool>(
@@ -2320,12 +2386,16 @@ class DetailsScreenState extends State<DetailsScreen> {
         title: Text(
           configured.isEmpty
               ? 'No source providers configured'
-              : 'No sources found',
+              : providersFailed
+                  ? 'Source providers did not respond'
+                  : 'No sources found',
         ),
         content: Text(
           configured.isEmpty
               ? 'Configure a Stremio-compatible source provider. Direct HTTP streams play immediately, and torrent/magnet sources can use Orvix built-in local P2P engine on Windows, Android, Android TV and macOS. PikPak/TorBox are optional cloud paths.'
-              : 'Your configured providers did not return a source for this title. You can manage providers or try again.',
+              : providersFailed
+                  ? 'One or more source providers timed out or returned an error. This is usually temporary, so try again in a moment.'
+                  : 'Your configured providers did not return a source for this title. You can manage providers or try again.',
         ),
         actions: [
           TextButton(
@@ -2336,7 +2406,11 @@ class DetailsScreenState extends State<DetailsScreen> {
             TextButton(
               onPressed: () {
                 Navigator.pop(context, false);
-                _findSourcesAndPlay(item, episode: episode);
+                _findSourcesAndPlay(
+                  item,
+                  episode: episode,
+                  forceRefresh: true,
+                );
               },
               child: const Text('Try Again'),
             ),
@@ -2433,7 +2507,9 @@ class DetailsScreenState extends State<DetailsScreen> {
     );
     for (var attempt = 0; attempt < 90; attempt++) {
       if (!mounted) return;
+      PlaybackPreparation.throwIfCurrentCancelled();
       if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 2));
+      PlaybackPreparation.throwIfCurrentCancelled();
       final cloudItem = await widget.torbox.getItem(
         added.kind,
         added.id,
@@ -2537,9 +2613,11 @@ class DetailsScreenState extends State<DetailsScreen> {
     var fileId = initialFileId;
     for (var attempt = 0; attempt < 45; attempt++) {
       if (!mounted) return;
+      PlaybackPreparation.throwIfCurrentCancelled();
       if (attempt > 0) {
         await Future<void>.delayed(const Duration(seconds: 2));
       }
+      PlaybackPreparation.throwIfCurrentCancelled();
 
       final status = await widget.transfer.getTaskStatus(taskId);
       fileId = status.fileId ?? fileId;
@@ -2613,11 +2691,13 @@ class DetailsScreenState extends State<DetailsScreen> {
   }) async {
     for (var attempt = 1; attempt <= 18; attempt++) {
       if (!mounted) return;
+      PlaybackPreparation.throwIfCurrentCancelled();
       setState(() {
         _resolveProgress = (.05 + attempt / 20).clamp(0, .94).toDouble();
         _status = 'Waiting for the new PikPak file… ${attempt * 5}s';
       });
       await Future<void>.delayed(const Duration(seconds: 5));
+      PlaybackPreparation.throwIfCurrentCancelled();
       final match = await _findInPikPak(item, episode: episode);
       if (match != null) {
         await _openPikPakFile(
@@ -3738,6 +3818,7 @@ class DetailsScreenState extends State<DetailsScreen> {
 
     final aiSettingEnabled =
         await AiSinhalaPreferencesService.isEnabled();
+    PlaybackPreparation.throwIfCurrentCancelled();
 
     // AI Sinhala no longer blocks Windows behind a complete-file preflight.
     // The cross-platform MPV player now opens the exact source first, discovers
@@ -3801,6 +3882,7 @@ class DetailsScreenState extends State<DetailsScreen> {
         }
       }
 
+      PlaybackPreparation.throwIfCurrentCancelled();
       if (!nativeEngineReady) {
         setState(() {
           _resolving = true;
@@ -3811,6 +3893,12 @@ class DetailsScreenState extends State<DetailsScreen> {
           fileNameHint: releaseHint,
         );
         playbackUrl = bridgeHandle.url;
+        if (PlaybackPreparation.current?.isCancelled == true) {
+          await LocalMediaBridgeService.instance.release(
+            bridgeHandle.sessionId,
+          );
+          throw const PlaybackPreparationCancelled();
+        }
       }
     }
 
@@ -4392,7 +4480,7 @@ class DetailsScreenState extends State<DetailsScreen> {
       }
     }
 
-    if (mounted) {
+    if (PlaybackPreparation.current?.isCancelled != true && mounted) {
       setState(() {
         _resolving = false;
         _resolveProgress = null;
@@ -4401,6 +4489,7 @@ class DetailsScreenState extends State<DetailsScreen> {
     }
 
     try {
+      PlaybackPreparation.throwIfCurrentCancelled();
       final preference = await PlayerEnginePreferencesService.get();
       final aiEnabled =
           Platform.isAndroid && aiSettingEnabled;
@@ -4481,6 +4570,8 @@ class DetailsScreenState extends State<DetailsScreen> {
     bool autoFallbackToMpv = false,
   }) async {
     if (!mounted || !Platform.isAndroid) return null;
+    // Never open a player for a preparation the user already backed out of.
+    PlaybackPreparation.throwIfCurrentCancelled();
     final result = await Navigator.of(context).push<AndroidExoPlayerResult>(
       MaterialPageRoute(
         builder: (_) => AndroidExoPlayerScreen(
@@ -4554,6 +4645,8 @@ class DetailsScreenState extends State<DetailsScreen> {
         RegExp(r'^[0-9a-fA-F]{40}$').hasMatch(uri.pathSegments.first) &&
         int.tryParse(uri.pathSegments[1]) != null;
 
+    // Never open a player for a preparation the user already backed out of.
+    PlaybackPreparation.throwIfCurrentCancelled();
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => PlayerScreen(

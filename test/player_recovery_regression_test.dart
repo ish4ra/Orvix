@@ -114,9 +114,16 @@ void main() {
     expect(details, contains('FreeP2pLiveProbeService? probeSession'));
     expect(details, contains('final probeSession = FreeP2pLiveProbeService('));
     expect(details, contains('parseMediaRuntime(item.runtime)'));
-    expect(details, contains('while (mounted)'));
+    // The loop lives in runSourcePlaybackLoop so Back during pre-player
+    // preparation can also return to the same list.
+    final preparation =
+        File('lib/services/playback_preparation.dart').readAsStringSync();
+    expect(details, contains('await runSourcePlaybackLoop<SourceResult>('));
+    expect(details, contains('isActive: () => mounted'));
+    expect(preparation, contains('while (isActive())'));
     expect(details, contains('probeSession: probeSession'));
-    expect(details, contains('Player returned: loop reopens the source picker'));
+    expect(details, contains('Player returned, or Back cancelled the preparation: the loop'));
+    expect(details, contains('reopens the source picker'));
     expect(details, contains('already-resolved results and cached live-probe ranking'));
     expect(details, isNot(contains('onPlaySource: (selected) async')));
     expect(player, contains('await _exit.leave(PlayerExitIntent.backButton);'));

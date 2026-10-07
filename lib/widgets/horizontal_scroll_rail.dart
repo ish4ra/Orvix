@@ -1,5 +1,36 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+
+/// Lets a plain horizontal list be dragged with a mouse on Windows.
+///
+/// Flutter's default scroll behavior only drags with touch, stylus and
+/// trackpad. The wide Windows Home uses [HorizontalScrollRail], which already
+/// enables mouse drag; the narrow-window Home layout uses ordinary horizontal
+/// ListViews, which lost mouse drag below the wide breakpoint. Other platforms
+/// keep their existing scroll behavior untouched.
+class MouseDraggableScroll extends StatelessWidget {
+  const MouseDraggableScroll({super.key, required this.child});
+
+  final Widget child;
+
+  static bool get enabled => defaultTargetPlatform == TargetPlatform.windows;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled) return child;
+    final behavior = ScrollConfiguration.of(context);
+    return ScrollConfiguration(
+      behavior: behavior.copyWith(
+        dragDevices: <PointerDeviceKind>{
+          ...behavior.dragDevices,
+          PointerDeviceKind.mouse,
+        },
+      ),
+      child: child,
+    );
+  }
+}
 
 class HorizontalScrollRail extends StatefulWidget {
   const HorizontalScrollRail({

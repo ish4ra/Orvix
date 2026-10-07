@@ -1439,21 +1439,24 @@ class _ContinueRail extends StatelessWidget {
           const SizedBox(height: 13),
           SizedBox(
             height: 172,
-            child: ListView.separated(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-              scrollDirection: Axis.horizontal,
-              cacheExtent: 1000,
-              itemCount: items.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 14),
-              itemBuilder: (context, index) {
-                final entry = items[index];
-                return _ContinueLandscapeCard(
-                  entry: entry,
-                  width: 292,
-                  height: 160,
-                  onTap: () => onOpen(entry),
-                );
-              },
+            child: MouseDraggableScroll(
+              child: ListView.separated(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                scrollDirection: Axis.horizontal,
+                cacheExtent: 1000,
+                itemCount: items.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 14),
+                itemBuilder: (context, index) {
+                  final entry = items[index];
+                  return _ContinueLandscapeCard(
+                    entry: entry,
+                    width: 292,
+                    height: 160,
+                    onTap: () => onOpen(entry),
+                  );
+                },
+              ),
             ),
           ),
         ],
@@ -1493,26 +1496,28 @@ class _MediaRail extends StatelessWidget {
           const SizedBox(height: 14),
           SizedBox(
             height: PlatformProfile.isAndroidTv ? 255 : 300,
-            child: ListView.separated(
-              padding: EdgeInsets.symmetric(
-                horizontal: PlatformProfile.isAndroidTv ? 24 : 32,
+            child: MouseDraggableScroll(
+              child: ListView.separated(
+                padding: EdgeInsets.symmetric(
+                  horizontal: PlatformProfile.isAndroidTv ? 24 : 32,
+                ),
+                scrollDirection: Axis.horizontal,
+                itemCount: items.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 16),
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  return MediaCard(
+                    item: item,
+                    width: PlatformProfile.isAndroidTv ? 138 : 150,
+                    compact: PlatformProfile.isAndroidTv,
+                    onFocusChanged: (focused) {
+                      if (focused) onPrefetch(item);
+                    },
+                    onPreview: () => onPrefetch(item),
+                    onTap: () => onOpen(item),
+                  );
+                },
               ),
-              scrollDirection: Axis.horizontal,
-              itemCount: items.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 16),
-              itemBuilder: (context, index) {
-                final item = items[index];
-                return MediaCard(
-                  item: item,
-                  width: PlatformProfile.isAndroidTv ? 138 : 150,
-                  compact: PlatformProfile.isAndroidTv,
-                  onFocusChanged: (focused) {
-                    if (focused) onPrefetch(item);
-                  },
-                  onPreview: () => onPrefetch(item),
-                  onTap: () => onOpen(item),
-                );
-              },
             ),
           ),
         ],

@@ -19,6 +19,9 @@ enum _RecoveryStep { email, code, newPassword, done }
 /// backend asks the user to confirm a security code first.
 enum _ChangePasswordStep { newPassword, code, done }
 
+/// Widest the non-TV Account title, form and "What syncs" column may grow.
+const double accountContentMaxWidth = 720;
+
 class AccountScreen extends StatefulWidget {
   const AccountScreen({
     super.key,
@@ -893,67 +896,79 @@ class _AccountScreenState extends State<AccountScreen> {
     return ListView(
       padding: const EdgeInsets.all(34),
       children: [
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 720),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Orvix Account',
-                style: Theme.of(context)
-                    .textTheme
-                    .headlineMedium
-                    ?.copyWith(fontWeight: FontWeight.w900),
+        // A vertical ListView gives its children a tight cross-axis width, so
+        // a bare ConstrainedBox here would still stretch to the full content
+        // area. Align loosens that constraint so the 720px cap actually holds
+        // on wide windows; the SizedBox then fills up to that cap, so the card
+        // keeps one width in every account state and still shrinks to fit
+        // narrower windows.
+        Align(
+          alignment: AlignmentDirectional.topStart,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: accountContentMaxWidth),
+            child: SizedBox(
+              width: double.infinity,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Orvix Account',
+                    style: Theme.of(context)
+                        .textTheme
+                        .headlineMedium
+                        ?.copyWith(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    user == null
+                        ? 'Optional cloud sync. Orvix still works normally without an account.'
+                        : 'Signed in as ${user.email ?? 'Orvix user'}',
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        height: 1.45),
+                  ),
+                  const SizedBox(height: 24),
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0D120E),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: const Color(0xFF263627)),
+                    ),
+                    child: user == null
+                        ? (_recoveryStep != null
+                            ? _recoveryForm()
+                            : _pendingVerificationEmail == null
+                                ? _signedOutForm()
+                                : _verificationForm())
+                        : (_changeStep != null && _changeUserId == user.id
+                            ? _changePasswordForm(user)
+                            : _deleteUserId == user.id
+                                ? _deleteAccountForm(user)
+                                : _signedInCard(user)),
+                  ),
+                  if (_message != null) ...[
+                    const SizedBox(height: 16),
+                    Text(_message!, style: const TextStyle(height: 1.4)),
+                  ],
+                  const SizedBox(height: 28),
+                  Text('What syncs',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 10),
+                  const _InfoLine(
+                      Icons.video_library_outlined, 'Library and Watchlist'),
+                  const _InfoLine(Icons.play_circle_outline_rounded,
+                      'Continue Watching and resume progress'),
+                  const _InfoLine(Icons.tune_rounded,
+                      'Orvix app preferences and source settings'),
+                  const _InfoLine(Icons.cloud_off_outlined,
+                      'Connected debrid and cloud-service credentials sync securely with your Orvix account'),
+                ],
               ),
-              const SizedBox(height: 8),
-              Text(
-                user == null
-                    ? 'Optional cloud sync. Orvix still works normally without an account.'
-                    : 'Signed in as ${user.email ?? 'Orvix user'}',
-                style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    height: 1.45),
-              ),
-              const SizedBox(height: 24),
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0D120E),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: const Color(0xFF263627)),
-                ),
-                child: user == null
-                    ? (_recoveryStep != null
-                        ? _recoveryForm()
-                        : _pendingVerificationEmail == null
-                            ? _signedOutForm()
-                            : _verificationForm())
-                    : (_changeStep != null && _changeUserId == user.id
-                        ? _changePasswordForm(user)
-                        : _deleteUserId == user.id
-                            ? _deleteAccountForm(user)
-                            : _signedInCard(user)),
-              ),
-              if (_message != null) ...[
-                const SizedBox(height: 16),
-                Text(_message!, style: const TextStyle(height: 1.4)),
-              ],
-              const SizedBox(height: 28),
-              Text('What syncs',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w900)),
-              const SizedBox(height: 10),
-              const _InfoLine(
-                  Icons.video_library_outlined, 'Library and Watchlist'),
-              const _InfoLine(Icons.play_circle_outline_rounded,
-                  'Continue Watching and resume progress'),
-              const _InfoLine(Icons.tune_rounded,
-                  'Orvix app preferences and source settings'),
-              const _InfoLine(Icons.cloud_off_outlined,
-                  'Connected debrid and cloud-service credentials sync securely with your Orvix account'),
-            ],
+            ),
           ),
         ),
       ],
