@@ -202,6 +202,12 @@ class _FakeBackend implements OrvixAccountBackend {
   }
 
   @override
+  Future<void> cancelTvLogin({
+    required String deviceCode,
+    required String deviceNonce,
+  }) async {}
+
+  @override
   Future<String> exchangeTvLogin({
     required String deviceCode,
     required String deviceNonce,
@@ -904,16 +910,23 @@ void main() {
   });
 
   group('TV device login through the backend abstraction', () {
+    TvDeviceLoginController controller() => TvDeviceLoginController(
+          delay: (_) async {},
+          syncAfterSignIn: () async {},
+        );
+
     test('approved login exchanges and signs in', () async {
+      final login = controller();
+      addTearDown(login.dispose);
       final states = <TvDeviceLoginState>[];
-      await TvDeviceLoginService.run(
-        onState: states.add,
-        isCancelled: () => false,
-      );
+      login.addListener(() => states.add(login.state));
+      await login.start();
       expect(states.map((s) => s.phase), [
-        TvDeviceLoginPhase.starting,
+        TvDeviceLoginPhase.preparing,
         TvDeviceLoginPhase.waiting,
         TvDeviceLoginPhase.signingIn,
+        TvDeviceLoginPhase.syncing,
+        TvDeviceLoginPhase.signedIn,
       ]);
       expect(states[1].userCode, 'ABC123');
       expect(states[1].verificationUrl, 'https://example.com/tv?code=ABC123');
@@ -930,12 +943,10 @@ void main() {
       backend.pollStatuses
         ..clear()
         ..add('expired');
-      final states = <TvDeviceLoginState>[];
-      await TvDeviceLoginService.run(
-        onState: states.add,
-        isCancelled: () => false,
-      );
-      expect(states.last.phase, TvDeviceLoginPhase.expired);
+      final login = controller();
+      addTearDown(login.dispose);
+      await login.start();
+      expect(login.state.phase, TvDeviceLoginPhase.expired);
       expect(backend.tvToken, isNull);
     });
 
@@ -1056,6 +1067,76 @@ void main() {
       expect(await backend.approveTvLogin('ABC123'), isTrue);
       expect(requests.last.url.path, '/rest/v1/rpc/approve_tv_login_session');
       expect(jsonDecode(requests.last.body), {'p_user_code': 'ABC123'});
+    });
+
+    test('TV poll without a row, cancel and rate limits', () async {
+      final backend = adapter((request) {
+        switch (request.url.pathSegments.last) {
+          case 'poll_tv_login_session':
+            return json([]);
+          case 'cancel_tv_login_session':
+            return json(true);
+          default:
+            return json({
+              'code': 'P0001',
+              'message': 'Too many TV code attempts. Try again later.',
+              'details': null,
+              'hint': 'tv_login_rate_limited',
+            }, 400);
+        }
+      });
+
+      expect(
+          await backend.pollTvLogin(deviceCode: 'dc', deviceNonce: 'wrong'),
+          isNull);
+
+      await backend.cancelTvLogin(deviceCode: 'dc', deviceNonce: 'nonce');
+      expect(requests.last.url.path, '/rest/v1/rpc/cancel_tv_login_session');
+      expect(jsonDecode(requests.last.body),
+          {'p_device_code': 'dc', 'p_device_nonce': 'nonce'});
+
+      await expectLater(
+        backend.approveTvLogin('ZZZZZZ'),
+        throwsA(isA<OrvixTvLoginException>().having(
+            (e) => e.kind, 'kind', OrvixTvLoginErrorKind.rateLimited)),
+      );
+    });
+
+    test('TV exchange maps the Edge Function answers', () async {
+      var answer = json({'refresh_token': 'refresh', 'access_token': 'a'});
+      final backend = adapter((_) => answer);
+
+      expect(
+          await backend.exchangeTvLogin(deviceCode: 'dc', deviceNonce: 'n'),
+          'refresh');
+      expect(requests.last.url.path, '/functions/v1/tv-login-exchange');
+      expect(jsonDecode(requests.last.body),
+          {'device_code': 'dc', 'device_nonce': 'n'});
+
+      for (final (response, kind) in [
+        (
+          json({'error': 'exchange_in_progress'}, 409),
+          OrvixTvLoginErrorKind.busy
+        ),
+        (
+          json({'error': 'not_approved_or_expired'}, 409),
+          OrvixTvLoginErrorKind.rejected
+        ),
+        (
+          json({'error': 'session_generation_failed'}, 503),
+          OrvixTvLoginErrorKind.unavailable
+        ),
+        (json({'error': 'claim_failed'}, 400), OrvixTvLoginErrorKind.unavailable),
+        (json({'msg': 'Invalid JWT'}, 401), OrvixTvLoginErrorKind.configuration),
+        (json({}, 200), OrvixTvLoginErrorKind.unavailable),
+      ]) {
+        answer = response;
+        await expectLater(
+          backend.exchangeTvLogin(deviceCode: 'dc', deviceNonce: 'n'),
+          throwsA(isA<OrvixTvLoginException>()
+              .having((e) => e.kind, 'kind', kind)),
+        );
+      }
     });
 
     test('invalid TV start response is rejected', () async {

@@ -129,6 +129,41 @@ class OrvixTvLoginStart {
   final int pollIntervalSeconds;
 }
 
+/// Why a TV login step failed, so the TV and the phone can react correctly.
+enum OrvixTvLoginErrorKind {
+  /// The login is not approved, expired, was cancelled or is already used.
+  /// Retrying the same login cannot succeed.
+  rejected,
+
+  /// Another exchange for the same login is in progress; retry shortly.
+  busy,
+
+  /// A temporary server or network problem; retrying may succeed.
+  unavailable,
+
+  /// The account entered too many wrong codes; wait before trying again.
+  rateLimited,
+
+  /// The server refused the request itself (for example the Edge Function's
+  /// gateway settings); retrying will not help.
+  configuration,
+}
+
+/// A TV login failure reported by the account backend. Never carries codes,
+/// nonces or tokens.
+class OrvixTvLoginException implements Exception {
+  const OrvixTvLoginException(this.kind);
+
+  final OrvixTvLoginErrorKind kind;
+
+  bool get retryable =>
+      kind == OrvixTvLoginErrorKind.busy ||
+      kind == OrvixTvLoginErrorKind.unavailable;
+
+  @override
+  String toString() => 'OrvixTvLoginException(${kind.name})';
+}
+
 /// Email/password accounts and the current session.
 abstract interface class OrvixAuthBackend {
   OrvixAccountUser? get currentUser;
@@ -238,14 +273,24 @@ abstract interface class OrvixTvLoginBackend {
     required String deviceName,
   });
 
-  /// Returns the lower-case session status, e.g. pending, expired, approved.
+  /// Returns the lower-case session status (pending, approved, expired,
+  /// consumed or cancelled), or null when the login does not exist for this
+  /// device code and nonce. Throws when the backend cannot be reached.
   Future<String?> pollTvLogin({
     required String deviceCode,
     required String deviceNonce,
   });
 
+  /// Stops a login the TV no longer shows, so approving its code does
+  /// nothing. Best effort: callers ignore failures.
+  Future<void> cancelTvLogin({
+    required String deviceCode,
+    required String deviceNonce,
+  });
+
   /// Exchanges an approved TV login for a session token for
-  /// [signInWithTvLoginToken].
+  /// [signInWithTvLoginToken]. Throws [OrvixTvLoginException] for answers
+  /// the server gave, and other errors when it could not be reached.
   Future<String> exchangeTvLogin({
     required String deviceCode,
     required String deviceNonce,
@@ -254,7 +299,9 @@ abstract interface class OrvixTvLoginBackend {
   Future<void> signInWithTvLoginToken(String token);
 
   /// Approves a TV's code from a signed-in phone. Returns false when the code
-  /// expired or was already used.
+  /// is not valid, expired or was already used. Throws
+  /// [OrvixTvLoginException] with [OrvixTvLoginErrorKind.rateLimited] after
+  /// too many wrong codes.
   Future<bool> approveTvLogin(String userCode);
 }
 

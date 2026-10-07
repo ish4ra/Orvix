@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -8,6 +7,9 @@ import '../models/media_item.dart';
 import '../services/catalog_service.dart';
 import '../services/platform_profile.dart';
 import '../services/source_provider_service.dart';
+import '../tv/tv_focus.dart';
+import '../tv/tv_theme.dart';
+import '../tv/tv_widgets.dart';
 import '../widgets/media_card.dart';
 
 class SearchScreen extends StatefulWidget {
@@ -38,7 +40,11 @@ class _SearchScreenState extends State<SearchScreen> {
   bool _loading = false;
   String? _error;
   int _generation = 0;
-  MediaItem? _tvFocusedItem;
+  /// The TV result being looked at, for the preview line and backdrop. A
+  /// notifier, so moving focus does not rebuild the whole results grid.
+  final _tvPreview = ValueNotifier<MediaItem?>(null);
+  final _tvBackdrop = ValueNotifier<String?>(null);
+  Timer? _tvBackdropDebounce;
   final Set<String> _warmingTitles = <String>{};
 
   @override
@@ -48,7 +54,9 @@ class _SearchScreenState extends State<SearchScreen> {
       debugLabel: 'search-field',
       onKeyEvent: _handleSearchFieldKey,
     );
-    if (widget.active) {
+    // On TV the shell moves focus into Search; focusing the field there
+    // never opens the keyboard by itself.
+    if (widget.active && !PlatformProfile.isAndroidTv) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _focusNode.requestFocus();
       });
@@ -58,7 +66,7 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void didUpdateWidget(covariant SearchScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.active && !oldWidget.active) {
+    if (widget.active && !oldWidget.active && !PlatformProfile.isAndroidTv) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _focusNode.requestFocus();
       });
@@ -68,6 +76,9 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _tvBackdropDebounce?.cancel();
+    _tvPreview.dispose();
+    _tvBackdrop.dispose();
     _controller.dispose();
     _focusNode.dispose();
     _firstResultFocusNode.dispose();
@@ -247,113 +258,125 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  Widget _buildTvSearch(BuildContext context) {
-    final focused = _tvFocusedItem ??
-        (_results.isNotEmpty ? _results.first : null);
-    final backdrop = focused?.background;
+  void _previewTvItem(MediaItem item) {
+    _prefetchItem(item);
+    _tvPreview.value = item;
+    // Swap the backdrop only once focus rests, not on every step of a held
+    // DPAD key.
+    _tvBackdropDebounce?.cancel();
+    _tvBackdropDebounce = Timer(const Duration(milliseconds: 280), () {
+      if (mounted) _tvBackdrop.value = item.background;
+    });
+  }
 
+  Widget _buildTvSearch(BuildContext context) {
     return Stack(
       fit: StackFit.expand,
       children: [
-        if (backdrop != null && backdrop.isNotEmpty)
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 220),
-            child: CachedNetworkImage(
-              key: ValueKey(backdrop),
-              imageUrl: backdrop,
-              fit: BoxFit.cover,
-              alignment: Alignment.topCenter,
-              memCacheWidth: 1280,
-              fadeInDuration: Duration.zero,
-              placeholder: (_, __) =>
-                  const ColoredBox(color: Color(0xFF050806)),
-              errorWidget: (_, __, ___) =>
-                  const ColoredBox(color: Color(0xFF050806)),
+        ValueListenableBuilder<String?>(
+          valueListenable: _tvBackdrop,
+          builder: (context, backdrop, _) => AnimatedSwitcher(
+            duration: const Duration(milliseconds: 260),
+            child: backdrop == null || backdrop.isEmpty
+                ? const SizedBox.expand(key: ValueKey('no-backdrop'))
+                : Align(
+                    key: ValueKey(backdrop),
+                    alignment: Alignment.topRight,
+                    child: FractionallySizedBox(
+                      widthFactor: .72,
+                      heightFactor: .62,
+                      child: TvNetworkImage(
+                        url: backdrop,
+                        cacheWidth: 1280,
+                        alignment: Alignment.topCenter,
+                      ),
+                    ),
+                  ),
+          ),
+        ),
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [Color(0xFF050806), Color(0xE6050806), Color(0x80050806)],
+              stops: [.18, .5, 1],
             ),
           ),
+        ),
         const DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [
-                Color(0xCC050806),
-                Color(0xEE050806),
-                Color(0xFF050806),
-              ],
-              stops: [0, .36, .62],
+              colors: [Color(0x66050806), Color(0xF2050806), Color(0xFF050806)],
+              stops: [0, .42, .62],
             ),
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(30, 24, 30, 22),
+          padding: const EdgeInsets.fromLTRB(
+            TvMetrics.pageHorizontal,
+            TvMetrics.pageTop,
+            TvMetrics.pageHorizontal,
+            0,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  const Text(
-                    'Search',
-                    style: TextStyle(
-                      fontSize: 25,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -.35,
-                    ),
-                  ),
-                  const SizedBox(width: 22),
+                  const Text('Search', style: TvText.title),
+                  const SizedBox(width: 28),
                   Expanded(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 720),
-                      child: TextField(
-                        controller: _controller,
-                        focusNode: _focusNode,
-                        onChanged: _onQueryChanged,
-                        onSubmitted: (_) => _focusFirstResult(),
-                        textInputAction: TextInputAction.search,
-                        style: const TextStyle(fontSize: 16),
-                        decoration: InputDecoration(
-                          isDense: true,
-                          hintText: 'Movies, series…',
-                          prefixIcon: const Icon(Icons.search_rounded),
-                          suffixIcon: _controller.text.isEmpty
-                              ? null
-                              : IconButton(
-                                  tooltip: 'Clear',
-                                  onPressed: () {
-                                    _controller.clear();
-                                    _onQueryChanged('');
-                                    setState(() {});
-                                    _focusNode.requestFocus();
-                                  },
-                                  icon: const Icon(Icons.close_rounded),
-                                ),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 620),
+                        child: TvTextField(
+                          key: const ValueKey('tv-search-field'),
+                          controller: _controller,
+                          focusNode: _focusNode,
+                          nextFocusNode: _firstResultFocusNode,
+                          preferred: true,
+                          icon: Icons.search_rounded,
+                          hint: 'Movies, series…',
+                          textInputAction: TextInputAction.search,
+                          onChanged: (value) {
+                            _onQueryChanged(value);
+                            setState(() {});
+                          },
                         ),
                       ),
                     ),
                   ),
-                  const Spacer(),
-                  if (focused != null)
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 300),
-                      child: Text(
-                        [
-                          focused.title,
-                          if (focused.year != null) focused.year!,
-                        ].join('  •  '),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.end,
-                        style: const TextStyle(
-                          color: Color(0xFFB0BAB2),
-                          fontWeight: FontWeight.w700,
-                          fontSize: 12.5,
-                        ),
-                      ),
-                    ),
                 ],
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 22,
+                child: ValueListenableBuilder<MediaItem?>(
+                  valueListenable: _tvPreview,
+                  builder: (context, item, _) => item == null
+                      ? const SizedBox.shrink()
+                      : Text(
+                          [
+                            item.title,
+                            item.typeLabel,
+                            if (item.year != null) item.year!,
+                            if (item.rating != null)
+                              '★ ${item.rating!.toStringAsFixed(1)}',
+                          ].join('   •   '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TvText.caption.copyWith(
+                            color: TvColors.lime,
+                            fontSize: 14,
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(height: 6),
               Expanded(child: _buildTvSearchBody(context)),
             ],
           ),
@@ -368,14 +391,10 @@ class _SearchScreenState extends State<SearchScreen> {
       return const Align(
         alignment: Alignment.topLeft,
         child: Padding(
-          padding: EdgeInsets.only(top: 10),
+          padding: EdgeInsets.only(top: 18),
           child: Text(
-            'Type at least two characters to search.',
-            style: TextStyle(
-              color: Color(0xFF97A299),
-              fontSize: 13.5,
-              fontWeight: FontWeight.w600,
-            ),
+            'Press OK on the search box and type at least two characters. Results appear as you type.',
+            style: TvText.body,
           ),
         ),
       );
@@ -384,9 +403,12 @@ class _SearchScreenState extends State<SearchScreen> {
     if (_error != null) {
       return Align(
         alignment: Alignment.topLeft,
-        child: Text(
-          'Search failed: $_error',
-          style: const TextStyle(color: Color(0xFFFFB4AB)),
+        child: Padding(
+          padding: const EdgeInsets.only(top: 18),
+          child: Text(
+            'Search failed. Check the connection and try again.',
+            style: TvText.body.copyWith(color: TvColors.danger),
+          ),
         ),
       );
     }
@@ -398,62 +420,49 @@ class _SearchScreenState extends State<SearchScreen> {
     if (!_loading && _results.isEmpty) {
       return const Align(
         alignment: Alignment.topLeft,
-        child: Text(
-          'No matching movies or TV series found.',
-          style: TextStyle(color: Color(0xFF97A299)),
+        child: Padding(
+          padding: EdgeInsets.only(top: 18),
+          child: Text(
+            'No matching movies or TV series found.',
+            style: TvText.body,
+          ),
         ),
       );
     }
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        const spacing = 13.0;
+        const spacing = 18.0;
+        const target = 140.0;
         final width = constraints.maxWidth;
-        final columns = width >= 1180
-            ? 8
-            : width >= 980
-                ? 7
-                : width >= 800
-                    ? 6
-                    : 5;
+        final columns =
+            ((width + spacing) / (target + spacing)).floor().clamp(4, 8);
         final cardWidth =
             (width - spacing * (columns - 1)) / columns.toDouble();
-        final cardHeight = cardWidth / .675 + 40;
 
         return Stack(
           children: [
             GridView.builder(
-              keyboardDismissBehavior:
-                  ScrollViewKeyboardDismissBehavior.onDrag,
-              cacheExtent: 1000,
-              padding: const EdgeInsets.only(top: 4, bottom: 26),
+              padding: const EdgeInsets.only(top: 12, bottom: 30),
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: columns,
                 crossAxisSpacing: spacing,
-                mainAxisSpacing: 15,
-                mainAxisExtent: cardHeight,
+                mainAxisSpacing: 22,
+                mainAxisExtent: TvPosterCard.heightFor(
+                                  cardWidth, MediaQuery.textScalerOf(context)),
               ),
               itemCount: _results.length,
               itemBuilder: (context, index) {
                 final item = _results[index];
-                return RepaintBoundary(
-                  child: MediaCard(
-                    key: ValueKey('tv-search-result-$index'),
-                    item: item,
-                    width: double.infinity,
-                    compact: true,
-                    focusScale: 1.055,
-                    focusNode: index == 0 ? _firstResultFocusNode : null,
-                    onFocusChanged: (focused) {
-                      if (!focused || !mounted) return;
-                      _prefetchItem(item);
-                      if (_tvFocusedItem?.id != item.id) {
-                        setState(() => _tvFocusedItem = item);
-                      }
-                    },
-                    onPreview: () => _prefetchItem(item),
-                    onTap: () => _openItem(item),
-                  ),
+                return TvPosterCard(
+                  key: ValueKey('tv-search-result-$index'),
+                  item: item,
+                  width: cardWidth,
+                  focusNode: index == 0 ? _firstResultFocusNode : null,
+                  onFocusChange: (focused) {
+                    if (focused && mounted) _previewTvItem(item);
+                  },
+                  onPressed: () => _openItem(item),
                 );
               },
             ),

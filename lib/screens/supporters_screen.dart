@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:simple_icons/simple_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../services/platform_profile.dart';
 import '../services/supporters_service.dart';
+import '../tv/tv_focus.dart';
+import '../tv/tv_theme.dart';
+import '../tv/tv_widgets.dart';
 
 class SupportersScreen extends StatefulWidget {
   const SupportersScreen({super.key});
@@ -38,8 +42,164 @@ class _SupportersScreenState extends State<SupportersScreen>
     await launchUrl(Uri.parse(value), mode: LaunchMode.externalApplication);
   }
 
+  bool _tvContributors = false;
+
+  Widget _buildTv(BuildContext context) {
+    const links = [
+      ('GitHub Sponsors', 'https://github.com/sponsors/ish4ra', SimpleIcons.githubsponsors),
+      ('Buy Me a Coffee', 'https://buymeacoffee.com/ish4ra', SimpleIcons.buymeacoffee),
+      ('Ko-fi', 'https://ko-fi.com/ish4ra', SimpleIcons.kofi),
+      ('Star on GitHub', 'https://github.com/ish4ra/Orvix', SimpleIcons.github),
+    ];
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(
+        TvMetrics.pageHorizontal,
+        TvMetrics.pageTop,
+        TvMetrics.pageHorizontal,
+        TvMetrics.pageBottom,
+      ),
+      children: [
+        Align(
+          alignment: Alignment.topLeft,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 820),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const TvPageHeader(
+                  title: 'Support Orvix',
+                  subtitle:
+                      'Orvix is free and open source. Support development, meet the earliest supporters, and see the contributors building the project.',
+                ),
+                const SizedBox(height: 22),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    for (final (label, url, icon) in links)
+                      TvButton(
+                        kind: label == 'GitHub Sponsors'
+                            ? TvButtonKind.primary
+                            : TvButtonKind.secondary,
+                        preferred: label == 'GitHub Sponsors',
+                        icon: icon,
+                        label: label,
+                        onPressed: () => _open(url),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 28),
+                TvTabGroup(
+                  child: Wrap(
+                  spacing: 12,
+                  children: [
+                    TvTab(
+                      key: const ValueKey('tv-support-supporters'),
+                      label: 'Supporters',
+                      icon: Icons.favorite_rounded,
+                      selected: !_tvContributors,
+                      onPressed: () => setState(() => _tvContributors = false),
+                    ),
+                    TvTab(
+                      key: const ValueKey('tv-support-contributors'),
+                      label: 'Contributors',
+                      icon: Icons.groups_rounded,
+                      selected: _tvContributors,
+                      onPressed: () => setState(() => _tvContributors = true),
+                    ),
+                  ],
+                ),
+                ),
+                const SizedBox(height: 16),
+                if (_tvContributors)
+                  FutureBuilder<List<OrvixContributor>>(
+                    future: _contributors,
+                    builder: (context, snap) => _tvList<OrvixContributor>(
+                      snap,
+                      empty: 'GitHub contributors will appear here.',
+                      failed: 'Could not load contributors.',
+                      row: (c, i) => TvListRow(
+                        icon: Icons.person_rounded,
+                        leading: _Avatar(url: c.avatarUrl, fallback: c.login),
+                        title: c.login,
+                        subtitle:
+                            '${c.contributions} contribution${c.contributions == 1 ? '' : 's'}',
+                        trailingIcon: Icons.open_in_new_rounded,
+                        onPressed: () => _open(c.profileUrl),
+                      ),
+                    ),
+                  )
+                else
+                  FutureBuilder<List<OrvixSupporter>>(
+                    future: _supporters,
+                    builder: (context, snap) => _tvList<OrvixSupporter>(
+                      snap,
+                      empty: 'The first public supporters will be recognized here.',
+                      failed: 'Could not load supporters.',
+                      row: (s, i) => TvListRow(
+                        icon: Icons.favorite_rounded,
+                        leading: _Avatar(url: s.avatarUrl, fallback: s.name),
+                        title: i < 3 ? '${s.name}   #${i + 1}' : s.name,
+                        subtitle: [
+                          s.providerLabel,
+                          s.supportType,
+                          if (s.tier?.isNotEmpty == true) s.tier!,
+                        ].join(' • '),
+                        trailingIcon:
+                            s.profileUrl == null ? null : Icons.open_in_new_rounded,
+                        onPressed: () => _open(s.profileUrl),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _tvList<T>(
+    AsyncSnapshot<List<T>> snap, {
+    required String empty,
+    required String failed,
+    required Widget Function(T item, int index) row,
+  }) {
+    if (snap.connectionState != ConnectionState.done) {
+      return const Padding(
+        padding: EdgeInsets.all(24),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (snap.hasError) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(failed, style: TvText.body),
+          const SizedBox(height: 12),
+          TvButton(
+            icon: Icons.refresh_rounded,
+            label: 'Retry',
+            onPressed: () => setState(_reload),
+          ),
+        ],
+      );
+    }
+    final items = snap.data ?? const [];
+    if (items.isEmpty) return Text(empty, style: TvText.body);
+    return Column(
+      children: [
+        for (var i = 0; i < items.length; i++) ...[
+          row(items[i], i),
+          const SizedBox(height: 10),
+        ],
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (PlatformProfile.isAndroidTv) return _buildTv(context);
     final compact = MediaQuery.sizeOf(context).width < 720;
     return ListView(
       padding: EdgeInsets.all(compact ? 20 : 34),

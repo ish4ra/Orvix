@@ -176,7 +176,6 @@ void main() {
       required ValueChanged<CloudProvider> onSelected,
       CloudProvider provider = CloudProvider.pikpak,
       bool mobile = false,
-      bool tv = false,
     }) =>
         Align(
           alignment: Alignment.topLeft,
@@ -184,7 +183,6 @@ void main() {
             provider: provider,
             onSelected: onSelected,
             mobile: mobile,
-            tv: tv,
           ),
         );
 
@@ -355,24 +353,7 @@ void main() {
           greaterThanOrEqualTo(tester.getRect(find.text('Clouds')).bottom));
     });
 
-    testWidgets('Android TV keeps the title-and-selector row', (tester) async {
-      await _setSize(tester, const Size(960, 540));
-      await tester.pumpWidget(_host(header(onSelected: (_) {}, tv: true)));
-      expect(find.byKey(const ValueKey('clouds-provider-menu')), findsNothing);
-      final button = tester.widget<SegmentedButton<CloudProvider>>(
-        find.byType(SegmentedButton<CloudProvider>),
-      );
-      expect(button.expandedInsets, isNull);
-      expect(button.segments.map((s) => s.icon), everyElement(isNotNull));
-      final row = find.ancestor(
-        of: find.text('Clouds'),
-        matching: find.byType(Row),
-      );
-      expect(
-        find.descendant(of: row.first, matching: find.byType(Spacer)),
-        findsOneWidget,
-      );
-    });
+    // Android TV uses TvCloudProviderTabs (tv_screens_test.dart).
   });
 
   group('Cloud library headers', () {

@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:simple_icons/simple_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -28,6 +27,10 @@ import 'services/playback_service.dart';
 import 'services/platform_profile.dart';
 import 'services/source_provider_service.dart';
 import 'services/torbox_service.dart';
+import 'tv/tv_focus.dart';
+import 'tv/tv_shell.dart';
+import 'tv/tv_theme.dart';
+import 'tv/tv_widgets.dart';
 import 'widgets/orvix_update_gate.dart';
 
 class OrvixApp extends StatefulWidget {
@@ -248,65 +251,6 @@ class _OrvixShellState extends State<_OrvixShell> {
   int _authRevision = 0;
   int _libraryRevision = 0;
 
-  @override
-  void initState() {
-    super.initState();
-    if (PlatformProfile.isAndroidTv) {
-      HardwareKeyboard.instance.addHandler(_handleTvDirectionalKey);
-    }
-  }
-
-  @override
-  void dispose() {
-    if (PlatformProfile.isAndroidTv) {
-      HardwareKeyboard.instance.removeHandler(_handleTvDirectionalKey);
-    }
-    super.dispose();
-  }
-
-  bool _handleTvDirectionalKey(KeyEvent event) {
-    if (!mounted ||
-        !PlatformProfile.isAndroidTv ||
-        (event is! KeyDownEvent && event is! KeyRepeatEvent)) {
-      return false;
-    }
-
-    // Only own DPAD traversal while the top-level Orvix shell is the active
-    // route. Details, player, dialogs and other pushed routes keep their own
-    // remote-key handling.
-    final route = ModalRoute.of(context);
-    if (route == null || !route.isCurrent) return false;
-
-    final direction = switch (event.logicalKey) {
-      LogicalKeyboardKey.arrowDown => TraversalDirection.down,
-      LogicalKeyboardKey.arrowUp => TraversalDirection.up,
-      _ => null,
-    };
-    if (direction == null) return false;
-
-    final current = FocusManager.instance.primaryFocus;
-    if (current == null) return false;
-
-    // TV forms opt into deterministic vertical traversal with a debug label.
-    // This prevents geometric DPAD traversal from skipping editable fields
-    // (for example TorBox API key) while keeping grid/list screens directional.
-    final linearForm = current.debugLabel?.startsWith('tv-linear-') ?? false;
-    var moved = false;
-    if (linearForm) {
-      moved = direction == TraversalDirection.down
-          ? current.nextFocus()
-          : current.previousFocus();
-      if (!moved) moved = current.focusInDirection(direction);
-    } else {
-      moved = current.focusInDirection(direction);
-      if (!moved) {
-        moved = direction == TraversalDirection.down
-            ? current.nextFocus()
-            : current.previousFocus();
-      }
-    }
-    return moved;
-  }
   void _refreshAfterAccountChange() {
     if (!mounted) return;
     setState(() {
@@ -442,8 +386,127 @@ class _OrvixShellState extends State<_OrvixShell> {
     }
   }
 
+  static const _tvDestinations = <TvDestination>[
+    TvDestination(
+      icon: Icons.home_outlined,
+      selectedIcon: Icons.home_rounded,
+      label: 'Home',
+    ),
+    TvDestination(
+      icon: Icons.search_rounded,
+      selectedIcon: Icons.manage_search_rounded,
+      label: 'Search',
+    ),
+    TvDestination(
+      icon: Icons.video_library_outlined,
+      selectedIcon: Icons.video_library_rounded,
+      label: 'Library',
+    ),
+    TvDestination(
+      icon: Icons.cloud_outlined,
+      selectedIcon: Icons.cloud_rounded,
+      label: 'Clouds',
+    ),
+    TvDestination(
+      icon: Icons.hub_outlined,
+      selectedIcon: Icons.hub_rounded,
+      label: 'Sources',
+    ),
+    TvDestination(
+      icon: Icons.settings_outlined,
+      selectedIcon: Icons.settings_rounded,
+      label: 'Settings',
+    ),
+    TvDestination(
+      icon: Icons.person_outline_rounded,
+      selectedIcon: Icons.person_rounded,
+      label: 'Account',
+    ),
+    TvDestination(
+      icon: Icons.favorite_border_rounded,
+      selectedIcon: Icons.favorite_rounded,
+      label: 'Support',
+    ),
+    TvDestination(
+      icon: Icons.info_outline_rounded,
+      selectedIcon: Icons.info_rounded,
+      label: 'About',
+    ),
+  ];
+
+  /// Android TV destinations. Built only once visited (see TvShell), so the
+  /// Account QR login only runs while Account is open.
+  Widget _tvScreen(int index) {
+    switch (index) {
+      case 0:
+        return HomeScreen(
+          catalog: widget.catalog,
+          sources: widget.sources,
+          mediaState: widget.mediaState,
+          onOpen: _openMedia,
+          onResume: _resumeContinueWatching,
+        );
+      case 1:
+        return SearchScreen(
+          catalog: widget.catalog,
+          sources: widget.sources,
+          onOpen: _openMedia,
+          active: _index == 1,
+        );
+      case 2:
+        return MediaLibraryScreen(
+          key: ValueKey('media-library-$_libraryRevision'),
+          mediaState: widget.mediaState,
+          onOpen: _openMedia,
+        );
+      case 3:
+        // Rebuilt after an Orvix account change, which can bring synced
+        // provider credentials; a provider connecting from inside Clouds
+        // must not rebuild the screen under the remote.
+        return LibraryScreen(
+          key: ValueKey(_authRevision),
+          pikpak: widget.pikpak,
+          transfer: widget.transfer,
+          torbox: widget.torbox,
+          cloudPreferences: widget.cloudPreferences,
+          playback: widget.playback,
+          onAuthChanged: () {},
+        );
+      case 4:
+        return SourcesScreen(sources: widget.sources);
+      case 5:
+        return const SettingsScreen();
+      case 6:
+        return AccountScreen(
+          active: _index == 6,
+          onAuthChanged: _refreshAfterAccountChange,
+        );
+      case 7:
+        return const SupportersScreen();
+      default:
+        return const _AboutScreen();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (PlatformProfile.isAndroidTv) {
+      return TvShell(
+        destinations: _tvDestinations,
+        selectedIndex: _index,
+        onSelected: _selectDestination,
+        brand: (expanded) => Padding(
+          padding: const EdgeInsets.only(left: 18),
+          child: _OrvixBrand(
+            iconSize: 44,
+            fontSize: 22,
+            showWordmark: expanded,
+          ),
+        ),
+        screenBuilder: (context, index) => _tvScreen(index),
+      );
+    }
+
     final screens = <Widget>[
       HomeScreen(
         // Keep the Home element/state alive when returning from Details.
@@ -498,44 +561,6 @@ class _OrvixShellState extends State<_OrvixShell> {
         child: IndexedStack(index: _index, children: screens),
       ),
     );
-
-    if (PlatformProfile.isAndroidTv) {
-      // Android TV Back must navigate inside Orvix instead of dropping straight
-      // to the launcher from a top-level destination. Child Navigator routes
-      // (details/player/dialogs) still get first chance to pop normally.
-      return PopScope(
-        canPop: false,
-        onPopInvokedWithResult: (didPop, result) {
-          if (didPop) return;
-          if (_index != 0) {
-            _selectDestination(0);
-          }
-          // At Home, consume Back. The remote Home button remains the explicit
-          // way to leave Orvix, preventing accidental exits during DPAD use.
-        },
-        child: Scaffold(
-          backgroundColor: const Color(0xFF050806),
-          body: SafeArea(
-            child: Column(
-              children: [
-                _TvTopNavigation(
-                  selectedIndex: _index,
-                  onSelected: _selectDestination,
-                ),
-                Expanded(
-                  child: FocusTraversalGroup(
-                    policy: ReadingOrderTraversalPolicy(),
-                    child: _TvFocusAutoScroll(
-                      child: ClipRect(child: body),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
 
     if (compact) {
       return Scaffold(
@@ -781,8 +806,138 @@ class _OrvixBrand extends StatelessWidget {
 class _AboutScreen extends StatelessWidget {
   const _AboutScreen();
 
+  static const _features = <(IconData, String)>[
+    (Icons.movie_filter_outlined,
+        'Rich movie & TV discovery with AIOMetadata/Cinemeta fallback'),
+    (Icons.cloud_outlined,
+        'Debrid and cloud-service connections, libraries and transfer bridge'),
+    (Icons.person_outline_rounded,
+        'Optional Orvix account for Library, progress and preference sync'),
+    (Icons.hub_outlined, 'User-configured Stremio-compatible source providers'),
+    (Icons.hub_rounded,
+        'Built-in local BitTorrent/P2P streaming on Windows, Android mobile, Android TV and macOS when no debrid account is connected'),
+    (Icons.play_circle_outline_rounded,
+        'Dual-engine Android playback: Auto / ExoPlayer / MPV, with libmpv on desktop and shared custom controls'),
+    (Icons.subtitles_rounded,
+        'OpenSubtitles v3 online subtitle addon with language filtering, sync and appearance controls'),
+    (Icons.video_library_outlined,
+        'Personal Library, persistent watchlist, and multi-title Continue Watching'),
+    (Icons.dashboard_customize_outlined,
+        'Customizable Home rows including optional IMDb Top 250 shelves'),
+    (Icons.phone_android_outlined,
+        'Shared Orvix feature set and branding across Windows, Android mobile, Android TV and macOS'),
+  ];
+
+  static Future<void> _open(String url) =>
+      launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+
+  Widget _buildTv(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(
+        TvMetrics.pageHorizontal,
+        TvMetrics.pageTop,
+        TvMetrics.pageHorizontal,
+        TvMetrics.pageBottom,
+      ),
+      children: [
+        const _OrvixBrand(iconSize: 60, fontSize: 34, showWordmark: true),
+        const SizedBox(height: 20),
+        FutureBuilder<String>(
+          future: AppUpdateService.installedVersion(),
+          builder: (context, snapshot) {
+            final version = snapshot.data?.trim();
+            return Text(
+              version == null || version.isEmpty ? 'Orvix' : 'Orvix v$version',
+              style: TvText.title,
+            );
+          },
+        ),
+        const SizedBox(height: 10),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 640),
+          child: const Text(
+            'A multi-cloud cinematic media hub built with Flutter. Orvix connects your cloud services, source providers, library and player across desktop, mobile and TV.',
+            style: TvText.body,
+          ),
+        ),
+        const SizedBox(height: 22),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            TvButton(
+              kind: TvButtonKind.primary,
+              icon: Icons.language_rounded,
+              label: 'isharalakshan.xyz',
+              preferred: true,
+              onPressed: () => _open('https://isharalakshan.xyz/orvix/'),
+            ),
+            TvButton(
+              icon: SimpleIcons.mastodon,
+              label: 'Mastodon',
+              onPressed: () => _open('https://fosstodon.org/@orvix'),
+            ),
+            TvButton(
+              icon: SimpleIcons.lemmy,
+              label: 'Lemmy',
+              onPressed: () => _open('https://lemmy.ml/c/Orvix'),
+            ),
+            TvButton(
+              icon: SimpleIcons.github,
+              label: 'GitHub',
+              onPressed: () => _open('https://github.com/ish4ra/Orvix'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 30),
+        const TvSectionHeader('What Orvix includes'),
+        const SizedBox(height: 14),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 820),
+          child: TvFocusable(
+            semanticLabel: 'What Orvix includes',
+            builder: (context, focused) => AnimatedContainer(
+              duration: TvMetrics.focusDuration,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: focused ? TvColors.cardFocused : TvColors.surface,
+                borderRadius: BorderRadius.circular(TvMetrics.radius),
+                border: Border.all(
+                  color: focused ? TvColors.primary : TvColors.border,
+                  width: focused ? TvMetrics.focusBorder : 1,
+                ),
+              ),
+              child: Column(
+                children: [
+                  for (final (icon, text) in _features)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Row(
+                        children: [
+                          Icon(icon, size: 21, color: TvColors.primary),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Text(
+                              text,
+                              style: TvText.body.copyWith(
+                                  color: const Color(0xFFD5DDD4)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (PlatformProfile.isAndroidTv) return _buildTv(context);
     return ListView(
       padding: const EdgeInsets.all(34),
       children: [
@@ -867,26 +1022,7 @@ class _AboutScreen extends StatelessWidget {
                     ?.copyWith(fontWeight: FontWeight.w900),
               ),
               const SizedBox(height: 16),
-              const _FeatureLine(Icons.movie_filter_outlined,
-                  'Rich movie & TV discovery with AIOMetadata/Cinemeta fallback'),
-              const _FeatureLine(Icons.cloud_outlined,
-                  'Debrid and cloud-service connections, libraries and transfer bridge'),
-              const _FeatureLine(Icons.person_outline_rounded,
-                  'Optional Orvix account for Library, progress and preference sync'),
-              const _FeatureLine(Icons.hub_outlined,
-                  'User-configured Stremio-compatible source providers'),
-              const _FeatureLine(Icons.hub_rounded,
-                  'Built-in local BitTorrent/P2P streaming on Windows, Android mobile, Android TV and macOS when no debrid account is connected'),
-              const _FeatureLine(Icons.play_circle_outline_rounded,
-                  'Dual-engine Android playback: Auto / ExoPlayer / MPV, with libmpv on desktop and shared custom controls'),
-              const _FeatureLine(Icons.subtitles_rounded,
-                  'OpenSubtitles v3 online subtitle addon with language filtering, sync and appearance controls'),
-              const _FeatureLine(Icons.video_library_outlined,
-                  'Personal Library, persistent watchlist, and multi-title Continue Watching'),
-              const _FeatureLine(Icons.dashboard_customize_outlined,
-                  'Customizable Home rows including optional IMDb Top 250 shelves'),
-              const _FeatureLine(Icons.phone_android_outlined,
-                  'Shared Orvix feature set and branding across Windows, Android mobile, Android TV and macOS'),
+              for (final (icon, text) in _features) _FeatureLine(icon, text),
             ],
           ),
         ),
@@ -950,202 +1086,4 @@ class _FeatureLine extends StatelessWidget {
       ),
     );
   }
-}
-
-
-class _TvTopNavigation extends StatelessWidget {
-  const _TvTopNavigation({
-    required this.selectedIndex,
-    required this.onSelected,
-  });
-
-  final int selectedIndex;
-  final ValueChanged<int> onSelected;
-
-  static const _items = <({IconData icon, String label, int index})>[
-    (icon: Icons.home_rounded, label: 'Home', index: 0),
-    (icon: Icons.search_rounded, label: 'Search', index: 1),
-    (icon: Icons.video_library_rounded, label: 'Library', index: 2),
-    (icon: Icons.cloud_rounded, label: 'Clouds', index: 3),
-    (icon: Icons.hub_rounded, label: 'Sources', index: 4),
-    (icon: Icons.settings_rounded, label: 'Settings', index: 5),
-    (icon: Icons.person_rounded, label: 'Account', index: 6),
-    (icon: Icons.favorite_rounded, label: 'Support', index: 7),
-    (icon: Icons.info_rounded, label: 'About', index: 8),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 72,
-      padding: const EdgeInsets.symmetric(horizontal: 22),
-      decoration: const BoxDecoration(
-        color: Color(0xFA080B09),
-        border: Border(
-          bottom: BorderSide(color: Color(0xFF1A211C), width: 1),
-        ),
-      ),
-      child: Row(
-        children: [
-          const _TvWordmark(),
-          const SizedBox(width: 24),
-          Expanded(
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: _items.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 5),
-              itemBuilder: (context, index) {
-                final item = _items[index];
-                return _TvTopNavButton(
-                  icon: item.icon,
-                  label: item.label,
-                  selected: selectedIndex == item.index,
-                  onPressed: () => onSelected(item.index),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TvWordmark extends StatelessWidget {
-  const _TvWordmark();
-
-  @override
-  Widget build(BuildContext context) {
-    return const _OrvixBrand(
-      iconSize: 40,
-      fontSize: 22,
-      showWordmark: true,
-    );
-  }
-}
-
-class _TvTopNavButton extends StatefulWidget {
-  const _TvTopNavButton({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final VoidCallback onPressed;
-
-  @override
-  State<_TvTopNavButton> createState() => _TvTopNavButtonState();
-}
-
-class _TvTopNavButtonState extends State<_TvTopNavButton> {
-  bool _focused = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
-    final active = widget.selected || _focused;
-
-    return Center(
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 100),
-        decoration: BoxDecoration(
-          color: widget.selected
-              ? const Color(0xFF1B221D)
-              : _focused
-                  ? const Color(0xFF202721)
-                  : Colors.transparent,
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(
-            color: _focused
-                ? Colors.white.withValues(alpha: .9)
-                : widget.selected
-                    ? primary.withValues(alpha: .34)
-                    : Colors.transparent,
-            width: _focused ? 2 : 1,
-          ),
-        ),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(15),
-          focusColor: Colors.transparent,
-          onFocusChange: (value) => setState(() => _focused = value),
-          onTap: widget.onPressed,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  widget.icon,
-                  size: 18,
-                  color: active ? primary : const Color(0xFF9BA39D),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  widget.label,
-                  style: TextStyle(
-                    color: active
-                        ? const Color(0xFFF0F2F0)
-                        : const Color(0xFF9BA39D),
-                    fontSize: 12.5,
-                    fontWeight: active ? FontWeight.w800 : FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-
-/// TV focus must always bring the newly focused control into the visible
-/// viewport. This mirrors TV-first UIs where DPAD traversal and scrolling are
-/// one operation instead of requiring touch/wheel input.
-class _TvFocusAutoScroll extends StatefulWidget {
-  const _TvFocusAutoScroll({required this.child});
-  final Widget child;
-
-  @override
-  State<_TvFocusAutoScroll> createState() => _TvFocusAutoScrollState();
-}
-
-class _TvFocusAutoScrollState extends State<_TvFocusAutoScroll> {
-  @override
-  void initState() {
-    super.initState();
-    FocusManager.instance.addListener(_revealPrimaryFocus);
-  }
-
-  @override
-  void dispose() {
-    FocusManager.instance.removeListener(_revealPrimaryFocus);
-    super.dispose();
-  }
-
-  void _revealPrimaryFocus() {
-    final focusContext = FocusManager.instance.primaryFocus?.context;
-    if (!mounted || focusContext == null) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !focusContext.mounted) return;
-      Scrollable.ensureVisible(
-        focusContext,
-        duration: const Duration(milliseconds: 170),
-        curve: Curves.easeOutCubic,
-        // Keep the focused TV control comfortably inside the viewport instead
-        // of waiting until it is clipped at an edge. This mirrors TV-first
-        // source browsers where DPAD focus and smooth scrolling are one action.
-        alignment: 0.30,
-        alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
-      );
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) => widget.child;
 }

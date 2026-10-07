@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import '../models/media_item.dart';
 import '../services/media_state_service.dart';
 import '../services/platform_profile.dart';
+import '../tv/tv_focus.dart';
+import '../tv/tv_theme.dart';
+import '../tv/tv_widgets.dart';
 import '../widgets/media_card.dart';
 
 enum _LibraryFilter { all, movies, tv }
@@ -61,8 +64,124 @@ class _MediaLibraryScreenState extends State<MediaLibraryScreen> {
     }).toList(growable: false);
   }
 
+  Future<void> _confirmTvRemove(MediaItem item) async {
+    final remove = await showTvOptionsDialog<bool>(
+      context,
+      title: 'Remove “${item.title}” from Library?',
+      options: const [(false, 'Keep'), (true, 'Remove from Library')],
+      selected: false,
+    );
+    if (remove == true && mounted) await _remove(item);
+  }
+
+  Widget _buildTv(BuildContext context) {
+    final visible = _visible;
+    const filters = [
+      (_LibraryFilter.all, 'All', Icons.apps_rounded),
+      (_LibraryFilter.movies, 'Movies', Icons.movie_outlined),
+      (_LibraryFilter.tv, 'TV', Icons.tv_outlined),
+    ];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        TvMetrics.pageHorizontal,
+        TvMetrics.pageTop,
+        TvMetrics.pageHorizontal,
+        0,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TvPageHeader(
+            title: 'Library',
+            subtitle:
+                '${_items.length} saved title${_items.length == 1 ? '' : 's'} • hold OK on a title to remove it',
+          ),
+          const SizedBox(height: 18),
+          TvTabGroup(
+            child: Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              for (final (filter, label, icon) in filters)
+                TvTab(
+                  key: ValueKey('tv-library-filter-${filter.name}'),
+                  label: label,
+                  icon: icon,
+                  selected: _filter == filter,
+                  preferred: filter == _LibraryFilter.all,
+                  onPressed: () => setState(() => _filter = filter),
+                ),
+              TvButton(
+                key: const ValueKey('tv-library-refresh'),
+                kind: TvButtonKind.quiet,
+                icon: Icons.refresh_rounded,
+                label: 'Refresh',
+                onPressed: _reload,
+              ),
+            ],
+          ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : visible.isEmpty
+                    ? TvMessage(
+                        icon: _items.isNotEmpty
+                            ? Icons.filter_alt_off_rounded
+                            : Icons.video_library_outlined,
+                        title: _items.isNotEmpty
+                            ? 'Nothing in this filter'
+                            : 'Your Library is empty',
+                        message: _items.isNotEmpty
+                            ? 'Try another filter.'
+                            : 'Open a movie or series and choose Library to save it here.',
+                      )
+                    : LayoutBuilder(
+                        builder: (context, constraints) {
+                          const spacing = 18.0;
+                          const target = 140.0;
+                          final columns = ((constraints.maxWidth + spacing) /
+                                  (target + spacing))
+                              .floor()
+                              .clamp(4, 8);
+                          final cardWidth = (constraints.maxWidth -
+                                  spacing * (columns - 1)) /
+                              columns;
+                          return GridView.builder(
+                            padding: const EdgeInsets.only(top: 14, bottom: 30),
+                            gridDelegate:
+                                SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: columns,
+                              crossAxisSpacing: spacing,
+                              mainAxisSpacing: 22,
+                              mainAxisExtent: TvPosterCard.heightFor(
+                                  cardWidth, MediaQuery.textScalerOf(context)),
+                            ),
+                            itemCount: visible.length,
+                            itemBuilder: (context, index) {
+                              final item = visible[index];
+                              return TvPosterCard(
+                                key: ValueKey(
+                                    'tv-library-${item.kind.name}-${item.id}'),
+                                item: item,
+                                width: cardWidth,
+                                onPressed: () => widget.onOpen(item),
+                                onLongPress: () => _confirmTvRemove(item),
+                              );
+                            },
+                          );
+                        },
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (PlatformProfile.isAndroidTv) return _buildTv(context);
     final visible = _visible;
     final mobile = PlatformProfile.isAndroidMobile;
     return Padding(
