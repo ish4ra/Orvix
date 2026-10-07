@@ -365,7 +365,7 @@ const dashboardHtml = `<!doctype html>
     .cards{display:grid;grid-template-columns:repeat(8,minmax(135px,1fr));gap:12px}.card,.panel{background:var(--card);border:1px solid var(--line);border-radius:18px}.card{padding:16px}.metric{font-size:28px;font-weight:900;margin-top:8px}.label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.09em}
     .grid2{display:grid;grid-template-columns:1.2fr .8fr;gap:14px;margin-top:14px}.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:14px}.panel{padding:18px;min-width:0}.panel h2{font-size:16px;margin:0 0 14px}.tableWrap{overflow:auto;max-height:430px}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:10px 9px;border-bottom:1px solid #172218;white-space:nowrap}th{color:var(--muted);font-weight:700;position:sticky;top:0;background:var(--card)}.online{color:var(--lime2);font-weight:800}
     .bars{display:grid;gap:10px}.barRow{display:grid;grid-template-columns:minmax(90px,180px) 1fr 48px;gap:10px;align-items:center}.barTrack{height:8px;background:#141d15;border-radius:20px;overflow:hidden}.barFill{height:100%;background:var(--lime);border-radius:20px}.barName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.barCount{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
-    .pill{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;background:#152116;color:#cfff91;font-size:11px;font-weight:750}.danger{color:var(--danger)}.sectionTitle{margin:26px 0 10px;font-size:12px;color:var(--muted);font-weight:850;letter-spacing:.12em;text-transform:uppercase}.empty{color:var(--muted);padding:14px 0}
+    .pill{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;background:#152116;color:#cfff91;font-size:11px;font-weight:750}.releaseAssets{display:grid;gap:3px;margin-top:6px;color:var(--muted);font-size:11px}.releaseAsset{display:flex;gap:8px;justify-content:space-between}.releaseAssetName{max-width:360px;overflow:hidden;text-overflow:ellipsis}.danger{color:var(--danger)}.sectionTitle{margin:26px 0 10px;font-size:12px;color:var(--muted);font-weight:850;letter-spacing:.12em;text-transform:uppercase}.empty{color:var(--muted);padding:14px 0}
     @media(max-width:1200px){.cards{grid-template-columns:repeat(4,1fr)}}@media(max-width:850px){.cards{grid-template-columns:repeat(2,1fr)}.grid2,.grid3{grid-template-columns:1fr}.wrap{padding:16px}.top{align-items:flex-start;flex-direction:column}}
   </style>
 </head>
@@ -400,7 +400,7 @@ const dashboardHtml = `<!doctype html>
     </div>
     <div class="sectionTitle">Releases & health</div>
     <div class="grid2">
-      <section class="panel"><h2>GitHub releases</h2><div class="tableWrap"><table><thead><tr><th>Release</th><th>Published</th><th>Downloads</th><th>Type</th></tr></thead><tbody id="releasesBody"></tbody></table></div></section>
+      <section class="panel"><h2>GitHub releases</h2><div class="tableWrap"><table><thead><tr><th>Release</th><th>Published</th><th>Total</th><th>Android Mobile</th><th>Android TV</th><th>Windows</th><th>macOS</th><th>Type</th></tr></thead><tbody id="releasesBody"></tbody></table></div></section>
       <section class="panel"><h2>Recent errors</h2><div class="tableWrap"><table><thead><tr><th>Time</th><th>Type</th><th>Platform</th><th>Version</th><th>Message</th></tr></thead><tbody id="errorsBody"></tbody></table></div></section>
     </div>
   </main>
@@ -466,7 +466,14 @@ const dashboardHtml = `<!doctype html>
       bars("countries",data.countries,country);bars("platforms",data.platforms);bars("versions",data.versions);bars("events",data.event_counts);
       el("usersBody").innerHTML = data.users.length ? data.users.map(row => '<tr><td>'+esc(row.display_name)+'</td><td>'+esc(row.email)+'</td><td>'+esc(country(row.country_code))+'</td><td>'+fmt.format(row.installations)+'</td><td>'+esc(row.device_display_name)+'</td><td>'+esc(relative(row.last_active_at))+'</td><td>'+esc(row.app_version)+'</td></tr>').join("") : '<tr><td colspan="7" class="empty">No accounts</td></tr>';
       el("installsBody").innerHTML = data.installations.length ? data.installations.slice(0,150).map(row => '<tr><td>'+esc(short(row.installation_id))+'</td><td>'+esc(country(row.country_code))+'</td><td>'+esc(row.platform)+(row.is_tv?' TV':'')+'</td><td>'+esc(row.device_display_name)+'</td><td>'+esc(row.app_version)+'</td><td>'+esc(row.locale)+'</td><td>'+esc(relative(row.last_seen_at))+'</td></tr>').join("") : '<tr><td colspan="7" class="empty">No telemetry received yet</td></tr>';
-      el("releasesBody").innerHTML = data.releases.length ? data.releases.map(row => '<tr><td>'+esc(row.tag)+'</td><td>'+esc(row.published_at?new Date(row.published_at).toLocaleDateString():"—")+'</td><td>'+fmt.format(row.total_downloads)+'</td><td>'+(row.prerelease?'<span class="pill">Beta</span>':'<span class="pill">Stable</span>')+'</td></tr>').join("") : '<tr><td colspan="4" class="empty">GitHub release data unavailable</td></tr>';
+      el("releasesBody").innerHTML = data.releases.length ? data.releases.map(row => {
+        const p = row.downloads_by_platform || {};
+        const assets = Array.isArray(row.assets) ? row.assets : [];
+        const assetHtml = assets.length ? '<div class="releaseAssets">'+assets.map(asset =>
+          '<div class="releaseAsset"><span class="releaseAssetName" title="'+esc(asset.name)+'">'+esc(asset.name)+'</span><strong>'+fmt.format(asset.downloads||0)+'</strong></div>'
+        ).join('')+'</div>' : '';
+        return '<tr><td>'+esc(row.tag)+assetHtml+'</td><td>'+esc(row.published_at?new Date(row.published_at).toLocaleDateString():"—")+'</td><td><strong>'+fmt.format(row.total_downloads)+'</strong></td><td>'+fmt.format(p["Android Mobile"]||0)+'</td><td>'+fmt.format(p["Android TV"]||0)+'</td><td>'+fmt.format(p["Windows"]||0)+'</td><td>'+fmt.format(p["macOS"]||0)+'</td><td>'+(row.prerelease?'<span class="pill">Beta</span>':'<span class="pill">Stable</span>')+'</td></tr>';
+      }).join("") : '<tr><td colspan="8" class="empty">GitHub release data unavailable</td></tr>';
       el("errorsBody").innerHTML = data.recent_errors.length ? data.recent_errors.map(row => '<tr><td>'+esc(relative(row.occurred_at))+'</td><td class="'+(row.fatal?'danger':'')+'">'+esc(row.error_type)+'</td><td>'+esc(row.platform)+'</td><td>'+esc(row.app_version)+'</td><td title="'+esc(row.message)+'">'+esc(String(row.message||"").slice(0,80))+'</td></tr>').join("") : '<tr><td colspan="5" class="empty">No recorded errors</td></tr>';
     }
     async function refresh() {
