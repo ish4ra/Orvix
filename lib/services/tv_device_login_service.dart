@@ -115,7 +115,7 @@ class TvDeviceLoginPolicy {
 class TvDeviceLoginController extends ChangeNotifier {
   TvDeviceLoginController({
     OrvixTvLoginBackend? backend,
-    Future<void> Function()? syncAfterSignIn,
+    Future<OrvixSyncResult> Function()? syncAfterSignIn,
     Future<void> Function(Duration duration)? delay,
     DateTime Function()? now,
     this.policy = const TvDeviceLoginPolicy(),
@@ -126,7 +126,7 @@ class TvDeviceLoginController extends ChangeNotifier {
         _now = now ?? DateTime.now;
 
   final OrvixTvLoginBackend? _backendOverride;
-  final Future<void> Function() _sync;
+  final Future<OrvixSyncResult> Function() _sync;
   final Future<void> Function(Duration duration)? _delayOverride;
   Timer? _waitTimer;
   Completer<void>? _wait;
@@ -394,20 +394,34 @@ class TvDeviceLoginController extends ChangeNotifier {
       ),
       generation,
     );
+    // Signing in worked; a sync problem never signs the TV out. Whatever did
+    // sync (for example a restored TorBox key) is kept.
+    const failed = TvDeviceLoginState(
+      phase: TvDeviceLoginPhase.syncFailed,
+      message:
+          'Signed in, but your cloud data did not sync. Choose Sync now to try again.',
+    );
+    OrvixSyncResult result;
     try {
-      await _sync().timeout(policy.syncTimeout);
+      result = await _sync().timeout(policy.syncTimeout);
+    } catch (_) {
+      _emit(failed, generation);
+      return;
+    }
+    final problem = result.problem;
+    if (result.credentialsFailed && result.stateFailed) {
+      _emit(failed, generation);
+    } else if (problem != null) {
       _emit(
-        const TvDeviceLoginState(phase: TvDeviceLoginPhase.signedIn),
+        TvDeviceLoginState(
+          phase: TvDeviceLoginPhase.syncFailed,
+          message: 'Signed in. $problem Choose Sync now to try again.',
+        ),
         generation,
       );
-    } catch (_) {
-      // Signing in worked; only the sync failed. Never sign the TV out here.
+    } else {
       _emit(
-        const TvDeviceLoginState(
-          phase: TvDeviceLoginPhase.syncFailed,
-          message:
-              'Signed in, but your cloud data did not sync. Choose Sync now to try again.',
-        ),
+        const TvDeviceLoginState(phase: TvDeviceLoginPhase.signedIn),
         generation,
       );
     }
