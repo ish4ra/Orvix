@@ -98,5 +98,6 @@ Future<void> main() async {
   }
 
   await OrvixAccountService.restoreSignedInState();
+  await OrvixTelemetryService.instance.initialize();
   runApp(const OrvixApp());
 }
