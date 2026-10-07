@@ -21,7 +21,6 @@ import 'services/cloud_preferences_service.dart';
 import 'services/local_torrent_service.dart';
 import 'services/media_state_service.dart';
 import 'services/orvix_account_service.dart';
-import 'services/orvix_telemetry_service.dart';
 import 'services/pikpak_service.dart';
 import 'services/pikpak_transfer_service.dart';
 import 'services/playback_service.dart';
@@ -65,7 +64,6 @@ class _OrvixAppState extends State<OrvixApp>
     _playback = PlaybackService();
     _mediaState = MediaStateService();
     unawaited(_mediaState.warm());
-    unawaited(OrvixTelemetryService.instance.initialize());
   }
 
   @override
