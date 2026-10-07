@@ -336,7 +336,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     icon: Icons.shield_outlined,
                     title: 'Diagnostics',
                     text:
-                        'Orvix uses limited technical diagnostics to improve reliability, performance, and compatibility across devices. Raw IP addresses, precise location, and unique hardware identifiers are not stored.',
+                        'Orvix uses limited technical diagnostics to improve reliability, performance, and compatibility across devices. Orvix does not store raw IP addresses, precise location, or unique hardware identifiers.',
                   ),
                 ]),
               ],
@@ -691,7 +691,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ),
                           SizedBox(height: 6),
                           Text(
-                            'Orvix uses limited technical diagnostics to improve reliability, performance, and compatibility across devices. Raw IP addresses, precise location, and unique hardware identifiers are not stored.',
+                            'Orvix uses limited technical diagnostics to improve reliability, performance, and compatibility across devices. Orvix does not store raw IP addresses, precise location, or unique hardware identifiers.',
                             style: TextStyle(
                               color: Color(0xFF9CA99E),
                               height: 1.45,
