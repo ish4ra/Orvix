@@ -138,6 +138,20 @@ class _RecoveryFakeBackend implements OrvixAccountBackend {
 
   @override
   Future<bool> approveTvLogin(String userCode) => throw UnimplementedError();
+
+  @override
+  Future<OrvixPasswordProof> verifyCurrentPassword({
+    required String email,
+    required String password,
+  }) =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> discardPasswordProof(OrvixPasswordProof proof) async {}
+
+  @override
+  Future<void> deleteAccount(OrvixPasswordProof proof) =>
+      throw UnimplementedError();
 }
 
 void main() {

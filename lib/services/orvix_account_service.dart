@@ -17,7 +17,13 @@ class OrvixAccountService {
 
   /// The active account backend. Supabase is the only production backend;
   /// replace this to move Orvix accounts to another provider (or in tests).
-  static OrvixAccountBackend backend = SupabaseOrvixAccountBackend();
+  static OrvixAccountBackend get backend => _backend;
+  static set backend(OrvixAccountBackend value) {
+    _backend = value;
+    _deletedUserId = null;
+  }
+
+  static OrvixAccountBackend _backend = SupabaseOrvixAccountBackend();
 
   static const _watchlistKey = 'pikora_watchlist_v1';
   static const _libraryKey = 'pikora_media_library_v1';
@@ -37,6 +43,13 @@ class OrvixAccountService {
   /// True between a verified recovery code and the end of password recovery.
   static bool _recoverySessionActive = false;
 
+  /// True from the password check until the deleted account is signed out.
+  static bool _accountDeletionInProgress = false;
+
+  /// The account deleted during this run. A stale session for it is never
+  /// treated as signed in again.
+  static String? _deletedUserId;
+
   static const _credentialKeys = <String>[
     'orvix_torbox_api_token_v1',
     'pikpak_access_token',
@@ -48,9 +61,23 @@ class OrvixAccountService {
 
   /// The signed-in user. A password recovery session is not a sign-in: while
   /// one is active this stays null, so nothing syncs into that account.
-  static OrvixAccountUser? get currentUser =>
-      _recoverySessionActive ? null : backend.currentUser;
+  static OrvixAccountUser? get currentUser {
+    if (_recoverySessionActive) return null;
+    final user = backend.currentUser;
+    if (user != null && user.id == _deletedUserId) return null;
+    return user;
+  }
+
   static bool get isSignedIn => currentUser != null;
+
+  /// Whether [deleteAccount] is running. Cloud sync and TV approval are
+  /// paused meanwhile so nothing is written back into the account.
+  static bool get isDeletingAccount => _accountDeletionInProgress;
+
+  /// Whether cloud data may still be written for [user]: it is the signed-in
+  /// account and is not being deleted.
+  static bool _cloudWritesAllowed(OrvixAccountUser user) =>
+      !_accountDeletionInProgress && currentUser?.id == user.id;
 
   static Future<OrvixAuthResult> signIn({
     required String email,
@@ -195,6 +222,58 @@ class OrvixAccountService {
     await backend.requestReauthentication();
   }
 
+  /// Permanently deletes the signed-in account and its cloud data after
+  /// confirming [currentPassword], then leaves this device signed out.
+  ///
+  /// Local Orvix data (library, watchlist, progress, preferences and
+  /// device-stored provider credentials) is kept. Nothing syncs while this
+  /// runs. When anything fails the account is not reported as deleted and,
+  /// unless the server already removed it, this device stays signed in.
+  /// The password is passed straight to the backend and never kept.
+  static Future<void> deleteAccount({required String currentPassword}) async {
+    final user = currentUser;
+    if (user == null) {
+      throw const OrvixAuthException(
+        'Sign in before deleting the account.',
+        kind: OrvixAuthErrorKind.sessionMissing,
+      );
+    }
+    if (_accountDeletionInProgress) {
+      throw StateError('Account deletion is already in progress.');
+    }
+    final email = user.email?.trim() ?? '';
+    if (email.isEmpty) {
+      throw const OrvixAuthException(
+        'The account has no email address to confirm the password with.',
+      );
+    }
+
+    _accountDeletionInProgress = true;
+    OrvixPasswordProof? proof;
+    try {
+      proof = await backend.verifyCurrentPassword(
+        email: email,
+        password: currentPassword,
+      );
+      // Only the account that started the deletion may be deleted.
+      if (proof.userId != user.id || currentUser?.id != user.id) {
+        throw const OrvixAuthException(
+          'The signed-in account changed during account deletion.',
+          kind: OrvixAuthErrorKind.accountChanged,
+        );
+      }
+      await backend.deleteAccount(proof);
+      _deletedUserId = user.id;
+    } finally {
+      if (proof != null) {
+        try {
+          await backend.discardPasswordProof(proof);
+        } catch (_) {}
+      }
+      _accountDeletionInProgress = false;
+    }
+  }
+
   /// Abandons password recovery and discards any recovery session.
   static Future<void> cancelPasswordRecovery() => _endRecoverySession();
 
@@ -245,7 +324,7 @@ class OrvixAccountService {
 
   static Future<void> pushLocalStateIfSignedIn() async {
     final user = currentUser;
-    if (user == null) return;
+    if (user == null || !_cloudWritesAllowed(user)) return;
 
     final prefs = await SharedPreferences.getInstance();
     final watchlist =
@@ -256,6 +335,7 @@ class OrvixAccountService {
         prefs.getString(_progressKey), const <String, dynamic>{});
     final preferences = _collectAppPreferences(prefs);
 
+    if (!_cloudWritesAllowed(user)) return;
     await backend.saveUserState(user.id, {
       'watchlist': watchlist,
       'library': library,
@@ -269,7 +349,8 @@ class OrvixAccountService {
   }
 
   static Future<void> syncCredentialsIfSignedIn() async {
-    if (!isSignedIn) return;
+    final user = currentUser;
+    if (user == null || !_cloudWritesAllowed(user)) return;
     final local = <String, String>{};
     for (final key in _credentialKeys) {
       final value = await _secureStorage.read(key: key);
@@ -277,6 +358,7 @@ class OrvixAccountService {
     }
 
     final remote = await backend.loadCredentials();
+    if (!_cloudWritesAllowed(user)) return;
 
     final merged = <String, String>{...remote, ...local}
       ..removeWhere((_, value) => value.isEmpty);
@@ -285,19 +367,21 @@ class OrvixAccountService {
         await _secureStorage.write(key: entry.key, value: entry.value);
       }
     }
-    if (merged.isNotEmpty) {
+    if (merged.isNotEmpty && _cloudWritesAllowed(user)) {
       await backend.saveCredentials(merged);
     }
   }
 
   static Future<void> mergeCloudIntoLocal() async {
     final user = currentUser;
-    if (user == null) return;
+    if (user == null || !_cloudWritesAllowed(user)) return;
 
     await syncCredentialsIfSignedIn();
+    if (!_cloudWritesAllowed(user)) return;
 
     final prefs = await SharedPreferences.getInstance();
     final stored = await backend.loadUserState(user.id);
+    if (!_cloudWritesAllowed(user)) return;
 
     if (stored == null) {
       await pushLocalStateIfSignedIn();
@@ -334,6 +418,7 @@ class OrvixAccountService {
       ..._collectAppPreferences(prefs),
     };
 
+    if (!_cloudWritesAllowed(user)) return;
     await backend.saveUserState(user.id, {
       'watchlist': mergedWatchlist,
       'library': mergedLibrary,

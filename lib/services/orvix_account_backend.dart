@@ -61,6 +61,14 @@ enum OrvixAuthErrorKind {
   /// before the password can be changed; see
   /// [OrvixAuthBackend.requestReauthentication].
   reauthenticationRequired,
+
+  /// The email/password combination was rejected, e.g. a wrong current
+  /// password when confirming account deletion.
+  invalidCredentials,
+
+  /// The signed-in account changed while a request for it was in progress,
+  /// so the request was abandoned.
+  accountChanged,
 }
 
 /// An authentication failure reported by the account backend.
@@ -91,6 +99,19 @@ class OrvixAuthException implements Exception {
 
   @override
   String toString() => cause?.toString() ?? 'OrvixAuthException: $message';
+}
+
+/// Proof that the signed-in user just entered their current password, from
+/// [OrvixAuthBackend.verifyCurrentPassword].
+///
+/// Backends keep whatever they need for [OrvixAuthBackend.deleteAccount] in a
+/// private subclass; it never holds the password itself. Every proof must be
+/// released with [OrvixAuthBackend.discardPasswordProof].
+abstract class OrvixPasswordProof {
+  const OrvixPasswordProof({required this.userId});
+
+  /// The account the password was verified for.
+  final String userId;
 }
 
 /// The first step of a TV device login: the code shown on the TV.
@@ -163,6 +184,28 @@ abstract interface class OrvixAuthBackend {
   /// Sends the signed-in user a security verification code for
   /// [changePassword]. Also used to resend the code.
   Future<void> requestReauthentication();
+
+  /// Checks [password] against the account with [email] without changing the
+  /// current session. Throws [OrvixAuthErrorKind.invalidCredentials] when the
+  /// password is wrong. The caller must compare [OrvixPasswordProof.userId]
+  /// with the account it expects.
+  Future<OrvixPasswordProof> verifyCurrentPassword({
+    required String email,
+    required String password,
+  });
+
+  /// Releases a proof from [verifyCurrentPassword]. Safe to call after
+  /// [deleteAccount] and when the backend cannot be reached.
+  Future<void> discardPasswordProof(OrvixPasswordProof proof);
+
+  /// Permanently deletes the account [proof] was issued for, together with
+  /// all of its cloud data. The server decides which account that is from
+  /// the proof's session; the client never names an account to delete.
+  ///
+  /// Completes normally only when the account is gone, and then this device
+  /// is signed out locally. On any failure the current session is kept so
+  /// the user can retry.
+  Future<void> deleteAccount(OrvixPasswordProof proof);
 
   Future<void> signOut();
 }
