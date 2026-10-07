@@ -45,6 +45,37 @@ function nameForUser(user: AnyRow | undefined) {
     (typeof user.email === "string" ? user.email.split("@")[0] : null);
 }
 
+function friendlyDeviceName(
+  manufacturer: unknown,
+  model: unknown,
+  type: unknown,
+) {
+  const make = typeof manufacturer === "string" ? manufacturer.trim() : "";
+  const rawModel = typeof model === "string" ? model.trim() : "";
+  const normalizedModel = rawModel.toUpperCase();
+
+  if (/^SM-S928(B|U|U1|W|N|0)?$/.test(normalizedModel)) {
+    return "Samsung Galaxy S24 Ultra";
+  }
+
+  if (
+    normalizedModel.startsWith("MIBOX") ||
+    ["MDZ-16-AB", "MDZ-22-AB", "MDZ-28-AA"].includes(normalizedModel)
+  ) {
+    return "Xiaomi Mi Box";
+  }
+
+  if (make && rawModel) {
+    if (rawModel.toLowerCase().includes(make.toLowerCase())) return rawModel;
+    const prettyMake = make.charAt(0).toUpperCase() + make.slice(1);
+    return `${prettyMake} ${rawModel}`;
+  }
+
+  if (rawModel) return rawModel;
+  if (make) return make;
+  return typeof type === "string" && type.trim() ? type.trim() : "Unknown device";
+}
+
 const ownerUserId = "87ac8a23-e207-408c-ab7d-65412353fc72";
 
 async function requireAdmin(req: Request) {
@@ -191,6 +222,14 @@ async function dashboardData() {
       os_version: installation?.os_version ?? null,
       locale: installation?.locale ?? null,
       is_tv: installation?.is_tv === true,
+      device_manufacturer: installation?.device_manufacturer ?? null,
+      device_model: installation?.device_model ?? null,
+      device_type: installation?.device_type ?? null,
+      device_display_name: friendlyDeviceName(
+        installation?.device_manufacturer,
+        installation?.device_model,
+        installation?.device_type,
+      ),
       started_at: session.started_at,
       last_heartbeat_at: session.last_heartbeat_at,
     };
@@ -212,6 +251,11 @@ async function dashboardData() {
       last_active_at: latest?.last_seen_at ?? null,
       country_code: latest?.country_code ?? null,
       platform: latest?.platform ?? null,
+      device_display_name: friendlyDeviceName(
+        latest?.device_manufacturer,
+        latest?.device_model,
+        latest?.device_type,
+      ),
       app_version: latest?.app_version ?? null,
     };
   });
@@ -302,7 +346,7 @@ const dashboardHtml = `<!doctype html>
     </div>
     <div id="cards" class="cards"></div>
     <div class="grid2">
-      <section class="panel"><h2>Live users</h2><div class="tableWrap"><table><thead><tr><th>User</th><th>Country</th><th>Platform</th><th>Version</th><th>Session</th><th>OS</th></tr></thead><tbody id="liveBody"></tbody></table></div></section>
+      <section class="panel"><h2>Live users</h2><div class="tableWrap"><table><thead><tr><th>User</th><th>Country</th><th>Platform</th><th>Device</th><th>Version</th><th>Session</th><th>OS</th></tr></thead><tbody id="liveBody"></tbody></table></div></section>
       <section class="panel"><h2>Countries</h2><div id="countries" class="bars"></div></section>
     </div>
     <div class="grid3">
@@ -312,8 +356,8 @@ const dashboardHtml = `<!doctype html>
     </div>
     <div class="sectionTitle">Accounts & installs</div>
     <div class="grid2">
-      <section class="panel"><h2>Registered users</h2><div class="tableWrap"><table><thead><tr><th>Name</th><th>Email</th><th>Country</th><th>Installs</th><th>Last active</th><th>Version</th></tr></thead><tbody id="usersBody"></tbody></table></div></section>
-      <section class="panel"><h2>Recent installations</h2><div class="tableWrap"><table><thead><tr><th>ID</th><th>Country</th><th>Platform</th><th>Version</th><th>Locale</th><th>Last seen</th></tr></thead><tbody id="installsBody"></tbody></table></div></section>
+      <section class="panel"><h2>Registered users</h2><div class="tableWrap"><table><thead><tr><th>Name</th><th>Email</th><th>Country</th><th>Installs</th><th>Device</th><th>Last active</th><th>Version</th></tr></thead><tbody id="usersBody"></tbody></table></div></section>
+      <section class="panel"><h2>Recent installations</h2><div class="tableWrap"><table><thead><tr><th>ID</th><th>Country</th><th>Platform</th><th>Device</th><th>Version</th><th>Locale</th><th>Last seen</th></tr></thead><tbody id="installsBody"></tbody></table></div></section>
     </div>
     <div class="sectionTitle">Releases & health</div>
     <div class="grid2">
@@ -378,11 +422,11 @@ const dashboardHtml = `<!doctype html>
       el("cards").innerHTML = cards.map(([label,value]) => '<div class="card"><div class="label">'+esc(label)+'</div><div class="metric">'+esc(typeof value==="number"?fmt.format(value):value)+'</div></div>').join("");
       el("liveBody").innerHTML = data.online.length ? data.online.map(row => {
         const started = Math.max(0,Math.round((Date.now()-new Date(row.started_at).getTime())/1000));
-        return '<tr><td><span class="online">●</span> '+esc(row.display_name||("Anonymous #"+short(row.installation_id)))+'<div class="sub">'+esc(row.email||"")+'</div></td><td>'+esc(country(row.country_code))+'</td><td>'+esc(row.platform)+(row.is_tv?' <span class="pill">TV</span>':'')+'</td><td>'+esc(row.app_version)+'</td><td>'+esc(duration(started))+'</td><td title="'+esc(row.os_version)+'">'+esc((row.os_version||"—").slice(0,38))+'</td></tr>';
-      }).join("") : '<tr><td colspan="6" class="empty">Nobody is online right now</td></tr>';
+        return '<tr><td><span class="online">●</span> '+esc(row.display_name||("Anonymous #"+short(row.installation_id)))+'<div class="sub">'+esc(row.email||"")+'</div></td><td>'+esc(country(row.country_code))+'</td><td>'+esc(row.platform)+(row.is_tv?' <span class="pill">TV</span>':'')+'</td><td>'+esc(row.device_display_name)+'</td><td>'+esc(row.app_version)+'</td><td>'+esc(duration(started))+'</td><td title="'+esc(row.os_version)+'">'+esc((row.os_version||"—").slice(0,38))+'</td></tr>';
+      }).join("") : '<tr><td colspan="7" class="empty">Nobody is online right now</td></tr>';
       bars("countries",data.countries,country);bars("platforms",data.platforms);bars("versions",data.versions);bars("events",data.event_counts);
-      el("usersBody").innerHTML = data.users.length ? data.users.map(row => '<tr><td>'+esc(row.display_name)+'</td><td>'+esc(row.email)+'</td><td>'+esc(country(row.country_code))+'</td><td>'+fmt.format(row.installations)+'</td><td>'+esc(relative(row.last_active_at))+'</td><td>'+esc(row.app_version)+'</td></tr>').join("") : '<tr><td colspan="6" class="empty">No accounts</td></tr>';
-      el("installsBody").innerHTML = data.installations.length ? data.installations.slice(0,150).map(row => '<tr><td>'+esc(short(row.installation_id))+'</td><td>'+esc(country(row.country_code))+'</td><td>'+esc(row.platform)+(row.is_tv?' TV':'')+'</td><td>'+esc(row.app_version)+'</td><td>'+esc(row.locale)+'</td><td>'+esc(relative(row.last_seen_at))+'</td></tr>').join("") : '<tr><td colspan="6" class="empty">No telemetry received yet</td></tr>';
+      el("usersBody").innerHTML = data.users.length ? data.users.map(row => '<tr><td>'+esc(row.display_name)+'</td><td>'+esc(row.email)+'</td><td>'+esc(country(row.country_code))+'</td><td>'+fmt.format(row.installations)+'</td><td>'+esc(row.device_display_name)+'</td><td>'+esc(relative(row.last_active_at))+'</td><td>'+esc(row.app_version)+'</td></tr>').join("") : '<tr><td colspan="7" class="empty">No accounts</td></tr>';
+      el("installsBody").innerHTML = data.installations.length ? data.installations.slice(0,150).map(row => '<tr><td>'+esc(short(row.installation_id))+'</td><td>'+esc(country(row.country_code))+'</td><td>'+esc(row.platform)+(row.is_tv?' TV':'')+'</td><td>'+esc(friendlyDeviceName(row.device_manufacturer,row.device_model,row.device_type))+'</td><td>'+esc(row.app_version)+'</td><td>'+esc(row.locale)+'</td><td>'+esc(relative(row.last_seen_at))+'</td></tr>').join("") : '<tr><td colspan="7" class="empty">No telemetry received yet</td></tr>';
       el("releasesBody").innerHTML = data.releases.length ? data.releases.map(row => '<tr><td>'+esc(row.tag)+'</td><td>'+esc(row.published_at?new Date(row.published_at).toLocaleDateString():"—")+'</td><td>'+fmt.format(row.total_downloads)+'</td><td>'+(row.prerelease?'<span class="pill">Beta</span>':'<span class="pill">Stable</span>')+'</td></tr>').join("") : '<tr><td colspan="4" class="empty">GitHub release data unavailable</td></tr>';
       el("errorsBody").innerHTML = data.recent_errors.length ? data.recent_errors.map(row => '<tr><td>'+esc(relative(row.occurred_at))+'</td><td class="'+(row.fatal?'danger':'')+'">'+esc(row.error_type)+'</td><td>'+esc(row.platform)+'</td><td>'+esc(row.app_version)+'</td><td title="'+esc(row.message)+'">'+esc(String(row.message||"").slice(0,80))+'</td></tr>').join("") : '<tr><td colspan="5" class="empty">No recorded errors</td></tr>';
     }
