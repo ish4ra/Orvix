@@ -173,6 +173,9 @@ Deno.serve(async (req: Request) => {
     locale: text(body.locale, 40),
     app_version: appVersion,
     build_number: text(body.build_number, 40),
+    device_manufacturer: text(body.device_manufacturer, 120),
+    device_model: text(body.device_model, 120),
+    device_type: text(body.device_type, 40),
     is_tv: body.is_tv === true,
   };
 
