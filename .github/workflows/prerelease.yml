@@ -78,8 +78,11 @@ jobs:
             tools/configure_android_mobile_compat.py \
             tools/configure_android_mobile_media_kit.py \
             tools/configure_android_signing.py \
-            tools/generate_desktop_branding.py
+            tools/generate_desktop_branding.py \
+            tools/verify_android_apk.py
           bash -n tools/publish_orvix_release.sh
+          bash -n tools/android_install_smoke_test.sh
+          python3 -m unittest discover -s tools/tests
 
       - name: Analyze
         run: flutter analyze lib --no-fatal-warnings --no-fatal-infos
@@ -1074,7 +1077,11 @@ jobs:
       - name: Build Android mobile APKs
         run: |
           flutter build apk --release
-          flutter build apk --release --split-per-abi
+          # Keep every ABI APK on the universal APK's versionCode. Flutter's
+          # default ABI*1000 offset made installing the universal APK over an
+          # ABI APK a downgrade ("package appears to be invalid").
+          flutter build apk --release --split-per-abi \
+            --android-project-arg=force-version-code-ignoring-abi=true
 
       - name: Verify Android mobile APK
         shell: bash
@@ -1111,6 +1118,27 @@ jobs:
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-arm64-v8a.apk
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-armeabi-v7a.apk
           cp build/app/outputs/flutter-apk/app-x86_64-release.apk Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-x86_64.apk
+
+      - name: Verify Android mobile APK installability
+        shell: bash
+        run: |
+          set -euo pipefail
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          PREVIOUS_CERT="$(grep -m1 'certificate SHA-256 digest:' /tmp/previous-cert.txt | sed 's/.*: //')"
+          test -n "$PREVIOUS_CERT"
+          V="${{ needs.metadata.outputs.version }}"
+          # Checks the exact files that are published: signature and Orvix
+          # certificate, zip alignment, manifest, ABIs, native libraries, and
+          # that all four APKs share one versionCode above the old ABI APKs.
+          python3 tools/verify_android_apk.py \
+            --build-tools "$(dirname "$APKSIGNER")" \
+            --flavor mobile \
+            --expected-cert-sha256 "$PREVIOUS_CERT" \
+            --above-legacy-split-version-codes \
+            "Orvix-v$V-Android-Mobile.apk=arm64-v8a,armeabi-v7a,x86_64" \
+            "Orvix-v$V-Android-Mobile-arm64-v8a.apk=arm64-v8a" \
+            "Orvix-v$V-Android-Mobile-armeabi-v7a.apk=armeabi-v7a" \
+            "Orvix-v$V-Android-Mobile-x86_64.apk=x86_64"
 
       - name: Export Android mobile branding previews
         shell: bash
@@ -1300,7 +1328,18 @@ jobs:
             "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
             -f tag_name="v${{ needs.metadata.outputs.version }}" \
             -f target_commitish="${GITHUB_SHA}" \
-            --jq '.body' > /tmp/notes.md
+            --jq '.body' > /tmp/generated-notes.md
+
+          V="${{ needs.metadata.outputs.version }}"
+          {
+            echo "### Which Android file should I download?"
+            echo
+            echo "- **Phones and tablets:** \`Orvix-v$V-Android-Mobile.apk\` (recommended, works on every supported phone)."
+            echo "- **Android TV / Google TV:** \`Orvix-v$V-Android-TV.apk\`."
+            echo "- Smaller phone downloads for one processor type: \`-arm64-v8a\` (most modern phones), \`-armeabi-v7a\` (older 32-bit phones), \`-x86_64\` (emulators and Chromebooks). Any Android Mobile file can update or replace another."
+            echo
+            cat /tmp/generated-notes.md
+          } > /tmp/notes.md
 
           chmod +x tools/publish_orvix_release.sh
           tools/publish_orvix_release.sh \

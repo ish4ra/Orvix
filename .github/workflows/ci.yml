@@ -58,9 +58,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile             tools/configure_android_build.py             tools/configure_android_mobile_compat.py             tools/configure_android_mobile_media_kit.py             tools/configure_android_signing.py             tools/generate_desktop_branding.py
+          python3 -m py_compile             tools/configure_android_build.py             tools/configure_android_mobile_compat.py             tools/configure_android_mobile_media_kit.py             tools/configure_android_signing.py             tools/generate_desktop_branding.py             tools/verify_android_apk.py
           bash -n tools/publish_orvix_release.sh
           bash -n tools/prepare_android_native.sh
+          bash -n tools/android_install_smoke_test.sh
+      - name: Test Android APK installability gate
+        run: python3 -m unittest discover -s tools/tests -v
       - name: Guard canonical maintenance rules
         shell: bash
         run: |
@@ -147,11 +150,64 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/configure_android_mobile_media_kit.py
-      - name: Compile Android mobile
-        run: flutter build apk --debug
-      - name: Verify APK
+      # Same APK set as prerelease.yml, signed with the debug key because
+      # pull requests do not get the release keystore.
+      - name: Build Android mobile release APKs
+        run: |
+          flutter build apk --release
+          flutter build apk --release --split-per-abi \
+            --android-project-arg=force-version-code-ignoring-abi=true
+      - name: Verify Android mobile APK installability
         shell: bash
-        run: test -s build/app/outputs/flutter-apk/app-debug.apk
+        run: |
+          set -euo pipefail
+          OUT=build/app/outputs/flutter-apk
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          python3 tools/verify_android_apk.py \
+            --build-tools "$(dirname "$APKSIGNER")" \
+            --flavor mobile \
+            "$OUT/app-release.apk=arm64-v8a,armeabi-v7a,x86_64" \
+            "$OUT/app-arm64-v8a-release.apk=arm64-v8a" \
+            "$OUT/app-armeabi-v7a-release.apk=armeabi-v7a" \
+            "$OUT/app-x86_64-release.apk=x86_64"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-mobile-ci-apks
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            build/app/outputs/flutter-apk/app-x86_64-release.apk
+
+  android-mobile-install:
+    name: Install Android Mobile on emulator
+    needs: android-mobile
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-mobile-ci-apks
+          path: apks
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      # Android 11 Google APIs image: a typical phone OS for the supported
+      # range, and it can translate arm64-v8a code for the ABI APK install.
+      - name: Install APKs with Package Manager
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          disk-size: 4096M
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash tools/android_install_smoke_test.sh apks/app-release.apk apks/app-x86_64-release.apk apks/app-arm64-v8a-release.apk
 
   android-tv:
     name: Build Android TV
