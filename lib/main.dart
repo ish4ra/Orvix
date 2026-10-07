@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -10,6 +11,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
 import 'services/orvix_account_service.dart';
+import 'services/orvix_telemetry_service.dart';
 import 'services/ai_sinhala_trace_service.dart';
 import 'services/local_torrent_service.dart';
 
@@ -39,6 +41,12 @@ Future<void> main() async {
         'flutter-fatal type=${details.exception.runtimeType} stack="$stack"',
       );
     }
+    unawaited(OrvixTelemetryService.instance.recordError(
+      errorType: details.exception.runtimeType.toString(),
+      message: details.exceptionAsString(),
+      stack: details.stack,
+      fatal: true,
+    ));
     try {
       FlutterError.presentError(details);
     } catch (_) {}
