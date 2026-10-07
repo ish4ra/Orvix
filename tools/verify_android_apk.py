@@ -317,7 +317,8 @@ def parse_badging(text: str) -> Badging:
             b.package = re.search(r"name='([^']*)'", line).group(1)
             b.version_code = int(re.search(r"versionCode='(\d+)'", line).group(1))
             b.version_name = re.search(r"versionName='([^']*)'", line).group(1)
-        elif line.startswith("sdkVersion:"):
+        elif line.startswith(("sdkVersion:", "minSdkVersion:")):
+            # Older aapt2 prints sdkVersion:, current SDK aapt2 minSdkVersion:.
             b.min_sdk = int(re.search(r"'(\d+)'", line).group(1))
         elif line.startswith("targetSdkVersion:"):
             b.target_sdk = int(re.search(r"'(\d+)'", line).group(1))
@@ -373,6 +374,19 @@ def parse_xmltree(text: str) -> XmlElement:
                 value = value[1:-1]
             stack[-1][1].attrs[key] = value
     return root
+
+
+def manifest_min_sdk(tree: XmlElement) -> int:
+    """minSdkVersion from <uses-sdk>, or -1 when absent or unreadable."""
+    uses_sdk = next((e for e in tree.iter() if e.name == "uses-sdk"), None)
+    raw = uses_sdk.attrs.get("android:minSdkVersion") if uses_sdk else None
+    if raw is None:
+        return -1
+    raw = raw.split(")")[-1]  # aapt prints "(type 0x10)0x18"
+    try:
+        return int(raw, 0)
+    except ValueError:
+        return -1
 
 
 def _is_true(value: str | None) -> bool:
@@ -505,10 +519,15 @@ def verify(args: argparse.Namespace) -> int:
                 failures.add(apk, f"aapt2 dump xmltree failed: {xml_run.stderr.strip()}")
                 continue
             tree = parse_xmltree(xml_run.stdout)
+            if badging.min_sdk < 0:
+                badging.min_sdk = manifest_min_sdk(tree)
 
             if badging.package != args.package:
                 failures.add(apk, f"package is {badging.package!r}, expected {args.package!r}")
-            if not 0 < badging.min_sdk <= SUPPORTED_MIN_SDK:
+            if badging.min_sdk < 0:
+                failures.add(apk, "could not read minSdkVersion from the manifest")
+                continue
+            if badging.min_sdk > SUPPORTED_MIN_SDK:
                 failures.add(apk, f"minSdk {badging.min_sdk} is above supported {SUPPORTED_MIN_SDK}")
             if badging.target_sdk < badging.min_sdk:
                 failures.add(apk, f"targetSdk {badging.target_sdk} is below minSdk")

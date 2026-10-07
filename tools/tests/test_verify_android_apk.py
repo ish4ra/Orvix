@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import stat
 import struct
 import sys
@@ -258,6 +259,22 @@ class ManifestTest(unittest.TestCase):
         self.assertTrue(b.launchable)
         self.assertFalse(b.leanback_launchable)
 
+    def test_parses_current_sdk_aapt2_min_sdk_line(self):
+        b = v.parse_badging(MOBILE_BADGING.replace("sdkVersion:'24'", "minSdkVersion:'24'"))
+        self.assertEqual(b.min_sdk, 24)
+
+    def test_min_sdk_falls_back_to_uses_sdk(self):
+        indent = re.search(r"^( *)E: application", MANIFEST_XMLTREE, re.M).group(1)
+        xml = MANIFEST_XMLTREE.replace(
+            f"{indent}E: application",
+            f"{indent}E: uses-sdk (line=7)\n"
+            f"{indent}  A: http://schemas.android.com/apk/res/android:minSdkVersion(0x0101020c)=24\n"
+            f"{indent}E: application",
+            1,
+        )
+        self.assertEqual(v.manifest_min_sdk(v.parse_xmltree(xml)), 24)
+        self.assertEqual(v.manifest_min_sdk(v.parse_xmltree(MANIFEST_XMLTREE)), -1)
+
     def test_detects_tv_only_badging(self):
         b = v.parse_badging(TV_BADGING)
         self.assertTrue(b.leanback_launchable)
@@ -368,6 +385,13 @@ class EndToEndTest(unittest.TestCase):
             self._apk("universal.apk", 4206, ["arm64-v8a", "x86_64"]),
             self._apk("arm64.apk", 4206, ["arm64-v8a"]),
         )
+        self.assertEqual(code, 0, output)
+
+    def test_current_sdk_aapt2_badging_passes(self):
+        spec = self._apk("universal.apk", 4206, ["arm64-v8a", "x86_64"])
+        badging = Path(spec.split("=")[0] + ".badging")
+        badging.write_text(badging.read_text().replace("sdkVersion:'24'", "minSdkVersion:'24'"))
+        code, output = self._verify(spec)
         self.assertEqual(code, 0, output)
 
     def test_split_versioncode_offset_fails(self):
