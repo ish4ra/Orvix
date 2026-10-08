@@ -16,7 +16,7 @@ IOS_VERSION="$(python3 - "$RELEASE_VERSION" <<'PY'
 import re
 import sys
 
-parts = re.findall(r"\\d+", sys.argv[1])
+parts = re.findall(r"\d+", sys.argv[1])
 if len(parts) < 3:
     raise SystemExit(f"Could not derive iOS marketing version from {sys.argv[1]!r}")
 print(".".join(parts))
