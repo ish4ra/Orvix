@@ -22,7 +22,7 @@ class UpdateAltStoreSourceTest(unittest.TestCase):
         ipa = root / "Orvix-v0.7.9-beta.61-iOS.ipa"
         info = {
             "CFBundleIdentifier": "com.orvix.orvix",
-            "CFBundleShortVersionString": "0.7.9-beta.61",
+            "CFBundleShortVersionString": "0.7.9.61",
             "CFBundleVersion": "205",
             "MinimumOSVersion": "13.0",
             "NSCameraUsageDescription": "Scan a QR code.",
@@ -94,7 +94,11 @@ class UpdateAltStoreSourceTest(unittest.TestCase):
 
             updated = json.loads(source_path.read_text(encoding="utf-8"))
             version = updated["apps"][0]["versions"][0]
-            self.assertEqual(version["version"], "0.7.9-beta.61")
+            self.assertEqual(version["version"], "0.7.9.61")
+            self.assertEqual(
+                MODULE.ios_marketing_version("0.7.9-beta.61"),
+                "0.7.9.61",
+            )
             self.assertEqual(version["buildVersion"], "205")
             self.assertEqual(len(version["sha256"]), 64)
             self.assertEqual(
@@ -114,7 +118,7 @@ class UpdateAltStoreSourceTest(unittest.TestCase):
     def test_replacing_same_version_build_is_idempotent(self):
         app = {"versions": []}
         entry = {
-            "version": "0.7.9-beta.61",
+            "version": "0.7.9.61",
             "buildVersion": "205",
         }
         MODULE.update_versions(app, dict(entry))
