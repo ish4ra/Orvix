@@ -98,14 +98,12 @@ def configure_app_icons() -> None:
         icon = source if pixels == 1024 else source.resize(
             (pixels, pixels), Image.Resampling.LANCZOS
         )
-        # App Store icon assets may not contain alpha. Flatten only the icon
-        # file itself; do not change the canonical source artwork.
-        if pixels == 1024:
-            background = Image.new("RGB", icon.size, (5, 8, 6))
-            background.paste(icon, mask=icon.getchannel("A"))
-            background.save(target, format="PNG")
-        else:
-            icon.save(target, format="PNG")
+        # iOS launcher icon assets must be opaque. Flatten only generated
+        # iOS files; the canonical source artwork and other platforms stay
+        # untouched.
+        background = Image.new("RGB", icon.size, (5, 8, 6))
+        background.paste(icon, mask=icon.getchannel("A"))
+        background.save(target, format="PNG")
         written += 1
 
     if written < 5:
