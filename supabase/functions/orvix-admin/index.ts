@@ -161,6 +161,79 @@ async function loadGithubReleases() {
   }
 }
 
+async function loadAllVersionSessions() {
+  const rows: AnyRow[] = [];
+  const pageSize = 1000;
+  for (let from = 0; from < 100000; from += pageSize) {
+    const { data, error } = await db
+      .from("orvix_analytics_sessions")
+      .select("installation_id,platform,app_version,started_at")
+      .order("started_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return rows;
+}
+
+function buildVerifiedVersionStats(rows: AnyRow[]) {
+  const byVersion = new Map<string, {
+    installations: Set<string>;
+    platforms: Map<string, Set<string>>;
+    lastSeenAt: string | null;
+  }>();
+
+  for (const row of rows) {
+    const version = typeof row.app_version === "string" ? row.app_version.trim() : "";
+    const installationId = typeof row.installation_id === "string" ? row.installation_id : "";
+    if (!version || !installationId) continue;
+
+    let entry = byVersion.get(version);
+    if (!entry) {
+      entry = {
+        installations: new Set<string>(),
+        platforms: new Map<string, Set<string>>(),
+        lastSeenAt: null,
+      };
+      byVersion.set(version, entry);
+    }
+
+    entry.installations.add(installationId);
+    const platform = ["Android Mobile", "Android TV", "Windows", "macOS"].includes(String(row.platform))
+      ? String(row.platform)
+      : "Other";
+    if (!entry.platforms.has(platform)) {
+      entry.platforms.set(platform, new Set<string>());
+    }
+    entry.platforms.get(platform)!.add(installationId);
+
+    const seenAt = typeof row.started_at === "string" ? row.started_at : null;
+    if (seenAt && (!entry.lastSeenAt || new Date(seenAt).getTime() > new Date(entry.lastSeenAt).getTime())) {
+      entry.lastSeenAt = seenAt;
+    }
+  }
+
+  return [...byVersion.entries()]
+    .map(([version, entry]) => ({
+      version,
+      unique_devices: entry.installations.size,
+      devices_by_platform: {
+        "Android Mobile": entry.platforms.get("Android Mobile")?.size ?? 0,
+        "Android TV": entry.platforms.get("Android TV")?.size ?? 0,
+        "Windows": entry.platforms.get("Windows")?.size ?? 0,
+        "macOS": entry.platforms.get("macOS")?.size ?? 0,
+        "Other": entry.platforms.get("Other")?.size ?? 0,
+      },
+      last_seen_at: entry.lastSeenAt,
+    }))
+    .sort((a, b) =>
+      new Date(b.last_seen_at ?? 0).getTime() -
+      new Date(a.last_seen_at ?? 0).getTime()
+    );
+}
+
 async function dashboardData() {
   const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
 
@@ -171,6 +244,7 @@ async function dashboardData() {
     errorsResult,
     usersResult,
     releases,
+    versionSessions,
   ] = await Promise.all([
     db.from("orvix_analytics_installations").select("*")
       .order("last_seen_at", { ascending: false }).limit(10000),
@@ -185,6 +259,7 @@ async function dashboardData() {
       .order("occurred_at", { ascending: false }).limit(500),
     db.auth.admin.listUsers({ page: 1, perPage: 1000 }),
     loadGithubReleases(),
+    loadAllVersionSessions(),
   ]);
 
   for (const result of [
@@ -347,6 +422,7 @@ async function dashboardData() {
     recent_errors: errors.slice(0, 100),
     recent_events: events.slice(0, 100),
     releases,
+    verified_versions: buildVerifiedVersionStats(versionSessions),
   };
 }
 
