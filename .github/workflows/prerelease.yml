@@ -79,8 +79,11 @@ jobs:
             tools/configure_android_mobile_media_kit.py \
             tools/configure_android_signing.py \
             tools/generate_desktop_branding.py \
+            tools/configure_ios_build.py \
+            tools/update_altstore_source.py \
             tools/verify_android_apk.py
           bash -n tools/publish_orvix_release.sh
+          bash -n tools/build_ios_ipa.sh
           bash -n tools/android_install_smoke_test.sh
           python3 -m unittest discover -s tools/tests
 
@@ -355,6 +358,44 @@ jobs:
           name: macos
           if-no-files-found: error
           path: Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip
+
+  ios:
+    name: Build iOS sideload IPA
+    needs: [metadata, validate]
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Prepare iOS build tooling
+        run: python3 -m pip install --disable-pip-version-check pillow
+
+      - name: Build unsigned iOS IPA
+        shell: bash
+        run: bash tools/build_ios_ipa.sh "${{ needs.metadata.outputs.version }}"
+
+      - name: Verify iOS sideload package
+        shell: bash
+        run: |
+          set -euo pipefail
+          IPA="Orvix-v${{ needs.metadata.outputs.version }}-iOS.ipa"
+          test -s "$IPA"
+          unzip -tq "$IPA"
+          unzip -l "$IPA" | grep -q 'Payload/Orvix.app/Info.plist'
+          if unzip -l "$IPA" | grep -q '/_CodeSignature/'; then
+            echo "iOS sideload IPA is unexpectedly signed." >&2
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          if-no-files-found: error
+          path: Orvix-v${{ needs.metadata.outputs.version }}-iOS.ipa
 
   windows:
     needs: [metadata, validate]
@@ -1278,7 +1319,7 @@ jobs:
 
   release:
     name: Publish Orvix prerelease
-    needs: [metadata, validate, windows, macos, android-mobile, android-tv]
+    needs: [metadata, validate, windows, macos, ios, android-mobile, android-tv]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -1303,6 +1344,11 @@ jobs:
           name: macos
           path: dist/macos
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios
+          path: dist/ios
+
       - name: Verify release assets
         shell: bash
         run: |
@@ -1314,7 +1360,9 @@ jobs:
           test -s dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-armeabi-v7a.apk
           test -s dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-x86_64.apk
           test -s dist/tv/Orvix-v${{ needs.metadata.outputs.version }}-Android-TV.apk
-          test -s dist/macos/Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip
+          test -s dist/macos/Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip \
+            dist/ios/Orvix-v${{ needs.metadata.outputs.version }}-iOS.ipa
+          test -s dist/ios/Orvix-v${{ needs.metadata.outputs.version }}-iOS.ipa
 
       - name: Publish Orvix prerelease
         env:
@@ -1338,6 +1386,13 @@ jobs:
             echo "- **Android TV / Google TV:** \`Orvix-v$V-Android-TV.apk\`."
             echo "- Smaller phone downloads for one processor type: \`-arm64-v8a\` (most modern phones), \`-armeabi-v7a\` (older 32-bit phones), \`-x86_64\` (emulators and Chromebooks). Any Android Mobile file can update or replace another."
             echo
+            echo "### iPhone / iPad sideload"
+            echo
+            echo "- **SideStore / AltStore:** `Orvix-v$V-iOS.ipa`."
+            echo "- AltStore source: `https://raw.githubusercontent.com/ish4ra/Orvix/develop/store.json`."
+            echo "- This is an unsigned sideload package. Free Apple accounts still require periodic re-signing (normally every 7 days)."
+            echo "- Built-in Free P2P is not packaged for iOS yet; use supported cloud/debrid/direct playback paths on this first iOS build."
+            echo
             cat /tmp/generated-notes.md
           } > /tmp/notes.md
 
@@ -1355,3 +1410,48 @@ jobs:
             dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-x86_64.apk \
             dist/tv/Orvix-v${{ needs.metadata.outputs.version }}-Android-TV.apk \
             dist/macos/Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip
+
+      - name: Update AltStore / SideStore source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          V="${{ needs.metadata.outputs.version }}"
+          IPA="dist/ios/Orvix-v$V-iOS.ipa"
+          DOWNLOAD_URL="https://github.com/ish4ra/Orvix/releases/download/v$V/Orvix-v$V-iOS.ipa"
+          RELEASE_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          for attempt in 1 2 3; do
+            git fetch origin develop
+            git switch -C update-ios-source origin/develop
+
+            python3 tools/update_altstore_source.py \
+              --source store.json \
+              --ipa "$GITHUB_WORKSPACE/$IPA" \
+              --release-notes /tmp/notes.md \
+              --release-version "$V" \
+              --release-date "$RELEASE_DATE" \
+              --download-url "$DOWNLOAD_URL"
+
+            if git diff --quiet -- store.json; then
+              echo "AltStore source already contains Orvix $V."
+              exit 0
+            fi
+
+            git add store.json
+            git commit -m "chore: update iOS sideload source for v$V"
+            if git push origin HEAD:develop; then
+              echo "Updated Orvix sideload source for v$V."
+              exit 0
+            fi
+
+            echo "develop moved while updating store.json; retrying ($attempt/3)." >&2
+            sleep $((attempt * 2))
+          done
+
+          echo "Could not update store.json on develop after three attempts." >&2
+          exit 1
