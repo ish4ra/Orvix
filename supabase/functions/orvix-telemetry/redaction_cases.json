@@ -1,0 +1,92 @@
+[
+  {
+    "name": "URL path, query and fragment",
+    "input": "Failed host lookup for https://api.example.test/rest/1.0/torrents/info/ABC123?auth_token=fake#frag",
+    "expected": "Failed host lookup for https://api.example.test/[redacted]"
+  },
+  {
+    "name": "add-on config in the URL path",
+    "input": "GET https://addon.example.test/realdebrid=FAKEKEY|sort=qualitysize/manifest.json failed",
+    "expected": "GET https://addon.example.test/[redacted] failed"
+  },
+  {
+    "name": "URL user info",
+    "input": "socket closed: https://user:fake-pass@cdn.example.test:8443/video.mkv",
+    "expected": "socket closed: https://[redacted]@cdn.example.test:8443/[redacted]"
+  },
+  {
+    "name": "bare host is kept",
+    "input": "Connection refused: https://api.example.test",
+    "expected": "Connection refused: https://api.example.test"
+  },
+  {
+    "name": "magnet link",
+    "input": "addMagnet failed for magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Movie",
+    "expected": "addMagnet failed for magnet:[redacted]"
+  },
+  {
+    "name": "JWT",
+    "input": "session eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYWtlIn0.ZmFrZS1zaWduYXR1cmU expired",
+    "expected": "session [redacted-jwt] expired"
+  },
+  {
+    "name": "authorization header value",
+    "input": "headers: {Authorization: Bearer fake.token-value_123}",
+    "expected": "headers: {Authorization: [redacted]}"
+  },
+  {
+    "name": "bearer outside a header",
+    "input": "retrying with Bearer fakeTokenValue1234",
+    "expected": "retrying with Bearer [redacted]"
+  },
+  {
+    "name": "Dart map with tokens",
+    "input": "{access_token: fake-access, refresh_token: fake-refresh, expires_in: 3600}",
+    "expected": "{access_token: [redacted], refresh_token: [redacted], expires_in: 3600}"
+  },
+  {
+    "name": "JSON with secrets",
+    "input": "{\"password\":\"fake-password\",\"api_key\": \"fake-key\",\"title\":\"Movie\"}",
+    "expected": "{\"password\":\"[redacted]\",\"api_key\": \"[redacted]\",\"title\":\"Movie\"}"
+  },
+  {
+    "name": "provider key in plain text",
+    "input": "torbox=fakeTorboxKey premiumize: fakePremiumizeKey",
+    "expected": "torbox=[redacted] premiumize: [redacted]"
+  },
+  {
+    "name": "email address",
+    "input": "No account for someone.name+tag@example.test",
+    "expected": "No account for [redacted-email]"
+  },
+  {
+    "name": "long token without a key name",
+    "input": "invalid key FAKE0123456789ABCDEFGHIJKLMNOPQRSTUVWX given",
+    "expected": "invalid key [redacted] given"
+  },
+  {
+    "name": "UUID",
+    "input": "device 11111111-1111-4111-8111-111111111111 not found",
+    "expected": "device [redacted] not found"
+  },
+  {
+    "name": "user home directories",
+    "input": "open C:\\Users\\Fake Name\\AppData\\x failed; /home/fakeuser/.cache and /Users/fakeuser/Library",
+    "expected": "open C:\\Users\\[user]\\AppData\\x failed; /home/[user]/.cache and /Users/[user]/Library"
+  },
+  {
+    "name": "Dart stack frames are kept",
+    "input": "#0      PlayerScreenState._open (package:orvix/screens/player_screen.dart:120:7)\n#1      _RootZone.runUnary (dart:async/zone.dart:1594:54)",
+    "expected": "#0      PlayerScreenState._open (package:orvix/screens/player_screen.dart:120:7)\n#1      _RootZone.runUnary (dart:async/zone.dart:1594:54)"
+  },
+  {
+    "name": "ordinary error text is kept",
+    "input": "AuthException(message: Invalid login credentials, statusCode: 400, code: invalid_credentials)",
+    "expected": "AuthException(message: Invalid login credentials, statusCode: 400, code: invalid_credentials)"
+  },
+  {
+    "name": "RenderFlex overflow is kept",
+    "input": "A RenderFlex overflowed by 12 pixels on the right.",
+    "expected": "A RenderFlex overflowed by 12 pixels on the right."
+  }
+]

@@ -30,7 +30,7 @@ Each message can contain:
 - device type (Desktop, Mobile, TV) and, on Android, device manufacturer and model;
 - whether the app is in the foreground;
 - event names such as "app resumed" or "signed in";
-- for app errors: error type, error message, and stack trace.
+- for app errors: error type, error message, and stack trace. Before these are sent, Orvix shortens web addresses to their host name and removes the tokens, keys, passwords, email addresses, IDs and user folder names it recognizes. The backend applies the same clean-up again before storing them.
 
 If you are signed in to an Orvix account, the backend links these records to your account ID.
 
