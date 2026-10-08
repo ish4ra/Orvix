@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import plistlib
+import re
 from pathlib import Path
 
 from PIL import Image
@@ -15,6 +16,47 @@ INFO_PLIST = IOS_ROOT / "Runner" / "Info.plist"
 APPICON_DIR = IOS_ROOT / "Runner" / "Assets.xcassets" / "AppIcon.appiconset"
 APPICON_CONTENTS = APPICON_DIR / "Contents.json"
 ICON_SOURCE = ROOT / "assets" / "branding" / "orvix_logo.png"
+PODFILE = IOS_ROOT / "Podfile"
+PBXPROJ = IOS_ROOT / "Runner.xcodeproj" / "project.pbxproj"
+APP_FRAMEWORK_INFO = IOS_ROOT / "Flutter" / "AppFrameworkInfo.plist"
+MIN_IOS_VERSION = "15.5"
+
+
+def configure_deployment_target() -> None:
+    """Match Orvix's current mobile_scanner dependency requirement."""
+    if not PODFILE.is_file() or not PBXPROJ.is_file():
+        raise SystemExit("Generated iOS Podfile/Xcode project is missing.")
+
+    podfile = PODFILE.read_text(encoding="utf-8")
+    platform_line = f"platform :ios, '{MIN_IOS_VERSION}'"
+    if re.search(r"^#?\s*platform\s+:ios,\s*['\"][^'\"]+['\"]", podfile, re.M):
+        podfile = re.sub(
+            r"^#?\s*platform\s+:ios,\s*['\"][^'\"]+['\"]",
+            platform_line,
+            podfile,
+            count=1,
+            flags=re.M,
+        )
+    else:
+        podfile = platform_line + "\n" + podfile
+    PODFILE.write_text(podfile, encoding="utf-8")
+
+    project = PBXPROJ.read_text(encoding="utf-8")
+    project, replacements = re.subn(
+        r"IPHONEOS_DEPLOYMENT_TARGET\s*=\s*[^;]+;",
+        f"IPHONEOS_DEPLOYMENT_TARGET = {MIN_IOS_VERSION};",
+        project,
+    )
+    if replacements == 0:
+        raise SystemExit("Could not set IPHONEOS_DEPLOYMENT_TARGET in Xcode project.")
+    PBXPROJ.write_text(project, encoding="utf-8")
+
+    if APP_FRAMEWORK_INFO.is_file():
+        with APP_FRAMEWORK_INFO.open("rb") as handle:
+            framework_info = plistlib.load(handle)
+        framework_info["MinimumOSVersion"] = MIN_IOS_VERSION
+        with APP_FRAMEWORK_INFO.open("wb") as handle:
+            plistlib.dump(framework_info, handle, sort_keys=False)
 
 
 def configure_info_plist() -> None:
@@ -111,6 +153,7 @@ def configure_app_icons() -> None:
 
 
 def main() -> None:
+    configure_deployment_target()
     configure_info_plist()
     configure_app_icons()
     print("Configured generated iOS runner for Orvix.")
