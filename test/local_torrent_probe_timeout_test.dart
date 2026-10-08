@@ -6,7 +6,7 @@ import 'package:orvix/services/local_torrent_service.dart';
 import 'package:orvix/services/source_provider_service.dart';
 
 void main() {
-  test('probe metadata timeout is a failed probe, not an escaped exception',
+  test('probe metadata timeout is an unresolved probe, not an escaped exception',
       () async {
     const infoHash = '0123456789abcdef0123456789abcdef01234567';
     final removed = <String>[];
@@ -15,7 +15,7 @@ void main() {
     server.listen((request) async {
       final path = request.uri.path;
       if (path == '/create') {
-        // Stall past the probe's short create-torrent deadline.
+        // Stall past the probe's bounded metadata deadlines.
         await Future<void>.delayed(const Duration(seconds: 3));
       } else if (path.endsWith('/remove')) {
         removed.add(path);
@@ -37,12 +37,16 @@ void main() {
     final result = await LocalTorrentService.instance.probe(
       source,
       retainSession: true,
+      metadataFastDeadline: const Duration(milliseconds: 300),
+      metadataExtendedDeadline: const Duration(milliseconds: 900),
     );
 
     expect(result.playableNow, isFalse);
     expect(result.bytesReceived, 0);
     expect(result.sampleWindowsPassed, 0);
-    expect(result.label, 'No live data');
+    // Metadata timeout is its own class, never a confirmed dead swarm.
+    expect(result.status, LocalTorrentProbeStatus.metadataTimeout);
+    expect(result.label, 'METADATA SLOW');
     // The temporary probe session is still cleaned up, not retained.
     expect(removed, contains('/$infoHash/remove'));
   });
@@ -70,7 +74,9 @@ void main() {
     expect(result.playableNow, isFalse);
     expect(result.bytesReceived, 0);
     expect(result.sampleWindowsPassed, 0);
-    expect(result.label, 'No live data');
+    // An engine that cannot start is not blamed on the torrent swarm.
+    expect(result.status, LocalTorrentProbeStatus.engineUnavailable);
+    expect(result.label, 'ENGINE ERROR');
   });
 
   group('ensureRunning startup lifecycle', () {

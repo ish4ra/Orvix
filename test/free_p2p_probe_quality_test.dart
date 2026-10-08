@@ -15,7 +15,7 @@ void main() {
       downloadSpeedBytesPerSecond: 3 * 1024 * 1024,
       sampleWindowsPassed: 2,
     );
-    expect(ready.label, 'Ready now');
+    expect(ready.label, 'READY NOW');
 
     const singleBurst = LocalTorrentProbeResult(
       playableNow: false,
@@ -27,7 +27,9 @@ void main() {
       downloadSpeedBytesPerSecond: 8 * 1024 * 1024,
       sampleWindowsPassed: 1,
     );
-    expect(singleBurst.label, 'No live data');
+    // Peers and a single burst, but no sustained second window: stalled.
+    expect(singleBurst.status, LocalTorrentProbeStatus.stalled);
+    expect(singleBurst.label, 'STALLED');
   });
 
   test('live score rewards bandwidth headroom for the actual payload', () {
