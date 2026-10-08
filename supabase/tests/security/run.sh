@@ -27,8 +27,10 @@ migrations="$here/../../migrations"
   for migration in "$migrations"/*.sql; do
     cat "$migration"
   done
-  # Applying the privilege migration again must be harmless.
+  # Applying the privilege and supporters contract migrations again must be
+  # harmless.
   cat "$migrations/20261008100000_harden_table_privileges.sql"
+  cat "$migrations/20261008130000_public_supporters_contract.sql"
   cat "$here/security_test.sql"
   echo 'rollback;'
 } | psql "$database_url" --no-psqlrc --quiet --tuples-only

@@ -20,18 +20,60 @@ expected for them and must not be "fixed" with a policy.
 | `orvix_user_credentials` | RPC-only | none | none | production-only, see below |
 | `orvix_tv_login_sessions` | RPC-only | none | none | cascades from `auth.users` |
 | `orvix_tv_login_approval_attempts` | RPC-only | none | none | cascades from `auth.users` |
-| `supporters` | Public read of visible rows | select (`is_public and is_active`) | same | writes only from supporter webhooks (service role) |
+| `supporters` | Public contract `list_public_supporters()`; direct read kept for released apps | select (`is_public and is_active`), temporary | same | writes only from supporter webhooks (service role); see below |
 | `orvix_admins` | Service only | none | none | currently unused; `orvix-admin` checks a fixed owner id |
 | `orvix_analytics_*` | Service only (`orvix-telemetry`, `orvix-admin`) | none | none | `user_id` is set null when the account is deleted |
 
-Known gap: the public `supporters` read is table-wide, so it also returns
-internal columns such as `provider_user_id` (a SHA-256 of the email for Ko-fi
-supporters with an email). The app selects `provider_user_id` to hide
-provider test rows, so narrowing the grant to the displayed columns would
-break the Supporters screen. First hide those rows without that column (for
-example by marking them private), ship an app that no longer selects it, and
-retire the versions that do; then `revoke select on public.supporters from
-anon, authenticated` and grant `select` on only the displayed columns.
+### Public supporters
+
+The public contract for the supporters wall is `list_public_supporters()`
+(`20261008130000_public_supporters_contract.sql`), not the `supporters`
+table. The table also holds ingestion data the public must not get:
+`provider_user_id` (the provider's id; for Ko-fi supporters with an email, a
+SHA-256 of that email), the visibility and activity flags, and provider test
+deliveries. A direct read returns any column the caller asks for, so the
+table cannot be narrowed to display fields while it is the read path.
+
+`list_public_supporters()` returns only `display_name`, `avatar_url`,
+`profile_url`, `provider` (for the provider label), `support_type`, `tier`
+and `supporter_since` (ordering and the "early supporter" badge). It applies
+the rules on the server: only `is_public and is_active` rows, never the
+provider test rows (Buy Me a Coffee sample supporter `2345`, Ko-fi test
+sender "Jo Example"), oldest first, at most 250. It is SECURITY DEFINER with
+an empty `search_path` and an explicit filter, so it keeps working after the
+direct read is revoked; the Supabase advisor's notice that anon can execute a
+SECURITY DEFINER function is expected for it, as for the pre-auth TV
+functions. Private supporters are stored as "Private supporter"
+without avatar or profile and are never returned. The app reads only this
+function and has no local filtering.
+
+The webhooks write with the service role and upsert on
+`(provider, provider_user_id)`; that column stays, and only the service role
+and the database owner use it.
+
+Temporary compatibility: released apps read the table directly
+(0.7.9-beta.26 and beta.27 select the display columns; beta.28 up to the
+first version with the contract also select `provider_user_id` and hide the
+test rows locally). The table's SELECT grant and the "Public can read visible
+supporters" policy therefore stay, and `provider_user_id` remains readable
+through that path until they are retired. Beta.26 and beta.27 also show any
+provider test row that is public; the stored rows are not rewritten.
+
+Deployment order: apply the migration to production before shipping an app
+build that calls `list_public_supporters()`; without it that build shows
+"Could not load supporters".
+
+Cleanup, once no supported app version reads the table (a new migration;
+the security test then needs its compatibility check removed and the
+expected `supporters` privileges set to none):
+
+```sql
+revoke select on table public.supporters from anon, authenticated;
+drop policy if exists "Public can read visible supporters" on public.supporters;
+```
+
+Do not drop `provider_user_id`: ingestion depends on it. The test rows can
+then also be marked private if wanted; the function already hides them.
 
 `supabase/tests/security/run.sh` checks this table (including TRUNCATE, which
 row level security does not cover) on top of Supabase's default privileges.
@@ -47,6 +89,7 @@ row level security does not cover) on top of Supabase's default privileges.
 | `begin/complete/release_tv_login_exchange`, `claim_tv_login_session` | definer | device code + nonce / exchange token | service_role |
 | `delete_orvix_account_data(uuid)` | invoker | user id from the verified JWT in `delete-account` | service_role |
 | `load_orvix_credentials()`, `save_orvix_credentials(p_payload)` | production-only | `auth.uid()` | authenticated |
+| `list_public_supporters()` | definer, `search_path=''` | none (public) | anon, authenticated, service_role |
 | `set_orvix_user_state_updated_at()` | invoker trigger | — | not callable through the API |
 
 Pre-auth TV functions are callable by anon by design. The device code and nonce

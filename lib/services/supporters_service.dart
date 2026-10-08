@@ -78,24 +78,13 @@ class SupabaseSupportersRepository implements SupportersRepository {
 
   @override
   Future<List<OrvixSupporter>> fetchPublicSupporters() async {
+    // list_public_supporters returns only displayable fields of visible
+    // supporters; hidden and provider test rows are filtered on the server.
     final rows = await _client
-        .from('supporters')
-        .select('provider_user_id,display_name,provider,support_type,tier,avatar_url,profile_url,supporter_since')
-        .eq('is_public', true)
-        .eq('is_active', true)
-        .order('supporter_since', ascending: true)
-        .limit(250);
+        .rpc('list_public_supporters')
+        .order('supporter_since', ascending: true);
 
     return (rows as List)
-        .where((row) {
-          final data = Map<String, dynamic>.from(row as Map);
-          final provider = data['provider'] as String?;
-          final providerUserId = data['provider_user_id']?.toString();
-          final name = (data['display_name'] as String?)?.trim();
-          // Known provider sandbox/test identities must never appear publicly.
-          return !(provider == 'buymeacoffee' && providerUserId == '2345') &&
-              !(provider == 'kofi' && name == 'Jo Example');
-        })
         .map((row) => OrvixSupporter.fromJson(Map<String, dynamic>.from(row as Map)))
         .toList(growable: false);
   }
