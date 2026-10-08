@@ -395,6 +395,11 @@ class SourceProviderService {
   _SourcePlaybackHistory? _historyFor(SourceResult source) =>
       _playbackHistory[_playbackHistoryIdentity(source)];
 
+  /// Recent playback history for this exact release on this install:
+  /// 2 recent success, 1 mostly successful, 0 none/neutral, -1 mostly failed,
+  /// -2 recent failure.
+  int playbackHistoryRank(SourceResult source) => _historyRank(source);
+
   int _historyRank(SourceResult source) {
     final history = _historyFor(source);
     if (history == null) return 0;

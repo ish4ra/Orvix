@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 
 import '../models/media_item.dart';
 import '../services/free_p2p_live_probe_service.dart';
-import '../services/local_torrent_service.dart';
 import '../services/source_provider_service.dart';
 import '../tv/tv_focus.dart';
 import '../tv/tv_theme.dart';
@@ -28,6 +27,7 @@ class TvSourceBrowserScreen extends StatefulWidget {
     this.episode,
     this.onPlaySource,
     this.preferFreeP2p = true,
+    this.probeSession,
   });
 
   final SourceProviderService sources;
@@ -36,6 +36,11 @@ class TvSourceBrowserScreen extends StatefulWidget {
   final Future<List<SourceResult>> resultsFuture;
   final Future<void> Function(SourceResult source)? onPlaySource;
   final bool preferFreeP2p;
+
+  /// Live-probe evidence already gathered by Normal Play. When provided, the
+  /// browser shows and ranks with it instead of re-probing from scratch; the
+  /// caller owns its release.
+  final FreeP2pLiveProbeService? probeSession;
 
   @override
   State<TvSourceBrowserScreen> createState() => _TvSourceBrowserScreenState();
@@ -65,10 +70,12 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
   @override
   void initState() {
     super.initState();
-    _liveProbe = FreeP2pLiveProbeService(
-      mediaDuration:
-          FreeP2pLiveProbeService.parseMediaRuntime(widget.item.runtime),
-    );
+    _liveProbe = widget.probeSession ??
+        FreeP2pLiveProbeService(
+          mediaDuration:
+              FreeP2pLiveProbeService.parseMediaRuntime(widget.item.runtime),
+        );
+    _liveProbeStarted = _liveProbe.hasAnyResult;
     _sort =
         widget.preferFreeP2p ? _TvSourceSort.free : _TvSourceSort.best;
     unawaited(_load());
@@ -173,18 +180,23 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
           .toList(growable: false);
     }
 
-    final ordered = [...sorted];
+    var ordered = [...sorted];
     if (_pinnedIdentity != null) {
-      final pinnedIndex = ordered.indexWhere(
-        (source) => widget.sources.matchesPinned(
-          source,
-          _pinnedIdentity,
-          seriesWide: _seriesWidePin,
-        ),
-      );
-      if (pinnedIndex > 0) {
-        final pinned = ordered.removeAt(pinnedIndex);
-        ordered.insert(0, pinned);
+      bool isPinned(SourceResult source) => widget.sources.matchesPinned(
+            source,
+            _pinnedIdentity,
+            seriesWide: _seriesWidePin,
+          );
+      if (_sort == _TvSourceSort.free) {
+        // Same pin rule as mobile/desktop: a pin confirmed unplayable does not
+        // hold a confirmed-live torrent below it.
+        ordered = _liveProbe.applyPinnedPreference(ordered, isPinned);
+      } else {
+        final pinnedIndex = ordered.indexWhere(isPinned);
+        if (pinnedIndex > 0) {
+          final pinned = ordered.removeAt(pinnedIndex);
+          ordered.insert(0, pinned);
+        }
       }
     }
     return ordered;
@@ -408,7 +420,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
         content: ConstrainedBox(
           constraints: BoxConstraints(maxWidth: 620),
           child: Text(
-            'Free P2P: ranks sources for the best chance of playing across phones and TVs — viable swarm first, then broad codec/device compatibility, exact file routing, seed health and practical size. Resolution/quality is not a priority.\n\n'
+            'Free P2P: ranks sources by what is playing right now. Torrents that delivered real media bytes in the live check come first, then unchecked ones, then torrents whose metadata did not resolve, then torrents with no usable data. Among live torrents: first-byte speed, real throughput against the file\'s bitrate, and live peers decide; quality only breaks ties. Provider seeder counts are a snapshot, not proof a torrent works.\n\n'
             'Smooth: favors TV-friendly formats, 1080p/720p, efficient codecs, healthy seeders and smaller files.\n\n'
             'Default: uses your normal Orvix source-priority settings.\n\n'
             'Compatible only: hides sources that look risky for a typical TV decoder, such as 8K, AV1, Hi10P/10-bit AVC, or Dolby Vision-only releases. It does not change the player or torrent engine.',
@@ -547,6 +559,9 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
   }
 
   Widget _sourceControls() {
+    final liveSummary = _sort == _TvSourceSort.free && !_loading
+        ? _liveProbe.summary(_results).text
+        : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -625,11 +640,61 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
                 icon: Icons.info_outline_rounded,
                 onPressed: () => unawaited(_showSourceModeHelp()),
               ),
+              if (_sort == _TvSourceSort.free) ...[
+                const SizedBox(width: 8),
+                _TvFilterChip(
+                  selected: false,
+                  label: 'Re-check live',
+                  icon: Icons.radar_rounded,
+                  onPressed: _recheckLive,
+                ),
+              ],
             ],
           ),
         ),
+        if (_sort == _TvSourceSort.free && liveSummary != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            _liveProbe.noLiveConfirmed
+                ? '$liveSummary — no source delivered live data; choose one or re-check'
+                : liveSummary,
+            style: const TextStyle(
+              color: Color(0xFFAEB6B0),
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ],
     );
+  }
+
+  /// Live health replaces the static provider-metadata assessment once a
+  /// source has been checked; unchecked sources keep the static hint.
+  FreeSourceAssessment _freeAssessment(SourceResult source) {
+    final health = _liveProbe.healthFor(source);
+    if (health == null) return widget.sources.assessFreePlayback(source);
+    final checking = health.state == FreeP2pHealthState.checking;
+    return FreeSourceAssessment(
+      label: health.label,
+      detail: health.metrics ??
+          (checking
+              ? 'Checking whether this torrent delivers media right now.'
+              : health.isLive
+                  ? 'Delivered real media bytes in the live check.'
+                  : 'Did not deliver usable media in the live check.'),
+      recommended: health.isLive,
+      warning: !health.isLive && !checking,
+    );
+  }
+
+  void _recheckLive() {
+    if (_liveProbe.isRunning || _results.isEmpty) return;
+    setState(() {
+      _liveProbe.clear();
+      _liveProbeStarted = false;
+    });
+    _startLiveProbe();
   }
 
   Widget _body() {
@@ -687,10 +752,21 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
       );
     }
 
-    return ListView.separated(
+    String rowKey(SourceResult source) =>
+        'tv-source-${widget.sources.sourceIdentity(source, seriesWide: false)}';
+    final indexByKey = <String, int>{
+      for (var i = 0; i < visible.length; i++) rowKey(visible[i]): i,
+    };
+
+    // ListView.builder with findChildIndexCallback keeps each row's element,
+    // and therefore its focus, attached to the same source when a live-check
+    // checkpoint reorders the list. Focus follows the source instead of
+    // jumping to whichever row now occupies the old index.
+    return ListView.builder(
       padding: const EdgeInsets.fromLTRB(2, 2, 2, 30),
       itemCount: visible.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
+      findChildIndexCallback: (key) =>
+          key is ValueKey<String> ? indexByKey[key.value] : null,
       itemBuilder: (context, index) {
         final source = visible[index];
         final pinned = widget.sources.matchesPinned(
@@ -698,22 +774,22 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
           _pinnedIdentity,
           seriesWide: _seriesWidePin,
         );
-        return _TvSourceRow(
-          key: ValueKey(
-            'tv-source-${widget.sources.sourceIdentity(source, seriesWide: false)}',
+        final free = _sort == _TvSourceSort.free;
+        return Padding(
+          key: ValueKey(rowKey(source)),
+          padding: EdgeInsets.only(
+            bottom: index == visible.length - 1 ? 0 : 10,
           ),
-          source: source,
-          assessment: _sort == _TvSourceSort.free
-              ? widget.sources.assessFreePlayback(source)
-              : null,
-          liveProbe: _sort == _TvSourceSort.free
-              ? _liveProbe.resultFor(source)
-              : null,
-          pinned: pinned,
-          autofocus: index == 0,
-          busy: _openingResource == source.resource,
-          onPressed: () => unawaited(_play(source)),
-          onPinRequest: () => unawaited(_confirmPin(source)),
+          child: _TvSourceRow(
+            source: source,
+            assessment: free ? _freeAssessment(source) : null,
+            freeP2p: free,
+            pinned: pinned,
+            autofocus: index == 0,
+            busy: _openingResource == source.resource,
+            onPressed: () => unawaited(_play(source)),
+            onPinRequest: () => unawaited(_confirmPin(source)),
+          ),
         );
       },
     );
@@ -722,10 +798,9 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
 
 class _TvSourceRow extends StatefulWidget {
   const _TvSourceRow({
-    super.key,
     required this.source,
     required this.assessment,
-    required this.liveProbe,
+    required this.freeP2p,
     required this.pinned,
     required this.autofocus,
     required this.busy,
@@ -735,7 +810,10 @@ class _TvSourceRow extends StatefulWidget {
 
   final SourceResult source;
   final FreeSourceAssessment? assessment;
-  final LocalTorrentProbeResult? liveProbe;
+
+  /// Free P2P mode: provider seed/peer counts are labelled as reported
+  /// snapshots so they are not read as live evidence.
+  final bool freeP2p;
   final bool pinned;
   final bool autofocus;
   final bool busy;
@@ -780,21 +858,19 @@ class _TvSourceRowState extends State<_TvSourceRow> {
     final quality = (source.quality ?? source.releaseQuality ?? '—').toUpperCase();
     final top = quality.contains('2160') || quality.contains('4K');
     final hd = top || quality.contains('1080');
-    final live = widget.liveProbe;
     final focused = _focused;
+    final reported = widget.freeP2p ? ' reported' : '';
     final facts = <(IconData, String)>[
       (Icons.extension_rounded, source.provider),
       if (source.sizeLabel != null) (Icons.sd_storage_rounded, source.sizeLabel!),
       if (source.seeders != null)
-        (Icons.arrow_upward_rounded, '${source.seeders} seeders'),
-      if (source.peers != null) (Icons.people_alt_rounded, '${source.peers} peers'),
+        (Icons.arrow_upward_rounded, '${source.seeders} seeders$reported'),
+      if (source.peers != null)
+        (Icons.people_alt_rounded, '${source.peers} peers$reported'),
       if (source.cached) (Icons.bolt_rounded, 'Cached'),
       (source.isMagnet ? Icons.hub_rounded : Icons.link_rounded,
           source.isMagnet ? 'P2P' : 'Direct'),
       if (source.preferredGroup) (Icons.star_rounded, 'Preferred group'),
-      if (live != null) (Icons.speed_rounded, '${live.label} • ${live.speedLabel}'),
-      if (live != null && live.connections > 0)
-        (Icons.lan_rounded, '${live.connections} live connections'),
     ];
 
     return Focus(

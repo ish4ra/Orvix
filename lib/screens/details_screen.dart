@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
 import '../models/media_item.dart';
 import '../services/ai_sinhala_preferences_service.dart';
@@ -1998,9 +1999,7 @@ class DetailsScreenState extends State<DetailsScreen> {
         // also exists.
         includeLowQuality: true,
       );
-      final hasDebridConnection = (await widget.torbox.isConnected) ||
-          (await RealDebridService.instance.isConnected) ||
-          (await PremiumizeService.instance.isConnected);
+      final hasCloudConnection = await _hasCloudConnection();
       await Navigator.of(context).push<void>(
         PageRouteBuilder<void>(
           transitionDuration: const Duration(milliseconds: 180),
@@ -2015,18 +2014,13 @@ class DetailsScreenState extends State<DetailsScreen> {
               item: item,
               episode: episode,
               resultsFuture: resultsFuture,
-              preferFreeP2p: !hasDebridConnection,
+              preferFreeP2p: !hasCloudConnection,
               onPlaySource: (chosen) async {
-                final hasCloudConnection =
-                    (await widget.pikpak.isSignedIn) ||
-                    (await widget.torbox.isConnected) ||
-                    (await RealDebridService.instance.isConnected) ||
-                    (await PremiumizeService.instance.isConnected);
                 await _playSourceResult(
                   chosen,
                   item,
                   episode,
-                  hasCloudConnection: hasCloudConnection,
+                  hasCloudConnection: await _hasCloudConnection(),
                 );
               },
             ),
@@ -2063,13 +2057,10 @@ class DetailsScreenState extends State<DetailsScreen> {
         return;
       }
 
-      final pikpakConnected = await widget.pikpak.isSignedIn;
-      final torboxConnected = await widget.torbox.isConnected;
-      final realDebridConnected = await RealDebridService.instance.isConnected;
-      final premiumizeConnected = await PremiumizeService.instance.isConnected;
-      final hasCloudConnection = pikpakConnected || torboxConnected || realDebridConnected || premiumizeConnected;
+      final hasCloudConnection = await _hasCloudConnection();
 
       SourceResult? chosen;
+      SourceResult? pinnedResult;
       FreeP2pLiveProbeService? autoProbeSession;
       if (autoUsePinned) {
         final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
@@ -2081,17 +2072,25 @@ class DetailsScreenState extends State<DetailsScreen> {
               pinned,
               seriesWide: item.kind == MediaKind.series,
             )) {
-              chosen = result;
+              pinnedResult = result;
               break;
             }
           }
         }
       }
-      // With no debrid/cloud connection, Normal Play validates the strongest
-      // static candidates against the live swarm before auto-picking. The
-      // probe stops early as soon as a source has strong two-window evidence,
-      // so this is safer than raw seeder ordering without turning Play into a
-      // long benchmark of every torrent.
+      // A pin is a preference, not a bypass of the Free P2P health gate. With
+      // a cloud/debrid path, or for a direct HTTP pin, it is used as before.
+      // A pinned torrent without a cloud path is probed first below and only
+      // auto-plays once it is confirmed live.
+      if (pinnedResult != null &&
+          (hasCloudConnection || !pinnedResult.isMagnet)) {
+        chosen = pinnedResult;
+      }
+      // With no debrid/cloud connection, Normal Play validates a bounded,
+      // staged shortlist against the live swarm before auto-picking. It stops
+      // early on strong two-window evidence and only auto-picks a torrent that
+      // proved it can deliver media bytes now; otherwise it returns null and
+      // the source picker opens with the same evidence.
       if (autoUsePinned && !hasCloudConnection && chosen == null) {
         autoProbeSession = FreeP2pLiveProbeService(
           mediaDuration: FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
@@ -2107,6 +2106,7 @@ class DetailsScreenState extends State<DetailsScreen> {
           chosen = await autoProbeSession.probeBestCandidate(
             results,
             widget.sources,
+            preferred: pinnedResult,
             onUpdate: (completed, total) {
               if (!mounted) return;
               setState(() {
@@ -2124,8 +2124,10 @@ class DetailsScreenState extends State<DetailsScreen> {
       }
 
       if (chosen == null && autoProbeSession != null) {
-        await autoProbeSession.release();
-        autoProbeSession = null;
+        // No torrent proved it can play right now. Do not launch a failed
+        // candidate: keep the results and their live evidence and let the
+        // user choose (or re-check) in the source picker.
+        // The picker's live-check line states that nothing was confirmed.
         if (mounted) {
           setState(() {
             _resolving = false;
@@ -2140,9 +2142,13 @@ class DetailsScreenState extends State<DetailsScreen> {
         // same in-memory result/probe session when the player returns. To the
         // user this is still one-step navigation:
         // player -> source list -> title, with no provider re-fetch.
-        final probeSession = FreeP2pLiveProbeService(
-          mediaDuration: FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
-        );
+        // Reuse the Normal Play live evidence when there is any, so the picker
+        // shows the same health states instead of re-probing from scratch.
+        final probeSession = autoProbeSession ??
+            FreeP2pLiveProbeService(
+              mediaDuration:
+                  FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
+            );
         try {
           // Player returned, or Back cancelled the preparation: the loop
           // reopens the source picker using the same
@@ -2190,6 +2196,16 @@ class DetailsScreenState extends State<DetailsScreen> {
     }
   }
 
+  /// One cloud/debrid eligibility check for the whole details flow. Any
+  /// connected PikPak, TorBox, Real-Debrid or Premiumize account is a cloud
+  /// path: playback sends torrents there, so Free P2P live probing/ranking is
+  /// only the automatic choice when none of them is connected.
+  Future<bool> _hasCloudConnection() async =>
+      (await widget.pikpak.isSignedIn) ||
+      (await widget.torbox.isConnected) ||
+      (await RealDebridService.instance.isConnected) ||
+      (await PremiumizeService.instance.isConnected);
+
   String _sourceReleaseHint(SourceResult source) {
     final fileName = source.fileNameHint?.trim();
     if (fileName != null && fileName.isNotEmpty) return fileName;
@@ -2202,10 +2218,7 @@ class DetailsScreenState extends State<DetailsScreen> {
     EpisodeItem? episode, {
     bool? hasCloudConnection,
   }) async {
-    final cloudConnected = hasCloudConnection ??
-        ((await widget.pikpak.isSignedIn) || (await widget.torbox.isConnected) ||
-            (await RealDebridService.instance.isConnected) ||
-            (await PremiumizeService.instance.isConnected));
+    final cloudConnected = hasCloudConnection ?? await _hasCloudConnection();
     final releaseHint = _sourceReleaseHint(chosen);
 
     if (!chosen.isMagnet) {
@@ -2730,7 +2743,9 @@ class DetailsScreenState extends State<DetailsScreen> {
     EpisodeItem? episode, {
     FreeP2pLiveProbeService? probeSession,
   }) async {
-    final hasDebridConnection = await widget.torbox.isConnected;
+    // Same eligibility as Normal Play and playback: Free P2P ranking and live
+    // probing apply only when no cloud/debrid provider is connected.
+    final hasCloudConnection = await _hasCloudConnection();
 
     if (PlatformProfile.isAndroidTv) {
       if (!mounted) return null;
@@ -2748,7 +2763,8 @@ class DetailsScreenState extends State<DetailsScreen> {
               item: item,
               episode: episode,
               resultsFuture: Future.value(results),
-              preferFreeP2p: !hasDebridConnection,
+              preferFreeP2p: !hasCloudConnection,
+              probeSession: probeSession,
             ),
           ),
         ),
@@ -2758,7 +2774,7 @@ class DetailsScreenState extends State<DetailsScreen> {
     var resultLimit = await widget.sources.getResultLimit();
     var compatibilityOnly = false;
     var smoothRanking = false;
-    var freeStreamingRanking = !hasDebridConnection;
+    var freeStreamingRanking = !hasCloudConnection;
     final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
     final seriesWidePin = item.kind == MediaKind.series;
     var pinnedIdentity = await widget.sources.getPinnedSourceIdentity(pinKey);
@@ -2893,18 +2909,27 @@ class DetailsScreenState extends State<DetailsScreen> {
               : [...ranked];
           final compatibilityHiddenCount = ranked.length - filtered.length;
 
-          final ordered = [...filtered];
+          var ordered = [...filtered];
           if (pinnedIdentity != null) {
-            final pinnedIndex = ordered.indexWhere(
-              (result) => widget.sources.matchesPinned(
-                result,
-                pinnedIdentity,
-                seriesWide: seriesWidePin,
-              ),
-            );
-            if (pinnedIndex > 0) {
-              final pinned = ordered.removeAt(pinnedIndex);
-              ordered.insert(0, pinned);
+            bool isPinnedResult(SourceResult result) =>
+                widget.sources.matchesPinned(
+                  result,
+                  pinnedIdentity,
+                  seriesWide: seriesWidePin,
+                );
+            if (freeStreamingRanking) {
+              // A pin stays on top unless it was just confirmed unplayable
+              // while another torrent is confirmed live.
+              ordered = liveProbe.applyPinnedPreference(
+                ordered,
+                isPinnedResult,
+              );
+            } else {
+              final pinnedIndex = ordered.indexWhere(isPinnedResult);
+              if (pinnedIndex > 0) {
+                final pinned = ordered.removeAt(pinnedIndex);
+                ordered.insert(0, pinned);
+              }
             }
           }
 
@@ -2918,7 +2943,7 @@ class DetailsScreenState extends State<DetailsScreen> {
           final priorityText =
               priority.map((e) => e.label.toLowerCase()).join(' → ');
           final rankingText = freeStreamingRanking
-              ? 'Free P2P: live bytes → first-byte latency → real speed/peers → compatibility → exact file → practical size'
+              ? 'Free P2P: live data now → first byte → real speed vs bitrate → live peers → history → provider seeds → exact file → size; quality only breaks ties'
               : smoothRanking
                   ? 'Smooth: compatibility → 1080/720 → efficient codec → seeders → smaller files → cache'
                   : 'Default: $priorityText';
@@ -2933,11 +2958,17 @@ class DetailsScreenState extends State<DetailsScreen> {
             if (limitHiddenCount > 0) '$limitHiddenCount beyond limit',
           ];
 
+          final liveSummary =
+              freeStreamingRanking ? liveProbe.summary(results).text : null;
+
           Widget quickPlayButton(SourceResult source) {
-            final waitingForProbe = freeStreamingRanking &&
-                source.isMagnet &&
-                !liveProbe.hasPlayableResult;
+            // Quick Play in Free P2P only launches a torrent that is confirmed
+            // live, pinned or not. Every row stays selectable for a manual
+            // choice, including an unconfirmed pin.
             final pinned = widget.sources.matchesPinned(source, pinnedIdentity);
+            final waitingForProbe =
+                freeStreamingRanking && !liveProbe.quickPlayAllowed(source);
+            final checking = freeStreamingRanking && liveProbe.isRunning;
             return FilledButton.tonalIcon(
               onPressed: waitingForProbe
                   ? null
@@ -2946,13 +2977,15 @@ class DetailsScreenState extends State<DetailsScreen> {
                       Navigator.pop(sheetContext, source);
                     },
               icon: Icon(
-                freeStreamingRanking && !liveProbe.hasPlayableResult
+                waitingForProbe
                     ? Icons.radar_rounded
                     : Icons.play_arrow_rounded,
               ),
               label: Text(
-                freeStreamingRanking && !liveProbe.hasPlayableResult
-                    ? 'Checking live…'
+                waitingForProbe
+                    ? checking
+                        ? 'Checking live…'
+                        : 'No live source'
                     : pinned
                         ? 'Play pinned'
                         : 'Quick Play ${source.quality ?? ''}'.trim(),
@@ -3137,6 +3170,48 @@ class DetailsScreenState extends State<DetailsScreen> {
                         ],
                       ),
                     ),
+                    if (liveSummary != null) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              liveProbe.noLiveConfirmed
+                                  ? '$liveSummary\nNo source delivered live data. Choose one manually or re-check.'
+                                  : liveSummary,
+                              style: TextStyle(
+                                color: color.onSurfaceVariant,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Copy live-check report',
+                            visualDensity: VisualDensity.compact,
+                            icon: const Icon(Icons.content_copy_rounded,
+                                size: 18),
+                            onPressed: () => unawaited(
+                              Clipboard.setData(
+                                ClipboardData(
+                                  text: liveProbe.diagnosticReport(results),
+                                ),
+                              ),
+                            ),
+                          ),
+                          TextButton.icon(
+                            onPressed: liveProbe.isRunning
+                                ? null
+                                : () => setSheetState(() {
+                                      liveProbe.clear();
+                                      liveProbeStarted = false;
+                                    }),
+                            icon: const Icon(Icons.refresh_rounded, size: 18),
+                            label: const Text('Re-check'),
+                          ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     const Divider(height: 1),
                     Expanded(
@@ -3150,21 +3225,26 @@ class DetailsScreenState extends State<DetailsScreen> {
                             pinnedIdentity,
                             seriesWide: seriesWidePin,
                           );
-                          final live = freeStreamingRanking
-                              ? liveProbe.resultFor(result)
+                          final health = freeStreamingRanking
+                              ? liveProbe.healthFor(result)
                               : null;
+                          final healthMetrics = health?.metrics;
                           final statusLabel = isPinned
-                              ? 'Pinned'
-                              : live != null
-                                  ? live.label
-                                  : index == 0 && freeStreamingRanking
-                                      ? 'Checking live…'
-                                      : index == 0 && smoothRanking
-                                          ? 'Smooth'
-                                          : null;
+                              ? health != null
+                                  ? 'Pinned • ${health.label}'
+                                  : 'Pinned'
+                              : health != null
+                                  ? health.label
+                                  : index == 0 && smoothRanking
+                                      ? 'Smooth'
+                                      : null;
+                          // Provider seeds are a snapshot from the addon, not
+                          // proof the torrent is usable; live numbers come
+                          // from the probe.
                           final providerText =
                               '${result.provider}${result.isMagnet ? ' • torrent / P2P' : ' • direct URL'}'
-                              '${live == null ? '' : ' • ${live.speedLabel} • ${live.connections} connections'}'
+                              '${freeStreamingRanking && result.isMagnet && result.seeders != null ? ' • ${result.seeders} seeders reported' : ''}'
+                              '${healthMetrics == null ? '' : ' • $healthMetrics'}'
                               '${result.compatibilityFriendly ? '' : ' • ⚠ compatibility risk'}';
 
                           if (compactSheet) {
