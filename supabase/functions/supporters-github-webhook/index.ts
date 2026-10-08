@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { githubSupporterRow } from "./row.ts";
 const enc=new TextEncoder();
 function hex(b:Uint8Array){return Array.from(b).map(x=>x.toString(16).padStart(2,"0")).join("")}
 function eq(a:string,b:string){if(a.length!==b.length)return false;let d=0;for(let i=0;i<a.length;i++)d|=a.charCodeAt(i)^b.charCodeAt(i);return d===0}
@@ -10,9 +11,8 @@ Deno.serve(async(req)=>{
  if(!eq(supplied,expected))return new Response("Invalid signature",{status:401});
  const event=req.headers.get("x-github-event")??"";if(event==="ping")return Response.json({ok:true,event:"ping"});if(event!=="sponsorship")return Response.json({ok:true,ignored:event});
  let body:any;try{body=JSON.parse(raw)}catch{return new Response("Invalid JSON",{status:400})}
- const sponsorship=body.sponsorship??{},sponsor=sponsorship.sponsor;if(!sponsor?.id)return Response.json({ok:true,ignored:"private sponsor"});
- const action=String(body.action??"").toLowerCase(),inactive=action==="cancelled"||action==="canceled";
- const now=new Date().toISOString(),client=createClient(Deno.env.get("SUPABASE_URL")!,Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,{auth:{persistSession:false}});
- const {error}=await client.from("supporters").upsert({provider:"github",provider_user_id:String(sponsor.id),display_name:sponsor.name??sponsor.login??"GitHub supporter",avatar_url:sponsor.avatar_url??null,profile_url:sponsor.html_url??null,support_type:sponsorship.is_one_time_payment?"One-time sponsor":"Sponsor",tier:sponsorship.tier?.name??null,supporter_since:sponsorship.created_at??now,last_supported_at:now,is_recurring:!sponsorship.is_one_time_payment,is_active:!inactive,is_public:!inactive,updated_at:now},{onConflict:"provider,provider_user_id"});
+ const row=githubSupporterRow(body,new Date().toISOString());if(!row)return Response.json({ok:true,ignored:"no sponsor id"});
+ const client=createClient(Deno.env.get("SUPABASE_URL")!,Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,{auth:{persistSession:false}});
+ const {error}=await client.from("supporters").upsert(row,{onConflict:"provider,provider_user_id"});
  if(error)return new Response("Database error",{status:500});return Response.json({ok:true});
 });
