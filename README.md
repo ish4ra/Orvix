@@ -2,6 +2,18 @@
 
 Orvix is a **multi-cloud cinematic media hub** built with Flutter. It combines movie/TV discovery, user-configured source providers, PikPak and TorBox cloud accounts, and built-in media playback in one native application.
 
+- **Downloads:** official builds are published only on [GitHub Releases](https://github.com/ish4ra/Orvix/releases).
+- **Code signing policy:** [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md)
+- **Privacy policy:** [PRIVACY.md](PRIVACY.md)
+- **Third-party notices:** [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+- **License:** [AGPL-3.0-only](LICENSE)
+
+## Code signing
+
+Orvix Windows releases are **currently unsigned**. Orvix is applying to the [SignPath Foundation](https://signpath.org/) open-source code signing program. Until then, Windows may show SmartScreen or "unknown publisher" warnings for the installer and `orvix.exe`. Download Orvix only from the official GitHub Releases page.
+
+If the application is approved, signed Windows releases will say so explicitly in their release notes, and the [code signing policy](CODE_SIGNING_POLICY.md) will be updated. A signature identifies the publisher, but Windows may still show reputation warnings for a while after a new release.
+
 ## Active development — v0.5
 
 Current development is on **`orvix-v0.5.0-dev`**. The older Go prototype on `main` remains only as historical reference; the active product is the Flutter/Dart application under `lib/`.
