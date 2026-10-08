@@ -618,11 +618,12 @@ void main() {
 
     test('a failed restore leaves the provider disconnected', () async {
       backend.loadError = Exception('network down');
-      await expectLater(
-        OrvixAccountService.signIn(
-            email: 'viewer@example.com', password: 'secret1'),
-        throwsException,
-      );
+      // Signing in still succeeds; only the credential part reports failure.
+      final result = await OrvixAccountService.signIn(
+          email: 'viewer@example.com', password: 'secret1');
+      expect(result.hasSession, isTrue);
+      expect(result.sync?.credentialsFailed, isTrue);
+      expect(result.sync?.stateFailed, isFalse);
       expect(OrvixAccountService.isSignedIn, isTrue);
       expect(await _torbox().isConnected, isFalse);
       expect(await _local(_syncStateKey), isNull);

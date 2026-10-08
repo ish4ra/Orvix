@@ -48,6 +48,33 @@ class _OfflineCatalog implements CatalogService {
   dynamic noSuchMethod(Invocation invocation) => null;
 }
 
+/// Every poster shares one title, so whichever item the shuffled hero picks,
+/// the hero shows the same text as the rail cards.
+class _SharedTitleCatalog extends _OfflineCatalog {
+  static const title = 'Shared title';
+
+  List<MediaItem> _shared(String prefix) => [
+        for (final item in _row(prefix))
+          MediaItem(id: item.id, kind: item.kind, title: title),
+      ];
+
+  @override
+  Future<List<MediaItem>> popularMovies({int limit = 40}) async =>
+      _shared('Popular');
+
+  @override
+  Future<List<MediaItem>> popularSeries({int limit = 40}) async =>
+      _shared('Series');
+
+  @override
+  Future<List<MediaItem>> topRatedMovies({int limit = 40}) async =>
+      _shared('Top');
+
+  @override
+  Future<List<MediaItem>> topRatedSeries({int limit = 40}) async =>
+      _shared('TopSeries');
+}
+
 class _ContinueState implements MediaStateService {
   @override
   Future<List<ContinueWatchingEntry>> continueWatching({int limit = 24}) async =>
@@ -71,18 +98,32 @@ class _ContinueState implements MediaStateService {
   dynamic noSuchMethod(Invocation invocation) => null;
 }
 
-/// The horizontal rail that holds [label] (a card title inside it).
-ScrollableState _railOf(WidgetTester tester, String label) {
+/// Every horizontal Scrollable on Home: the media and Continue Watching rails.
+final Finder _horizontalRails = find.byWidgetPredicate(
+  (w) => w is Scrollable && w.axisDirection == AxisDirection.right,
+);
+
+/// The card title [label] inside a horizontal rail.
+///
+/// Home shuffles its hero candidates, so the same title can also be shown
+/// by the hero, which is not inside any horizontal rail. Scoping the lookup
+/// to the rails keeps the target independent of the hero pick.
+Finder _railCard(String label) =>
+    find.descendant(of: _horizontalRails, matching: find.text(label)).first;
+
+/// The horizontal rail that holds [card].
+ScrollableState _railOf(WidgetTester tester, Finder card) {
   final element = find
-      .ancestor(of: find.text(label).first, matching: find.byType(Scrollable))
+      .ancestor(of: card, matching: _horizontalRails)
       .evaluate()
-      .firstWhere(
-        (e) => (e.widget as Scrollable).axisDirection == AxisDirection.right,
-      );
+      .first;
   return (element as StatefulElement).state as ScrollableState;
 }
 
-Future<void> _pumpNarrowHome(WidgetTester tester) async {
+Future<void> _pumpNarrowHome(
+  WidgetTester tester, {
+  CatalogService? catalog,
+}) async {
   // Below the 900px wide-desktop breakpoint: the generic Home layout with
   // plain horizontal ListViews (_MediaRail / _ContinueRail).
   tester.view.physicalSize = const Size(800, 1400);
@@ -91,7 +132,7 @@ Future<void> _pumpNarrowHome(WidgetTester tester) async {
   await tester.pumpWidget(MaterialApp(
     home: Scaffold(
       body: HomeScreen(
-        catalog: _OfflineCatalog(),
+        catalog: catalog ?? _OfflineCatalog(),
         sources: SourceProviderService(
           client: MockClient(
             (_) async => http.Response(jsonEncode({'streams': []}), 200),
@@ -112,10 +153,11 @@ Future<double> _drag(
   String label,
   PointerDeviceKind kind,
 ) async {
-  final rail = _railOf(tester, label);
+  final card = _railCard(label);
+  final rail = _railOf(tester, card);
   final before = rail.position.pixels;
   await tester.dragFrom(
-    tester.getCenter(find.text(label).first),
+    tester.getCenter(card),
     const Offset(-260, 0),
     kind: kind,
   );
@@ -155,6 +197,37 @@ void main() {
         greaterThan(100));
     // Mouse drag stays as it was on Android (Flutter's default: off).
     expect(await _drag(tester, 'Series 0', PointerDeviceKind.mouse), 0);
+
+    await unmount(tester);
+  });
+
+  testWidgets('rail helper picks the rail card when the hero shows the same '
+      'title', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    await _pumpNarrowHome(tester, catalog: _SharedTitleCatalog());
+
+    const title = _SharedTitleCatalog.title;
+    final all = find.text(title);
+    final inRails = find.descendant(
+      of: _horizontalRails,
+      matching: find.text(title),
+    );
+    // The hero copy exists and sits outside every horizontal rail, ahead of
+    // the rail cards: an unscoped `.first` lookup would land on it.
+    final heroCopies = all.evaluate().toSet()
+      ..removeAll(inRails.evaluate());
+    expect(heroCopies, hasLength(1));
+    expect(all.evaluate().first, heroCopies.single);
+    expect(
+      find.ancestor(of: all.first, matching: _horizontalRails),
+      findsNothing,
+    );
+
+    final card = _railCard(title);
+    expect(heroCopies.contains(card.evaluate().single), isFalse);
+    expect(find.ancestor(of: card, matching: _horizontalRails), findsWidgets);
+    expect(await _drag(tester, title, PointerDeviceKind.mouse),
+        greaterThan(100));
 
     await unmount(tester);
   });

@@ -116,7 +116,12 @@ class OrvixAccountService {
   static bool _cloudWritesAllowed(OrvixAccountUser user) =>
       !_accountDeletionInProgress && currentUser?.id == user.id;
 
-  static Future<OrvixAuthResult> signIn({
+  /// Signs in, then merges the account into this device.
+  ///
+  /// Throws only when signing in fails. A sync problem after a successful
+  /// sign-in is reported in [OrvixSignInResult.sync]; the user stays signed
+  /// in and Sync now retries.
+  static Future<OrvixSignInResult> signIn({
     required String email,
     required String password,
   }) async {
@@ -124,11 +129,11 @@ class OrvixAccountService {
       email: email.trim(),
       password: password,
     );
-    await mergeCloudIntoLocal();
-    return response;
+    return OrvixSignInResult(response, sync: await mergeCloudIntoLocal());
   }
 
-  static Future<OrvixAuthResult> signUp({
+  /// Same contract as [signIn]; nothing syncs until a session exists.
+  static Future<OrvixSignInResult> signUp({
     required String email,
     required String password,
   }) async {
@@ -136,13 +141,14 @@ class OrvixAccountService {
       email: email.trim(),
       password: password,
     );
-    if (response.hasSession) {
-      await mergeCloudIntoLocal();
-    }
-    return response;
+    return OrvixSignInResult(
+      response,
+      sync: response.hasSession ? await mergeCloudIntoLocal() : null,
+    );
   }
 
-  static Future<OrvixAuthResult> verifySignupOtp({
+  /// Same contract as [signIn]; nothing syncs until a session exists.
+  static Future<OrvixSignInResult> verifySignupOtp({
     required String email,
     required String token,
   }) async {
@@ -150,10 +156,10 @@ class OrvixAccountService {
       email: email.trim(),
       token: token.trim(),
     );
-    if (response.hasSession) {
-      await mergeCloudIntoLocal();
-    }
-    return response;
+    return OrvixSignInResult(
+      response,
+      sync: response.hasSession ? await mergeCloudIntoLocal() : null,
+    );
   }
 
   static Future<void> resendSignupConfirmation({
@@ -536,6 +542,17 @@ class OrvixAccountService {
     if (!mapEquals(merged, remote)) {
       if (!_cloudWritesAllowed(user)) return false;
       await backend.saveCredentials(merged);
+      // The payload sent is the complete credential set. When it drops keys
+      // (a disconnect), make sure the account really lost them: a backend
+      // that merged instead of replacing would bring the old credential back
+      // on the next sync. The removal then stays pending and is retried.
+      final dropped = remote.keys.where((key) => !merged.containsKey(key));
+      if (dropped.isNotEmpty) {
+        final after = await backend.loadCredentials();
+        if (dropped.any((key) => after[key]?.isNotEmpty ?? false)) {
+          throw StateError('The account kept removed provider credentials.');
+        }
+      }
     }
 
     final now = {...local, ...restore};
@@ -589,20 +606,57 @@ class OrvixAccountService {
     );
   }
 
-  static Future<void> mergeCloudIntoLocal() async {
+  /// Merges the account into this device and this device into the account.
+  ///
+  /// Provider credentials and account state (library, watchlist, progress,
+  /// preferences) sync independently: a failure in one never stops or undoes
+  /// the other, and each is reported in the result. Never throws for a sync
+  /// failure; a failed part keeps this device's data as it is and the next
+  /// sync retries it. No backend detail is kept in the result.
+  static Future<OrvixSyncResult> mergeCloudIntoLocal() async {
     final user = currentUser;
-    if (user == null || !_cloudWritesAllowed(user)) return;
+    if (user == null || !_cloudWritesAllowed(user)) {
+      return OrvixSyncResult.skipped;
+    }
 
-    await syncCredentialsIfSignedIn();
-    if (!_cloudWritesAllowed(user)) return;
+    OrvixSyncStatus credentials;
+    try {
+      credentials = await _serializeCredentials(() => _syncCredentials(user))
+          ? OrvixSyncStatus.synced
+          : OrvixSyncStatus.skipped;
+    } catch (error) {
+      _logSyncFailure('provider credentials', error);
+      credentials = OrvixSyncStatus.failed;
+    }
 
+    OrvixSyncStatus state;
+    try {
+      state = await _mergeUserState(user)
+          ? OrvixSyncStatus.synced
+          : OrvixSyncStatus.skipped;
+    } catch (error) {
+      _logSyncFailure('account data', error);
+      state = OrvixSyncStatus.failed;
+    }
+    return OrvixSyncResult(credentials: credentials, state: state);
+  }
+
+  /// Only the error type is logged: backend messages may echo request data.
+  static void _logSyncFailure(String part, Object error) {
+    debugPrint('Orvix account sync: $part did not sync (${error.runtimeType}).');
+  }
+
+  /// Returns false when nothing was synced because the account may no
+  /// longer be written to.
+  static Future<bool> _mergeUserState(OrvixAccountUser user) async {
+    if (!_cloudWritesAllowed(user)) return false;
     final prefs = await SharedPreferences.getInstance();
     final stored = await backend.loadUserState(user.id);
-    if (!_cloudWritesAllowed(user)) return;
+    if (!_cloudWritesAllowed(user)) return false;
 
     if (stored == null) {
       await pushLocalStateIfSignedIn();
-      return;
+      return true;
     }
 
     final remote = Map<String, dynamic>.from(stored);
@@ -635,7 +689,7 @@ class OrvixAccountService {
       ..._collectAppPreferences(prefs),
     };
 
-    if (!_cloudWritesAllowed(user)) return;
+    if (!_cloudWritesAllowed(user)) return false;
     await backend.saveUserState(user.id, {
       'watchlist': mergedWatchlist,
       'library': mergedLibrary,
@@ -646,6 +700,7 @@ class OrvixAccountService {
           mergedPreferences['orvix_preferred_cloud_v1']?.toString() ?? 'pikpak',
       'preferences': mergedPreferences,
     });
+    return true;
   }
 
   static dynamic _decodeJsonValue(String? raw, dynamic fallback) {
@@ -757,6 +812,65 @@ class OrvixAccountService {
       }
     }
   }
+}
+
+/// How one part of an account sync ended.
+enum OrvixSyncStatus {
+  synced,
+
+  /// Could not sync; this device keeps its data and the next sync retries.
+  failed,
+
+  /// Not attempted: not signed in, or the account is being deleted.
+  skipped,
+}
+
+/// The outcome of one account sync. Provider credentials and account state
+/// (library, watchlist, progress and preferences) are reported separately
+/// because one can sync while the other fails. Holds no backend detail, so
+/// it is safe to show.
+class OrvixSyncResult {
+  const OrvixSyncResult({required this.credentials, required this.state});
+
+  static const skipped = OrvixSyncResult(
+    credentials: OrvixSyncStatus.skipped,
+    state: OrvixSyncStatus.skipped,
+  );
+
+  final OrvixSyncStatus credentials;
+  final OrvixSyncStatus state;
+
+  bool get credentialsFailed => credentials == OrvixSyncStatus.failed;
+  bool get stateFailed => state == OrvixSyncStatus.failed;
+  bool get hasFailure => credentialsFailed || stateFailed;
+
+  /// What did not sync, as one or two sentences for the user, or null when
+  /// nothing failed. Callers add how to retry.
+  String? get problem {
+    if (credentialsFailed && stateFailed) {
+      return 'Your cloud data did not sync.';
+    }
+    if (credentialsFailed) {
+      return 'Your library, watchlist, progress and settings synced, but your '
+          'cloud provider connections did not. Providers connected on this '
+          'device stay connected.';
+    }
+    if (stateFailed) {
+      return 'Your cloud provider connections synced, but your library, '
+          'watchlist, progress and settings did not.';
+    }
+    return null;
+  }
+}
+
+/// A successful sign-in, sign-up or email verification, with the sync that
+/// followed it. A sync problem never means the sign-in failed.
+class OrvixSignInResult extends OrvixAuthResult {
+  OrvixSignInResult(OrvixAuthResult auth, {this.sync})
+      : super(user: auth.user, hasSession: auth.hasSession);
+
+  /// Null when no sync ran (no session yet).
+  final OrvixSyncResult? sync;
 }
 
 /// What happened to the account copy of a provider credential change.
