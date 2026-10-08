@@ -89,6 +89,15 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def ios_marketing_version(release_version: str) -> str:
+    parts = re.findall(r"\\d+", release_version)
+    if len(parts) < 3:
+        raise ValueError(
+            f"could not derive iOS marketing version from {release_version!r}"
+        )
+    return ".".join(parts)
+
+
 def validate_date(value: str) -> None:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
@@ -144,9 +153,11 @@ def main() -> int:
     build = _string(app_info, "CFBundleVersion", "application Info.plist")
     min_os = _string(app_info, "MinimumOSVersion", "application Info.plist")
 
-    if version != args.release_version:
+    expected_ios_version = ios_marketing_version(args.release_version)
+    if version != expected_ios_version:
         raise ValueError(
-            f"IPA version {version} does not match release version {args.release_version}"
+            f"IPA version {version} does not match expected iOS version "
+            f"{expected_ios_version} for release {args.release_version}"
         )
     validate_date(args.release_date)
     validate_url(args.download_url)
