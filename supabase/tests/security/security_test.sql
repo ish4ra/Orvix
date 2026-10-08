@@ -110,7 +110,8 @@ declare
   v_expected text[];
 begin
   foreach v_role in array array['anon', 'authenticated'] loop
-    select coalesce(array_agg(p.oid::regprocedure::text order by 1), array[]::text[])
+    select coalesce(array_agg(p.oid::regprocedure::text
+                              order by p.oid::regprocedure::text collate "C"), array[]::text[])
       into v_actual
     from pg_proc p
     where p.pronamespace = 'public'::regnamespace
@@ -119,6 +120,7 @@ begin
 
     v_expected := array[
       'cancel_tv_login_session(uuid,uuid)',
+      'list_public_supporters()',
       'poll_tv_login_session(uuid,uuid)',
       'start_tv_login_session(uuid,text)'
     ];
@@ -259,5 +261,123 @@ begin
   end loop;
 end;
 $$;
+
+-- Supporters public contract: list_public_supporters() returns display
+-- fields only, never provider_user_id, and never hidden or test rows.
+do $$
+declare
+  v_columns text[];
+begin
+  select array_agg(a.name order by a.ord) into v_columns
+  from pg_proc p,
+       unnest(p.proargnames, p.proargmodes::text[]) with ordinality as a(name, mode, ord)
+  where p.oid = 'public.list_public_supporters()'::regprocedure and a.mode = 't';
+  assert v_columns = array['display_name', 'avatar_url', 'profile_url', 'provider',
+                           'support_type', 'tier', 'supporter_since'],
+    format('list_public_supporters returns %s', v_columns);
+end;
+$$;
+
+set role service_role;
+insert into public.supporters
+  (provider, provider_user_id, display_name, avatar_url, profile_url, is_public, is_active, supporter_since)
+values
+  ('kofi', 'email-sha256:00000000000000000000000000000000000000000000000000000000000000aa',
+   'Fake Kofi Fan', null, null, true, true, '2026-01-02'),
+  ('kofi', 'email-sha256:00000000000000000000000000000000000000000000000000000000000000bb',
+   'Private supporter', null, null, false, true, '2026-01-03'),
+  ('buymeacoffee', '777', 'Fake BMC Fan', 'https://img.example.test/777.png',
+   'https://bmc.example.test/fake', true, true, '2026-01-04'),
+  -- Provider test deliveries.
+  ('buymeacoffee', '2345', 'Sample Supporter', null, null, true, true, '2026-01-05'),
+  ('kofi', 'email-sha256:00000000000000000000000000000000000000000000000000000000000000cc',
+   ' Jo Example ', null, null, true, true, '2026-01-06');
+update public.supporters set supporter_since = '2026-01-01' where provider_user_id = 'public-active';
+reset role;
+
+create function pg_temp.public_supporter_names() returns text[]
+language sql as $$
+  select coalesce(array_agg(display_name), array[]::text[]) from public.list_public_supporters()
+$$;
+
+do $$
+declare
+  v_role text;
+  v_names text[];
+  v_payload text;
+begin
+  foreach v_role in array array['anon', 'authenticated'] loop
+    execute format('set local role %I', v_role);
+    v_names := pg_temp.public_supporter_names();
+    assert v_names = array['Visible', 'Fake Kofi Fan', 'Fake BMC Fan'],
+      format('%s gets public supporters %s', v_role, v_names);
+
+    assert (select row(provider, avatar_url, profile_url)::text
+            from public.list_public_supporters() where display_name = 'Fake BMC Fan')
+           = row('buymeacoffee', 'https://img.example.test/777.png', 'https://bmc.example.test/fake')::text,
+      'public supporter display fields changed';
+
+    select string_agg(to_jsonb(s)::text, ',') into v_payload from public.list_public_supporters() s;
+    assert v_payload not like '%email-sha256%' and v_payload not like '%provider_user_id%',
+      format('%s received an internal supporter identifier', v_role);
+
+    begin
+      perform provider_user_id from public.list_public_supporters();
+      raise exception '% read provider_user_id through list_public_supporters', v_role;
+    exception when undefined_column then null;
+    end;
+
+    -- Compatibility for released apps, which read the table directly (and
+    -- from beta.28 select provider_user_id). Remove with the direct read.
+    perform provider_user_id from public.supporters;
+    reset role;
+  end loop;
+end;
+$$;
+
+-- Once the direct read is retired (revoke + drop policy), the contract still
+-- works and the table is closed to clients. Rolled back afterwards.
+do $$
+declare
+  v_names text[];
+begin
+  revoke select on table public.supporters from anon, authenticated;
+  drop policy "Public can read visible supporters" on public.supporters;
+
+  set local role anon;
+  v_names := pg_temp.public_supporter_names();
+  assert v_names = array['Visible', 'Fake Kofi Fan', 'Fake BMC Fan'],
+    format('after retiring the direct read anon gets %s', v_names);
+  begin
+    perform 1 from public.supporters;
+    raise exception 'anon still reads public.supporters after the revoke';
+  exception when insufficient_privilege then null;
+  end;
+  reset role;
+
+  raise exception using errcode = 'P0001', message = 'rollback retirement check';
+exception when sqlstate 'P0001' then
+  if sqlerrm <> 'rollback retirement check' then
+    raise;
+  end if;
+end;
+$$;
+
+-- Webhook ingestion (service role) still keys supporters by
+-- (provider, provider_user_id) and can read the identifier.
+set role service_role;
+insert into public.supporters (provider, provider_user_id, display_name, is_public, is_active)
+values ('buymeacoffee', '777', 'Fake BMC Fan (renamed)', true, true)
+on conflict (provider, provider_user_id) do update
+  set display_name = excluded.display_name;
+do $$
+begin
+  assert (select count(*) from public.supporters where provider = 'buymeacoffee' and provider_user_id = '777') = 1,
+    'webhook upsert duplicated a supporter';
+  assert (select display_name from public.supporters where provider_user_id = '777') = 'Fake BMC Fan (renamed)',
+    'webhook upsert did not update the supporter';
+end;
+$$;
+reset role;
 
 select 'security checks passed' as result;

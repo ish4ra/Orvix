@@ -53,3 +53,12 @@ Deno.test("a cancelled sponsorship is hidden and inactive", () => {
 Deno.test("an event without a sponsor id is ignored", () => {
   assertEquals(githubSupporterRow({ action: "created", sponsorship: {} }, NOW), null);
 });
+
+Deno.test("ingestion keys every row by provider and provider_user_id", () => {
+  // The upsert's conflict target. These identifiers stay server side; the
+  // app reads list_public_supporters, which does not return them.
+  for (const privacy of ["public", "private"]) {
+    const row = githubSupporterRow(event(privacy), NOW)!;
+    assertEquals([row.provider, row.provider_user_id], ["github", "1001"], privacy);
+  }
+});
