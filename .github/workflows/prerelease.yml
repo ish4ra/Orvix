@@ -372,7 +372,12 @@ jobs:
           cache: true
 
       - name: Prepare iOS build tooling
-        run: python3 -m pip install --disable-pip-version-check pillow
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/orvix-ios-venv"
+          "$RUNNER_TEMP/orvix-ios-venv/bin/python" -m pip install --disable-pip-version-check pillow
+          echo "$RUNNER_TEMP/orvix-ios-venv/bin" >> "$GITHUB_PATH"
 
       - name: Build unsigned iOS IPA
         shell: bash
@@ -1360,8 +1365,7 @@ jobs:
           test -s dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-armeabi-v7a.apk
           test -s dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-x86_64.apk
           test -s dist/tv/Orvix-v${{ needs.metadata.outputs.version }}-Android-TV.apk
-          test -s dist/macos/Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip \
-            dist/ios/Orvix-v${{ needs.metadata.outputs.version }}-iOS.ipa
+          test -s dist/macos/Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip
           test -s dist/ios/Orvix-v${{ needs.metadata.outputs.version }}-iOS.ipa
 
       - name: Publish Orvix prerelease
@@ -1388,8 +1392,8 @@ jobs:
             echo
             echo "### iPhone / iPad sideload"
             echo
-            echo "- **SideStore / AltStore:** `Orvix-v$V-iOS.ipa`."
-            echo "- AltStore source: `https://raw.githubusercontent.com/ish4ra/Orvix/develop/store.json`."
+            echo "- **SideStore / AltStore:** \`Orvix-v$V-iOS.ipa\`."
+            echo "- AltStore source: \`https://raw.githubusercontent.com/ish4ra/Orvix/develop/store.json\`."
             echo "- This is an unsigned sideload package. Free Apple accounts still require periodic re-signing (normally every 7 days)."
             echo "- Built-in Free P2P is not packaged for iOS yet; use supported cloud/debrid/direct playback paths on this first iOS build."
             echo
@@ -1409,7 +1413,8 @@ jobs:
             dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-armeabi-v7a.apk \
             dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-x86_64.apk \
             dist/tv/Orvix-v${{ needs.metadata.outputs.version }}-Android-TV.apk \
-            dist/macos/Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip
+            dist/macos/Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip \
+            dist/ios/Orvix-v${{ needs.metadata.outputs.version }}-iOS.ipa
 
       - name: Update AltStore / SideStore source
         env:
