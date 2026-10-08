@@ -283,7 +283,12 @@ jobs:
           channel: stable
           cache: true
       - name: Prepare iOS build tooling
-        run: python3 -m pip install --disable-pip-version-check pillow
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/orvix-ios-venv"
+          "$RUNNER_TEMP/orvix-ios-venv/bin/python" -m pip install --disable-pip-version-check pillow
+          echo "$RUNNER_TEMP/orvix-ios-venv/bin" >> "$GITHUB_PATH"
       - name: Build unsigned iOS IPA
         shell: bash
         run: bash tools/build_ios_ipa.sh
