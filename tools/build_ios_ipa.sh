@@ -10,14 +10,24 @@ if [[ -z "$PUBSPEC_VERSION" ]]; then
   exit 1
 fi
 
-FULL_VERSION="${1:-${PUBSPEC_VERSION%%+*}}"
+RELEASE_VERSION="${1:-${PUBSPEC_VERSION%%+*}}"
 BUILD_NUMBER="${PUBSPEC_VERSION#*+}"
+IOS_VERSION="$(python3 - "$RELEASE_VERSION" <<'PY'
+import re
+import sys
+
+parts = re.findall(r"\\d+", sys.argv[1])
+if len(parts) < 3:
+    raise SystemExit(f"Could not derive iOS marketing version from {sys.argv[1]!r}")
+print(".".join(parts))
+PY
+)"
 if [[ "$BUILD_NUMBER" == "$PUBSPEC_VERSION" || -z "$BUILD_NUMBER" ]]; then
   BUILD_NUMBER="1"
 fi
 
-if [[ ! "$FULL_VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]]; then
-  echo "Invalid iOS release version: $FULL_VERSION" >&2
+if [[ ! "$RELEASE_VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]]; then
+  echo "Invalid iOS release version: $RELEASE_VERSION" >&2
   exit 1
 fi
 if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
@@ -31,7 +41,7 @@ python3 tools/configure_ios_build.py
 flutter pub get
 
 flutter build ios --release --no-codesign \
-  --build-name "$FULL_VERSION" \
+  --build-name "$IOS_VERSION" \
   --build-number "$BUILD_NUMBER"
 
 APP="build/ios/iphoneos/Runner.app"
@@ -50,8 +60,8 @@ MIN_OS="$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$PLIST")"
   echo "Unexpected iOS bundle identifier: $BUNDLE_ID" >&2
   exit 1
 }
-[[ "$BUILT_VERSION" == "$FULL_VERSION" ]] || {
-  echo "Built iOS version $BUILT_VERSION does not match $FULL_VERSION" >&2
+[[ "$BUILT_VERSION" == "$IOS_VERSION" ]] || {
+  echo "Built iOS version $BUILT_VERSION does not match expected $IOS_VERSION" >&2
   exit 1
 }
 [[ "$BUILT_NUMBER" == "$BUILD_NUMBER" ]] || {
@@ -75,7 +85,7 @@ if [[ -d "$APP/_CodeSignature" ]]; then
   exit 1
 fi
 
-OUTPUT="Orvix-v${FULL_VERSION}-iOS.ipa"
+OUTPUT="Orvix-v${RELEASE_VERSION}-iOS.ipa"
 PACKAGE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/orvix-ios-ipa.XXXXXX")"
 trap 'rm -rf "$PACKAGE_ROOT"' EXIT
 mkdir -p "$PACKAGE_ROOT/Payload"
@@ -88,4 +98,4 @@ ditto "$APP" "$PACKAGE_ROOT/Payload/Orvix.app"
 
 unzip -tq "$OUTPUT"
 test -s "$OUTPUT"
-echo "Created $OUTPUT (bundle=$BUNDLE_ID version=$BUILT_VERSION build=$BUILT_NUMBER minOS=$MIN_OS)"
+echo "Created $OUTPUT (release=$RELEASE_VERSION iosVersion=$BUILT_VERSION build=$BUILT_NUMBER minOS=$MIN_OS)"
