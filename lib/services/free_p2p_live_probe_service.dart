@@ -154,6 +154,12 @@ class FreeP2pLiveProbeService {
     );
   }
 
+  /// Whether Free P2P Quick Play may launch [source]: a direct HTTP source,
+  /// or a torrent confirmed live by this session's probe. Pins get no
+  /// exception; an unconfirmed pinned torrent stays manually selectable.
+  bool quickPlayAllowed(SourceResult source) =>
+      !source.isMagnet || healthFor(source)?.isLive == true;
+
   /// Counts for a concise live-check summary line.
   FreeP2pCheckSummary summary(Iterable<SourceResult> results) {
     var live = 0, failed = 0, unresolved = 0, checking = 0, notChecked = 0;
@@ -586,18 +592,39 @@ class FreeP2pLiveProbeService {
   /// shortlist and returns only a torrent that proved it can deliver media
   /// bytes now. Returns null when no torrent was confirmed live, so the
   /// caller opens the source picker instead of launching a failed source.
+  ///
+  /// [preferred] is the user's pinned source. A direct HTTP pin is returned
+  /// at once. A pinned torrent is probed first and auto-picked only when it
+  /// is confirmed live; otherwise the best confirmed-live alternative (or
+  /// null) is returned exactly as without a pin.
   Future<SourceResult?> probeBestCandidate(
     Iterable<SourceResult> results,
     SourceProviderService sources, {
     void Function(int completed, int total)? onUpdate,
+    SourceResult? preferred,
   }) async {
+    if (preferred != null && !preferred.isMagnet) return preferred;
+    final pin = preferred;
     final base = sources.sortForFreeStreaming(results);
     if (base.isEmpty) return null;
 
+    bool pinConfirmedLive() =>
+        pin != null && _evidenceFor(pin)?.confirmedLive == true;
+
     // Direct HTTP sources already have a usable transport and the static Free
     // score deliberately puts them ahead of torrents. Do not delay them with a
-    // torrent-only probe.
-    if (!base.first.isMagnet) return base.first;
+    // torrent-only probe; only a pinned torrent is checked before falling back
+    // to the direct source.
+    if (!base.first.isMagnet) {
+      if (pin != null) {
+        _markChecking([pin]);
+        await _probeBatch([pin]);
+        onUpdate?.call(1, 1);
+        _checkpoint();
+        if (pinConfirmedLive()) return pin;
+      }
+      return base.first;
+    }
 
     final watch = Stopwatch()..start();
     final probed = <String>{};
@@ -607,7 +634,18 @@ class FreeP2pLiveProbeService {
 
     for (var stage = 0; stage < stages.length; stage++) {
       if (stage > 0 && hasPlayableResult) break;
-      final candidates = _selectCandidates(base, sources, stages[stage], probed);
+      final List<SourceResult> candidates;
+      if (stage == 0 && pin != null) {
+        // The pin leads the first batch and takes one of its slots, so the
+        // check stays bounded.
+        probed.add(_key(pin));
+        candidates = [
+          pin,
+          ..._selectCandidates(base, sources, stages[stage] - 1, probed),
+        ];
+      } else {
+        candidates = _selectCandidates(base, sources, stages[stage], probed);
+      }
       if (candidates.isEmpty) break;
       probed.addAll(candidates.map(_key));
       total += candidates.length;
@@ -623,6 +661,9 @@ class FreeP2pLiveProbeService {
         completed += batch.length;
         onUpdate?.call(completed, total);
         _checkpoint();
+
+        // A confirmed-live pin is the user's preference: play it.
+        if (pinConfirmedLive()) return pin;
 
         final best = rank(base, sources).first;
         final live = _evidenceFor(best);

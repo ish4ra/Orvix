@@ -376,6 +376,183 @@ void main() {
       expect(ordered, contains(pinned), reason: 'the pin stays selectable');
     });
 
+    test('Normal Play: a stalled pin loses to a healthy live alternative',
+        () async {
+      final sources = SourceProviderService();
+      final pinned = _torrent('Pinned.1080p', seeders: 120);
+      final live = _torrent('Live.720p', quality: '720P', seeders: 3);
+      final runner = _Runner({'Pinned.1080p': _stalled, 'Live.720p': _live()});
+      final probe = FreeP2pLiveProbeService(probeRunner: runner.call);
+
+      final chosen = await probe.probeBestCandidate(
+        [pinned, live],
+        sources,
+        preferred: pinned,
+      );
+
+      expect(runner.probed.first, pinned.title, reason: 'the pin is probed first');
+      expect(chosen, same(live));
+    });
+
+    test('Normal Play: a metadata-slow pin is never auto-launched', () async {
+      final sources = SourceProviderService();
+      final pinned = _torrent('Pinned.1080p', seeders: 120);
+      final live = _torrent('Live.720p', quality: '720P', seeders: 3);
+      final probe = FreeP2pLiveProbeService(
+        probeRunner: _Runner({
+          'Pinned.1080p': _failed(LocalTorrentProbeStatus.metadataTimeout),
+          'Live.720p': _live(),
+        }).call,
+      );
+
+      expect(
+        await probe.probeBestCandidate([pinned, live], sources,
+            preferred: pinned),
+        same(live),
+      );
+    });
+
+    test('Normal Play: a confirmed-live pin wins over a healthier source',
+        () async {
+      final sources = SourceProviderService();
+      final pinned = _torrent('Pinned.720p', quality: '720P', seeders: 1);
+      final stronger = _torrent('Stronger.1080p', seeders: 300);
+      final runner = _Runner({
+        // Live but not "ready now": the pin preference still wins.
+        'Pinned.720p': _live(speed: 600 * 1024, latencyMs: 1500),
+        'Stronger.1080p': _live(speed: 6.0 * _mb, latencyMs: 200),
+      });
+      final probe = FreeP2pLiveProbeService(probeRunner: runner.call);
+
+      final chosen = await probe.probeBestCandidate(
+        [stronger, pinned],
+        sources,
+        preferred: pinned,
+      );
+
+      expect(chosen, same(pinned));
+      expect(runner.probed.first, pinned.title);
+    });
+
+    test('Normal Play: a failed pin with no live alternative launches nothing',
+        () async {
+      final sources = SourceProviderService();
+      final pinned = _torrent('Pinned.1080p', seeders: 200);
+      final others = [
+        for (var i = 0; i < 10; i++) _torrent('Other.$i.1080p', seeders: 50 - i),
+      ];
+      final runner = _Runner({'Pinned.1080p': _stalled});
+      final probe = FreeP2pLiveProbeService(probeRunner: runner.call);
+
+      final chosen = await probe.probeBestCandidate(
+        [pinned, ...others],
+        sources,
+        preferred: pinned,
+      );
+
+      expect(chosen, isNull);
+      expect(probe.noLiveConfirmed, isTrue);
+      expect(runner.probed.first, pinned.title);
+      // The pin takes a first-batch slot: still bounded to 6 + 3.
+      expect(
+        runner.probed.length,
+        FreeP2pLiveProbeService.initialShortlistSize +
+            FreeP2pLiveProbeService.expansionBatchSize,
+      );
+    });
+
+    test('Normal Play: a direct HTTP pin is used immediately', () async {
+      final sources = SourceProviderService();
+      const directPin = SourceResult(
+        provider: 'Direct',
+        title: 'Direct.Pin',
+        resource: 'https://example.test/pin.mkv',
+        isMagnet: false,
+        sortMode: SourceSortMode.quality,
+      );
+      final runner = _Runner({});
+      final probe = FreeP2pLiveProbeService(probeRunner: runner.call);
+
+      expect(
+        await probe.probeBestCandidate(
+          [_torrent('Torrent.1080p', seeders: 90), directPin],
+          sources,
+          preferred: directPin,
+        ),
+        same(directPin),
+      );
+      expect(runner.probed, isEmpty);
+    });
+
+    test('Normal Play: a pinned torrent is checked before a direct fallback',
+        () async {
+      final sources = SourceProviderService();
+      const direct = SourceResult(
+        provider: 'Direct',
+        title: 'Direct.720p',
+        resource: 'https://example.test/movie.mkv',
+        isMagnet: false,
+        sortMode: SourceSortMode.quality,
+      );
+      final pinned = _torrent('Pinned.1080p', seeders: 40);
+
+      final dead = FreeP2pLiveProbeService(
+        probeRunner: _Runner({'Pinned.1080p': _stalled}).call,
+      );
+      expect(
+        await dead.probeBestCandidate([pinned, direct], sources,
+            preferred: pinned),
+        same(direct),
+      );
+
+      final live = FreeP2pLiveProbeService(
+        probeRunner: _Runner({'Pinned.1080p': _live()}).call,
+      );
+      expect(
+        await live.probeBestCandidate([pinned, direct], sources,
+            preferred: pinned),
+        same(pinned),
+      );
+    });
+
+    test('Quick Play needs confirmed live evidence, pinned or not', () async {
+      final sources = SourceProviderService();
+      final pinned = _torrent('Pinned.1080p', seeders: 80);
+      final live = _torrent('Live.720p', quality: '720P', seeders: 5);
+      final failed = _torrent('Failed.720p', quality: '720P', seeders: 9);
+      const direct = SourceResult(
+        provider: 'Direct',
+        title: 'Direct.720p',
+        resource: 'https://example.test/movie.mkv',
+        isMagnet: false,
+        sortMode: SourceSortMode.quality,
+      );
+      final pending = Completer<LocalTorrentProbeResult>();
+      final probe = FreeP2pLiveProbeService(
+        probeRunner: (source) async => switch (source.title) {
+          'Live.720p' => _live(),
+          'Failed.720p' => _stalled,
+          _ => pending.future,
+        },
+      );
+
+      // Unprobed pinned magnet: no Quick Play.
+      expect(probe.quickPlayAllowed(pinned), isFalse);
+      expect(probe.quickPlayAllowed(direct), isTrue);
+
+      final run = probe.probeTopCandidates([pinned, live, failed], sources);
+      await Future<void>.delayed(Duration.zero);
+      // Still checking: no Quick Play.
+      expect(probe.healthFor(pinned)?.state, FreeP2pHealthState.checking);
+      expect(probe.quickPlayAllowed(pinned), isFalse);
+      expect(probe.quickPlayAllowed(live), isTrue);
+      expect(probe.quickPlayAllowed(failed), isFalse);
+
+      pending.complete(_failed(LocalTorrentProbeStatus.metadataTimeout));
+      await run;
+      expect(probe.quickPlayAllowed(pinned), isFalse);
+    });
+
     test('an unprobed or live pin still goes first', () async {
       final sources = SourceProviderService();
       final pinned = _torrent('Pinned.1080p', seeders: 1);
@@ -455,9 +632,27 @@ void main() {
     // and TV receives the same session.
     expect(details, contains('final probeSession = autoProbeSession ??'));
     expect(details, contains('probeSession: probeSession,'));
-    // Debrid/cloud gating is unchanged.
+    // One cloud/debrid eligibility check drives Normal Play, the picker,
+    // Android TV and playback.
     expect(details, contains('if (autoUsePinned && !hasCloudConnection && chosen == null)'));
-    expect(details, contains('var freeStreamingRanking = !hasDebridConnection;'));
+    expect(details, contains('var freeStreamingRanking = !hasCloudConnection;'));
+    expect(details, isNot(contains('hasDebridConnection')));
+    expect(details, contains('Future<bool> _hasCloudConnection() async'));
+    expect(
+      RegExp(r'await _hasCloudConnection\(\)').allMatches(details).length,
+      greaterThanOrEqualTo(5),
+    );
+    expect(details, isNot(contains('preferFreeP2p: !hasDebrid')));
+    expect(
+      RegExp(r'preferFreeP2p: !hasCloudConnection').allMatches(details).length,
+      2,
+    );
+    // Pinned torrents go through the live check; Quick Play has no pin bypass.
+    expect(details, contains('preferred: pinnedResult,'));
+    // Without a cloud path, only a direct HTTP pin skips the live check.
+    expect(details, contains('(hasCloudConnection || !pinnedResult.isMagnet)'));
+    expect(details, contains('liveProbe.quickPlayAllowed(source)'));
+    expect(details, isNot(contains('health.state == FreeP2pHealthState.checking')));
   });
 
   group('Android TV source browser', () {

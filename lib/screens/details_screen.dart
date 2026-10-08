@@ -1999,9 +1999,7 @@ class DetailsScreenState extends State<DetailsScreen> {
         // also exists.
         includeLowQuality: true,
       );
-      final hasDebridConnection = (await widget.torbox.isConnected) ||
-          (await RealDebridService.instance.isConnected) ||
-          (await PremiumizeService.instance.isConnected);
+      final hasCloudConnection = await _hasCloudConnection();
       await Navigator.of(context).push<void>(
         PageRouteBuilder<void>(
           transitionDuration: const Duration(milliseconds: 180),
@@ -2016,18 +2014,13 @@ class DetailsScreenState extends State<DetailsScreen> {
               item: item,
               episode: episode,
               resultsFuture: resultsFuture,
-              preferFreeP2p: !hasDebridConnection,
+              preferFreeP2p: !hasCloudConnection,
               onPlaySource: (chosen) async {
-                final hasCloudConnection =
-                    (await widget.pikpak.isSignedIn) ||
-                    (await widget.torbox.isConnected) ||
-                    (await RealDebridService.instance.isConnected) ||
-                    (await PremiumizeService.instance.isConnected);
                 await _playSourceResult(
                   chosen,
                   item,
                   episode,
-                  hasCloudConnection: hasCloudConnection,
+                  hasCloudConnection: await _hasCloudConnection(),
                 );
               },
             ),
@@ -2064,13 +2057,10 @@ class DetailsScreenState extends State<DetailsScreen> {
         return;
       }
 
-      final pikpakConnected = await widget.pikpak.isSignedIn;
-      final torboxConnected = await widget.torbox.isConnected;
-      final realDebridConnected = await RealDebridService.instance.isConnected;
-      final premiumizeConnected = await PremiumizeService.instance.isConnected;
-      final hasCloudConnection = pikpakConnected || torboxConnected || realDebridConnected || premiumizeConnected;
+      final hasCloudConnection = await _hasCloudConnection();
 
       SourceResult? chosen;
+      SourceResult? pinnedResult;
       FreeP2pLiveProbeService? autoProbeSession;
       if (autoUsePinned) {
         final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
@@ -2082,11 +2072,19 @@ class DetailsScreenState extends State<DetailsScreen> {
               pinned,
               seriesWide: item.kind == MediaKind.series,
             )) {
-              chosen = result;
+              pinnedResult = result;
               break;
             }
           }
         }
+      }
+      // A pin is a preference, not a bypass of the Free P2P health gate. With
+      // a cloud/debrid path, or for a direct HTTP pin, it is used as before.
+      // A pinned torrent without a cloud path is probed first below and only
+      // auto-plays once it is confirmed live.
+      if (pinnedResult != null &&
+          (hasCloudConnection || !pinnedResult.isMagnet)) {
+        chosen = pinnedResult;
       }
       // With no debrid/cloud connection, Normal Play validates a bounded,
       // staged shortlist against the live swarm before auto-picking. It stops
@@ -2108,6 +2106,7 @@ class DetailsScreenState extends State<DetailsScreen> {
           chosen = await autoProbeSession.probeBestCandidate(
             results,
             widget.sources,
+            preferred: pinnedResult,
             onUpdate: (completed, total) {
               if (!mounted) return;
               setState(() {
@@ -2197,6 +2196,16 @@ class DetailsScreenState extends State<DetailsScreen> {
     }
   }
 
+  /// One cloud/debrid eligibility check for the whole details flow. Any
+  /// connected PikPak, TorBox, Real-Debrid or Premiumize account is a cloud
+  /// path: playback sends torrents there, so Free P2P live probing/ranking is
+  /// only the automatic choice when none of them is connected.
+  Future<bool> _hasCloudConnection() async =>
+      (await widget.pikpak.isSignedIn) ||
+      (await widget.torbox.isConnected) ||
+      (await RealDebridService.instance.isConnected) ||
+      (await PremiumizeService.instance.isConnected);
+
   String _sourceReleaseHint(SourceResult source) {
     final fileName = source.fileNameHint?.trim();
     if (fileName != null && fileName.isNotEmpty) return fileName;
@@ -2209,10 +2218,7 @@ class DetailsScreenState extends State<DetailsScreen> {
     EpisodeItem? episode, {
     bool? hasCloudConnection,
   }) async {
-    final cloudConnected = hasCloudConnection ??
-        ((await widget.pikpak.isSignedIn) || (await widget.torbox.isConnected) ||
-            (await RealDebridService.instance.isConnected) ||
-            (await PremiumizeService.instance.isConnected));
+    final cloudConnected = hasCloudConnection ?? await _hasCloudConnection();
     final releaseHint = _sourceReleaseHint(chosen);
 
     if (!chosen.isMagnet) {
@@ -2737,7 +2743,9 @@ class DetailsScreenState extends State<DetailsScreen> {
     EpisodeItem? episode, {
     FreeP2pLiveProbeService? probeSession,
   }) async {
-    final hasDebridConnection = await widget.torbox.isConnected;
+    // Same eligibility as Normal Play and playback: Free P2P ranking and live
+    // probing apply only when no cloud/debrid provider is connected.
+    final hasCloudConnection = await _hasCloudConnection();
 
     if (PlatformProfile.isAndroidTv) {
       if (!mounted) return null;
@@ -2755,7 +2763,7 @@ class DetailsScreenState extends State<DetailsScreen> {
               item: item,
               episode: episode,
               resultsFuture: Future.value(results),
-              preferFreeP2p: !hasDebridConnection,
+              preferFreeP2p: !hasCloudConnection,
               probeSession: probeSession,
             ),
           ),
@@ -2766,7 +2774,7 @@ class DetailsScreenState extends State<DetailsScreen> {
     var resultLimit = await widget.sources.getResultLimit();
     var compatibilityOnly = false;
     var smoothRanking = false;
-    var freeStreamingRanking = !hasDebridConnection;
+    var freeStreamingRanking = !hasCloudConnection;
     final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
     final seriesWidePin = item.kind == MediaKind.series;
     var pinnedIdentity = await widget.sources.getPinnedSourceIdentity(pinKey);
@@ -2955,16 +2963,11 @@ class DetailsScreenState extends State<DetailsScreen> {
 
           Widget quickPlayButton(SourceResult source) {
             // Quick Play in Free P2P only launches a torrent that is confirmed
-            // live. Rows stay selectable for a manual choice.
+            // live, pinned or not. Every row stays selectable for a manual
+            // choice, including an unconfirmed pin.
             final pinned = widget.sources.matchesPinned(source, pinnedIdentity);
-            final health = liveProbe.healthFor(source);
-            final sourceLive = !source.isMagnet ||
-                health?.isLive == true ||
-                // An explicit pin that was not confirmed failed stays playable.
-                (pinned &&
-                    (health == null ||
-                        health.state == FreeP2pHealthState.checking));
-            final waitingForProbe = freeStreamingRanking && !sourceLive;
+            final waitingForProbe =
+                freeStreamingRanking && !liveProbe.quickPlayAllowed(source);
             final checking = freeStreamingRanking && liveProbe.isRunning;
             return FilledButton.tonalIcon(
               onPressed: waitingForProbe
