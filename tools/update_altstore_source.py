@@ -90,7 +90,7 @@ def sha256(path: Path) -> str:
 
 
 def ios_marketing_version(release_version: str) -> str:
-    parts = re.findall(r"\\d+", release_version)
+    parts = re.findall(r"\d+", release_version)
     if len(parts) < 3:
         raise ValueError(
             f"could not derive iOS marketing version from {release_version!r}"
