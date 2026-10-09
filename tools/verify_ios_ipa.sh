@@ -27,6 +27,16 @@ unzip -tq "$IPA" >/dev/null || fail "IPA zip integrity check failed: $IPA"
 unzip -Z1 "$IPA" > "$WORK/entries.txt"
 grep -qx 'Payload/Orvix.app/Info.plist' "$WORK/entries.txt" \
   || fail "IPA is missing Payload/Orvix.app/Info.plist"
+
+notice() {
+  # Multi-line workflow annotations encode newlines as %0A.
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    echo "::notice title=$1::${2//$'\n'/%0A}"
+  fi
+  printf '%s:\n%s\n' "$1" "$2"
+}
+SIGNATURE_PATHS="$(grep -E '_CodeSignature/CodeResources$|embedded\.mobileprovision$' "$WORK/entries.txt" || true)"
+notice "IPA signature paths" "${SIGNATURE_PATHS:-none}"
 # The app bundle itself must be unsigned. Embedded frameworks such as
 # Flutter.framework ship pre-signed; sideload tools re-sign them anyway.
 if grep -Eq '^Payload/Orvix\.app/(_CodeSignature/|embedded\.mobileprovision$)' "$WORK/entries.txt"; then
@@ -75,6 +85,20 @@ PY
 
 unzip -q "$IPA" 'Payload/Orvix.app/*' -d "$WORK"
 APP="$WORK/Payload/Orvix.app"
+
+if command -v codesign >/dev/null 2>&1; then
+  SIGNATURE_DETAILS=""
+  while IFS= read -r bundle; do
+    details="$(codesign -dv --verbose=2 "$bundle" 2>&1 \
+      | grep -E '^(Signature|Authority|TeamIdentifier|Identifier)=|not signed' \
+      | tr '\n' ' ' || true)"
+    SIGNATURE_DETAILS+="${bundle#"$WORK/"}: ${details:-no codesign output}"$'\n'
+  done < <(
+    echo "$APP"
+    find "$APP" -mindepth 1 \( -name '*.framework' -o -name '*.appex' -o -name '*.dylib' \) -prune -print | sort
+  )
+  notice "IPA codesign details" "${SIGNATURE_DETAILS%$'\n'}"
+fi
 EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")"
 ARCHS="$(xcrun lipo -archs "$APP/$EXECUTABLE")"
 [[ " $ARCHS " == *" arm64 "* ]] || fail "iOS executable does not contain arm64: $ARCHS"

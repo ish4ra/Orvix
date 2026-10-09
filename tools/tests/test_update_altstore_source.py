@@ -25,6 +25,11 @@ DOWNLOAD_URL = (
     "https://github.com/ish4ra/Orvix/releases/download/"
     "v0.7.9-beta.64/Orvix-v0.7.9-beta.64-iOS.ipa"
 )
+# Nested bundles in an unsigned `flutter build ios --no-codesign` app that
+# carry their own signature. Only the Orvix.app bundle itself must be unsigned.
+NESTED_SIGNATURE_PATHS = (
+    "Payload/Orvix.app/Frameworks/Flutter.framework/_CodeSignature/CodeResources",
+)
 
 
 class IosVersionTest(unittest.TestCase):
@@ -164,6 +169,26 @@ class UpdateAltStoreSourceTest(unittest.TestCase):
             self.assertEqual(
                 app["appPermissions"]["privacy"]["NSCameraUsageDescription"],
                 "Scan a QR code.",
+            )
+
+    def test_source_generation_accepts_ci_style_ipa_with_nested_signatures(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            ipa = self._write_ipa(root)
+            with zipfile.ZipFile(ipa, "a") as archive:
+                for name in NESTED_SIGNATURE_PATHS:
+                    archive.writestr(name, b"nested-signature")
+            source_path = self._write_source(root)
+
+            self.assertEqual(
+                self._run_main(root, ipa, source_path, "--build-version", "4209"),
+                0,
+            )
+            version = json.loads(source_path.read_text(encoding="utf-8"))[
+                "apps"
+            ][0]["versions"][0]
+            self.assertEqual(
+                (version["version"], version["buildVersion"]), ("0.7.9", "4209")
             )
 
     def test_rejects_four_component_marketing_version_in_ipa(self):
