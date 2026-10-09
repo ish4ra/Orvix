@@ -83,22 +83,40 @@ print(
 )
 PY
 
-unzip -q "$IPA" 'Payload/Orvix.app/*' -d "$WORK"
+unzip -q "$IPA" -d "$WORK"
 APP="$WORK/Payload/Orvix.app"
 
 if command -v codesign >/dev/null 2>&1; then
-  SIGNATURE_DETAILS=""
+  # Orvix.app must be unsigned. Nested bundles may keep the ad-hoc
+  # signatures Flutter's toolchain gives them (App.framework,
+  # Flutter.framework, objective_c.framework), but nothing may be signed
+  # with a certificate or Apple team identity.
+  UNSIGNED_NESTED=0
+  ADHOC_NESTED=""
   while IFS= read -r bundle; do
-    details="$(codesign -dv --verbose=2 "$bundle" 2>&1 \
-      | grep -E '^(Signature|Authority|TeamIdentifier|Identifier)=|not signed' \
-      | tr '\n' ' ' || true)"
-    SIGNATURE_DETAILS+="${bundle#"$WORK/"}: ${details:-no codesign output}"$'\n'
+    name="${bundle#"$WORK/"}"
+    details="$(codesign -dv --verbose=2 "$bundle" 2>&1 || true)"
+    if grep -q 'code object is not signed at all' <<< "$details"; then
+      [[ "$bundle" == "$APP" ]] || UNSIGNED_NESTED=$((UNSIGNED_NESTED + 1))
+      continue
+    fi
+    [[ "$bundle" != "$APP" ]] || fail "Payload/Orvix.app is code signed; the sideload IPA must ship it unsigned."
+    if grep -q '^Authority=' <<< "$details" \
+      || ! grep -qx 'Signature=adhoc' <<< "$details" \
+      || ! grep -qx 'TeamIdentifier=not set' <<< "$details"; then
+      fail "$name is signed with a certificate or team identity: $(grep -E '^(Authority|TeamIdentifier|Signature)=' <<< "$details" | tr '\n' ' ')"
+    fi
+    ADHOC_NESTED+="${name#Payload/Orvix.app/}"$'\n'
   done < <(
     echo "$APP"
     find "$APP" -mindepth 1 \( -name '*.framework' -o -name '*.appex' -o -name '*.dylib' \) -prune -print | sort
   )
-  notice "IPA codesign details" "${SIGNATURE_DETAILS%$'\n'}"
+  notice "IPA codesign summary" "Payload/Orvix.app: not signed
+Ad-hoc signed nested bundles (no certificate, TeamIdentifier not set):
+${ADHOC_NESTED:-none
+}Unsigned nested bundles: $UNSIGNED_NESTED"
 fi
+
 EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")"
 ARCHS="$(xcrun lipo -archs "$APP/$EXECUTABLE")"
 [[ " $ARCHS " == *" arm64 "* ]] || fail "iOS executable does not contain arm64: $ARCHS"

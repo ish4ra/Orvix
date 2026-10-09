@@ -25,10 +25,13 @@ DOWNLOAD_URL = (
     "https://github.com/ish4ra/Orvix/releases/download/"
     "v0.7.9-beta.64/Orvix-v0.7.9-beta.64-iOS.ipa"
 )
-# Nested bundles in an unsigned `flutter build ios --no-codesign` app that
-# carry their own signature. Only the Orvix.app bundle itself must be unsigned.
+# The exact nested signatures in the CI-built IPA (run 37890093932). They are
+# ad-hoc (no certificate, TeamIdentifier not set) from Flutter's toolchain;
+# Payload/Orvix.app itself is not signed at all.
 NESTED_SIGNATURE_PATHS = (
+    "Payload/Orvix.app/Frameworks/objective_c.framework/_CodeSignature/CodeResources",
     "Payload/Orvix.app/Frameworks/Flutter.framework/_CodeSignature/CodeResources",
+    "Payload/Orvix.app/Frameworks/App.framework/_CodeSignature/CodeResources",
 )
 
 
@@ -222,11 +225,8 @@ class UpdateAltStoreSourceTest(unittest.TestCase):
             root = Path(temporary)
             ipa = self._write_ipa(root)
             with zipfile.ZipFile(ipa, "a") as archive:
-                archive.writestr(
-                    "Payload/Orvix.app/Frameworks/Flutter.framework/"
-                    "_CodeSignature/CodeResources",
-                    b"vendor-signed",
-                )
+                for name in NESTED_SIGNATURE_PATHS:
+                    archive.writestr(name, b"adhoc-signature")
             info, _ = MODULE.read_ipa(ipa)
             self.assertEqual(info["CFBundleIdentifier"], "com.orvix.orvix")
 
