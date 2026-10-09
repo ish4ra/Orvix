@@ -16,6 +16,11 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 APP_INFO_PATTERN = re.compile(r"^Payload/[^/]+\.app/Info\.plist$")
+# Only the app bundle itself must be unsigned. Embedded frameworks such as
+# Flutter.framework ship pre-signed; sideload tools re-sign them anyway.
+APP_SIGNATURE_PATTERN = re.compile(
+    r"^Payload/[^/]+\.app/(?:_CodeSignature/|embedded\.mobileprovision$)"
+)
 INFO_PATTERN = re.compile(
     r"^Payload/[^/]+\.app(?:/PlugIns/[^/]+\.appex)?/Info\.plist$"
 )
@@ -63,7 +68,7 @@ def read_ipa(path: Path) -> tuple[dict, dict[str, str]]:
             raise ValueError(
                 f"IPA must contain exactly one app Info.plist, found {len(infos)}"
             )
-        if any("/_CodeSignature/" in name for name in names):
+        if any(APP_SIGNATURE_PATTERN.match(name) for name in names):
             raise ValueError("IPA must be unsigned so AltStore/SideStore can re-sign it")
 
         app_info = plistlib.loads(archive.read(infos[0]))

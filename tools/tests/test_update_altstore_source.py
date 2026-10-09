@@ -192,6 +192,24 @@ class UpdateAltStoreSourceTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "must be unsigned"):
                 MODULE.read_ipa(signed)
 
+    def test_presigned_embedded_framework_does_not_count_as_signed_app(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            ipa = self._write_ipa(root)
+            with zipfile.ZipFile(ipa, "a") as archive:
+                archive.writestr(
+                    "Payload/Orvix.app/Frameworks/Flutter.framework/"
+                    "_CodeSignature/CodeResources",
+                    b"vendor-signed",
+                )
+            info, _ = MODULE.read_ipa(ipa)
+            self.assertEqual(info["CFBundleIdentifier"], "com.orvix.orvix")
+
+            with zipfile.ZipFile(ipa, "a") as archive:
+                archive.writestr("Payload/Orvix.app/embedded.mobileprovision", b"p")
+            with self.assertRaisesRegex(ValueError, "must be unsigned"):
+                MODULE.read_ipa(ipa)
+
     def test_betas_sharing_a_marketing_version_are_distinguished_by_build(self):
         app = {"versions": []}
         beta64 = {"version": "0.7.9", "buildVersion": "4209", "marketingVersion": RELEASE}
