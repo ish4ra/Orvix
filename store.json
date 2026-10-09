@@ -1,0 +1,28 @@
+{
+  "name": "Orvix",
+  "subtitle": "Open-source cinematic media hub for iPhone and iPad.",
+  "description": "Orvix is an open-source media client for discovering, resolving and playing media from user-configured sources and supported services.",
+  "website": "https://isharalakshan.xyz/orvix/",
+  "iconURL": "https://raw.githubusercontent.com/ish4ra/Orvix/develop/assets/branding/orvix_logo.png",
+  "tintColor": "#B9FF45",
+  "featuredApps": [
+    "com.orvix.orvix"
+  ],
+  "apps": [
+    {
+      "name": "Orvix",
+      "bundleIdentifier": "com.orvix.orvix",
+      "developerName": "Orvix",
+      "subtitle": "Cinematic media hub for iPhone and iPad.",
+      "localizedDescription": "Orvix for iOS is distributed as an unsigned IPA for AltStore and SideStore. Bring your own supported sources and services.",
+      "iconURL": "https://raw.githubusercontent.com/ish4ra/Orvix/develop/assets/branding/orvix_logo.png",
+      "tintColor": "#B9FF45",
+      "category": "entertainment",
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {}
+      },
+      "versions": []
+    }
+  ]
+}

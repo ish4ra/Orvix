@@ -79,8 +79,12 @@ jobs:
             tools/configure_android_mobile_media_kit.py \
             tools/configure_android_signing.py \
             tools/generate_desktop_branding.py \
+            tools/configure_ios_build.py \
+            tools/update_altstore_source.py \
             tools/verify_android_apk.py
           bash -n tools/publish_orvix_release.sh
+          bash -n tools/build_ios_ipa.sh
+          bash -n tools/verify_ios_ipa.sh
           bash -n tools/android_install_smoke_test.sh
           python3 -m unittest discover -s tools/tests
 
@@ -355,6 +359,44 @@ jobs:
           name: macos
           if-no-files-found: error
           path: Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip
+
+  ios:
+    name: Build iOS sideload IPA
+    needs: [metadata, validate]
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Prepare iOS build tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/orvix-ios-venv"
+          "$RUNNER_TEMP/orvix-ios-venv/bin/python" -m pip install --disable-pip-version-check pillow
+          echo "$RUNNER_TEMP/orvix-ios-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Build unsigned iOS IPA
+        shell: bash
+        run: bash tools/build_ios_ipa.sh "${{ needs.metadata.outputs.version }}"
+
+      - name: Verify iOS sideload package
+        shell: bash
+        run: |
+          set -euo pipefail
+          V="${{ needs.metadata.outputs.version }}"
+          PUBSPEC_VERSION="$(awk '$1 == "version:" {print $2}' pubspec.yaml)"
+          bash tools/verify_ios_ipa.sh "Orvix-v$V-iOS.ipa" "$V" "${PUBSPEC_VERSION#*+}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          if-no-files-found: error
+          path: Orvix-v${{ needs.metadata.outputs.version }}-iOS.ipa
 
   windows:
     needs: [metadata, validate]
@@ -1278,7 +1320,7 @@ jobs:
 
   release:
     name: Publish Orvix prerelease
-    needs: [metadata, validate, windows, macos, android-mobile, android-tv]
+    needs: [metadata, validate, windows, macos, ios, android-mobile, android-tv]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -1303,6 +1345,11 @@ jobs:
           name: macos
           path: dist/macos
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios
+          path: dist/ios
+
       - name: Verify release assets
         shell: bash
         run: |
@@ -1315,6 +1362,7 @@ jobs:
           test -s dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-x86_64.apk
           test -s dist/tv/Orvix-v${{ needs.metadata.outputs.version }}-Android-TV.apk
           test -s dist/macos/Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip
+          test -s dist/ios/Orvix-v${{ needs.metadata.outputs.version }}-iOS.ipa
 
       - name: Publish Orvix prerelease
         env:
@@ -1332,6 +1380,10 @@ jobs:
 
           V="${{ needs.metadata.outputs.version }}"
           {
+            if [ -f "docs/release-notes/v$V.md" ]; then
+              cat "docs/release-notes/v$V.md"
+              echo
+            fi
             echo "### Which Android file should I download?"
             echo
             echo "- **Phones and tablets:** \`Orvix-v$V-Android-Mobile.apk\` (recommended, works on every supported phone)."
@@ -1344,6 +1396,15 @@ jobs:
             echo
             echo "- [Code signing policy](https://github.com/$GITHUB_REPOSITORY/blob/v$V/CODE_SIGNING_POLICY.md)"
             echo "- [Privacy policy](https://github.com/$GITHUB_REPOSITORY/blob/v$V/PRIVACY.md)"
+            echo
+            IOS_BUILD="$(awk '$1 == "version:" {print $2}' pubspec.yaml)"
+            echo "### iPhone / iPad sideload"
+            echo
+            echo "- **iPhone / iPad:** \`Orvix-v$V-iOS.ipa\` is an **unsigned IPA** for AltStore, SideStore or a compatible sideload tool, which re-signs it with your own Apple account. It is **not** an App Store release."
+            echo "- Requires iOS / iPadOS 15.5 or later. iOS shows this build as version ${V%%-*} (build ${IOS_BUILD#*+})."
+            echo "- Apps signed with a free Apple account normally have to be re-signed periodically (every 7 days); AltStore / SideStore can refresh them."
+            echo "- AltStore / SideStore source: \`https://raw.githubusercontent.com/ish4ra/Orvix/develop/store.json\`."
+            echo "- Built-in local Free P2P is not included on iOS yet. Use supported cloud, debrid or direct playback sources."
             echo
             cat /tmp/generated-notes.md
           } > /tmp/notes.md
@@ -1361,4 +1422,32 @@ jobs:
             dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-armeabi-v7a.apk \
             dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-x86_64.apk \
             dist/tv/Orvix-v${{ needs.metadata.outputs.version }}-Android-TV.apk \
-            dist/macos/Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip
+            dist/macos/Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip \
+            dist/ios/Orvix-v${{ needs.metadata.outputs.version }}-iOS.ipa
+
+      - name: Prepare AltStore / SideStore source entry
+        # store.json changes go to develop through a normal PR. This only
+        # produces a candidate file and never blocks or alters the release.
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          V="${{ needs.metadata.outputs.version }}"
+          BUILD="$(awk '$1 == "version:" {print $2}' pubspec.yaml)"
+          mkdir -p dist/altstore
+          python3 tools/update_altstore_source.py \
+            --source store.json \
+            --ipa "dist/ios/Orvix-v$V-iOS.ipa" \
+            --release-notes /tmp/notes.md \
+            --release-version "$V" \
+            --build-version "${BUILD#*+}" \
+            --release-date "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+            --download-url "https://github.com/$GITHUB_REPOSITORY/releases/download/v$V/Orvix-v$V-iOS.ipa" \
+            --output dist/altstore/store.json
+
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: altstore-source
+          if-no-files-found: warn
+          path: dist/altstore/store.json
