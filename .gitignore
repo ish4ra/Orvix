@@ -13,3 +13,6 @@ windows/flutter/ephemeral/
 # Python cache
 __pycache__/
 *.pyc
+
+# Generated only inside the Legacy iOS build (tools/build_ios_legacy_ipa.sh).
+/pubspec_overrides.yaml

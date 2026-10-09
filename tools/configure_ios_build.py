@@ -3,12 +3,17 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import plistlib
 import re
+import sys
 from pathlib import Path
 
 from PIL import Image
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ios_profiles import PROFILES, IosProfile, get_profile  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 IOS_ROOT = ROOT / "ios"
@@ -19,16 +24,19 @@ ICON_SOURCE = ROOT / "assets" / "branding" / "orvix_logo.png"
 PODFILE = IOS_ROOT / "Podfile"
 PBXPROJ = IOS_ROOT / "Runner.xcodeproj" / "project.pbxproj"
 APP_FRAMEWORK_INFO = IOS_ROOT / "Flutter" / "AppFrameworkInfo.plist"
-MIN_IOS_VERSION = "15.5"
 
 
-def configure_deployment_target() -> None:
-    """Match Orvix's current mobile_scanner dependency requirement."""
+def configure_deployment_target(profile: IosProfile) -> None:
+    """Apply the selected profile's iOS deployment target everywhere.
+
+    Modern stays at 15.5 for mobile_scanner 6.x; Legacy targets 12.0.
+    """
+    min_ios = profile.min_ios
     if not PODFILE.is_file() or not PBXPROJ.is_file():
         raise SystemExit("Generated iOS Podfile/Xcode project is missing.")
 
     podfile = PODFILE.read_text(encoding="utf-8")
-    platform_line = f"platform :ios, '{MIN_IOS_VERSION}'"
+    platform_line = f"platform :ios, '{min_ios}'"
     if re.search(r"^#?\s*platform\s+:ios,\s*['\"][^'\"]+['\"]", podfile, re.M):
         podfile = re.sub(
             r"^#?\s*platform\s+:ios,\s*['\"][^'\"]+['\"]",
@@ -44,7 +52,7 @@ def configure_deployment_target() -> None:
     project = PBXPROJ.read_text(encoding="utf-8")
     project, replacements = re.subn(
         r"IPHONEOS_DEPLOYMENT_TARGET\s*=\s*[^;]+;",
-        f"IPHONEOS_DEPLOYMENT_TARGET = {MIN_IOS_VERSION};",
+        f"IPHONEOS_DEPLOYMENT_TARGET = {min_ios};",
         project,
     )
     if replacements == 0:
@@ -54,7 +62,7 @@ def configure_deployment_target() -> None:
     if APP_FRAMEWORK_INFO.is_file():
         with APP_FRAMEWORK_INFO.open("rb") as handle:
             framework_info = plistlib.load(handle)
-        framework_info["MinimumOSVersion"] = MIN_IOS_VERSION
+        framework_info["MinimumOSVersion"] = min_ios
         with APP_FRAMEWORK_INFO.open("wb") as handle:
             plistlib.dump(framework_info, handle, sort_keys=False)
 
@@ -153,10 +161,19 @@ def configure_app_icons() -> None:
 
 
 def main() -> None:
-    configure_deployment_target()
+    parser = argparse.ArgumentParser(description=__doc__)
+    # Deliberately required: the build scripts must say which IPA they build.
+    parser.add_argument("--profile", required=True, choices=sorted(PROFILES))
+    args = parser.parse_args()
+    profile = get_profile(args.profile)
+
+    configure_deployment_target(profile)
     configure_info_plist()
     configure_app_icons()
-    print("Configured generated iOS runner for Orvix.")
+    print(
+        f"Configured generated iOS runner for Orvix "
+        f"({profile.name}, iOS {profile.min_ios}+)."
+    )
 
 
 if __name__ == "__main__":

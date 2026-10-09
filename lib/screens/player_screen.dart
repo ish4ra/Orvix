@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart' as mk;
@@ -22,6 +21,7 @@ import '../services/playback_service.dart';
 import '../services/platform_profile.dart';
 import '../services/player_exit_controller.dart';
 import '../services/player_resize_preferences_service.dart';
+import '../services/subtitle_file_picker.dart';
 import '../services/subtitle_preferences_service.dart';
 import '../services/subtitle_render_policy.dart';
 import '../services/video_black_bar_crop_service.dart';
@@ -4767,11 +4767,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _pickExternalSubtitle() async {
     _hideTimer?.cancel();
-    final result = await FilePicker.pickFile(
-      type: FileType.custom,
-      allowedExtensions: const ['srt', 'ass', 'ssa', 'vtt'],
-    );
-    final path = result?.path;
+    final path = await pickExternalSubtitlePath();
     if (path == null || path.isEmpty) {
       if (mounted) _scheduleHide();
       return;

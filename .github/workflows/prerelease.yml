@@ -80,11 +80,17 @@ jobs:
             tools/configure_android_signing.py \
             tools/generate_desktop_branding.py \
             tools/configure_ios_build.py \
+            tools/ios_ipa_checks.py \
+            tools/ios_macho.py \
+            tools/ios_profiles.py \
             tools/update_altstore_source.py \
             tools/verify_android_apk.py
           bash -n tools/publish_orvix_release.sh
+          bash -n tools/ios_ipa_common.sh
           bash -n tools/build_ios_ipa.sh
+          bash -n tools/build_ios_legacy_ipa.sh
           bash -n tools/verify_ios_ipa.sh
+          bash -n tools/verify_ios_legacy_ipa.sh
           bash -n tools/android_install_smoke_test.sh
           python3 -m unittest discover -s tools/tests
 
@@ -360,8 +366,8 @@ jobs:
           if-no-files-found: error
           path: Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip
 
-  ios:
-    name: Build iOS sideload IPA
+  ios-modern:
+    name: Build iOS Modern sideload IPA
     needs: [metadata, validate]
     runs-on: macos-15
     steps:
@@ -380,23 +386,76 @@ jobs:
           "$RUNNER_TEMP/orvix-ios-venv/bin/python" -m pip install --disable-pip-version-check pillow
           echo "$RUNNER_TEMP/orvix-ios-venv/bin" >> "$GITHUB_PATH"
 
-      - name: Build unsigned iOS IPA
+      - name: Build unsigned Modern iOS IPA (iOS 15.5+)
         shell: bash
         run: bash tools/build_ios_ipa.sh "${{ needs.metadata.outputs.version }}"
 
-      - name: Verify iOS sideload package
+      - name: Verify Modern iOS sideload package
         shell: bash
         run: |
           set -euo pipefail
           V="${{ needs.metadata.outputs.version }}"
           PUBSPEC_VERSION="$(awk '$1 == "version:" {print $2}' pubspec.yaml)"
-          bash tools/verify_ios_ipa.sh "Orvix-v$V-iOS.ipa" "$V" "${PUBSPEC_VERSION#*+}"
+          bash tools/verify_ios_ipa.sh "Orvix-v$V-iOS-15.5-Plus.ipa" "$V" "${PUBSPEC_VERSION#*+}" modern
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ios
+          name: ios-modern
           if-no-files-found: error
-          path: Orvix-v${{ needs.metadata.outputs.version }}-iOS.ipa
+          path: Orvix-v${{ needs.metadata.outputs.version }}-iOS-15.5-Plus.ipa
+
+  # iOS 12 build for older 64-bit devices. Only this job pins the last
+  # Flutter release that targets iOS 12 (see tools/ios_profiles.py).
+  ios-legacy:
+    name: Build iOS Legacy sideload IPA
+    needs: [metadata, validate]
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 16.4
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -d /Applications/Xcode_16.4.app ]; then
+            echo "Xcode 16.4 is not installed on this runner. Available:" >&2
+            ls -d /Applications/Xcode*.app >&2 || true
+            exit 1
+          fi
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          xcodebuild -version
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.32.8
+          cache: true
+
+      - name: Prepare iOS build tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/orvix-ios-venv"
+          "$RUNNER_TEMP/orvix-ios-venv/bin/python" -m pip install --disable-pip-version-check pillow
+          echo "$RUNNER_TEMP/orvix-ios-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Build unsigned Legacy iOS IPA (iOS 12)
+        shell: bash
+        run: bash tools/build_ios_legacy_ipa.sh "${{ needs.metadata.outputs.version }}"
+
+      - name: Verify Legacy iOS sideload package and Mach-O deployment targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          V="${{ needs.metadata.outputs.version }}"
+          PUBSPEC_VERSION="$(awk '$1 == "version:" {print $2}' pubspec.yaml)"
+          bash tools/verify_ios_legacy_ipa.sh "Orvix-v$V-iOS-12-Legacy.ipa" "$V" "${PUBSPEC_VERSION#*+}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-legacy
+          if-no-files-found: error
+          path: Orvix-v${{ needs.metadata.outputs.version }}-iOS-12-Legacy.ipa
 
   windows:
     needs: [metadata, validate]
@@ -1320,7 +1379,7 @@ jobs:
 
   release:
     name: Publish Orvix prerelease
-    needs: [metadata, validate, windows, macos, ios, android-mobile, android-tv]
+    needs: [metadata, validate, windows, macos, ios-modern, ios-legacy, android-mobile, android-tv]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -1347,8 +1406,13 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: ios
-          path: dist/ios
+          name: ios-modern
+          path: dist/ios-modern
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios-legacy
+          path: dist/ios-legacy
 
       - name: Verify release assets
         shell: bash
@@ -1362,7 +1426,8 @@ jobs:
           test -s dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-x86_64.apk
           test -s dist/tv/Orvix-v${{ needs.metadata.outputs.version }}-Android-TV.apk
           test -s dist/macos/Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip
-          test -s dist/ios/Orvix-v${{ needs.metadata.outputs.version }}-iOS.ipa
+          test -s dist/ios-modern/Orvix-v${{ needs.metadata.outputs.version }}-iOS-15.5-Plus.ipa
+          test -s dist/ios-legacy/Orvix-v${{ needs.metadata.outputs.version }}-iOS-12-Legacy.ipa
 
       - name: Publish Orvix prerelease
         env:
@@ -1398,13 +1463,40 @@ jobs:
             echo "- [Privacy policy](https://github.com/$GITHUB_REPOSITORY/blob/v$V/PRIVACY.md)"
             echo
             IOS_BUILD="$(awk '$1 == "version:" {print $2}' pubspec.yaml)"
-            echo "### iPhone / iPad sideload"
+            echo "### Which iPhone / iPad file should I download?"
             echo
-            echo "- **iPhone / iPad:** \`Orvix-v$V-iOS.ipa\` is an **unsigned IPA** for AltStore, SideStore or a compatible sideload tool, which re-signs it with your own Apple account. It is **not** an App Store release."
-            echo "- Requires iOS / iPadOS 15.5 or later. iOS shows this build as version ${V%%-*} (build ${IOS_BUILD#*+})."
-            echo "- Apps signed with a free Apple account normally have to be re-signed periodically (every 7 days); AltStore / SideStore can refresh them."
-            echo "- AltStore / SideStore source: \`https://raw.githubusercontent.com/ish4ra/Orvix/develop/store.json\`."
+            echo "There are two iPhone / iPad files. Download **one**, chosen by your iOS version (**Settings > General > About > iOS Version**). Both are **unsigned IPAs** for sideloading: your sideload tool re-signs them with your own Apple account. They are **not** App Store releases."
+            echo
+            echo "### iPhone / iPad - Modern (Recommended)"
+            echo
+            echo "File:"
+            echo "\`Orvix-v$V-iOS-15.5-Plus.ipa\`"
+            echo
+            echo "- Requires iOS / iPadOS 15.5 or later."
+            echo "- Recommended build for supported newer devices."
+            echo "- Use this unless your device cannot run iOS 15.5."
+            echo "- Install with AltStore, SideStore or a compatible sideload tool. AltStore / SideStore source: \`https://raw.githubusercontent.com/ish4ra/Orvix/develop/store.json\`."
+            echo
+            echo "### iPhone / iPad - Legacy"
+            echo
+            echo "File:"
+            echo "\`Orvix-v$V-iOS-12-Legacy.ipa\`"
+            echo
+            echo "- For older devices running iOS 12.x that cannot update to iOS 15.5."
+            echo "- Intended for devices such as:"
+            echo "  - iPhone 5s"
+            echo "  - iPhone 6"
+            echo "  - iPhone 6 Plus"
+            echo "- Requires iOS 12.0 or later. If your device can run iOS 15.5 or later, use the Modern file instead."
+            echo "- Not in the AltStore / SideStore source, because current AltStore and SideStore apps do not run on iOS 12. Install it from a computer with a sideload tool that still supports iOS 12."
+            echo "- Legacy-only limitations: no features are removed compared with the Modern build. It is built with an older, iOS 12 compatible Flutter toolchain and library versions, so details can differ slightly from the Modern build."
+            echo
+            echo "### Both iPhone / iPad builds"
+            echo
+            echo "- iOS shows both builds as version ${V%%-*} (build ${IOS_BUILD#*+})."
+            echo "- Apps signed with a free Apple account normally have to be re-signed periodically (every 7 days)."
             echo "- Built-in local Free P2P is not included on iOS yet. Use supported cloud, debrid or direct playback sources."
+            echo "- Embedded subtitle extraction and the AI audio subtitle fallback are not available on iOS."
             echo
             cat /tmp/generated-notes.md
           } > /tmp/notes.md
@@ -1423,11 +1515,15 @@ jobs:
             dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-x86_64.apk \
             dist/tv/Orvix-v${{ needs.metadata.outputs.version }}-Android-TV.apk \
             dist/macos/Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip \
-            dist/ios/Orvix-v${{ needs.metadata.outputs.version }}-iOS.ipa
+            dist/ios-modern/Orvix-v${{ needs.metadata.outputs.version }}-iOS-15.5-Plus.ipa \
+            dist/ios-legacy/Orvix-v${{ needs.metadata.outputs.version }}-iOS-12-Legacy.ipa
 
       - name: Prepare AltStore / SideStore source entry
         # store.json changes go to develop through a normal PR. This only
         # produces a candidate file and never blocks or alters the release.
+        # Only the Modern IPA is listed: current AltStore / SideStore apps do
+        # not run on iOS 12, and one bundle ID must not get two entries for
+        # the same version/build. The Legacy IPA is a direct download.
         continue-on-error: true
         shell: bash
         run: |
@@ -1437,12 +1533,12 @@ jobs:
           mkdir -p dist/altstore
           python3 tools/update_altstore_source.py \
             --source store.json \
-            --ipa "dist/ios/Orvix-v$V-iOS.ipa" \
+            --ipa "dist/ios-modern/Orvix-v$V-iOS-15.5-Plus.ipa" \
             --release-notes /tmp/notes.md \
             --release-version "$V" \
             --build-version "${BUILD#*+}" \
             --release-date "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-            --download-url "https://github.com/$GITHUB_REPOSITORY/releases/download/v$V/Orvix-v$V-iOS.ipa" \
+            --download-url "https://github.com/$GITHUB_REPOSITORY/releases/download/v$V/Orvix-v$V-iOS-15.5-Plus.ipa" \
             --output dist/altstore/store.json
 
       - uses: actions/upload-artifact@v4

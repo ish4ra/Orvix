@@ -23,7 +23,7 @@ SPEC.loader.exec_module(MODULE)
 RELEASE = "0.7.9-beta.64"
 DOWNLOAD_URL = (
     "https://github.com/ish4ra/Orvix/releases/download/"
-    "v0.7.9-beta.64/Orvix-v0.7.9-beta.64-iOS.ipa"
+    "v0.7.9-beta.64/Orvix-v0.7.9-beta.64-iOS-15.5-Plus.ipa"
 )
 # The exact nested signatures in the CI-built IPA (run 37890093932). They are
 # ad-hoc (no certificate, TeamIdentifier not set) from Flutter's toolchain;
@@ -69,10 +69,17 @@ class IosVersionTest(unittest.TestCase):
                     MODULE.ios_build_version(build)
 
     def test_ipa_builder_uses_shared_version_helpers(self):
-        script = (ROOT / "tools" / "build_ios_ipa.sh").read_text(encoding="utf-8")
-        self.assertIn("ios_marketing_version", script)
-        self.assertIn("ios_build_version", script)
-        self.assertNotIn("re.findall", script)
+        # Both iOS builders resolve versions through tools/ios_ipa_common.sh.
+        common = (ROOT / "tools" / "ios_ipa_common.sh").read_text(encoding="utf-8")
+        self.assertIn("ios_marketing_version", common)
+        self.assertIn("ios_build_version", common)
+        self.assertNotIn("re.findall", common)
+        for builder in ("build_ios_ipa.sh", "build_ios_legacy_ipa.sh"):
+            with self.subTest(builder=builder):
+                script = (ROOT / "tools" / builder).read_text(encoding="utf-8")
+                self.assertIn('source "$ROOT/tools/ios_ipa_common.sh"', script)
+                self.assertIn('orvix_ios_resolve_versions "${1:-}"', script)
+                self.assertNotIn("re.findall", script)
 
 
 class UpdateAltStoreSourceTest(unittest.TestCase):
@@ -84,7 +91,7 @@ class UpdateAltStoreSourceTest(unittest.TestCase):
         version: str = "0.7.9",
         build: str = "4209",
     ) -> Path:
-        ipa = root / f"Orvix-v{RELEASE}-iOS.ipa"
+        ipa = root / f"Orvix-v{RELEASE}-iOS-15.5-Plus.ipa"
         info = {
             "CFBundleIdentifier": "com.orvix.orvix",
             "CFBundleShortVersionString": version,

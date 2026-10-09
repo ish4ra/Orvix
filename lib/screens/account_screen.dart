@@ -2346,11 +2346,13 @@ class _OrvixTvQrScannerScreenState extends State<_OrvixTvQrScannerScreen>
     if (accepted != null) _finish(accepted);
   }
 
+  // The optional child keeps this builder valid for mobile_scanner 6.x
+  // (Modern iOS/Android) and 7.x (Legacy iOS), whose errorBuilder dropped it.
   Widget _cameraError(
     BuildContext context,
-    MobileScannerException error,
+    MobileScannerException error, [
     Widget? child,
-  ) {
+  ]) {
     return ColoredBox(
       color: Colors.black,
       child: Center(
