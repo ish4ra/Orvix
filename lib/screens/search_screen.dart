@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -47,6 +48,29 @@ class _SearchScreenState extends State<SearchScreen> {
   Timer? _tvBackdropDebounce;
   final Set<String> _warmingTitles = <String>{};
 
+  /// Desktop keeps keyboard-first Search: the field takes focus whenever
+  /// Search opens. On a phone or tablet a focused field raises the software
+  /// keyboard, so there the field is focused only when the user taps it. On
+  /// TV the shell moves focus into Search; the TV field is read-only until
+  /// the user presses OK.
+  static bool get _focusFieldOnOpen {
+    if (PlatformProfile.isAndroidTv) return false;
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.windows ||
+      TargetPlatform.macOS ||
+      TargetPlatform.linux =>
+        true,
+      TargetPlatform.android ||
+      TargetPlatform.iOS ||
+      TargetPlatform.fuchsia =>
+        false,
+    };
+  }
+
+  /// Touch platforms where focusing the field opens the software keyboard.
+  static bool get _softKeyboard =>
+      !PlatformProfile.isAndroidTv && !_focusFieldOnOpen;
+
   @override
   void initState() {
     super.initState();
@@ -54,9 +78,7 @@ class _SearchScreenState extends State<SearchScreen> {
       debugLabel: 'search-field',
       onKeyEvent: _handleSearchFieldKey,
     );
-    // On TV the shell moves focus into Search; focusing the field there
-    // never opens the keyboard by itself.
-    if (widget.active && !PlatformProfile.isAndroidTv) {
+    if (widget.active && _focusFieldOnOpen) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _focusNode.requestFocus();
       });
@@ -66,10 +88,15 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void didUpdateWidget(covariant SearchScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.active && !oldWidget.active && !PlatformProfile.isAndroidTv) {
+    if (widget.active && !oldWidget.active && _focusFieldOnOpen) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _focusNode.requestFocus();
       });
+    }
+    // Leaving Search on a phone closes its keyboard; coming back does not
+    // reopen it.
+    if (!widget.active && oldWidget.active && _softKeyboard) {
+      _focusNode.unfocus();
     }
   }
 
@@ -116,6 +143,10 @@ class _SearchScreenState extends State<SearchScreen> {
 
   void _openItem(MediaItem item) {
     _prefetchItem(item);
+    // A route remembers its focused field and refocuses it when the next
+    // route pops. On a phone that would reopen the keyboard on the way back
+    // from Details, so the field lets go of focus first.
+    if (_softKeyboard) _focusNode.unfocus();
     widget.onOpen(widget.catalog.peekDetails(item) ?? item);
   }
 
@@ -223,6 +254,9 @@ class _SearchScreenState extends State<SearchScreen> {
               focusNode: _focusNode,
               onChanged: _onQueryChanged,
               onSubmitted: (_) => _focusFirstResult(),
+              // Flutter keeps a touch field focused on an outside tap; on a
+              // phone, tapping elsewhere closes the keyboard instead.
+              onTapOutside: _softKeyboard ? (_) => _focusNode.unfocus() : null,
               textInputAction: TextInputAction.search,
               style: const TextStyle(fontSize: 17),
               decoration: InputDecoration(
@@ -237,7 +271,9 @@ class _SearchScreenState extends State<SearchScreen> {
                           _controller.clear();
                           _onQueryChanged('');
                           setState(() {});
-                          _focusNode.requestFocus();
+                          // Desktop goes straight back to typing. On a phone
+                          // clearing does not open the keyboard by itself.
+                          if (!_softKeyboard) _focusNode.requestFocus();
                         },
                         icon: const Icon(Icons.close),
                       ),

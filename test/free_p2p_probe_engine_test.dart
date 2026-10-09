@@ -122,6 +122,14 @@ const _fast = Duration(milliseconds: 200);
 const _extended = Duration(milliseconds: 600);
 const _sample = Duration(milliseconds: 500);
 
+/// Earliest a wait that runs to the extended deadline can end, measured on a
+/// microsecond [Stopwatch]. The probe waits `extended - elapsed` on the same
+/// in-flight request, and Dart VM timers are scheduled in whole milliseconds
+/// (`Duration.inMilliseconds` truncates), so up to one millisecond of that
+/// remainder is dropped. Production timing is unchanged; this is the exact
+/// bound the timer guarantees, not a tolerance.
+final _extendedTimerFloor = _extended - const Duration(milliseconds: 1);
+
 Future<LocalTorrentProbeResult> _probe(
   SourceResult source, {
   bool retain = true,
@@ -171,9 +179,11 @@ void main() {
     expect(result.metadataResolved, isFalse);
     expect(result.confirmedLive, isFalse);
     expect(result.discoveredPeers, 12);
-    // Promising candidates keep the same request up to the extended deadline.
-    expect(watch.elapsed, greaterThanOrEqualTo(_extended));
-    expect(result.metadataElapsed, greaterThanOrEqualTo(_extended));
+    // Promising candidates keep the same request up to the extended deadline,
+    // well past the fast deadline where an empty swarm stops.
+    expect(result.metadataElapsed, greaterThan(_extendedTimerFloor));
+    expect(watch.elapsed, greaterThan(_extendedTimerFloor));
+    expect(watch.elapsed, greaterThanOrEqualTo(result.metadataElapsed!));
     // A metadata timeout is never reported as a confirmed empty swarm.
     expect(result.status, isNot(LocalTorrentProbeStatus.noPeers));
     // The abandoned probe session is detached.
@@ -292,6 +302,26 @@ void main() {
       // Leaving the picker without playing detaches A too.
       await service.releaseRetainedProbeSessions();
       expect(engine.removed, ['2' * 40, '1' * 40]);
+    });
+  });
+
+  test('a late warm probe session can be detached on its own', () async {
+    final engine = _FakeEngine();
+    final kept = _torrent('5');
+    final late = _torrent('6');
+    await withEngine(engine, () async {
+      expect((await _probe(kept)).confirmedLive, isTrue);
+      expect((await _probe(late)).confirmedLive, isTrue);
+
+      await service.releaseRetainedProbe(late);
+      expect(engine.removed, ['6' * 40]);
+      // Only once, and never a session that is not retained.
+      await service.releaseRetainedProbe(late);
+      await service.releaseRetainedProbe(_torrent('7'));
+      expect(engine.removed, ['6' * 40]);
+
+      await service.releaseRetainedProbeSessions();
+      expect(engine.removed, ['6' * 40, '5' * 40]);
     });
   });
 

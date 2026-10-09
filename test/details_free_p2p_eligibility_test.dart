@@ -85,6 +85,33 @@ MockClient _provider() => MockClient((request) async => http.Response(
       200,
     ));
 
+/// Three releases with distinct reported seeders and resolutions.
+MockClient _threeReleases() => MockClient((request) async => http.Response(
+      jsonEncode({
+        'streams': [
+          {
+            'name': 'Torrentio\n2160p',
+            'title': 'Trigger.2025.2160p.WEB-DL.x265-AAA\nSeeders: 5 Size: 8.1 GB',
+            'infoHash': 'a' * 40,
+            'fileIdx': 0,
+          },
+          {
+            'name': 'Torrentio\n1080p',
+            'title': 'Trigger.2025.1080p.WEB-DL.x264-BBB\nSeeders: 100 Size: 2.1 GB',
+            'infoHash': 'b' * 40,
+            'fileIdx': 0,
+          },
+          {
+            'name': 'Torrentio\n720p',
+            'title': 'Trigger.2025.720p.WEB-DL.x264-CCC\nSeeders: 20 Size: 1.2 GB',
+            'infoHash': 'd' * 40,
+            'fileIdx': 0,
+          },
+        ],
+      }),
+      200,
+    ));
+
 /// Local engine stand-in. Torrent creation is held until the test releases
 /// it, so a live check stays in progress ("checking").
 class _Engine {
@@ -124,6 +151,7 @@ void main() {
     SourceProviderService sources, {
     bool pikpak = false,
     bool torbox = false,
+    String expectText = _release,
   }) async {
     tester.view.physicalSize = const Size(1000, 1400);
     tester.view.devicePixelRatio = 1;
@@ -145,7 +173,7 @@ void main() {
     await settle(tester);
     await tester.tap(find.text('Find Sources'));
     await settle(tester);
-    expect(find.textContaining(_release), findsWidgets,
+    expect(find.textContaining(expectText), findsWidgets,
         reason: 'source picker is open');
   }
 
@@ -238,5 +266,84 @@ void main() {
 
       await close(tester, engine);
     }, () => engine.client);
+  });
+
+  group('Source Priority while the picker is open', () {
+    const seedersFirst = <String>[
+      'seeders',
+      'resolution',
+      'fileSize',
+      'releaseQuality',
+      'cache',
+    ];
+
+    List<String> rowOrder(WidgetTester tester) {
+      final tags = ['AAA', 'BBB', 'CCC'];
+      double top(String tag) =>
+          tester.getTopLeft(find.textContaining('-$tag').first).dy;
+      return [...tags]..sort((a, b) => top(a).compareTo(top(b)));
+    }
+
+    Future<void> resetToDefault(WidgetTester tester) async {
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Sort'));
+      await settle(tester);
+      await tester.tap(find.text('Reset default'));
+      await settle(tester);
+    }
+
+    testWidgets('no cloud: Free P2P follows the saved priority and reorders '
+        'at once', (tester) async {
+      SharedPreferences.setMockInitialValues(
+          {'orvix_source_priority_v6': seedersFirst});
+      final engine = _Engine();
+      await http.runWithClient(() async {
+        await openPicker(
+          tester,
+          SourceProviderService(client: _threeReleases()),
+          expectText: 'Trigger.2025.1080p.WEB-DL.x264-BBB',
+        );
+        expect(find.textContaining('free P2P ranking on'), findsOneWidget);
+        expect(engine.creates, isNotEmpty, reason: 'the live check runs');
+        // Every check is still in flight: one unchecked group, ordered by
+        // reported seeders.
+        expect(rowOrder(tester), ['BBB', 'CCC', 'AAA']);
+        expect(find.textContaining('100 seeders reported'), findsOneWidget);
+
+        await resetToDefault(tester);
+        // Default priority: release quality ties, then resolution.
+        expect(rowOrder(tester), ['AAA', 'BBB', 'CCC']);
+
+        await close(tester, engine);
+      }, () => engine.client);
+    });
+
+    testWidgets('cloud/debrid: the saved priority sorts and reorders without '
+        'any Free P2P probe', (tester) async {
+      SharedPreferences.setMockInitialValues(
+          {'orvix_source_priority_v6': seedersFirst});
+      final engine = _Engine();
+      await http.runWithClient(() async {
+        await openPicker(
+          tester,
+          SourceProviderService(client: _threeReleases()),
+          torbox: true,
+          expectText: 'Trigger.2025.1080p.WEB-DL.x264-BBB',
+        );
+        expect(find.textContaining('free P2P ranking on'), findsNothing);
+        expect(rowOrder(tester), ['BBB', 'CCC', 'AAA']);
+
+        await resetToDefault(tester);
+        expect(rowOrder(tester), ['AAA', 'BBB', 'CCC']);
+
+        // Choosing the Free P2P order by hand does not start torrent probes
+        // for sources that playback sends to the cloud service.
+        await tester.tap(find.widgetWithText(FilterChip, 'Free P2P'));
+        await settle(tester);
+        expect(engine.creates, isEmpty);
+        expect(rowOrder(tester), ['AAA', 'BBB', 'CCC']);
+
+        await close(tester, engine);
+      }, () => engine.client);
+    });
   });
 }

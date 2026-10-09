@@ -75,7 +75,10 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
           mediaDuration:
               FreeP2pLiveProbeService.parseMediaRuntime(widget.item.runtime),
         );
-    _liveProbeStarted = _liveProbe.hasAnyResult;
+    // Reopened after playback: keep the list the user chose from while its
+    // evidence is fresh. Otherwise the open browser continues the bounded
+    // check in the background.
+    _liveProbeStarted = _liveProbe.isFrozen && _liveProbe.hasAnyResult;
     _sort =
         widget.preferFreeP2p ? _TvSourceSort.free : _TvSourceSort.best;
     unawaited(_load());
@@ -113,6 +116,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
       setState(() {
         _results = values[0] as List<SourceResult>;
         _priority = values[1] as List<SourceSortCriterion>;
+        _liveProbe.setPriority(_priority);
         _pinnedIdentity = values[2] as String?;
         _loading = false;
         _error = null;
@@ -134,13 +138,18 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
   }
 
   void _startLiveProbe() {
-    if (_liveProbeStarted || _results.isEmpty) return;
+    // Live probing belongs to the Free P2P playback path only; with a
+    // cloud/debrid connection (preferFreeP2p false) playback never uses it.
+    if (!widget.preferFreeP2p || _liveProbeStarted || _results.isEmpty) {
+      return;
+    }
     _liveProbeStarted = true;
     unawaited(
       _liveProbe
           .probeTopCandidates(
             _results,
             widget.sources,
+            continueInBackground: true,
             onUpdate: () {
               if (mounted) setState(() {});
             },
@@ -408,7 +417,11 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
     if (saved == null || !mounted) return;
     await widget.sources.setPriorityOrder(saved);
     if (!mounted) return;
-    setState(() => _priority = saved);
+    // Rows reorder at once; the background check also follows it.
+    setState(() {
+      _priority = saved;
+      _liveProbe.setPriority(saved);
+    });
   }
 
   Future<void> _showSourceModeHelp() async {
@@ -420,7 +433,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
         content: ConstrainedBox(
           constraints: BoxConstraints(maxWidth: 620),
           child: Text(
-            'Free P2P: ranks sources by what is playing right now. Torrents that delivered real media bytes in the live check come first, then unchecked ones, then torrents whose metadata did not resolve, then torrents with no usable data. Among live torrents: first-byte speed, real throughput against the file\'s bitrate, and live peers decide; quality only breaks ties. Provider seeder counts are a snapshot, not proof a torrent works.\n\n'
+            'Free P2P: ranks sources by what is playing right now. Direct links come first, then torrents that delivered real media bytes in the live check (ready now, live, then slow), then unchecked ones, then torrents whose metadata did not resolve, then torrents that failed the check, grouped at the bottom. Inside each group your Order setting decides. Provider seeder counts are a reported snapshot, not proof a torrent works.\n\n'
             'Smooth: favors TV-friendly formats, 1080p/720p, efficient codecs, healthy seeders and smaller files.\n\n'
             'Default: uses your normal Orvix source-priority settings.\n\n'
             'Compatible only: hides sources that look risky for a typical TV decoder, such as 8K, AV1, Hi10P/10-bit AVC, or Dolby Vision-only releases. It does not change the player or torrent engine.',
@@ -688,8 +701,10 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
     );
   }
 
+  /// Discards this browser's evidence (and any frozen order) and starts a
+  /// fresh bounded check with the current Order setting.
   void _recheckLive() {
-    if (_liveProbe.isRunning || _results.isEmpty) return;
+    if (!widget.preferFreeP2p || _results.isEmpty) return;
     setState(() {
       _liveProbe.clear();
       _liveProbeStarted = false;
@@ -757,6 +772,11 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
     final indexByKey = <String, int>{
       for (var i = 0; i < visible.length; i++) rowKey(visible[i]): i,
     };
+    final free = _sort == _TvSourceSort.free;
+    // Torrents that failed the live check sit together at the bottom under
+    // one label; the label is not focusable and the rows stay selectable.
+    final failedStart =
+        free ? _liveProbe.failedGroupStart(visible) : visible.length;
 
     // ListView.builder with findChildIndexCallback keeps each row's element,
     // and therefore its focus, attached to the same source when a live-check
@@ -774,21 +794,44 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
           _pinnedIdentity,
           seriesWide: _seriesWidePin,
         );
-        final free = _sort == _TvSourceSort.free;
+        final row = _TvSourceRow(
+          key: const ValueKey('tv-row-card'),
+          source: source,
+          assessment: free ? _freeAssessment(source) : null,
+          freeP2p: free,
+          pinned: pinned,
+          autofocus: index == 0,
+          busy: _openingResource == source.resource,
+          onPressed: () => unawaited(_play(source)),
+          onPinRequest: () => unawaited(_confirmPin(source)),
+        );
         return Padding(
           key: ValueKey(rowKey(source)),
           padding: EdgeInsets.only(
             bottom: index == visible.length - 1 ? 0 : 10,
           ),
-          child: _TvSourceRow(
-            source: source,
-            assessment: free ? _freeAssessment(source) : null,
-            freeP2p: free,
-            pinned: pinned,
-            autofocus: index == 0,
-            busy: _openingResource == source.resource,
-            onPressed: () => unawaited(_play(source)),
-            onPinRequest: () => unawaited(_confirmPin(source)),
+          // Same shape for every row, so a row that becomes the first failed
+          // one keeps its element and therefore its focus.
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (index == failedStart)
+                Padding(
+                  key: const ValueKey('tv-free-p2p-failed-group'),
+                  padding: const EdgeInsets.fromLTRB(6, 8, 6, 10),
+                  child: Text(
+                    'Failed the live check '
+                    '(${visible.length - failedStart}) • still selectable',
+                    style: const TextStyle(
+                      color: Color(0xFFFFB4A8),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              row,
+            ],
           ),
         );
       },
@@ -798,6 +841,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
 
 class _TvSourceRow extends StatefulWidget {
   const _TvSourceRow({
+    super.key,
     required this.source,
     required this.assessment,
     required this.freeP2p,

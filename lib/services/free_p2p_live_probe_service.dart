@@ -1,14 +1,24 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, listEquals;
 
 import 'local_torrent_service.dart';
 import 'source_provider_service.dart';
 
 class FreeP2pLiveProbeService {
-  FreeP2pLiveProbeService({this.mediaDuration, FreeP2pProbeRunner? probeRunner})
-      : _probeRunner = probeRunner;
+  FreeP2pLiveProbeService({
+    this.mediaDuration,
+    FreeP2pProbeRunner? probeRunner,
+    FreeP2pProbeEngine? engine,
+    List<SourceSortCriterion>? priority,
+  })  : _engine = engine ??
+            (probeRunner != null
+                ? _RunnerProbeEngine(probeRunner)
+                : const LocalFreeP2pProbeEngine()),
+        _priority = List.unmodifiable(
+          priority ?? SourceProviderService.defaultPriority,
+        );
 
   final Duration? mediaDuration;
 
@@ -45,16 +55,36 @@ class FreeP2pLiveProbeService {
       <String, ({DateTime at, LocalTorrentProbeResult result})>{};
 
   /// Evidence used for ordering. It is a snapshot of [_cache] taken only at
-  /// checkpoints (end of a probe stage), so rows do not reorder while the
-  /// user is selecting. Status chips read the live [_cache] instead.
+  /// checkpoints (end of a probe stage or background batch), so rows do not
+  /// reorder on every single probe. Status chips read the live [_cache].
   Map<String, ({DateTime at, LocalTorrentProbeResult result})> _rankEvidence =
       <String, ({DateTime at, LocalTorrentProbeResult result})>{};
 
-  /// Probe-runner override. Production probes go through the local torrent
-  /// engine; tests inject deterministic results.
-  final FreeP2pProbeRunner? _probeRunner;
+  /// Torrent-engine operations. Production probes go through the local
+  /// torrent engine; tests inject deterministic results.
+  final FreeP2pProbeEngine _engine;
+
+  /// The user's Source Priority. It orders sources inside each live-health
+  /// group and decides which unchecked rows are checked next.
+  List<SourceSortCriterion> _priority;
 
   Future<void>? _running;
+
+  /// Check generation. [clear] starts a new one; results of probes started
+  /// in an older generation are discarded.
+  int _epoch = 0;
+  int _runningEpoch = 0;
+
+  /// Picker-only: keep classifying further rows after the first stages.
+  bool _continueInBackground = false;
+
+  /// Set once the picker closed or handed a source to playback: no further
+  /// batch starts, and a probe finishing afterwards does not keep a warm
+  /// session (except for the source handed to playback).
+  bool _closed = false;
+  String? _handoffKey;
+
+  void Function()? _onUpdate;
 
   /// Candidates of the current bounded check that have no result yet; shown
   /// as CHECKING.
@@ -66,13 +96,22 @@ class FreeP2pLiveProbeService {
 
   static const Duration _evidenceTtl = Duration(minutes: 3);
 
-  /// First bounded batch: strongest static candidates plus raw-seeder,
-  /// raw-peer and provider-diversity alternatives.
+  /// First bounded batch: the rows the user's Source Priority puts first,
+  /// plus static-playability, raw-seeder, raw-peer and provider-diversity
+  /// alternatives.
   static const int initialShortlistSize = 6;
 
   /// Second bounded batch, probed only when the first batch confirmed no
   /// playable source.
   static const int expansionBatchSize = 3;
+
+  /// Source picker only: further rows are checked one small batch at a time
+  /// while the picker stays open. Normal Play never runs these.
+  static const int backgroundBatchSize = 3;
+
+  /// Most torrents one picker check classifies, counting evidence it already
+  /// had (for example from Normal Play). Re-check starts a new budget.
+  static const int pickerProbeLimit = 18;
 
   /// Simultaneous probes. Each probe holds one short-lived torrent session;
   /// three keeps the UI responsive without many competing downloads.
@@ -96,13 +135,22 @@ class FreeP2pLiveProbeService {
     return '${source.resource}|$file';
   }
 
-  Future<LocalTorrentProbeResult> _runProbe(SourceResult source) {
-    final runner = _probeRunner;
-    if (runner != null) return runner(source);
-    return LocalTorrentService.instance.probe(source, retainSession: true);
+  List<SourceSortCriterion> get priority => _priority;
+
+  /// Applies a changed Source Priority. A frozen order is dropped, so an open
+  /// picker reorders as soon as the setting is saved. Returns whether the
+  /// priority changed.
+  bool setPriority(List<SourceSortCriterion> priority) {
+    if (listEquals(priority, _priority)) return false;
+    _priority = List.unmodifiable(priority);
+    _frozenOrder = null;
+    return true;
   }
 
   bool get isRunning => _running != null;
+
+  /// Whether rows keep the order the user last chose from.
+  bool get isFrozen => _frozenOrder != null;
 
   bool _fresh(DateTime at) => DateTime.now().difference(at) <= _evidenceTtl;
 
@@ -115,6 +163,9 @@ class FreeP2pLiveProbeService {
   /// Probing finished, produced results, and none of them proved playable.
   bool get noLiveConfirmed =>
       !isRunning && hasAnyResult && !hasPlayableResult;
+
+  /// Probes currently in flight.
+  int get activeProbeCount => _active.length;
 
   LocalTorrentProbeResult? resultFor(SourceResult source) {
     final key = _key(source);
@@ -137,6 +188,8 @@ class FreeP2pLiveProbeService {
     _rankEvidence = Map.of(_cache);
   }
 
+  void _notify() => _onUpdate?.call();
+
   /// Shared health presentation for mobile, desktop and Android TV rows.
   /// Returns null for a torrent that has not been probed and is not being
   /// probed right now.
@@ -152,6 +205,24 @@ class FreeP2pLiveProbeService {
       result,
       result.statusFor(source, mediaDuration: mediaDuration),
     );
+  }
+
+  /// Whether [source] failed the live check the current order is based on:
+  /// no usable media arrived (NO PEERS, STALLED, SOURCE ERROR). METADATA SLOW
+  /// and ENGINE ERROR are unresolved, not failures, and unchecked rows are
+  /// never failures.
+  bool failedLiveCheck(SourceResult source) =>
+      source.isMagnet && evidenceTier(_evidenceFor(source)) == 0;
+
+  /// Index where the trailing group of rows that failed the live check
+  /// starts, or `ordered.length` when there is none. Every row from this
+  /// index on is a confirmed failure, so pickers label them as one group.
+  int failedGroupStart(List<SourceResult> ordered) {
+    var start = ordered.length;
+    while (start > 0 && failedLiveCheck(ordered[start - 1])) {
+      start--;
+    }
+    return start;
   }
 
   /// Whether Free P2P Quick Play may launch [source]: a direct HTTP source,
@@ -189,7 +260,8 @@ class FreeP2pLiveProbeService {
     );
   }
 
-  /// Free P2P order: live playability dominates. See [compareFreeP2p].
+  /// Free P2P order: live health groups first, the user's Source Priority
+  /// inside each group. See [compareFreeP2p].
   List<SourceResult> rank(
     Iterable<SourceResult> results,
     SourceProviderService sources,
@@ -218,6 +290,7 @@ class FreeP2pLiveProbeService {
         _evidenceFor(b),
         sources: sources,
         mediaDuration: mediaDuration,
+        priority: _priority,
       );
       if (live != 0) return live;
       return (baseIndex[a] ?? 999999).compareTo(baseIndex[b] ?? 999999);
@@ -294,19 +367,22 @@ class FreeP2pLiveProbeService {
   }
 
   /// Free P2P comparison between two sources given their live evidence.
-  /// Returns 0 when live evidence does not separate them; callers then fall
-  /// back to the static Free order (history, provider seeds, exact file,
-  /// size). Resolution never participates outside the final live tie-break.
+  /// Returns 0 when nothing separates them; callers then fall back to the
+  /// static Free order (history, provider seeds, exact file, size).
   ///
-  /// Priority:
+  /// Health groups, never overridden by a preference:
   /// 1. direct HTTP before torrents (no swarm startup)
   /// 2. evidence tier: confirmed live > unprobed > metadata unresolved >
   ///    confirmed failure
-  /// 3. among live: status band (ready now > live > slow), first-byte
-  ///    latency band, throughput/bitrate-headroom band, live connection band
-  /// 4. among live with comparable bands: recent playback history, exact file
-  ///    routing, compatibility, then resolution/quality as the last tie-break
-  /// 5. among failures: closest to working (stalled > no peers > error)
+  /// 3. among live: status band (ready now > live > slow, which includes the
+  ///    file's bitrate need); among failures: closest to working (stalled >
+  ///    no peers > error)
+  ///
+  /// Inside a health group, [priority] (the user's Source Priority) decides.
+  /// Provider seeders there are the reported snapshot, not live evidence.
+  /// Live sources that still tie are ordered by first-byte latency,
+  /// throughput, live connections, playback history, exact file routing,
+  /// compatibility and finally quality.
   static int compareFreeP2p(
     SourceResult a,
     LocalTorrentProbeResult? pa,
@@ -314,9 +390,13 @@ class FreeP2pLiveProbeService {
     LocalTorrentProbeResult? pb, {
     required SourceProviderService sources,
     Duration? mediaDuration,
+    List<SourceSortCriterion>? priority,
   }) {
+    int byPriority() =>
+        priority == null ? 0 : sources.compareByPriority(a, b, priority);
+
     if (a.isMagnet != b.isMagnet) return a.isMagnet ? 1 : -1;
-    if (!a.isMagnet) return 0;
+    if (!a.isMagnet) return byPriority();
 
     final tierA = evidenceTier(pa);
     final tierB = evidenceTier(pb);
@@ -328,6 +408,8 @@ class FreeP2pLiveProbeService {
         _statusBand(pa.statusFor(a, mediaDuration: mediaDuration)),
         _statusBand(pb.statusFor(b, mediaDuration: mediaDuration)),
       );
+      if (c != 0) return c;
+      c = byPriority();
       if (c != 0) return c;
       c = cmp(_latencyBand(pa.firstByteLatency),
           _latencyBand(pb.firstByteLatency));
@@ -348,9 +430,10 @@ class FreeP2pLiveProbeService {
     }
 
     if (tierA == 0 && pa != null && pb != null) {
-      return _failureRank(pb.status).compareTo(_failureRank(pa.status));
+      final c = _failureRank(pb.status).compareTo(_failureRank(pa.status));
+      if (c != 0) return c;
     }
-    return 0;
+    return byPriority();
   }
 
   static int _exactFile(SourceResult source) =>
@@ -387,7 +470,11 @@ class FreeP2pLiveProbeService {
     return out;
   }
 
-  Future<void> _probeBatch(List<SourceResult> batch) async {
+  Future<void> _probeBatch(
+    List<SourceResult> batch, {
+    required int epoch,
+    bool retain = true,
+  }) async {
     await Future.wait(
       batch.map((source) async {
         final key = _key(source);
@@ -396,9 +483,21 @@ class FreeP2pLiveProbeService {
           return;
         }
         try {
-          final result = await _runProbe(source);
-          _cache[key] = (at: DateTime.now(), result: result);
-          _log(source, result);
+          final result = await _engine.probe(source, retainSession: retain);
+          final stale = epoch != _epoch;
+          if (!stale) {
+            _cache[key] = (at: DateTime.now(), result: result);
+            _log(source, result);
+          }
+          // A probe that outlived its check (Re-check, or the picker closed)
+          // must not leave a warm session behind. The source handed to
+          // playback keeps its own.
+          if (retain &&
+              result.confirmedLive &&
+              (stale || _closed) &&
+              key != _handoffKey) {
+            await _engine.releaseRetained(source);
+          }
         } finally {
           _active.remove(key);
           _pending.remove(key);
@@ -451,53 +550,89 @@ class FreeP2pLiveProbeService {
     ].join('\n');
   }
 
+  int _freshCount(Iterable<SourceResult> results) {
+    final keys = <String>{};
+    for (final source in results) {
+      if (source.isMagnet && resultFor(source) != null) keys.add(_key(source));
+    }
+    return keys.length;
+  }
+
+  /// Picker live check. Stage one probes a bounded shortlist, stage two one
+  /// expansion batch when nothing is confirmed live. With
+  /// [continueInBackground] (an open picker) further rows are then checked
+  /// one small batch at a time, in the order the user's Source Priority and
+  /// the diversity samples choose, until [pickerProbeLimit] torrents are
+  /// classified, the picker closes, or a Re-check starts. At most
+  /// [probeConcurrency] probes run at once.
   Future<void> probeTopCandidates(
     Iterable<SourceResult> results,
     SourceProviderService sources, {
     void Function()? onUpdate,
+    bool continueInBackground = false,
   }) {
+    _onUpdate = onUpdate;
+    _continueInBackground = continueInBackground;
     final existing = _running;
-    if (existing != null) return existing;
+    if (existing != null) {
+      if (_runningEpoch == _epoch) return existing;
+      // A cleared check is still finishing its in-flight probes. Start the
+      // fresh check once they settle, so no torrent is probed twice at once.
+      return () async {
+        try {
+          await existing;
+        } catch (_) {}
+        return probeTopCandidates(
+          results,
+          sources,
+          onUpdate: onUpdate,
+          continueInBackground: continueInBackground,
+        );
+      }();
+    }
 
+    final epoch = _epoch;
+    _runningEpoch = epoch;
+    // New evidence is about to arrive: never keep showing an old frozen order.
+    _frozenOrder = null;
+    _closed = false;
+    _handoffKey = null;
     final completer = Completer<void>();
     _running = completer.future;
     final all = results.toList(growable: false);
+    var budget = pickerProbeLimit - _freshCount(all);
+    bool open() => epoch == _epoch && !_closed;
+
+    List<SourceResult> next(int size) {
+      final count = size < budget ? size : budget;
+      final picked = _selectCandidates(all, sources, count, const <String>{});
+      budget -= picked.length;
+      return picked;
+    }
+
     unawaited(() async {
       try {
-        final probed = <String>{};
-        final initial =
-            _selectCandidates(all, sources, initialShortlistSize, probed);
-        probed.addAll(initial.map(_key));
-        _markChecking(initial);
-        onUpdate?.call();
-        // Status chips update as each batch finishes; ordering changes only
-        // at the stage checkpoint below.
-        for (var start = 0;
-            start < initial.length;
-            start += probeConcurrency) {
-          final end = (start + probeConcurrency).clamp(0, initial.length);
-          await _probeBatch(initial.sublist(start, end));
-          onUpdate?.call();
-        }
-        _checkpoint();
-        onUpdate?.call();
+        // Status chips update as each batch finishes; ordering changes at
+        // the stage checkpoint.
+        await _runStage(next(initialShortlistSize), epoch: epoch);
+        if (epoch == _epoch) _checkpoint();
+        _notify();
 
-        if (!hasPlayableResult) {
-          final expansion =
-              _selectCandidates(all, sources, expansionBatchSize, probed);
-          if (expansion.isNotEmpty) {
-            _markChecking(expansion);
-            onUpdate?.call();
-            for (var start = 0;
-                start < expansion.length;
-                start += probeConcurrency) {
-              final end =
-                  (start + probeConcurrency).clamp(0, expansion.length);
-              await _probeBatch(expansion.sublist(start, end));
-              onUpdate?.call();
-            }
-            _checkpoint();
-          }
+        if (open() && !hasPlayableResult) {
+          await _runStage(next(expansionBatchSize), epoch: epoch);
+          if (epoch == _epoch) _checkpoint();
+          _notify();
+        }
+
+        // Open picker: keep classifying more rows, one bounded batch at a
+        // time. These probes keep no warm session; a source chosen from them
+        // starts its own torrent session.
+        while (open() && _continueInBackground && budget > 0) {
+          final batch = next(backgroundBatchSize);
+          if (batch.isEmpty) break;
+          await _runStage(batch, epoch: epoch, retain: false);
+          if (epoch == _epoch) _checkpoint();
+          _notify();
         }
         if (!completer.isCompleted) completer.complete();
       } catch (error, stackTrace) {
@@ -507,10 +642,37 @@ class FreeP2pLiveProbeService {
       } finally {
         _pending.clear();
         _running = null;
-        onUpdate?.call();
+        _notify();
       }
     }());
     return completer.future;
+  }
+
+  Future<void> _runStage(
+    List<SourceResult> candidates, {
+    required int epoch,
+    bool retain = true,
+  }) async {
+    if (candidates.isEmpty) return;
+    _markChecking(candidates);
+    _notify();
+    for (var start = 0;
+        start < candidates.length;
+        start += probeConcurrency) {
+      if (epoch != _epoch || _closed) {
+        for (final source in candidates.skip(start)) {
+          _pending.remove(_key(source));
+        }
+        return;
+      }
+      final end = (start + probeConcurrency).clamp(0, candidates.length);
+      await _probeBatch(
+        candidates.sublist(start, end),
+        epoch: epoch,
+        retain: retain,
+      );
+      _notify();
+    }
   }
 
   /// Marks candidates as checking before their batch starts, so the picker
@@ -521,69 +683,77 @@ class FreeP2pLiveProbeService {
     }
   }
 
-  /// Picks up to [count] torrent candidates not yet in [exclude]. Most come
-  /// from the static Free order; the rest deliberately sample the best raw
-  /// provider-seeder and provider-peer alternatives and an unrepresented
-  /// provider, so stale static metadata cannot trap probing in one bucket.
+  /// Picks up to [count] unchecked torrent candidates not in [exclude]. Most
+  /// follow the user's Source Priority (the order the picker shows); the
+  /// rest deliberately sample the static Free P2P playability estimate, the
+  /// best raw provider-seeder and provider-peer alternatives and an
+  /// unrepresented provider, so neither a preference nor stale metadata can
+  /// trap probing in one bucket.
   List<SourceResult> _selectCandidates(
     Iterable<SourceResult> results,
     SourceProviderService sources,
     int count,
     Set<String> exclude,
   ) {
-    final base = sources
-        .sortForFreeStreaming(results)
-        .where((source) => source.isMagnet && !exclude.contains(_key(source)))
-        .toList(growable: false);
-    if (base.length <= count) {
-      final seen = <String>{};
-      return base.where((source) => seen.add(_key(source))).toList();
+    if (count <= 0) return const <SourceResult>[];
+    final keys = <String>{};
+    final staticOrder = <SourceResult>[];
+    for (final source in sources.sortForFreeStreaming(results)) {
+      if (!source.isMagnet) continue;
+      final key = _key(source);
+      if (exclude.contains(key) ||
+          _active.contains(key) ||
+          resultFor(source) != null) {
+        continue;
+      }
+      // The same torrent from two providers is probed once.
+      if (keys.add(key)) staticOrder.add(source);
     }
+    final staticIndex = <SourceResult, int>{
+      for (var i = 0; i < staticOrder.length; i++) staticOrder[i]: i,
+    };
+    int byStatic(SourceResult a, SourceResult b) =>
+        staticIndex[a]!.compareTo(staticIndex[b]!);
+    final userOrder = [...staticOrder]..sort((a, b) {
+        final c = sources.compareByPriority(a, b, _priority);
+        return c != 0 ? c : byStatic(a, b);
+      });
+    if (userOrder.length <= count) return userOrder;
 
     final selected = <SourceResult>[];
-    final seen = <String>{};
+    final chosen = <String>{};
 
-    void add(SourceResult source) {
-      if (selected.length < count && seen.add(_key(source))) {
-        selected.add(source);
+    void takeFrom(List<SourceResult> order, int target) {
+      for (final source in order) {
+        if (selected.length >= target || selected.length >= count) break;
+        if (chosen.add(_key(source))) selected.add(source);
       }
     }
 
-    final staticTake = count > 3 ? count - 3 : 1;
-    for (final source in base) {
-      if (selected.length >= staticTake) break;
-      add(source);
-    }
+    takeFrom(userOrder, count > 3 ? count - 3 : 1);
+    takeFrom(staticOrder, selected.length + 1);
 
-    final bySeeders = [...base]
-      ..sort((a, b) => (b.seeders ?? -1).compareTo(a.seeders ?? -1));
-    final seederTarget = selected.length + 1;
-    for (final source in bySeeders) {
-      if (selected.length >= seederTarget) break;
-      add(source);
-    }
+    final bySeeders = [...staticOrder]..sort((a, b) {
+        final c = (b.seeders ?? -1).compareTo(a.seeders ?? -1);
+        return c != 0 ? c : byStatic(a, b);
+      });
+    takeFrom(bySeeders, selected.length + 1);
 
-    final byPeers = [...base]
-      ..sort((a, b) => (b.peers ?? -1).compareTo(a.peers ?? -1));
-    final peerTarget = selected.length + 1;
-    for (final source in byPeers) {
-      if (selected.length >= peerTarget) break;
-      add(source);
-    }
+    final byPeers = [...staticOrder]..sort((a, b) {
+        final c = (b.peers ?? -1).compareTo(a.peers ?? -1);
+        return c != 0 ? c : byStatic(a, b);
+      });
+    takeFrom(byPeers, selected.length + 1);
 
     final providers = selected.map((source) => source.provider).toSet();
-    for (final source in base) {
-      if (selected.length >= count) break;
-      if (!providers.contains(source.provider)) {
-        add(source);
-        break;
-      }
-    }
+    takeFrom(
+      userOrder
+          .where((source) => !providers.contains(source.provider))
+          .toList(growable: false),
+      selected.length + 1,
+    );
 
-    for (final source in base) {
-      if (selected.length >= count) break;
-      add(source);
-    }
+    takeFrom(userOrder, count);
     return selected;
   }
 
@@ -607,6 +777,7 @@ class FreeP2pLiveProbeService {
     final pin = preferred;
     final base = sources.sortForFreeStreaming(results);
     if (base.isEmpty) return null;
+    final epoch = _epoch;
 
     bool pinConfirmedLive() =>
         pin != null && _evidenceFor(pin)?.confirmedLive == true;
@@ -618,7 +789,7 @@ class FreeP2pLiveProbeService {
     if (!base.first.isMagnet) {
       if (pin != null) {
         _markChecking([pin]);
-        await _probeBatch([pin]);
+        await _probeBatch([pin], epoch: epoch);
         onUpdate?.call(1, 1);
         _checkpoint();
         if (pinConfirmedLive()) return pin;
@@ -657,7 +828,7 @@ class FreeP2pLiveProbeService {
         final end = (start + probeConcurrency).clamp(0, candidates.length);
         final batch = candidates.sublist(start, end);
         _markChecking(batch);
-        await _probeBatch(batch);
+        await _probeBatch(batch, epoch: epoch);
         completed += batch.length;
         onUpdate?.call(completed, total);
         _checkpoint();
@@ -686,6 +857,9 @@ class FreeP2pLiveProbeService {
     return _evidenceFor(best)?.confirmedLive == true ? best : null;
   }
 
+  /// Keeps the current order while the user plays a source, so the reopened
+  /// picker shows the list they chose from. A new check run, a Source
+  /// Priority change or [clear] drops it.
   void freezeRanking(
     Iterable<SourceResult> results,
     SourceProviderService sources,
@@ -694,22 +868,107 @@ class FreeP2pLiveProbeService {
     _frozenOrder = rank(results, sources).map(_key).toList(growable: false);
   }
 
+  /// Hands [source] to playback: no further probe batch starts, and every
+  /// other warm probe session is detached.
   Future<void> prepareForPlayback(SourceResult source) async {
-    await LocalTorrentService.instance.prepareRetainedProbeForPlayback(source);
+    _closed = true;
+    _continueInBackground = false;
+    _handoffKey = _key(source);
+    await _engine.prepareForPlayback(source);
   }
 
+  /// Stops the check (no further batch starts) and detaches every warm probe
+  /// session that is not playing.
   Future<void> release() async {
-    await LocalTorrentService.instance.releaseRetainedProbeSessions();
+    _closed = true;
+    _continueInBackground = false;
+    await _engine.releaseAll();
   }
 
-  /// Drops all evidence so the next probe run starts fresh (Re-check).
+  /// Drops all evidence so the next check starts fresh (Re-check). A check
+  /// still in flight stops scheduling probes and its late results are
+  /// discarded.
   void clear() {
+    _epoch++;
     unawaited(release());
     _cache.clear();
     _rankEvidence = <String, ({DateTime at, LocalTorrentProbeResult result})>{};
     _pending.clear();
     _frozenOrder = null;
   }
+
+  /// Re-check: discards this session's evidence and starts a fresh bounded
+  /// check that uses the current Source Priority.
+  Future<void> recheck(
+    Iterable<SourceResult> results,
+    SourceProviderService sources, {
+    void Function()? onUpdate,
+    bool continueInBackground = false,
+  }) {
+    clear();
+    return probeTopCandidates(
+      results,
+      sources,
+      onUpdate: onUpdate,
+      continueInBackground: continueInBackground,
+    );
+  }
+}
+
+/// Torrent-engine operations behind the Free P2P live check.
+abstract class FreeP2pProbeEngine {
+  Future<LocalTorrentProbeResult> probe(
+    SourceResult source, {
+    required bool retainSession,
+  });
+
+  /// Detaches [source]'s warm probe session, if it kept one.
+  Future<void> releaseRetained(SourceResult source);
+
+  /// Keeps only [source]'s warm probe session for the playback handoff.
+  Future<void> prepareForPlayback(SourceResult source);
+
+  /// Detaches every warm probe session that is not playing.
+  Future<void> releaseAll();
+}
+
+/// The local torrent engine (production).
+class LocalFreeP2pProbeEngine implements FreeP2pProbeEngine {
+  const LocalFreeP2pProbeEngine();
+
+  @override
+  Future<LocalTorrentProbeResult> probe(
+    SourceResult source, {
+    required bool retainSession,
+  }) =>
+      LocalTorrentService.instance.probe(source, retainSession: retainSession);
+
+  @override
+  Future<void> releaseRetained(SourceResult source) =>
+      LocalTorrentService.instance.releaseRetainedProbe(source);
+
+  @override
+  Future<void> prepareForPlayback(SourceResult source) =>
+      LocalTorrentService.instance.prepareRetainedProbeForPlayback(source);
+
+  @override
+  Future<void> releaseAll() =>
+      LocalTorrentService.instance.releaseRetainedProbeSessions();
+}
+
+/// Deterministic probe results from a runner; session handling stays on the
+/// local engine.
+class _RunnerProbeEngine extends LocalFreeP2pProbeEngine {
+  const _RunnerProbeEngine(this.runner);
+
+  final FreeP2pProbeRunner runner;
+
+  @override
+  Future<LocalTorrentProbeResult> probe(
+    SourceResult source, {
+    required bool retainSession,
+  }) =>
+      runner(source);
 }
 
 typedef FreeP2pProbeRunner = Future<LocalTorrentProbeResult> Function(

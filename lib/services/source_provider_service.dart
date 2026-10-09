@@ -946,13 +946,25 @@ class SourceProviderService {
     SourceResult b,
     List<SourceSortCriterion> priority,
   ) {
+    final cmp = compareByPriority(a, b, priority);
+    if (cmp != 0) return cmp;
+    return a.title.compareTo(b.title);
+  }
+
+  /// The user's Source Priority alone: 0 when every criterion ties, so a
+  /// caller can apply its own tie-break (Free P2P keeps its static order).
+  int compareByPriority(
+    SourceResult a,
+    SourceResult b,
+    List<SourceSortCriterion> priority,
+  ) {
     for (final criterion in priority) {
       final av = _criterionValue(a, criterion);
       final bv = _criterionValue(b, criterion);
       final cmp = bv.compareTo(av);
       if (cmp != 0) return cmp;
     }
-    return a.title.compareTo(b.title);
+    return 0;
   }
 
   int _criterionValue(SourceResult result, SourceSortCriterion criterion) {

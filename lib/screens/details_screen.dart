@@ -2094,6 +2094,7 @@ class DetailsScreenState extends State<DetailsScreen> {
       if (autoUsePinned && !hasCloudConnection && chosen == null) {
         autoProbeSession = FreeP2pLiveProbeService(
           mediaDuration: FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
+          priority: await widget.sources.getPriorityOrder(),
         );
         if (mounted) {
           setState(() {
@@ -2148,6 +2149,7 @@ class DetailsScreenState extends State<DetailsScreen> {
             FreeP2pLiveProbeService(
               mediaDuration:
                   FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
+              priority: await widget.sources.getPriorityOrder(),
             );
         try {
           // Player returned, or Back cancelled the preparation: the loop
@@ -2785,7 +2787,15 @@ class DetailsScreenState extends State<DetailsScreen> {
           mediaDuration: FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
         );
     final ownsProbeSession = probeSession == null;
-    var liveProbeStarted = liveProbe.hasAnyResult;
+    // The user's Source Priority orders rows inside each live-health group.
+    liveProbe.setPriority(priority);
+    // Live probing belongs to the Free P2P playback path only; with a
+    // cloud/debrid connection playback never uses these torrent sessions.
+    final liveCheckAllowed = !hasCloudConnection;
+    // Reopened after playback: keep the list the user chose from while its
+    // evidence is fresh. Otherwise (first open, or after Normal Play) the
+    // picker continues the bounded check in the background.
+    var liveProbeStarted = liveProbe.isFrozen && liveProbe.hasAnyResult;
 
     Future<void> customizePriority(
       BuildContext dialogContext,
@@ -2857,7 +2867,11 @@ class DetailsScreenState extends State<DetailsScreen> {
       );
       if (saved != null) {
         await widget.sources.setPriorityOrder(saved);
-        setSheetState(() => priority = saved);
+        // Rows reorder at once; the background check also follows it.
+        setSheetState(() {
+          priority = saved;
+          liveProbe.setPriority(saved);
+        });
       }
     }
 
@@ -2875,7 +2889,7 @@ class DetailsScreenState extends State<DetailsScreen> {
       constraints: const BoxConstraints(maxWidth: 1080),
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) {
-          if (freeStreamingRanking && !liveProbeStarted) {
+          if (freeStreamingRanking && liveCheckAllowed && !liveProbeStarted) {
             liveProbeStarted = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {
               unawaited(
@@ -2883,6 +2897,9 @@ class DetailsScreenState extends State<DetailsScreen> {
                     .probeTopCandidates(
                       results,
                       widget.sources,
+                      // While the picker is open, keep classifying more rows
+                      // in small bounded batches.
+                      continueInBackground: true,
                       onUpdate: () {
                         if (sheetContext.mounted) {
                           setSheetState(() {});
@@ -2940,10 +2957,53 @@ class DetailsScreenState extends State<DetailsScreen> {
           final limitHiddenCount = totalAfterFilter - sorted.length;
           final best = sorted.isEmpty ? null : sorted.first;
           final color = Theme.of(context).colorScheme;
+          // Torrents that failed the live check sit together at the bottom
+          // under one label. They stay selectable for a manual choice.
+          final failedStart = freeStreamingRanking
+              ? liveProbe.failedGroupStart(sorted)
+              : sorted.length;
+
+          // Same shape for every row, so a row that becomes the first failed
+          // one keeps its element (and any keyboard focus).
+          Widget withFailedGroupLabel(int index, Widget row) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (index == failedStart)
+                  Padding(
+                    key: const ValueKey('free-p2p-failed-group'),
+                    padding: const EdgeInsets.fromLTRB(4, 6, 4, 8),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.report_gmailerrorred_rounded,
+                          size: 16,
+                          color: color.error,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            'Failed the live check '
+                            '(${sorted.length - failedStart}) • still selectable',
+                            style: TextStyle(
+                              color: color.error,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                KeyedSubtree(key: const ValueKey('source-row'), child: row),
+              ],
+            );
+          }
           final priorityText =
               priority.map((e) => e.label.toLowerCase()).join(' → ');
           final rankingText = freeStreamingRanking
-              ? 'Free P2P: live data now → first byte → real speed vs bitrate → live peers → history → provider seeds → exact file → size; quality only breaks ties'
+              ? 'Free P2P: direct → live now → not checked → metadata slow → failed check; within each group: $priorityText'
               : smoothRanking
                   ? 'Smooth: compatibility → 1080/720 → efficient codec → seeders → smaller files → cache'
                   : 'Default: $priorityText';
@@ -3200,12 +3260,15 @@ class DetailsScreenState extends State<DetailsScreen> {
                             ),
                           ),
                           TextButton.icon(
-                            onPressed: liveProbe.isRunning
-                                ? null
-                                : () => setSheetState(() {
+                            // Discards this picker's evidence (and any frozen
+                            // order) and starts a fresh bounded check with the
+                            // current Source Priority.
+                            onPressed: liveCheckAllowed
+                                ? () => setSheetState(() {
                                       liveProbe.clear();
                                       liveProbeStarted = false;
-                                    }),
+                                    })
+                                : null,
                             icon: const Icon(Icons.refresh_rounded, size: 18),
                             label: const Text('Re-check'),
                           ),
@@ -3218,7 +3281,8 @@ class DetailsScreenState extends State<DetailsScreen> {
                       child: ListView.separated(
                         itemCount: sorted.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 8),
-                        itemBuilder: (context, index) {
+                        itemBuilder: (context, index) => withFailedGroupLabel(
+                            index, Builder(builder: (context) {
                           final result = sorted[index];
                           final isPinned = widget.sources.matchesPinned(
                             result,
@@ -3459,7 +3523,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                               ),
                             ),
                           );
-                        },
+                        })),
                       ),
                     ),
                   ],
