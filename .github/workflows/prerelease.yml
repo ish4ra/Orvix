@@ -3,7 +3,7 @@ name: Orvix prerelease
 on:
   push:
     branches:
-      - 'release/all-v0.7.9-beta.59'
+      - 'release/all-v0.7.9-beta.64'
     paths:
       - 'pubspec.yaml'
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
 
 
 concurrency:
-  group: orvix-prerelease-beta59
+  group: orvix-prerelease-beta64
   cancel-in-progress: true
 
 jobs:
