@@ -9,10 +9,19 @@ IPA="${1:?usage: verify_ios_ipa.sh <ipa> <release-version> <build-number>}"
 RELEASE_VERSION="${2:?missing release version}"
 BUILD_NUMBER="${3:?missing build number}"
 
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/orvix-ipa-verify.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+
 test -s "$IPA"
 unzip -tq "$IPA"
-unzip -l "$IPA" | grep -q 'Payload/Orvix.app/Info.plist'
-if unzip -l "$IPA" | grep -q '/_CodeSignature/'; then
+# List once into a file: piping unzip into `grep -q` can SIGPIPE unzip and
+# fail the check under pipefail even when the entry exists.
+unzip -Z1 "$IPA" > "$WORK/entries.txt"
+if ! grep -qx 'Payload/Orvix.app/Info.plist' "$WORK/entries.txt"; then
+  echo "IPA is missing Payload/Orvix.app/Info.plist" >&2
+  exit 1
+fi
+if grep -q '/_CodeSignature/' "$WORK/entries.txt"; then
   echo "iOS sideload IPA is unexpectedly signed." >&2
   exit 1
 fi
@@ -46,8 +55,6 @@ print(
 )
 PY
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/orvix-ipa-verify.XXXXXX")"
-trap 'rm -rf "$WORK"' EXIT
 unzip -q "$IPA" 'Payload/Orvix.app/*' -d "$WORK"
 APP="$WORK/Payload/Orvix.app"
 EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")"
