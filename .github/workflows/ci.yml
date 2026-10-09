@@ -63,6 +63,7 @@ jobs:
           bash -n tools/publish_orvix_release.sh
           bash -n tools/prepare_android_native.sh
           bash -n tools/build_ios_ipa.sh
+          bash -n tools/verify_ios_ipa.sh
           bash -n tools/android_install_smoke_test.sh
       - name: Test Android APK installability gate
         run: python3 -m unittest discover -s tools/tests -v
@@ -296,10 +297,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          IPA="$(find . -maxdepth 1 -type f -name 'Orvix-v*-iOS.ipa' -print -quit)"
-          test -n "$IPA"
-          test -s "$IPA"
-          unzip -tq "$IPA"
+          PUBSPEC_VERSION="$(awk '$1 == "version:" {print $2}' pubspec.yaml)"
+          V="${PUBSPEC_VERSION%%+*}"
+          bash tools/verify_ios_ipa.sh "Orvix-v$V-iOS.ipa" "$V" "${PUBSPEC_VERSION#*+}"
       - uses: actions/upload-artifact@v4
         with:
           name: ios-ci-ipa

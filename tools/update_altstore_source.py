@@ -30,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--release-version", required=True)
     parser.add_argument("--release-date", required=True)
     parser.add_argument("--download-url", required=True)
+    parser.add_argument("--build-version")
     parser.add_argument("--output", type=Path)
     return parser.parse_args()
 
@@ -89,13 +90,38 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+RELEASE_VERSION_PATTERN = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?"
+    r"(?:\+[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?$"
+)
+BUILD_VERSION_PATTERN = re.compile(r"^[1-9]\d*$")
+
+
 def ios_marketing_version(release_version: str) -> str:
-    parts = re.findall(r"\d+", release_version)
-    if len(parts) < 3:
+    """Return Apple's three-component CFBundleShortVersionString.
+
+    Prerelease and build suffixes never become extra components:
+    ``0.7.9-beta.64`` and ``0.7.9-beta.64+4209`` both map to ``0.7.9``.
+    Beta iterations are told apart by CFBundleVersion instead.
+    """
+    match = RELEASE_VERSION_PATTERN.fullmatch(release_version.strip())
+    if match is None:
         raise ValueError(
-            f"could not derive iOS marketing version from {release_version!r}"
+            f"could not derive iOS marketing version from {release_version!r}; "
+            "expected Major.Minor.Patch with an optional -prerelease/+build suffix"
         )
-    return ".".join(parts)
+    return ".".join(match.groups())
+
+
+def ios_build_version(build_number: str) -> str:
+    """Validate the app build number used as CFBundleVersion."""
+    value = build_number.strip()
+    if BUILD_VERSION_PATTERN.fullmatch(value) is None:
+        raise ValueError(
+            f"iOS build version must be a positive integer, got {build_number!r}"
+        )
+    return value
 
 
 def validate_date(value: str) -> None:
@@ -159,6 +185,11 @@ def main() -> int:
             f"IPA version {version} does not match expected iOS version "
             f"{expected_ios_version} for release {args.release_version}"
         )
+    build = ios_build_version(build)
+    if args.build_version is not None and build != ios_build_version(args.build_version):
+        raise ValueError(
+            f"IPA build version {build} does not match expected {args.build_version}"
+        )
     validate_date(args.release_date)
     validate_url(args.download_url)
 
@@ -186,6 +217,8 @@ def main() -> int:
     entry = {
         "version": version,
         "buildVersion": build,
+        # Human-facing label; AltStore matches version/buildVersion to the IPA.
+        "marketingVersion": args.release_version,
         "date": args.release_date,
         "localizedDescription": notes,
         "downloadURL": args.download_url,

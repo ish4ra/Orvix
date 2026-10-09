@@ -12,26 +12,34 @@ fi
 
 RELEASE_VERSION="${1:-${PUBSPEC_VERSION%%+*}}"
 BUILD_NUMBER="${PUBSPEC_VERSION#*+}"
-IOS_VERSION="$(python3 - "$RELEASE_VERSION" <<'PY'
-import re
-import sys
-
-parts = re.findall(r"\d+", sys.argv[1])
-if len(parts) < 3:
-    raise SystemExit(f"Could not derive iOS marketing version from {sys.argv[1]!r}")
-print(".".join(parts))
-PY
-)"
 if [[ "$BUILD_NUMBER" == "$PUBSPEC_VERSION" || -z "$BUILD_NUMBER" ]]; then
-  BUILD_NUMBER="1"
+  echo "pubspec.yaml version $PUBSPEC_VERSION has no +BUILD number for CFBundleVersion" >&2
+  exit 1
 fi
 
 if [[ ! "$RELEASE_VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]]; then
   echo "Invalid iOS release version: $RELEASE_VERSION" >&2
   exit 1
 fi
-if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
-  echo "Invalid iOS build number from pubspec.yaml: $BUILD_NUMBER" >&2
+
+# Apple requires CFBundleShortVersionString to be Major.Minor.Patch, so
+# 0.7.9-beta.64 ships as 0.7.9. Beta iterations stay unique through
+# CFBundleVersion, which is the same +BUILD number Android uses.
+read -r IOS_VERSION BUILD_NUMBER < <(
+  python3 - "$RELEASE_VERSION" "$BUILD_NUMBER" "$ROOT/tools" <<'PY'
+import sys
+
+sys.path.insert(0, sys.argv[3])
+from update_altstore_source import ios_build_version, ios_marketing_version
+
+try:
+    print(ios_marketing_version(sys.argv[1]), ios_build_version(sys.argv[2]))
+except ValueError as exc:
+    raise SystemExit(f"error: {exc}")
+PY
+)
+if [[ -z "${IOS_VERSION:-}" || -z "${BUILD_NUMBER:-}" ]]; then
+  echo "Could not derive iOS version/build from $RELEASE_VERSION / $PUBSPEC_VERSION" >&2
   exit 1
 fi
 
@@ -70,6 +78,15 @@ MIN_OS="$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$PLIST")"
 }
 [[ -n "$MIN_OS" ]] || {
   echo "Built iOS app has no MinimumOSVersion" >&2
+  exit 1
+}
+DISPLAY_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$PLIST")"
+[[ "$DISPLAY_NAME" == "Orvix" ]] || {
+  echo "Unexpected iOS display name: $DISPLAY_NAME" >&2
+  exit 1
+}
+/usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' "$PLIST" >/dev/null || {
+  echo "Built iOS app is missing NSCameraUsageDescription for QR scanning" >&2
   exit 1
 }
 
