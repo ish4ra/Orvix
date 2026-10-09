@@ -650,7 +650,10 @@ def apple_swift(
     team: str = "59GAB85EFG",
     authorities: tuple[str, ...] = ios_signing.APPLE_SOFTWARE_SIGNING_CHAIN,
 ) -> str:
-    return codesign_output(identifier or f"com.apple.dt.runtime.{name}", authorities=authorities, team=team)
+    # Observed in the Xcode 16.4 Legacy IPA: libswiftCore.dylib is signed as
+    # com.apple.dt.runtime.swiftCore (no "lib" prefix).
+    default = "com.apple.dt.runtime." + name.removeprefix("lib")
+    return codesign_output(identifier or default, authorities=authorities, team=team)
 
 
 def developer(identifier: str, identity: str, team: str) -> str:
@@ -766,7 +769,7 @@ class SigningPolicyTest(unittest.TestCase):
         path = f"{APP_PATH}/Frameworks/libswiftSomething.dylib"
         self.put(path, macho(minos="7.0"))
         problems = self.problems(
-            {path: developer("com.apple.dt.runtime.libswiftSomething", "Apple Development", "ABCDE12345")}
+            {path: developer("com.apple.dt.runtime.swiftSomething", "Apple Development", "ABCDE12345")}
         )
         self.assertTrue(
             any("libswiftSomething.dylib" in p and "certificate chain" in p for p in problems), problems
@@ -786,7 +789,12 @@ class SigningPolicyTest(unittest.TestCase):
             ),
             "another library's identifier": (
                 SWIFT_CORE,
-                apple_swift("libswiftCore", identifier="com.apple.dt.runtime.libswiftUIKit"),
+                apple_swift("libswiftCore", identifier="com.apple.dt.runtime.swiftUIKit"),
+                "runtime identifier",
+            ),
+            "identifier with lib prefix": (
+                SWIFT_CORE,
+                apple_swift("libswiftCore", identifier="com.apple.dt.runtime.libswiftCore"),
                 "runtime identifier",
             ),
             "partial chain": (
@@ -799,7 +807,7 @@ class SigningPolicyTest(unittest.TestCase):
             "outside Frameworks": (in_plugins, apple_swift("libswiftCore"), "libswift<Name>.dylib"),
             "ad-hoc with a team": (
                 SWIFT_CORE,
-                codesign_output("com.apple.dt.runtime.libswiftCore", adhoc=True, team="59GAB85EFG"),
+                codesign_output("com.apple.dt.runtime.swiftCore", adhoc=True, team="59GAB85EFG"),
                 "ad-hoc",
             ),
         }
@@ -816,6 +824,42 @@ class SigningPolicyTest(unittest.TestCase):
             SWIFT_CORE, apple_swift("libswiftCore"), LEGACY, (self.root / SWIFT_CORE).read_bytes()
         )
         self.assertEqual(result, (ios_signing.APPLE_SWIFT_RUNTIME, None))
+
+    def test_real_legacy_ci_signing_inventory_passes(self):
+        # Exact codesign inventory of the Xcode 16.4 / Flutter 3.32.8 Legacy
+        # IPA from PR #69 CI run 37936894964.
+        swift = (
+            "AVFoundation Accelerate Core CoreAudio CoreData CoreFoundation CoreGraphics "
+            "CoreImage CoreLocation CoreMedia Darwin Dispatch Foundation Metal ObjectiveC "
+            "Photos QuartzCore UIKit os simd"
+        ).split()
+        unsigned = (
+            "Ass Avcodec Avfilter Avformat Avutil DKImagePickerController DKPhotoGallery Dav1d "
+            "Freetype Fribidi Harfbuzz Mbedcrypto Mbedtls Mbedx509 Mpv Png16 SDWebImage SwiftyGif "
+            "Swresample Swscale Uchardet Xml2 app_links file_picker flutter_secure_storage_darwin "
+            "media_kit_libs_ios_video media_kit_video mobile_scanner package_info_plus "
+            "path_provider_foundation shared_preferences_foundation sqflite_darwin url_launcher_ios "
+            "video_player_avfoundation wakelock_plus"
+        ).split()
+        inventory = {
+            APP_PATH: NOT_SIGNED,
+            f"{APP_PATH}/Frameworks/App.framework": adhoc("io.flutter.flutter.app"),
+            f"{APP_PATH}/Frameworks/Flutter.framework": adhoc("io.flutter.flutter"),
+        }
+        inventory.update({f"{APP_PATH}/Frameworks/{name}.framework": NOT_SIGNED for name in unsigned})
+        for name in swift:
+            path = f"{APP_PATH}/Frameworks/libswift{name}.dylib"
+            self.put(path, macho(minos="7.0", sdk="12.2"))
+            inventory[path] = apple_swift(f"libswift{name}")
+            self.assertIn(f"Identifier=com.apple.dt.runtime.swift{name}\n", inventory[path])
+        groups, problems = ios_signing.classify_inventory(inventory, LEGACY, self.root)
+        self.assertEqual(problems, [])
+        self.assertEqual(len(groups[ios_signing.APPLE_SWIFT_RUNTIME]), 20)
+        self.assertEqual(len(groups[ios_signing.ADHOC]), 2)
+        self.assertEqual(len(groups[ios_signing.UNSIGNED]), 36)  # Orvix.app + 35 nested
+        # The same inventory is not acceptable for the Modern build.
+        _, modern_problems = ios_signing.classify_inventory(inventory, MODERN, self.root)
+        self.assertEqual(len(modern_problems), 20)
 
     def test_swift_runtime_must_still_fit_ios_12(self):
         for name, data, reason in (

@@ -133,7 +133,7 @@ applies these rules:
   embeds Apple's Swift runtime back-deployment libraries
   (`Frameworks/libswift*.dylib`) and they keep Apple's own signature. They are
   accepted only at `Payload/Orvix.app/Frameworks/libswift<Name>.dylib` with
-  identifier `com.apple.dt.runtime.libswift<Name>`, the certificate chain
+  identifier `com.apple.dt.runtime.swift<Name>`, the certificate chain
   `Software Signing` → `Apple Code Signing Certification Authority` →
   `Apple Root CA`, team `59GAB85EFG`, and an arm64 iOS slice that fits
   iOS 12.0. Sideload tools re-sign them along with the app. The Modern build

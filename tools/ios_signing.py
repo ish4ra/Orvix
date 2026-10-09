@@ -13,8 +13,9 @@ module decides, one item at a time, whether the signature is acceptable:
 - Legacy only: Swift runtime libraries that Xcode embeds for deployment
   targets below iOS 12.2 keep Apple's own signature. They are accepted only
   at Payload/Orvix.app/Frameworks/libswift<Name>.dylib, with Apple's runtime
-  identifier, Apple's software-signing certificate chain, Apple's team
-  identifier, and an arm64 iOS slice that fits the Legacy target.
+  identifier com.apple.dt.runtime.swift<Name>, Apple's software-signing
+  certificate chain, Apple's team identifier, and an arm64 iOS slice that
+  fits the Legacy target.
 - Anything else, including any other certificate or team, or output that
   cannot be parsed, is rejected.
 """
@@ -45,7 +46,10 @@ APPLE_SOFTWARE_SIGNING_CHAIN = (
     "Apple Root CA",
 )
 APPLE_RUNTIME_TEAM_ID = "59GAB85EFG"
-SWIFT_RUNTIME_PATH = re.compile(rf"^{re.escape(APP)}/Frameworks/(libswift[A-Za-z0-9_]+)\.dylib$")
+SWIFT_RUNTIME_PATH = re.compile(rf"^{re.escape(APP)}/Frameworks/lib(swift[A-Za-z0-9_]+)\.dylib$")
+# Apple's runtime identifier drops the "lib" prefix: libswiftCore.dylib is
+# signed as com.apple.dt.runtime.swiftCore (observed for all 20 libraries).
+SWIFT_RUNTIME_IDENTIFIER = "com.apple.dt.runtime.{}"
 
 # Identities that make Orvix.app a developer- or store-signed app.
 DEVELOPER_IDENTITY = re.compile(
@@ -112,8 +116,12 @@ def _swift_runtime_problem(
         return f"the {profile.name} build never embeds Swift runtime libraries"
     if sig.adhoc:
         return "ad-hoc signed, not Apple-signed"
-    if sig.identifier != f"com.apple.dt.runtime.{match.group(1)}":
-        return f"identifier {sig.identifier!r} is not Apple's runtime identifier for {match.group(1)}"
+    expected_identifier = SWIFT_RUNTIME_IDENTIFIER.format(match.group(1))
+    if sig.identifier != expected_identifier:
+        return (
+            f"identifier {sig.identifier!r} is not Apple's runtime identifier "
+            f"{expected_identifier!r} for lib{match.group(1)}.dylib"
+        )
     if tuple(sig.authorities) != APPLE_SOFTWARE_SIGNING_CHAIN:
         return f"certificate chain {sig.authorities} is not Apple's software-signing chain"
     if sig.team_id != APPLE_RUNTIME_TEAM_ID:
