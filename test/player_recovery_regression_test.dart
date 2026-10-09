@@ -112,7 +112,8 @@ void main() {
     // closes before player push, then reopens from cached results when the
     // player returns. This avoids rendering the player underneath the sheet.
     expect(details, contains('FreeP2pLiveProbeService? probeSession'));
-    expect(details, contains('final probeSession = FreeP2pLiveProbeService('));
+    expect(details, contains('final probeSession = autoProbeSession ??'));
+    expect(details, contains('FreeP2pLiveProbeService('));
     expect(details, contains('parseMediaRuntime(item.runtime)'));
     // The loop lives in runSourcePlaybackLoop so Back during pre-player
     // preparation can also return to the same list.

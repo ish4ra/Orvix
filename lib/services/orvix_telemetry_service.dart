@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'platform_profile.dart';
+import 'telemetry_redaction.dart';
 
 /// Lightweight, privacy-conscious product telemetry for the private Orvix
 /// Control Center.
@@ -20,6 +21,10 @@ import 'platform_profile.dart';
 ///
 /// Telemetry is deliberately isolated from playback/source logic. Failures are
 /// swallowed so analytics can never block startup, playback or navigation.
+///
+/// Error text, stack traces and event property strings pass through
+/// [redactTelemetryText] first, so URLs, tokens, provider keys and email
+/// addresses inside an error never leave the device.
 class OrvixTelemetryService with WidgetsBindingObserver {
   OrvixTelemetryService._();
 
@@ -105,7 +110,7 @@ class OrvixTelemetryService with WidgetsBindingObserver {
       extra: {
         'event_name': eventName,
         'event_category': category,
-        'properties': properties,
+        'properties': redactTelemetryProperties(properties),
       },
     );
   }
@@ -120,9 +125,9 @@ class OrvixTelemetryService with WidgetsBindingObserver {
     await _send(
       type: 'error',
       extra: {
-        'error_type': errorType,
-        'message': message,
-        if (stack != null) 'stack': stack.toString(),
+        'error_type': redactTelemetryText(errorType),
+        'message': redactTelemetryText(message),
+        if (stack != null) 'stack': redactTelemetryText(stack.toString()),
         'fatal': fatal,
       },
     );

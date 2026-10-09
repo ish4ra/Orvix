@@ -46,6 +46,42 @@ class LocalTorrentHealth {
       'peers: $peers, connections: $connections, speed: $speedLabel';
 }
 
+/// Why a Free P2P live probe ended the way it did. Each value is a distinct
+/// failure or success class, so a metadata timeout is never reported as a
+/// confirmed dead swarm and an engine failure is never blamed on the torrent.
+enum LocalTorrentProbeStatus {
+  /// The local torrent engine could not be started. This says nothing about
+  /// the torrent itself.
+  engineUnavailable,
+
+  /// The engine rejected the torrent or the create request failed (bad info
+  /// hash, HTTP error, engine error payload).
+  createError,
+
+  /// Magnet metadata did not resolve within the bounded probe deadline. The
+  /// swarm may still be alive; this is an unresolved state, not proof of zero
+  /// peers.
+  metadataTimeout,
+
+  /// Metadata resolved, but the engine reported no connected peers and no
+  /// media bytes arrived.
+  noPeers,
+
+  /// Peers/connections existed (or a few bytes arrived), but the torrent did
+  /// not serve enough useful media bytes in the sample windows.
+  stalled,
+
+  /// Real media bytes arrived in both sample windows, but measured throughput
+  /// is below what this file needs (or very low when the need is unknown).
+  slow,
+
+  /// Real media bytes arrived in both sample windows at a usable rate.
+  live,
+
+  /// Strong two-window evidence: fast first byte and high throughput.
+  readyNow,
+}
+
 class LocalTorrentProbeResult {
   const LocalTorrentProbeResult({
     required this.playableNow,
@@ -56,6 +92,9 @@ class LocalTorrentProbeResult {
     required this.connections,
     required this.downloadSpeedBytesPerSecond,
     required this.sampleWindowsPassed,
+    this.outcome,
+    this.metadataElapsed,
+    this.discoveredPeers,
   });
 
   final bool playableNow;
@@ -66,6 +105,96 @@ class LocalTorrentProbeResult {
   final int connections;
   final double downloadSpeedBytesPerSecond;
   final int sampleWindowsPassed;
+
+  /// Explicit probe outcome for results that ended before byte sampling
+  /// (engine, create and metadata failures) or that were not sampled at all
+  /// (direct HTTP). Sampled results leave this null and derive [status] from
+  /// the measured evidence.
+  final LocalTorrentProbeStatus? outcome;
+
+  /// Time the engine took to answer `/create` (metadata resolution), or the
+  /// time waited before giving up when metadata timed out.
+  final Duration? metadataElapsed;
+
+  /// Peers the engine had discovered (not necessarily connected) when the
+  /// engine exposes that figure. Null when unknown.
+  final int? discoveredPeers;
+
+  /// Minimum measured throughput for a confirmed-live source to count as more
+  /// than slow when the file's bitrate need is unknown.
+  static const double slowSpeedFloorBytesPerSecond = 300 * 1024;
+
+  static const _preSamplingFailures = <LocalTorrentProbeStatus>{
+    LocalTorrentProbeStatus.engineUnavailable,
+    LocalTorrentProbeStatus.createError,
+    LocalTorrentProbeStatus.metadataTimeout,
+  };
+
+  /// Whether magnet metadata resolved during this probe.
+  bool get metadataResolved =>
+      outcome == null || !_preSamplingFailures.contains(outcome);
+
+  /// Probe classification from the evidence alone. [statusFor] additionally
+  /// weighs measured throughput against the selected file's bitrate need.
+  LocalTorrentProbeStatus get status {
+    final explicit = outcome;
+    if (explicit != null) return explicit;
+    if (playableNow) {
+      if (readyNow) return LocalTorrentProbeStatus.readyNow;
+      if (downloadSpeedBytesPerSecond < slowSpeedFloorBytesPerSecond) {
+        return LocalTorrentProbeStatus.slow;
+      }
+      return LocalTorrentProbeStatus.live;
+    }
+    if (bytesReceived > 0 || peers > 0 || connections > 0) {
+      return LocalTorrentProbeStatus.stalled;
+    }
+    return LocalTorrentProbeStatus.noPeers;
+  }
+
+  /// Like [status], but a confirmed-live source whose measured throughput
+  /// cannot sustain this file's estimated bitrate is classified as slow.
+  LocalTorrentProbeStatus statusFor(
+    SourceResult source, {
+    Duration? mediaDuration,
+  }) {
+    final base = status;
+    if (outcome != null ||
+        (base != LocalTorrentProbeStatus.live &&
+            base != LocalTorrentProbeStatus.readyNow)) {
+      return base;
+    }
+    final headroom = headroomFor(source, mediaDuration: mediaDuration);
+    if (headroom != null && headroom < 1.0) {
+      return LocalTorrentProbeStatus.slow;
+    }
+    return base;
+  }
+
+  /// Measured throughput divided by the file's estimated playback need, or
+  /// null when the size, runtime or speed is unknown.
+  double? headroomFor(
+    SourceResult source, {
+    Duration? mediaDuration,
+  }) {
+    final bytes = source.sizeBytes;
+    final duration = mediaDuration;
+    if (bytes == null ||
+        bytes <= 0 ||
+        duration == null ||
+        duration.inSeconds <= 0 ||
+        downloadSpeedBytesPerSecond <= 0) {
+      return null;
+    }
+    // Leave room for container overhead and bitrate spikes instead of treating
+    // the file's mathematical average as the exact sustained requirement.
+    final required = bytes / duration.inSeconds * 1.25;
+    if (required <= 0) return null;
+    return downloadSpeedBytesPerSecond / required;
+  }
+
+  /// True when this probe proved the torrent can deliver media bytes now.
+  bool get confirmedLive => playableNow && metadataResolved;
 
   String get speedLabel {
     final speed = downloadSpeedBytesPerSecond;
@@ -84,16 +213,39 @@ class LocalTorrentProbeResult {
         downloadSpeedBytesPerSecond >= 1500 * 1024;
   }
 
-  String get label {
-    if (!playableNow) return 'No live data';
-    if (readyNow) return 'Ready now';
-    if (sampleWindowsPassed >= 2 &&
-        downloadSpeedBytesPerSecond >= 512 * 1024) {
-      return 'Fast swarm';
-    }
-    if (bytesReceived > 0) return 'Live swarm';
-    return 'Slow';
+  /// Short user-facing health label for this probe.
+  String get label => labelForStatus(status);
+
+  static String labelForStatus(LocalTorrentProbeStatus status) {
+    return switch (status) {
+      LocalTorrentProbeStatus.readyNow => 'READY NOW',
+      LocalTorrentProbeStatus.live => 'LIVE',
+      LocalTorrentProbeStatus.slow => 'SLOW',
+      LocalTorrentProbeStatus.stalled => 'STALLED',
+      LocalTorrentProbeStatus.noPeers => 'NO PEERS',
+      LocalTorrentProbeStatus.metadataTimeout => 'METADATA SLOW',
+      LocalTorrentProbeStatus.createError => 'SOURCE ERROR',
+      LocalTorrentProbeStatus.engineUnavailable => 'ENGINE ERROR',
+    };
   }
+
+  /// Non-sensitive structured evidence for diagnostics. It never contains the
+  /// magnet, trackers, titles or any credential.
+  Map<String, Object?> toDiagnostics() => <String, Object?>{
+        'status': status.name,
+        'metadataResolved': metadataResolved,
+        if (metadataElapsed != null)
+          'metadataMs': metadataElapsed!.inMilliseconds,
+        if (discoveredPeers != null) 'discoveredPeers': discoveredPeers,
+        'livePeers': peers,
+        'liveConnections': connections,
+        if (firstByteLatency != null)
+          'firstByteMs': firstByteLatency!.inMilliseconds,
+        'bytes': bytesReceived,
+        'speedBps': downloadSpeedBytesPerSecond.round(),
+        'windows': sampleWindowsPassed,
+        'sampleMs': elapsed.inMilliseconds,
+      };
 
   int get score {
     if (!playableNow) return -1000000000;
@@ -157,6 +309,23 @@ class LocalTorrentProbeResult {
     }
     return value;
   }
+}
+
+class _EngineSwarmStats {
+  const _EngineSwarmStats({
+    required this.connectedPeers,
+    required this.connections,
+    required this.discoveredPeers,
+  });
+
+  final int connectedPeers;
+  final int connections;
+  final int? discoveredPeers;
+
+  /// True only when the engine explicitly reports a discovered-peer count of
+  /// zero and no connections. A missing discovery figure is not evidence.
+  bool get reportsEmptySwarm =>
+      discoveredPeers == 0 && connectedPeers == 0 && connections == 0;
 }
 
 class LocalTorrentService {
@@ -329,8 +498,8 @@ class LocalTorrentService {
     try {
       response = await _createTorrent(body);
     } on TimeoutException {
-      throw const LocalTorrentException(
-        'The local torrent engine timed out while resolving magnet metadata.',
+      throw LocalTorrentException(
+        _metadataTimeoutMessage(await _engineSwarmStats(infoHash)),
       );
     } catch (error) {
       throw LocalTorrentException(
@@ -763,11 +932,57 @@ class LocalTorrentService {
     }
   }
 
+  /// Playback metadata-timeout message that states what the engine actually
+  /// saw, so a report can tell a dead swarm from peers that never delivered
+  /// metadata or an engine that exposed no statistics. It keeps the "timed
+  /// out" wording that playback history uses to classify stalled sources.
+  @visibleForTesting
+  static String metadataTimeoutMessageFor({
+    required bool statsAvailable,
+    int connectedPeers = 0,
+    int? discoveredPeers,
+  }) {
+    const prefix =
+        'The local torrent engine timed out while resolving magnet metadata';
+    if (!statsAvailable) {
+      return '$prefix. The engine reported no swarm statistics, so the '
+          'torrent may be dead or unreachable from this network.';
+    }
+    if ((discoveredPeers ?? 0) == 0 && connectedPeers == 0) {
+      return '$prefix: no peers were found for this torrent.';
+    }
+    final found = discoveredPeers == null ? '' : '$discoveredPeers found, ';
+    return '$prefix: peers ${found}$connectedPeers connected, but none '
+        'delivered the torrent metadata.';
+  }
+
+  String _metadataTimeoutMessage(_EngineSwarmStats? swarm) =>
+      metadataTimeoutMessageFor(
+        statsAvailable: swarm != null,
+        connectedPeers: swarm?.connectedPeers ?? 0,
+        discoveredPeers: swarm?.discoveredPeers,
+      );
+
+  /// First metadata deadline for a live probe. Healthy swarms with reachable
+  /// trackers usually answer well inside this window.
+  static const Duration probeMetadataFastDeadline =
+      Duration(milliseconds: 3000);
+
+  /// Total metadata deadline for a probe whose engine did not explicitly
+  /// report an empty swarm at [probeMetadataFastDeadline]. DHT/PeX discovery
+  /// and ut_metadata exchange can legitimately take several seconds, so a
+  /// promising candidate keeps the same in-flight request instead of being
+  /// recreated or abandoned.
+  static const Duration probeMetadataExtendedDeadline =
+      Duration(milliseconds: 7000);
+
   Future<LocalTorrentProbeResult> probe(
     SourceResult source, {
     Duration timeout = const Duration(milliseconds: 4800),
     int windowBytes = 512 * 1024,
     bool retainSession = false,
+    Duration metadataFastDeadline = probeMetadataFastDeadline,
+    Duration metadataExtendedDeadline = probeMetadataExtendedDeadline,
   }) async {
     if (!source.isMagnet) {
       return const LocalTorrentProbeResult(
@@ -779,38 +994,41 @@ class LocalTorrentService {
         connections: 0,
         downloadSpeedBytesPerSecond: 0,
         sampleWindowsPassed: 2,
+        outcome: LocalTorrentProbeStatus.live,
+      );
+    }
+
+    LocalTorrentProbeResult failed(
+      LocalTorrentProbeStatus outcome, {
+      Duration? metadataElapsed,
+      _EngineSwarmStats? swarm,
+    }) {
+      return LocalTorrentProbeResult(
+        playableNow: false,
+        bytesReceived: 0,
+        elapsed: Duration.zero,
+        firstByteLatency: null,
+        peers: swarm?.connectedPeers ?? 0,
+        connections: swarm?.connections ?? 0,
+        downloadSpeedBytesPerSecond: 0,
+        sampleWindowsPassed: 0,
+        outcome: outcome,
+        metadataElapsed: metadataElapsed,
+        discoveredPeers: swarm?.discoveredPeers,
       );
     }
 
     final infoHash = _extractInfoHash(source.resource);
     if (infoHash == null) {
-      return LocalTorrentProbeResult(
-        playableNow: false,
-        bytesReceived: 0,
-        elapsed: timeout,
-        firstByteLatency: null,
-        peers: 0,
-        connections: 0,
-        downloadSpeedBytesPerSecond: 0,
-        sampleWindowsPassed: 0,
-      );
+      return failed(LocalTorrentProbeStatus.createError);
     }
 
     try {
       await ensureRunning();
     } catch (_) {
-      // An engine that cannot start is failed live-health evidence for this
-      // candidate only; playback resolve() still surfaces the real error.
-      return LocalTorrentProbeResult(
-        playableNow: false,
-        bytesReceived: 0,
-        elapsed: timeout,
-        firstByteLatency: null,
-        peers: 0,
-        connections: 0,
-        downloadSpeedBytesPerSecond: 0,
-        sampleWindowsPassed: 0,
-      );
+      // An engine that cannot start says nothing about this torrent's swarm.
+      // Playback resolve() still surfaces the real engine error.
+      return failed(LocalTorrentProbeStatus.engineUnavailable);
     }
     final engineMagnet = normalizeMagnetForEngine(source.resource);
     final trackerUrls = trackerUrlsForMagnet(engineMagnet);
@@ -830,27 +1048,53 @@ class LocalTorrentService {
 
     var retainedProbe = false;
     try {
+      final metadataWatch = Stopwatch()..start();
+      final createFuture = _createTorrent(body);
+      // The same request may be awaited twice below and may finish after the
+      // probe gave up on it; its late result or error is intentionally unused.
+      createFuture.ignore();
       http.Response? response;
+      var metadataTimedOut = false;
       try {
-        response = await _createTorrent(body).timeout(
-          const Duration(milliseconds: 1800),
-        );
+        response = await createFuture.timeout(metadataFastDeadline);
+      } on TimeoutException {
+        final early = await _engineSwarmStats(infoHash);
+        final remaining = metadataExtendedDeadline - metadataWatch.elapsed;
+        // Give slow-but-promising metadata more time on the same in-flight
+        // request. Stop early only when the engine explicitly reports that it
+        // has found no peers at all.
+        if (early?.reportsEmptySwarm != true && remaining > Duration.zero) {
+          try {
+            response = await createFuture.timeout(remaining);
+          } on TimeoutException {
+            metadataTimedOut = true;
+          } catch (_) {
+            response = null;
+          }
+        } else {
+          metadataTimedOut = true;
+        }
       } catch (_) {
-        // Slow metadata or an engine error is failed live-health evidence for
-        // this candidate only; it must not abort probing the other sources.
+        // A transport/engine error for this candidate must not abort probing
+        // the other sources.
+        response = null;
+      }
+      metadataWatch.stop();
+
+      if (metadataTimedOut) {
+        final swarm = await _engineSwarmStats(infoHash);
+        return failed(
+          LocalTorrentProbeStatus.metadataTimeout,
+          metadataElapsed: metadataWatch.elapsed,
+          swarm: swarm,
+        );
       }
       if (response == null ||
           response.statusCode < 200 ||
           response.statusCode >= 300) {
-        return LocalTorrentProbeResult(
-          playableNow: false,
-          bytesReceived: 0,
-          elapsed: timeout,
-          firstByteLatency: null,
-          peers: 0,
-          connections: 0,
-          downloadSpeedBytesPerSecond: 0,
-          sampleWindowsPassed: 0,
+        return failed(
+          LocalTorrentProbeStatus.createError,
+          metadataElapsed: metadataWatch.elapsed,
         );
       }
 
@@ -859,6 +1103,13 @@ class LocalTorrentService {
         final decoded = jsonDecode(response.body);
         if (decoded is Map<String, dynamic>) payload = decoded;
       } catch (_) {}
+      final engineError = payload?['error']?.toString().trim();
+      if (engineError != null && engineError.isNotEmpty) {
+        return failed(
+          LocalTorrentProbeStatus.createError,
+          metadataElapsed: metadataWatch.elapsed,
+        );
+      }
 
       final fileIndex = source.torrentFileIndex ??
           _asInt(payload?['guessedFileIdx']) ??
@@ -886,6 +1137,7 @@ class LocalTorrentService {
             if (chunk.isEmpty) continue;
             firstByte ??= watch.elapsed;
             received += chunk.length;
+            bytes += chunk.length;
             if (received >= length) break;
           }
         } finally {
@@ -897,7 +1149,6 @@ class LocalTorrentService {
       try {
         await (() async {
           final first = await readWindow(0, windowBytes);
-          bytes += first;
           if (first >= 256 * 1024) sampleWindowsPassed++;
 
           // A tiny burst at byte zero can be cached while the rest of the
@@ -911,14 +1162,14 @@ class LocalTorrentService {
                 ? preferredOffset
                 : maxSafeOffset.clamp(windowBytes, preferredOffset).toInt();
             final second = await readWindow(secondOffset, windowBytes);
-            bytes += second;
             if (second >= 256 * 1024) sampleWindowsPassed++;
           } else if (first >= 256 * 1024) {
             sampleWindowsPassed = 2;
           }
         })().timeout(timeout);
       } catch (_) {
-        // Timeout/stall is live health evidence and lowers this source.
+        // Timeout/stall is live health evidence and lowers this source. Bytes
+        // that did arrive before the stall are kept as partial evidence.
       } finally {
         watch.stop();
       }
@@ -929,15 +1180,19 @@ class LocalTorrentService {
       final measuredSpeed = bytes / elapsedSeconds;
       final engineSpeed = health?.downloadSpeedBytesPerSecond ?? 0;
       final speed = measuredSpeed > engineSpeed ? measuredSpeed : engineSpeed;
+      final playable = sampleWindowsPassed >= 2 && bytes >= 512 * 1024;
 
-      if (retainSession) {
+      // Only a source that proved it can deliver media is worth keeping warm
+      // for a playback handoff. Failed candidates are detached immediately so
+      // probing never accumulates idle torrent sessions.
+      if (retainSession && playable) {
         _retainedProbeInfoHashes.add(infoHash);
         retainedProbe = true;
         _scheduleProbeCleanup();
       }
 
       return LocalTorrentProbeResult(
-        playableNow: sampleWindowsPassed >= 2 && bytes >= 512 * 1024,
+        playableNow: playable,
         bytesReceived: bytes,
         elapsed: watch.elapsed,
         firstByteLatency: firstByte,
@@ -945,12 +1200,49 @@ class LocalTorrentService {
         connections: health?.connections ?? 0,
         downloadSpeedBytesPerSecond: speed,
         sampleWindowsPassed: sampleWindowsPassed,
+        metadataElapsed: metadataWatch.elapsed,
       );
     } finally {
       // Never detach a torrent that is currently being used by the player.
       if (!retainedProbe && _currentInfoHash != infoHash) {
         await _removeEngine(infoHash);
       }
+    }
+  }
+
+  /// Torrent-level engine statistics, available on engines that expose
+  /// `/{infoHash}/stats.json` before metadata resolves. Best effort: returns
+  /// null when the route is missing or the engine does not answer quickly.
+  Future<_EngineSwarmStats?> _engineSwarmStats(String infoHash) async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse('$baseUrl/$infoHash/stats.json'),
+            headers: const {'Accept': 'application/json'},
+          )
+          .timeout(const Duration(milliseconds: 1500));
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map) return null;
+      final connected = _asInt(decoded['peers']) ??
+          _asInt(decoded['numPeers']) ??
+          _asInt(decoded['connectedPeers']);
+      final connections = _asInt(decoded['swarmConnections']) ??
+          _asInt(decoded['connections']);
+      final discovered = _asInt(decoded['unique']) ??
+          _asInt(decoded['swarmSize']) ??
+          _asInt(decoded['discoveredPeers']) ??
+          _asInt(decoded['peersDiscovered']);
+      if (connected == null && connections == null && discovered == null) {
+        return null;
+      }
+      return _EngineSwarmStats(
+        connectedPeers: connected ?? 0,
+        connections: connections ?? connected ?? 0,
+        discoveredPeers: discovered,
+      );
+    } catch (_) {
+      return null;
     }
   }
 

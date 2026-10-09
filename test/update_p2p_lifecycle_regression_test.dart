@@ -112,7 +112,7 @@ void main() {
     expect(torrent, contains('sampleWindowsPassed'));
     expect(torrent, contains('preferredOffset = 8 * 1024 * 1024'));
     expect(live, contains('probeTopCandidates'));
-    expect(live, contains('_probeCandidates'));
+    expect(live, contains('_selectCandidates'));
     expect(live, contains('probeBestCandidate'));
     expect(live, contains('retainSession: true'));
     expect(torrent, contains('scoreFor('));

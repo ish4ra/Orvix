@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { redactProperties, redactText } from "./redact.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -20,6 +21,11 @@ function text(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed ? trimmed.slice(0, max) : null;
+}
+
+// Redacts before truncating, so a cut cannot leave part of a secret behind.
+function redactedText(value: unknown, max: number): string | null {
+  return text(typeof value === "string" ? redactText(value) : null, max);
 }
 
 function countryHeader(req: Request): string | null {
@@ -221,15 +227,16 @@ Deno.serve(async (req: Request) => {
   }
 
   if (type === "error") {
-    const errorType = text(body.error_type, 120) ?? "unknown";
-    const message = text(body.message, 1200) ?? "Unknown error";
+    // Older app versions send error text unredacted.
+    const errorType = redactedText(body.error_type, 120) ?? "unknown";
+    const message = redactedText(body.message, 1200) ?? "Unknown error";
     const { error } = await db.from("orvix_analytics_errors").insert({
       installation_id: installationId,
       session_id: sessionId,
       user_id: userId,
       error_type: errorType,
       message,
-      stack: text(body.stack, 6000),
+      stack: redactedText(body.stack, 6000),
       fatal: body.fatal === true,
       platform,
       app_version: appVersion,
@@ -243,7 +250,7 @@ Deno.serve(async (req: Request) => {
       user_id: userId,
       event_name: eventName,
       event_category: text(body.event_category, 80) ?? "app",
-      properties: safeProperties(body.properties),
+      properties: redactProperties(safeProperties(body.properties)),
     });
     if (error) console.error("telemetry event insert failed", error);
   }
