@@ -28,6 +28,9 @@ class IosProfile:
     # None means "the stable Flutter the rest of CI uses".
     flutter_version: str | None = None
     xcode_version: str | None = None
+    # Xcode embeds Apple-signed libswift*.dylib back-deployment copies only
+    # for deployment targets below iOS 12.2, i.e. only in the Legacy build.
+    allows_embedded_swift_runtime: bool = False
 
     def ipa_filename(self, release_version: str) -> str:
         version = release_version.strip()
@@ -52,6 +55,7 @@ LEGACY = IosProfile(
     title="Build iOS Legacy sideload IPA",
     flutter_version="3.32.8",
     xcode_version="16.4",
+    allows_embedded_swift_runtime=True,
 )
 
 PROFILES = {profile.name: profile for profile in (MODERN, LEGACY)}

@@ -21,6 +21,7 @@ sys.path.insert(0, str(TOOLS))
 
 import ios_ipa_checks  # noqa: E402
 import ios_macho  # noqa: E402
+import ios_signing  # noqa: E402
 import update_altstore_source  # noqa: E402
 from ios_profiles import LEGACY, MODERN, PROFILES, get_profile  # noqa: E402
 
@@ -605,10 +606,275 @@ class WorkflowTest(unittest.TestCase):
 
     def test_quality_job_checks_new_helpers(self):
         quality = job_block(self.ci, "quality")
-        for helper in ("ios_ipa_checks.py", "ios_macho.py", "ios_profiles.py"):
+        for helper in ("ios_ipa_checks.py", "ios_macho.py", "ios_profiles.py", "ios_signing.py"):
             self.assertIn(f"tools/{helper}", quality)
         for script in ("ios_ipa_common.sh", "build_ios_legacy_ipa.sh", "verify_ios_legacy_ipa.sh"):
             self.assertIn(f"bash -n tools/{script}", quality)
+
+
+# --- code-signing policy -------------------------------------------------------
+
+APP_PATH = "Payload/Orvix.app"
+NOT_SIGNED = "/tmp/x: code object is not signed at all\n"
+
+
+def codesign_output(
+    identifier: str,
+    *,
+    authorities: tuple[str, ...] = (),
+    team: str = "not set",
+    adhoc: bool = False,
+    fmt: str = "Mach-O thin (arm64)",
+) -> str:
+    flags = "0x2(adhoc)" if adhoc else "0x0(none)"
+    lines = [
+        "Executable=/tmp/x",
+        f"Identifier={identifier}",
+        f"Format={fmt}",
+        f"CodeDirectory v=20400 size=1234 flags={flags} hashes=30+7 location=embedded",
+        "Signature=adhoc" if adhoc else "Signature size=4797",
+    ]
+    lines += [f"Authority={authority}" for authority in authorities]
+    lines += [f"TeamIdentifier={team}", "Sealed Resources=none", "Internal requirements count=1 size=96"]
+    return "\n".join(lines) + "\n"
+
+
+def adhoc(identifier: str) -> str:
+    return codesign_output(identifier, adhoc=True, fmt="bundle with Mach-O thin (arm64)")
+
+
+def apple_swift(
+    name: str,
+    *,
+    identifier: str | None = None,
+    team: str = "59GAB85EFG",
+    authorities: tuple[str, ...] = ios_signing.APPLE_SOFTWARE_SIGNING_CHAIN,
+) -> str:
+    return codesign_output(identifier or f"com.apple.dt.runtime.{name}", authorities=authorities, team=team)
+
+
+def developer(identifier: str, identity: str, team: str) -> str:
+    return codesign_output(
+        identifier,
+        authorities=(
+            f"{identity}: Some Developer ({team})",
+            "Apple Worldwide Developer Relations Certification Authority",
+            "Apple Root CA",
+        ),
+        team=team,
+    )
+
+
+SWIFT_CORE = f"{APP_PATH}/Frameworks/libswiftCore.dylib"
+SWIFT_ACCELERATE = f"{APP_PATH}/Frameworks/libswiftAccelerate.dylib"
+FLUTTER_ITEMS = {
+    f"{APP_PATH}/Frameworks/App.framework": adhoc("io.flutter.flutter.app"),
+    f"{APP_PATH}/Frameworks/Flutter.framework": adhoc("io.flutter.flutter"),
+    f"{APP_PATH}/Frameworks/Mpv.framework": NOT_SIGNED,
+}
+
+
+class SigningPolicyTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def put(self, path: str, data: bytes) -> None:
+        target = self.root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+    def problems(self, items: dict, profile=LEGACY) -> list[str]:
+        inventory = {APP_PATH: NOT_SIGNED, **items}
+        return ios_signing.classify_inventory(inventory, profile, self.root)[1]
+
+    # 1
+    def test_unsigned_app_with_flutter_adhoc_frameworks_passes(self):
+        for profile in (MODERN, LEGACY):
+            with self.subTest(profile=profile.name):
+                self.assertEqual(self.problems(FLUTTER_ITEMS, profile), [])
+
+    # 2
+    def test_unsigned_app_with_apple_swift_runtime_passes_legacy(self):
+        for path in (SWIFT_CORE, SWIFT_ACCELERATE):
+            self.put(path, macho(minos="7.0", sdk="12.2"))
+        inventory = {
+            APP_PATH: NOT_SIGNED,
+            **FLUTTER_ITEMS,
+            SWIFT_CORE: apple_swift("libswiftCore"),
+            SWIFT_ACCELERATE: apple_swift("libswiftAccelerate"),
+        }
+        groups, problems = ios_signing.classify_inventory(inventory, LEGACY, self.root)
+        self.assertEqual(problems, [])
+        self.assertEqual(groups[ios_signing.APPLE_SWIFT_RUNTIME], [SWIFT_ACCELERATE, SWIFT_CORE])
+        self.assertIn(APP_PATH, groups[ios_signing.UNSIGNED])
+
+    def test_modern_does_not_accept_embedded_swift_runtime(self):
+        self.put(SWIFT_CORE, macho(minos="7.0"))
+        problems = self.problems({SWIFT_CORE: apple_swift("libswiftCore")}, MODERN)
+        self.assertTrue(any("modern build never embeds Swift runtime" in p for p in problems), problems)
+
+    # 3, 4
+    def test_signed_app_is_rejected(self):
+        app_store_chain = (
+            "Apple iPhone OS Application Signing",
+            "Apple iPhone Certification Authority",
+            "Apple Root CA",
+        )
+        for name, output in (
+            ("Apple Development", developer("com.orvix.orvix", "Apple Development", "ABCDE12345")),
+            ("Apple Distribution", developer("com.orvix.orvix", "Apple Distribution", "ABCDE12345")),
+            ("iPhone Distribution", developer("com.orvix.orvix", "iPhone Distribution", "ABCDE12345")),
+            ("App Store", codesign_output("com.orvix.orvix", authorities=app_store_chain, team="ABCDE12345")),
+            ("ad-hoc", adhoc("com.orvix.orvix")),
+            ("Apple runtime chain", apple_swift("libswiftCore", identifier="com.orvix.orvix")),
+        ):
+            for profile in (MODERN, LEGACY):
+                with self.subTest(identity=name, profile=profile.name):
+                    category, problem = ios_signing.classify(APP_PATH, output, profile)
+                    self.assertEqual(category, ios_signing.REJECTED)
+                    self.assertIn("Payload/Orvix.app is code signed", problem)
+        _, problem = ios_signing.classify(
+            APP_PATH, developer("com.orvix.orvix", "Apple Distribution", "ABCDE12345"), LEGACY
+        )
+        self.assertIn("'Apple Distribution: Some Developer (ABCDE12345)'", problem)
+
+    # 5
+    def test_embedded_provisioning_profile_is_rejected(self):
+        problems = ios_ipa_checks.check_layout(
+            [f"{APP_PATH}/Info.plist", f"{APP_PATH}/embedded.mobileprovision"]
+        )
+        self.assertTrue(any("provisioning profile" in p for p in problems), problems)
+
+    # 6
+    def test_third_party_team_on_nested_framework_is_rejected(self):
+        framework = f"{APP_PATH}/Frameworks/SDWebImage.framework"
+        for profile in (MODERN, LEGACY):
+            with self.subTest(profile=profile.name):
+                problems = self.problems(
+                    {framework: developer("com.sdwebimage", "Apple Development", "ZZZZZ99999")}, profile
+                )
+                self.assertTrue(
+                    any("SDWebImage.framework is signed with a certificate" in p for p in problems), problems
+                )
+
+    # 7
+    def test_developer_signed_dylib_named_like_swift_runtime_is_rejected(self):
+        path = f"{APP_PATH}/Frameworks/libswiftSomething.dylib"
+        self.put(path, macho(minos="7.0"))
+        problems = self.problems(
+            {path: developer("com.apple.dt.runtime.libswiftSomething", "Apple Development", "ABCDE12345")}
+        )
+        self.assertTrue(
+            any("libswiftSomething.dylib" in p and "certificate chain" in p for p in problems), problems
+        )
+
+    def test_swift_runtime_rule_requires_every_apple_property(self):
+        other_name = f"{APP_PATH}/Frameworks/libfoo.dylib"
+        in_framework = f"{APP_PATH}/Frameworks/Plugin.framework/libswiftCore.dylib"
+        in_plugins = f"{APP_PATH}/PlugIns/libswiftCore.dylib"
+        for path in (SWIFT_CORE, other_name, in_framework, in_plugins):
+            self.put(path, macho(minos="7.0"))
+        cases = {
+            "wrong team": (SWIFT_CORE, apple_swift("libswiftCore", team="ABCDE12345"), "runtime team"),
+            "no team": (SWIFT_CORE, apple_swift("libswiftCore", team="not set"), "runtime team"),
+            "wrong identifier": (
+                SWIFT_CORE, apple_swift("libswiftCore", identifier="com.example.libswiftCore"), "runtime identifier"
+            ),
+            "another library's identifier": (
+                SWIFT_CORE,
+                apple_swift("libswiftCore", identifier="com.apple.dt.runtime.libswiftUIKit"),
+                "runtime identifier",
+            ),
+            "partial chain": (
+                SWIFT_CORE,
+                apple_swift("libswiftCore", authorities=("Software Signing", "Apple Root CA")),
+                "certificate chain",
+            ),
+            "not a Swift runtime name": (other_name, apple_swift("libfoo"), "libswift<Name>.dylib"),
+            "inside a framework": (in_framework, apple_swift("libswiftCore"), "libswift<Name>.dylib"),
+            "outside Frameworks": (in_plugins, apple_swift("libswiftCore"), "libswift<Name>.dylib"),
+            "ad-hoc with a team": (
+                SWIFT_CORE,
+                codesign_output("com.apple.dt.runtime.libswiftCore", adhoc=True, team="59GAB85EFG"),
+                "ad-hoc",
+            ),
+        }
+        for name, (path, output, reason) in cases.items():
+            with self.subTest(case=name):
+                category, problem = ios_signing.classify(path, output, LEGACY, (self.root / path).read_bytes())
+                self.assertEqual(category, ios_signing.REJECTED)
+                self.assertIn(reason, problem)
+
+    # 8
+    def test_expected_apple_swift_runtime_passes(self):
+        self.put(SWIFT_CORE, macho(minos="7.0", sdk="12.2"))
+        result = ios_signing.classify(
+            SWIFT_CORE, apple_swift("libswiftCore"), LEGACY, (self.root / SWIFT_CORE).read_bytes()
+        )
+        self.assertEqual(result, (ios_signing.APPLE_SWIFT_RUNTIME, None))
+
+    def test_swift_runtime_must_still_fit_ios_12(self):
+        for name, data, reason in (
+            ("ios 13", macho(minos="13.0"), "requires iOS 13.0"),
+            ("simulator", macho(platform=7, minos="7.0"), "ios-simulator"),
+            ("no arm64", macho(cputype=CPU_ARMV7, minos="7.0"), "no arm64"),
+        ):
+            with self.subTest(case=name):
+                category, problem = ios_signing.classify(SWIFT_CORE, apple_swift("libswiftCore"), LEGACY, data)
+                self.assertEqual(category, ios_signing.REJECTED)
+                self.assertIn(reason, problem)
+        _, problem = ios_signing.classify(SWIFT_CORE, apple_swift("libswiftCore"), LEGACY, None)
+        self.assertIn("deployment target cannot be checked", problem)
+
+    def test_unclassifiable_signature_is_rejected(self):
+        for output in ("", "codesign: unexpected output\n", "Format=Mach-O thin (arm64)\n"):
+            with self.subTest(output=output):
+                category, problem = ios_signing.classify(f"{APP_PATH}/Frameworks/X.framework", output, LEGACY)
+                self.assertEqual(category, ios_signing.REJECTED)
+                self.assertIn("cannot be classified", problem)
+
+    def test_app_must_be_inspected(self):
+        _, problems = ios_signing.classify_inventory(FLUTTER_ITEMS, LEGACY, self.root)
+        self.assertIn("Payload/Orvix.app was not inspected", problems)
+
+    # 9, 10
+    def test_legacy_ipa_with_ios13_swift_dylib_fails_the_mach_o_gate(self):
+        ipa = write_ipa(self.root, LEGACY, binaries={
+            "Runner": macho(minos="12.0", filetype=MH_EXECUTE),
+            "Frameworks/libswiftCore.dylib": macho(minos="13.0"),
+        })
+        problems = run_checks(ipa, LEGACY)
+        self.assertTrue(any("libswiftCore.dylib [arm64]: requires iOS 13.0" in p for p in problems), problems)
+
+    def test_signable_items_cover_app_bundles_and_dylibs(self):
+        for path in (
+            f"{APP_PATH}/Runner",
+            f"{APP_PATH}/Frameworks/Flutter.framework/Flutter",
+            f"{APP_PATH}/Frameworks/Flutter.framework/inner.dylib",
+            f"{APP_PATH}/Frameworks/libswiftCore.dylib",
+            f"{APP_PATH}/PlugIns/Share.appex/Share",
+        ):
+            self.put(path, b"x")
+        self.assertEqual(
+            ios_signing.signable_items(self.root),
+            [
+                APP_PATH,
+                f"{APP_PATH}/Frameworks/Flutter.framework",
+                f"{APP_PATH}/Frameworks/libswiftCore.dylib",
+                f"{APP_PATH}/PlugIns/Share.appex",
+            ],
+        )
+
+    def test_verifier_delegates_signing_to_the_policy(self):
+        verifier = read("tools/verify_ios_ipa.sh")
+        self.assertIn('python3 "$ROOT/tools/ios_signing.py" --profile "$PROFILE" "$WORK"', verifier)
+        self.assertIn("embedded\\.mobileprovision", verifier)
+        self.assertTrue(LEGACY.allows_embedded_swift_runtime)
+        self.assertFalse(MODERN.allows_embedded_swift_runtime)
 
 
 if __name__ == "__main__":

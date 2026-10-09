@@ -59,34 +59,14 @@ unzip -q "$IPA" -d "$WORK"
 APP="$WORK/Payload/Orvix.app"
 
 if command -v codesign >/dev/null 2>&1; then
-  # Orvix.app must be unsigned. Nested bundles may keep the ad-hoc
-  # signatures Flutter's toolchain gives them (App.framework,
-  # Flutter.framework, objective_c.framework), but nothing may be signed
-  # with a certificate or Apple team identity.
-  UNSIGNED_NESTED=0
-  ADHOC_NESTED=""
-  while IFS= read -r bundle; do
-    name="${bundle#"$WORK/"}"
-    details="$(codesign -dv --verbose=2 "$bundle" 2>&1 || true)"
-    if grep -q 'code object is not signed at all' <<< "$details"; then
-      [[ "$bundle" == "$APP" ]] || UNSIGNED_NESTED=$((UNSIGNED_NESTED + 1))
-      continue
-    fi
-    [[ "$bundle" != "$APP" ]] || fail "Payload/Orvix.app is code signed; the sideload IPA must ship it unsigned."
-    if grep -q '^Authority=' <<< "$details" \
-      || ! grep -qx 'Signature=adhoc' <<< "$details" \
-      || ! grep -qx 'TeamIdentifier=not set' <<< "$details"; then
-      fail "$name is signed with a certificate or team identity: $(grep -E '^(Authority|TeamIdentifier|Signature)=' <<< "$details" | tr '\n' ' ')"
-    fi
-    ADHOC_NESTED+="${name#Payload/Orvix.app/}"$'\n'
-  done < <(
-    echo "$APP"
-    find "$APP" -mindepth 1 \( -name '*.framework' -o -name '*.appex' -o -name '*.dylib' \) -prune -print | sort
-  )
-  notice "IPA codesign summary" "Payload/Orvix.app: not signed
-Ad-hoc signed nested bundles (no certificate, TeamIdentifier not set):
-${ADHOC_NESTED:-none
-}Unsigned nested bundles: $UNSIGNED_NESTED"
+  # Orvix.app must be unsigned. Nested items may be unsigned or keep the
+  # ad-hoc signatures Flutter's toolchain gives them (App.framework,
+  # Flutter.framework, objective_c.framework). The Legacy build may also
+  # carry the Apple-signed Swift runtime dylibs Xcode embeds for iOS < 12.2.
+  # Every other certificate or team identity is rejected; see
+  # tools/ios_signing.py for the exact rules.
+  python3 "$ROOT/tools/ios_signing.py" --profile "$PROFILE" "$WORK" \
+    || fail "$(basename "$IPA") contains a code signature that is not allowed (see errors above)."
 fi
 
 EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")"

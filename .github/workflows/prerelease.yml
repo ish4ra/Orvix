@@ -83,6 +83,7 @@ jobs:
             tools/ios_ipa_checks.py \
             tools/ios_macho.py \
             tools/ios_profiles.py \
+            tools/ios_signing.py \
             tools/update_altstore_source.py \
             tools/verify_android_apk.py
           bash -n tools/publish_orvix_release.sh

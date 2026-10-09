@@ -118,6 +118,29 @@ OpenGL ES and keeps its iOS 15 picture-in-picture code behind `@available`.
 `lipo` and `otool`, prints the deployment-target inventory to the CI log and
 fails if Apple's tools and the parser disagree.
 
+## Code signatures inside the IPA
+
+`tools/ios_signing.py` runs `codesign -dv` on `Payload/Orvix.app` and on
+every nested framework, app extension and dylib, prints the inventory, and
+applies these rules:
+
+- `Payload/Orvix.app` must be **unsigned**. Any signature on it (Apple
+  Development, Apple Distribution, App Store, ad-hoc, ...) fails, and so does
+  an `embedded.mobileprovision` anywhere in the IPA.
+- Nested items may be unsigned, or ad-hoc signed by Flutter's toolchain
+  (`Signature=adhoc`, no certificate, `TeamIdentifier` not set).
+- **Legacy only:** because the deployment target is below iOS 12.2, Xcode
+  embeds Apple's Swift runtime back-deployment libraries
+  (`Frameworks/libswift*.dylib`) and they keep Apple's own signature. They are
+  accepted only at `Payload/Orvix.app/Frameworks/libswift<Name>.dylib` with
+  identifier `com.apple.dt.runtime.libswift<Name>`, the certificate chain
+  `Software Signing` → `Apple Code Signing Certification Authority` →
+  `Apple Root CA`, team `59GAB85EFG`, and an arm64 iOS slice that fits
+  iOS 12.0. Sideload tools re-sign them along with the app. The Modern build
+  never contains them, so it does not accept them.
+- Anything else, including any other certificate, team or unparseable
+  `codesign` output, fails.
+
 ## Installing the Legacy IPA
 
 Current AltStore and SideStore apps do not run on iOS 12, so the Legacy IPA is
