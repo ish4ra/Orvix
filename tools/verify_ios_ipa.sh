@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
 # Verify an unsigned Orvix sideload IPA: zip integrity, Payload layout,
-# Apple-compatible version metadata, arm64 executable and no signature.
+# Apple-compatible version metadata, the profile's IPA name and exact
+# MinimumOSVersion, the deployment target of every shipped Mach-O binary,
+# arm64 executable and no app signature.
+#
+# The profile defaults to modern (Orvix-v<version>-iOS-15.5-Plus.ipa).
+# tools/verify_ios_legacy_ipa.sh runs this with "legacy" and adds the Apple
+# toolchain deployment-target inventory for the iOS 12 build.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 
-IPA="${1:?usage: verify_ios_ipa.sh <ipa> <release-version> <build-number>}"
+IPA="${1:?usage: verify_ios_ipa.sh <ipa> <release-version> <build-number> [modern|legacy]}"
 RELEASE_VERSION="${2:?missing release version}"
 BUILD_NUMBER="${3:?missing build number}"
+PROFILE="${4:-modern}"
 
 fail() {
   # Also surface the reason as a workflow annotation in GitHub Actions.
-  [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=iOS IPA verification::$*"
+  [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=iOS $PROFILE IPA verification::$*"
   echo "$*" >&2
   exit 1
 }
@@ -43,78 +50,23 @@ if grep -Eq '^Payload/Orvix\.app/(_CodeSignature/|embedded\.mobileprovision$)' "
   fail "iOS sideload IPA is unexpectedly signed (app _CodeSignature or embedded.mobileprovision)."
 fi
 
-python3 - "$IPA" "$RELEASE_VERSION" "$BUILD_NUMBER" "$ROOT/tools" <<'PY'
-import os
-import sys
-from pathlib import Path
-
-sys.path.insert(0, sys.argv[4])
-from update_altstore_source import ios_build_version, ios_marketing_version, read_ipa
-
-
-def fail(message: str) -> None:
-    if os.environ.get("GITHUB_ACTIONS"):
-        print(f"::error title=iOS IPA verification::{message}", flush=True)
-    raise SystemExit(message)
-
-
-ipa, release, build = sys.argv[1:4]
-try:
-    info, _ = read_ipa(Path(ipa))
-    expected = {
-        "CFBundleIdentifier": "com.orvix.orvix",
-        "CFBundleDisplayName": "Orvix",
-        "CFBundleShortVersionString": ios_marketing_version(release),
-        "CFBundleVersion": ios_build_version(build),
-    }
-except Exception as exc:  # report any parsing problem as an annotation
-    fail(f"{type(exc).__name__}: {exc}")
-for key, value in expected.items():
-    if info.get(key) != value:
-        fail(f"IPA {key}={info.get(key)!r}, expected {value!r}")
-if not info.get("NSCameraUsageDescription"):
-    fail("IPA is missing NSCameraUsageDescription")
-if not info.get("MinimumOSVersion"):
-    fail("IPA is missing MinimumOSVersion")
-print(
-    "IPA metadata OK: "
-    + ", ".join(f"{key}={value}" for key, value in expected.items())
-    + f", MinimumOSVersion={info['MinimumOSVersion']}"
-)
-PY
+# Metadata, layout, exact MinimumOSVersion and Mach-O deployment targets.
+python3 "$ROOT/tools/ios_ipa_checks.py" --profile "$PROFILE" \
+  "$IPA" "$RELEASE_VERSION" "$BUILD_NUMBER" \
+  || fail "$(basename "$IPA") failed the $PROFILE iOS IPA checks (see errors above)."
 
 unzip -q "$IPA" -d "$WORK"
 APP="$WORK/Payload/Orvix.app"
 
 if command -v codesign >/dev/null 2>&1; then
-  # Orvix.app must be unsigned. Nested bundles may keep the ad-hoc
-  # signatures Flutter's toolchain gives them (App.framework,
-  # Flutter.framework, objective_c.framework), but nothing may be signed
-  # with a certificate or Apple team identity.
-  UNSIGNED_NESTED=0
-  ADHOC_NESTED=""
-  while IFS= read -r bundle; do
-    name="${bundle#"$WORK/"}"
-    details="$(codesign -dv --verbose=2 "$bundle" 2>&1 || true)"
-    if grep -q 'code object is not signed at all' <<< "$details"; then
-      [[ "$bundle" == "$APP" ]] || UNSIGNED_NESTED=$((UNSIGNED_NESTED + 1))
-      continue
-    fi
-    [[ "$bundle" != "$APP" ]] || fail "Payload/Orvix.app is code signed; the sideload IPA must ship it unsigned."
-    if grep -q '^Authority=' <<< "$details" \
-      || ! grep -qx 'Signature=adhoc' <<< "$details" \
-      || ! grep -qx 'TeamIdentifier=not set' <<< "$details"; then
-      fail "$name is signed with a certificate or team identity: $(grep -E '^(Authority|TeamIdentifier|Signature)=' <<< "$details" | tr '\n' ' ')"
-    fi
-    ADHOC_NESTED+="${name#Payload/Orvix.app/}"$'\n'
-  done < <(
-    echo "$APP"
-    find "$APP" -mindepth 1 \( -name '*.framework' -o -name '*.appex' -o -name '*.dylib' \) -prune -print | sort
-  )
-  notice "IPA codesign summary" "Payload/Orvix.app: not signed
-Ad-hoc signed nested bundles (no certificate, TeamIdentifier not set):
-${ADHOC_NESTED:-none
-}Unsigned nested bundles: $UNSIGNED_NESTED"
+  # Orvix.app must be unsigned. Nested items may be unsigned or keep the
+  # ad-hoc signatures Flutter's toolchain gives them (App.framework,
+  # Flutter.framework, objective_c.framework). The Legacy build may also
+  # carry the Apple-signed Swift runtime dylibs Xcode embeds for iOS < 12.2.
+  # Every other certificate or team identity is rejected; see
+  # tools/ios_signing.py for the exact rules.
+  python3 "$ROOT/tools/ios_signing.py" --profile "$PROFILE" "$WORK" \
+    || fail "$(basename "$IPA") contains a code signature that is not allowed (see errors above)."
 fi
 
 EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")"

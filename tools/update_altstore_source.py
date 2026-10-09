@@ -9,11 +9,15 @@ import json
 import os
 import plistlib
 import re
+import sys
 import tempfile
 import zipfile
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ios_profiles import LEGACY, MODERN  # noqa: E402
 
 APP_INFO_PATTERN = re.compile(r"^Payload/[^/]+\.app/Info\.plist$")
 # Only the app bundle itself must be unsigned. Embedded frameworks such as
@@ -141,6 +145,37 @@ def validate_url(value: str) -> None:
         raise ValueError("download URL must be an HTTPS IPA URL")
 
 
+def _version_tuple(value: str) -> tuple[int, ...]:
+    parts = [int(part) for part in value.split(".")]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
+
+
+def validate_source_build(ipa: Path, download_url: str, min_os: str) -> None:
+    """Only the Modern IPA belongs in the AltStore/SideStore source.
+
+    Current AltStore and SideStore apps do not run on iOS 12, and listing two
+    builds with the same bundle ID, version and build number would be
+    ambiguous. The iOS 12 Legacy IPA is published as a direct download only.
+    """
+    legacy_suffix = f"-{LEGACY.asset_suffix}.ipa"
+    if ipa.name.endswith(legacy_suffix) or download_url.endswith(legacy_suffix):
+        raise ValueError(
+            "the Legacy iOS 12 IPA is a direct GitHub download only; "
+            "the AltStore/SideStore source lists the Modern build"
+        )
+    try:
+        too_old = _version_tuple(min_os) < _version_tuple(MODERN.min_ios)
+    except ValueError:
+        raise ValueError(f"IPA MinimumOSVersion is not a version: {min_os!r}") from None
+    if too_old:
+        raise ValueError(
+            f"IPA MinimumOSVersion {min_os} is below the Modern build's "
+            f"{MODERN.min_ios}; only the Modern IPA belongs in the source"
+        )
+
+
 def update_versions(app: dict, entry: dict) -> None:
     versions = app.get("versions")
     if not isinstance(versions, list):
@@ -197,6 +232,7 @@ def main() -> int:
         )
     validate_date(args.release_date)
     validate_url(args.download_url)
+    validate_source_build(args.ipa, args.download_url, min_os)
 
     notes = args.release_notes.read_text(encoding="utf-8").strip()
     if not notes:

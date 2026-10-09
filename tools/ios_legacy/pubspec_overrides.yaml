@@ -1,0 +1,48 @@
+# Legacy iOS (iOS 12, Flutter 3.32.8 / Dart 3.8.1) dependency overrides.
+#
+# Used ONLY by tools/build_ios_legacy_ipa.sh, which copies this file to the
+# repository root as pubspec_overrides.yaml inside its own CI workspace.
+# Never commit a root pubspec_overrides.yaml: every other build (Android,
+# Android TV, Windows, macOS, Modern iOS) must keep the normal dependencies.
+#
+# A pubspec_overrides.yaml replaces pubspec.yaml's dependency_overrides, so
+# the reviewed Debrify media_kit pins are repeated here unchanged.
+# tools/tests/test_ios_build_profiles.py keeps them identical to pubspec.yaml.
+#
+# Every package with iOS native code is pinned to an exact version whose
+# podspec allows iOS 12.0 and whose Dart SDK constraint fits Dart 3.8.
+# Why each one is here is documented in docs/ios-legacy-build.md.
+dependency_overrides:
+  media_kit:
+    git:
+      url: https://github.com/varunsalian/debrify.git
+      ref: 709eca3a0828f2b5bfdaf153ab6a0c00a89c5f2d
+      path: packages/media_kit_patched
+  media_kit_video:
+    git:
+      url: https://github.com/varunsalian/debrify.git
+      ref: 709eca3a0828f2b5bfdaf153ab6a0c00a89c5f2d
+      path: packages/media_kit_video_patched
+
+  # Dart-only stand-in: FFmpegKit is never used on iOS, and the real iOS pod
+  # needs iOS 14. See packages/ffmpeg_kit_flutter_new_https/README.md.
+  ffmpeg_kit_flutter_new_https:
+    path: tools/ios_legacy/packages/ffmpeg_kit_flutter_new_https
+
+  # Direct dependencies whose current releases need iOS 13+ or Dart 3.9+.
+  mobile_scanner: 7.4.2
+  file_picker: 11.0.3
+  flutter_secure_storage: 10.3.4
+  package_info_plus: 9.0.1
+  video_player: 2.10.1
+
+  # iOS plugin implementations, pinned so the native stack is reproducible.
+  app_links: 6.4.1
+  flutter_secure_storage_darwin: 0.3.2
+  media_kit_libs_ios_video: 1.1.4
+  path_provider_foundation: 2.4.2
+  shared_preferences_foundation: 2.5.4
+  sqflite_darwin: 2.4.2
+  url_launcher_ios: 6.3.4
+  video_player_avfoundation: 2.8.4
+  wakelock_plus: 1.4.0

@@ -1,0 +1,14 @@
+name: ffmpeg_kit_flutter_new_https
+description: >-
+  Orvix Legacy iOS stand-in for ffmpeg_kit_flutter_new_https. Dart only, no
+  native code. Used solely by tools/build_ios_legacy_ipa.sh.
+version: 2.6.7+orvix.legacy.ios.stub
+publish_to: none
+
+environment:
+  sdk: ">=3.1.0 <4.0.0"
+  flutter: ">=3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter

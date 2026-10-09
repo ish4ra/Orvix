@@ -59,11 +59,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile             tools/configure_android_build.py             tools/configure_android_mobile_compat.py             tools/configure_android_mobile_media_kit.py             tools/configure_android_signing.py             tools/generate_desktop_branding.py             tools/configure_ios_build.py             tools/update_altstore_source.py             tools/verify_android_apk.py
+          python3 -m py_compile             tools/configure_android_build.py             tools/configure_android_mobile_compat.py             tools/configure_android_mobile_media_kit.py             tools/configure_android_signing.py             tools/generate_desktop_branding.py             tools/configure_ios_build.py             tools/ios_ipa_checks.py             tools/ios_macho.py             tools/ios_profiles.py             tools/ios_signing.py             tools/update_altstore_source.py             tools/verify_android_apk.py
           bash -n tools/publish_orvix_release.sh
           bash -n tools/prepare_android_native.sh
+          bash -n tools/ios_ipa_common.sh
           bash -n tools/build_ios_ipa.sh
+          bash -n tools/build_ios_legacy_ipa.sh
           bash -n tools/verify_ios_ipa.sh
+          bash -n tools/verify_ios_legacy_ipa.sh
           bash -n tools/android_install_smoke_test.sh
       - name: Test Android APK installability gate
         run: python3 -m unittest discover -s tools/tests -v
@@ -273,8 +276,8 @@ jobs:
         shell: bash
         run: test -d build/macos/Build/Products/Release/Orvix.app
 
-  ios:
-    name: Build iOS sideload IPA
+  ios-modern:
+    name: Build iOS Modern sideload IPA
     needs: quality
     runs-on: macos-15
     steps:
@@ -290,19 +293,69 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/orvix-ios-venv"
           "$RUNNER_TEMP/orvix-ios-venv/bin/python" -m pip install --disable-pip-version-check pillow
           echo "$RUNNER_TEMP/orvix-ios-venv/bin" >> "$GITHUB_PATH"
-      - name: Build unsigned iOS IPA
+      - name: Build unsigned Modern iOS IPA (iOS 15.5+)
         shell: bash
         run: bash tools/build_ios_ipa.sh
-      - name: Verify sideload package
+      - name: Verify Modern sideload package
         shell: bash
         run: |
           set -euo pipefail
           PUBSPEC_VERSION="$(awk '$1 == "version:" {print $2}' pubspec.yaml)"
           V="${PUBSPEC_VERSION%%+*}"
-          bash tools/verify_ios_ipa.sh "Orvix-v$V-iOS.ipa" "$V" "${PUBSPEC_VERSION#*+}"
+          bash tools/verify_ios_ipa.sh "Orvix-v$V-iOS-15.5-Plus.ipa" "$V" "${PUBSPEC_VERSION#*+}" modern
       - uses: actions/upload-artifact@v4
         with:
-          name: ios-ci-ipa
+          name: ios-modern
           retention-days: 1
           if-no-files-found: error
-          path: Orvix-v*-iOS.ipa
+          path: Orvix-v*-iOS-15.5-Plus.ipa
+
+  # iOS 12 build for older 64-bit devices (iPhone 5s / 6 / 6 Plus). Flutter
+  # 3.35 dropped iOS 12, so this job alone pins Flutter 3.32.8 and Xcode 16.4;
+  # every other job keeps the current stable Flutter. The pins must match
+  # tools/ios_profiles.py (checked by tools/tests/test_ios_build_profiles.py).
+  ios-legacy:
+    name: Build iOS Legacy sideload IPA
+    needs: quality
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 16.4
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -d /Applications/Xcode_16.4.app ]; then
+            echo "Xcode 16.4 is not installed on this runner. Available:" >&2
+            ls -d /Applications/Xcode*.app >&2 || true
+            exit 1
+          fi
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          xcodebuild -version
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.32.8
+          cache: true
+      - name: Prepare iOS build tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/orvix-ios-venv"
+          "$RUNNER_TEMP/orvix-ios-venv/bin/python" -m pip install --disable-pip-version-check pillow
+          echo "$RUNNER_TEMP/orvix-ios-venv/bin" >> "$GITHUB_PATH"
+      - name: Build unsigned Legacy iOS IPA (iOS 12)
+        shell: bash
+        run: bash tools/build_ios_legacy_ipa.sh
+      - name: Verify Legacy sideload package and Mach-O deployment targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          PUBSPEC_VERSION="$(awk '$1 == "version:" {print $2}' pubspec.yaml)"
+          V="${PUBSPEC_VERSION%%+*}"
+          bash tools/verify_ios_legacy_ipa.sh "Orvix-v$V-iOS-12-Legacy.ipa" "$V" "${PUBSPEC_VERSION#*+}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-legacy
+          retention-days: 1
+          if-no-files-found: error
+          path: Orvix-v*-iOS-12-Legacy.ipa
