@@ -77,6 +77,17 @@ class PlayerScreen extends StatefulWidget {
   final ValueChanged<String>? onStartupFailed;
   final Future<void> Function(String message)? onStartupFallback;
 
+  /// Slow Android local P2P torrents stay in the loading state until video
+  /// arrives or the user exits, rather than being marked dead after 30s.
+  @visibleForTesting
+  static bool waitsForLocalTorrent({required bool isAndroid, required String url}) {
+    if (!isAndroid) return false;
+    final streamUri = Uri.tryParse(url);
+    return streamUri != null &&
+        (streamUri.host == '127.0.0.1' || streamUri.host == 'localhost') &&
+        streamUri.port == 11470;
+  }
+
   @override
   State<PlayerScreen> createState() => _PlayerScreenState();
 }
@@ -1720,11 +1731,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
         // Do not treat slow peer discovery as a failed torrent. Android
         // localhost P2P streams can begin playing minutes after opening.
         // Keep waiting until real playback, a genuine player error, or Back.
-        final streamUri = Uri.tryParse(widget.url);
-        final waitingForLocalP2p = Platform.isAndroid &&
-            streamUri != null &&
-            (streamUri.host == '127.0.0.1' || streamUri.host == 'localhost') &&
-            streamUri.port == 11470;
+        final waitingForLocalP2p = PlayerScreen.waitsForLocalTorrent(
+          isAndroid: Platform.isAndroid,
+          url: widget.url,
+        );
         if (!waitingForLocalP2p) {
           _startupTimer = Timer(const Duration(seconds: 30), () {
             if (!mounted || _closing) return;
