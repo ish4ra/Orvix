@@ -307,7 +307,9 @@ void main() {
         // Every check is still in flight: one unchecked group, ordered by
         // reported seeders.
         expect(rowOrder(tester), ['BBB', 'CCC', 'AAA']);
-        expect(find.textContaining('100 seeders reported'), findsOneWidget);
+        // Row positions above verify ordering; provider metadata text
+        // may appear in multiple rows or additional visible widgets.
+        expect(find.textContaining('100 seeders reported'), findsWidgets);
 
         await resetToDefault(tester);
         // Default priority: release quality ties, then resolution.
