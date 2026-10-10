@@ -624,7 +624,8 @@ void main() {
         File('lib/screens/tv_source_browser_screen.dart').readAsStringSync();
     for (final source in [details, tv]) {
       expect(source, contains('applyPinnedPreference('));
-      expect(source, contains('healthFor('));
+      expect(source, contains('ealthFor('));
+      expect(source, contains('groupHeaders('));
     }
     expect(details, contains('liveProbe.rank(results, widget.sources)'));
     expect(tv, contains('_liveProbe.rank(_results, widget.sources)'));
@@ -635,7 +636,7 @@ void main() {
     // One cloud/debrid eligibility check drives Normal Play, the picker,
     // Android TV and playback.
     expect(details, contains('if (autoUsePinned && !hasCloudConnection && chosen == null)'));
-    expect(details, contains('var freeStreamingRanking = !hasCloudConnection;'));
+    expect(details, contains('final liveCheckAllowed = !hasCloudConnection;'));
     expect(details, isNot(contains('hasDebridConnection')));
     expect(details, contains('Future<bool> _hasCloudConnection() async'));
     expect(

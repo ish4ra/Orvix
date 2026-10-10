@@ -198,7 +198,7 @@ void main() {
         torbox: torbox,
       );
       expect(
-        find.textContaining('free P2P ranking on'),
+        find.textContaining('Free P2P live check on'),
         enabled ? findsOneWidget : findsNothing,
       );
       expect(
@@ -261,15 +261,23 @@ void main() {
       expect(tester.widget<FilledButton>(quickPlay).onPressed, isNull,
           reason: 'Quick Play needs a confirmed-live torrent, pin or not');
       expect(find.widgetWithText(FilledButton, 'Play pinned'), findsNothing);
-      // Changing display order must not disable the Free P2P safety gate.
-      await tester.tap(find.widgetWithText(FilterChip, 'Free P2P'));
-      await settle(tester);
-      // Turning off display ranking must not bypass playback safety.
-      // The active probing spinner is hidden with the display mode,
-      // but the unconfirmed pinned torrent remains unplayable via Quick Play.
-      final afterToggle = find.widgetWithText(FilledButton, 'No live source');
-      expect(afterToggle, findsOneWidget);
-      expect(tester.widget<FilledButton>(afterToggle).onPressed, isNull);
+      // Changing the display mode never disables the Free P2P safety gate
+      // or the live check: the unconfirmed pin stays CHECKING and Quick
+      // Play stays disabled in every mode.
+      final probesBefore = engine.creates.length;
+      for (final mode in ['Smooth', 'My Priority', 'Recommended']) {
+        await tester.tap(find.widgetWithText(ChoiceChip, mode));
+        await settle(tester);
+        expect(find.textContaining('Free P2P live check on'), findsOneWidget,
+            reason: mode);
+        expect(find.text('Pinned • CHECKING'), findsWidgets, reason: mode);
+        final gated = find.widgetWithText(FilledButton, 'Checking live…');
+        expect(gated, findsOneWidget, reason: mode);
+        expect(tester.widget<FilledButton>(gated).onPressed, isNull,
+            reason: mode);
+      }
+      expect(engine.creates.length, probesBefore,
+          reason: 'a display mode change neither restarts nor adds probes');
       // The pinned row itself stays selectable for a manual choice.
       expect(find.textContaining(_release), findsWidgets);
 
@@ -311,7 +319,7 @@ void main() {
           SourceProviderService(client: _threeReleases()),
           expectText: 'Trigger.2025.1080p.WEB-DL.x264-BBB',
         );
-        expect(find.textContaining('free P2P ranking on'), findsOneWidget);
+        expect(find.textContaining('Free P2P live check on'), findsOneWidget);
         expect(engine.creates, isNotEmpty, reason: 'the live check runs');
         // Every check is still in flight: one unchecked group, ordered by
         // reported seeders.
@@ -323,6 +331,44 @@ void main() {
         await resetToDefault(tester);
         // Default priority: release quality ties, then resolution.
         expect(rowOrder(tester), ['AAA', 'BBB', 'CCC']);
+
+        await close(tester, engine);
+      }, () => engine.client);
+    });
+
+    testWidgets('no cloud: Recommended by default; saving a priority selects '
+        'My Priority at once without resetting it', (tester) async {
+      final engine = _Engine();
+      await http.runWithClient(() async {
+        final sources = SourceProviderService(client: _threeReleases());
+        await openPicker(
+          tester,
+          sources,
+          expectText: 'Trigger.2025.1080p.WEB-DL.x264-BBB',
+        );
+        bool selected(String mode) =>
+            tester.widget<ChoiceChip>(find.widgetWithText(ChoiceChip, mode))
+                .selected;
+        expect(selected('Recommended'), isTrue);
+        expect(selected('My Priority'), isFalse);
+        // Recommended ignores resolution: the static playability estimate.
+        final recommended = rowOrder(tester);
+        expect(recommended.first, 'BBB');
+        final probes = engine.creates.length;
+
+        await resetToDefault(tester);
+        expect(selected('My Priority'), isTrue);
+        expect(rowOrder(tester), ['AAA', 'BBB', 'CCC']);
+        expect(await sources.getDisplayMode(liveCheck: true),
+            SourceDisplayMode.myPriority);
+        expect(await sources.getPriorityOrder(),
+            SourceProviderService.defaultPriority);
+
+        await tester.tap(find.widgetWithText(ChoiceChip, 'Recommended'));
+        await settle(tester);
+        expect(rowOrder(tester), recommended);
+        expect(engine.creates.length, probes,
+            reason: 'reordering never starts another check');
 
         await close(tester, engine);
       }, () => engine.client);
@@ -340,17 +386,21 @@ void main() {
           torbox: true,
           expectText: 'Trigger.2025.1080p.WEB-DL.x264-BBB',
         );
-        expect(find.textContaining('free P2P ranking on'), findsNothing);
+        expect(find.textContaining('Free P2P live check on'), findsNothing);
         expect(rowOrder(tester), ['BBB', 'CCC', 'AAA']);
 
         await resetToDefault(tester);
         expect(rowOrder(tester), ['AAA', 'BBB', 'CCC']);
 
-        // Choosing the Free P2P order by hand does not start torrent probes
-        // for sources that playback sends to the cloud service.
-        await tester.tap(find.widgetWithText(FilterChip, 'Free P2P'));
-        await settle(tester);
-        expect(engine.creates, isEmpty);
+        // No display mode starts torrent probes for sources that playback
+        // sends to the cloud service.
+        for (final mode in ['Recommended', 'Smooth', 'My Priority']) {
+          await tester.tap(find.widgetWithText(ChoiceChip, mode));
+          await settle(tester);
+          expect(engine.creates, isEmpty, reason: mode);
+          expect(find.textContaining('Live check:'), findsNothing,
+              reason: mode);
+        }
         expect(rowOrder(tester), ['AAA', 'BBB', 'CCC']);
 
         await close(tester, engine);

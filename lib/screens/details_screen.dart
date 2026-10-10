@@ -2775,8 +2775,12 @@ class DetailsScreenState extends State<DetailsScreen> {
     var priority = await widget.sources.getPriorityOrder();
     var resultLimit = await widget.sources.getResultLimit();
     var compatibilityOnly = false;
-    var smoothRanking = false;
-    var freeStreamingRanking = !hasCloudConnection;
+    // Live probing and its playback gate belong to the Free P2P playback
+    // path only; with a cloud/debrid connection playback never uses these
+    // torrent sessions. The display mode below never changes this.
+    final liveCheckAllowed = !hasCloudConnection;
+    var displayMode =
+        await widget.sources.getDisplayMode(liveCheck: liveCheckAllowed);
     final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
     final seriesWidePin = item.kind == MediaKind.series;
     var pinnedIdentity = await widget.sources.getPinnedSourceIdentity(pinKey);
@@ -2787,11 +2791,10 @@ class DetailsScreenState extends State<DetailsScreen> {
           mediaDuration: FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
         );
     final ownsProbeSession = probeSession == null;
-    // The user's Source Priority orders rows inside each live-health group.
+    // The user's Source Priority (My Priority, Quick Play) and the chosen
+    // display mode order rows inside each live-health group.
     liveProbe.setPriority(priority);
-    // Live probing belongs to the Free P2P playback path only; with a
-    // cloud/debrid connection playback never uses these torrent sessions.
-    final liveCheckAllowed = !hasCloudConnection;
+    liveProbe.setDisplayMode(displayMode);
     // Reopened after playback: keep the list the user chose from while its
     // evidence is fresh. Otherwise (first open, or after Normal Play) the
     // picker continues the bounded check in the background.
@@ -2867,13 +2870,32 @@ class DetailsScreenState extends State<DetailsScreen> {
       );
       if (saved != null) {
         await widget.sources.setPriorityOrder(saved);
-        // Rows reorder at once; the background check also follows it.
+        // Saving a priority is a request to sort by it: rows reorder at once
+        // under My Priority, and the background check also follows it.
+        await widget.sources.setDisplayMode(SourceDisplayMode.myPriority);
         setSheetState(() {
           priority = saved;
           liveProbe.setPriority(saved);
+          displayMode = SourceDisplayMode.myPriority;
+          liveProbe.setDisplayMode(displayMode);
         });
       }
     }
+
+    void selectDisplayMode(SourceDisplayMode mode, StateSetter setSheetState) {
+      if (mode == displayMode) return;
+      setSheetState(() {
+        displayMode = mode;
+        liveProbe.setDisplayMode(mode);
+      });
+      unawaited(widget.sources.setDisplayMode(mode));
+    }
+
+    bool isPinnedResult(SourceResult result) => widget.sources.matchesPinned(
+          result,
+          pinnedIdentity,
+          seriesWide: seriesWidePin,
+        );
 
     final selected = await showModalBottomSheet<SourceResult>(
       context: context,
@@ -2889,7 +2911,9 @@ class DetailsScreenState extends State<DetailsScreen> {
       constraints: const BoxConstraints(maxWidth: 1080),
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) {
-          if (freeStreamingRanking && liveCheckAllowed && !liveProbeStarted) {
+          // The live check runs whatever the display mode, so changing the
+          // order can never skip or reset playback safety.
+          if (liveCheckAllowed && !liveProbeStarted) {
             liveProbeStarted = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {
               unawaited(
@@ -2900,6 +2924,8 @@ class DetailsScreenState extends State<DetailsScreen> {
                       // While the picker is open, keep classifying more rows
                       // in small bounded batches.
                       continueInBackground: true,
+                      // An unchecked pin is checked in the first batch.
+                      preferred: results.where(isPinnedResult).firstOrNull,
                       onUpdate: () {
                         if (sheetContext.mounted) {
                           setSheetState(() {});
@@ -2914,11 +2940,16 @@ class DetailsScreenState extends State<DetailsScreen> {
           final sheetWidth = MediaQuery.sizeOf(context).width;
           final compactSheet = sheetWidth < 680;
           final desktopSheet = Platform.isWindows && sheetWidth >= 900;
-          final ranked = freeStreamingRanking
+          final ranked = liveCheckAllowed
               ? liveProbe.rank(results, widget.sources)
-              : smoothRanking
-                  ? widget.sources.sortForSmoothPlayback(results)
-                  : widget.sources.sortResults(results, priority);
+              : switch (displayMode) {
+                  SourceDisplayMode.recommended =>
+                    widget.sources.sortRecommended(results),
+                  SourceDisplayMode.myPriority =>
+                    widget.sources.sortResults(results, priority),
+                  SourceDisplayMode.smooth =>
+                    widget.sources.sortForSmoothPlayback(results),
+                };
           final filtered = compatibilityOnly
               ? ranked
                   .where((result) => result.compatibilityFriendly)
@@ -2928,13 +2959,7 @@ class DetailsScreenState extends State<DetailsScreen> {
 
           var ordered = [...filtered];
           if (pinnedIdentity != null) {
-            bool isPinnedResult(SourceResult result) =>
-                widget.sources.matchesPinned(
-                  result,
-                  pinnedIdentity,
-                  seriesWide: seriesWidePin,
-                );
-            if (freeStreamingRanking) {
+            if (liveCheckAllowed) {
               // A pin stays on top unless it was just confirmed unplayable
               // while another torrent is confirmed live.
               ordered = liveProbe.applyPinnedPreference(
@@ -2951,50 +2976,70 @@ class DetailsScreenState extends State<DetailsScreen> {
           }
 
           final totalAfterFilter = ordered.length;
-          final sorted = resultLimit > 0 && ordered.length > resultLimit
-              ? ordered.take(resultLimit).toList(growable: false)
-              : ordered;
+          // In Free P2P the limit never hides every confirmed-live torrent.
+          final sorted = liveCheckAllowed
+              ? liveProbe.applyResultLimit(ordered, resultLimit)
+              : resultLimit > 0 && ordered.length > resultLimit
+                  ? ordered.take(resultLimit).toList(growable: false)
+                  : ordered;
           final limitHiddenCount = totalAfterFilter - sorted.length;
           final best = sorted.isEmpty ? null : sorted.first;
-          // Quick Play must not depend on display order or pin promotion.
-          // A different visible sort cannot bypass the live-evidence gate.
+          // Quick Play must not depend on display order. In Free P2P it takes
+          // the best eligible source (a confirmed-live pin first) from the
+          // playback order, and never an unconfirmed or failed torrent.
           final quickPlaySource = liveCheckAllowed
-              ? liveProbe.rank(results, widget.sources)
-                  .where(liveProbe.quickPlayAllowed)
-                  .firstOrNull
+              ? liveProbe.quickPlayCandidate(
+                  filtered,
+                  widget.sources,
+                  isPinned: isPinnedResult,
+                )
               : best;
           final color = Theme.of(context).colorScheme;
-          // Torrents that failed the live check sit together at the bottom
-          // under one label. They stay selectable for a manual choice.
-          final failedStart = freeStreamingRanking
-              ? liveProbe.failedGroupStart(sorted)
-              : sorted.length;
+          // Health-group labels (Confirmed live, Not checked yet, Metadata
+          // slow, Failed the live check). Failed torrents sit together at the
+          // bottom and stay selectable for a manual choice.
+          final groupHeaders = liveCheckAllowed
+              ? liveProbe.groupHeaders(sorted, isPinned: isPinnedResult)
+              : const <int, FreeP2pGroupHeader>{};
 
-          // Same shape for every row, so a row that becomes the first failed
-          // one keeps its element (and any keyboard focus).
-          Widget withFailedGroupLabel(int index, Widget row) {
+          // Same shape for every row, so a row that gains or loses a group
+          // label keeps its element (and any keyboard focus).
+          Widget withGroupHeader(int index, Widget row) {
+            final header = groupHeaders[index];
+            final failed = header?.group == FreeP2pGroup.failed;
+            final headerColor = failed ? color.error : color.onSurfaceVariant;
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (index == failedStart)
+                if (header != null)
                   Padding(
-                    key: const ValueKey('free-p2p-failed-group'),
+                    key: ValueKey(
+                      failed ? 'free-p2p-failed-group' : 'free-p2p-group',
+                    ),
                     padding: const EdgeInsets.fromLTRB(4, 6, 4, 8),
                     child: Row(
                       children: [
                         Icon(
-                          Icons.report_gmailerrorred_rounded,
+                          switch (header.group) {
+                            FreeP2pGroup.direct => Icons.link_rounded,
+                            FreeP2pGroup.live => Icons.bolt_rounded,
+                            FreeP2pGroup.notChecked =>
+                              Icons.radio_button_unchecked_rounded,
+                            FreeP2pGroup.metadataSlow =>
+                              Icons.hourglass_bottom_rounded,
+                            FreeP2pGroup.failed =>
+                              Icons.report_gmailerrorred_rounded,
+                          },
                           size: 16,
-                          color: color.error,
+                          color: headerColor,
                         ),
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(
-                            'Failed the live check '
-                            '(${sorted.length - failedStart}) • still selectable',
+                            header.label,
                             style: TextStyle(
-                              color: color.error,
+                              color: headerColor,
                               fontSize: 12,
                               fontWeight: FontWeight.w800,
                             ),
@@ -3009,24 +3054,31 @@ class DetailsScreenState extends State<DetailsScreen> {
           }
           final priorityText =
               priority.map((e) => e.label.toLowerCase()).join(' → ');
-          final rankingText = freeStreamingRanking
-              ? 'Free P2P: direct → live now → not checked → metadata slow → failed check; within each group: $priorityText'
-              : smoothRanking
-                  ? 'Smooth: compatibility → 1080/720 → efficient codec → seeders → smaller files → cache'
-                  : 'Default: $priorityText';
+          const healthGroups =
+              'live → not checked → metadata slow → failed check';
+          final rankingText = switch (displayMode) {
+            SourceDisplayMode.recommended => liveCheckAllowed
+                ? 'Recommended: $healthGroups; live by ready now, first byte, real speed and live peers'
+                : 'Recommended: cached → device compatibility, exact file, reported swarm, practical size',
+            SourceDisplayMode.myPriority => liveCheckAllowed
+                ? 'My Priority: $healthGroups; within each group: $priorityText'
+                : 'My Priority: $priorityText',
+            SourceDisplayMode.smooth => liveCheckAllowed
+                ? 'Smooth: $healthGroups; within each group: compatibility → 1080/720 → efficient codec → seeders → smaller files'
+                : 'Smooth: compatibility → 1080/720 → efficient codec → seeders → smaller files → cache',
+          };
           final summaryParts = <String>[
             resultLimit > 0
                 ? 'Showing ${sorted.length} of $totalAfterFilter results'
                 : '${sorted.length} result${sorted.length == 1 ? '' : 's'} shown',
-            if (freeStreamingRanking) 'free P2P ranking on',
-            if (smoothRanking) 'smooth ranking on',
+            if (liveCheckAllowed) 'Free P2P live check on',
             if (compatibilityHiddenCount > 0)
               '$compatibilityHiddenCount risky hidden',
             if (limitHiddenCount > 0) '$limitHiddenCount beyond limit',
           ];
 
           final liveSummary =
-              freeStreamingRanking ? liveProbe.summary(results).text : null;
+              liveCheckAllowed ? liveProbe.summary(results).text : null;
 
           Widget quickPlayButton(SourceResult source) {
             // Quick Play in Free P2P only launches a torrent that is confirmed
@@ -3035,7 +3087,7 @@ class DetailsScreenState extends State<DetailsScreen> {
             final pinned = widget.sources.matchesPinned(source, pinnedIdentity);
             final waitingForProbe =
                 liveCheckAllowed && !liveProbe.quickPlayAllowed(source);
-            final checking = freeStreamingRanking && liveProbe.isRunning;
+            final checking = liveCheckAllowed && liveProbe.isRunning;
             return FilledButton.tonalIcon(
               onPressed: waitingForProbe
                   ? null
@@ -3130,18 +3182,34 @@ class DetailsScreenState extends State<DetailsScreen> {
                       runSpacing: 8,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        FilterChip(
-                          showCheckmark: false,
-                          selected: freeStreamingRanking,
-                          avatar: const Icon(Icons.bolt_rounded, size: 18),
-                          label: const Text('Free P2P'),
-                          tooltip:
-                              'Rank viable sources by broad device compatibility, exact file routing, swarm health and practical size. Resolution is not a priority.',
-                          onSelected: (value) => setSheetState(() {
-                            freeStreamingRanking = value;
-                            if (value) smoothRanking = false;
-                          }),
-                        ),
+                        // One display mode at a time. Display only: the Free
+                        // P2P live check and Quick Play gate stay the same.
+                        for (final mode in SourceDisplayMode.values)
+                          ChoiceChip(
+                            showCheckmark: false,
+                            selected: displayMode == mode,
+                            avatar: Icon(
+                              switch (mode) {
+                                SourceDisplayMode.recommended =>
+                                  Icons.auto_awesome_rounded,
+                                SourceDisplayMode.myPriority =>
+                                  Icons.format_list_numbered_rounded,
+                                SourceDisplayMode.smooth => Icons.speed_rounded,
+                              },
+                              size: 18,
+                            ),
+                            label: Text(mode.label),
+                            tooltip: switch (mode) {
+                              SourceDisplayMode.recommended =>
+                                'Orvix order: confirmed-live sources first, then the most playable ones.',
+                              SourceDisplayMode.myPriority =>
+                                'Your Source Priority (Sort), inside each live-health group.',
+                              SourceDisplayMode.smooth =>
+                                'Compatible, efficient 1080p/720p sources first, inside each live-health group.',
+                            },
+                            onSelected: (_) =>
+                                selectDisplayMode(mode, setSheetState),
+                          ),
                         FilterChip(
                           showCheckmark: false,
                           selected: compatibilityOnly,
@@ -3156,23 +3224,6 @@ class DetailsScreenState extends State<DetailsScreen> {
                               'Hide known-risk formats such as AV1, 8K, Hi10P and Dolby Vision-only releases.',
                           onSelected: (value) =>
                               setSheetState(() => compatibilityOnly = value),
-                        ),
-                        FilterChip(
-                          showCheckmark: false,
-                          selected: smoothRanking,
-                          avatar: Icon(
-                            smoothRanking
-                                ? Icons.speed_rounded
-                                : Icons.speed_outlined,
-                            size: 18,
-                          ),
-                          label: const Text('Smooth'),
-                          tooltip:
-                              'Prioritize compatible, efficient and healthy sources.',
-                          onSelected: (value) => setSheetState(() {
-                            smoothRanking = value;
-                            if (value) freeStreamingRanking = false;
-                          }),
                         ),
                         if (!PlatformProfile.isAndroidMobile)
                           OutlinedButton.icon(
@@ -3270,12 +3321,10 @@ class DetailsScreenState extends State<DetailsScreen> {
                             // Discards this picker's evidence (and any frozen
                             // order) and starts a fresh bounded check with the
                             // current Source Priority.
-                            onPressed: liveCheckAllowed
-                                ? () => setSheetState(() {
-                                      liveProbe.clear();
-                                      liveProbeStarted = false;
-                                    })
-                                : null,
+                            onPressed: () => setSheetState(() {
+                              liveProbe.clear();
+                              liveProbeStarted = false;
+                            }),
                             icon: const Icon(Icons.refresh_rounded, size: 18),
                             label: const Text('Re-check'),
                           ),
@@ -3288,7 +3337,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                       child: ListView.separated(
                         itemCount: sorted.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 8),
-                        itemBuilder: (context, index) => withFailedGroupLabel(
+                        itemBuilder: (context, index) => withGroupHeader(
                             index, Builder(builder: (context) {
                           final result = sorted[index];
                           final isPinned = widget.sources.matchesPinned(
@@ -3296,8 +3345,8 @@ class DetailsScreenState extends State<DetailsScreen> {
                             pinnedIdentity,
                             seriesWide: seriesWidePin,
                           );
-                          final health = freeStreamingRanking
-                              ? liveProbe.healthFor(result)
+                          final health = liveCheckAllowed
+                              ? liveProbe.displayHealthFor(result)
                               : null;
                           final healthMetrics = health?.metrics;
                           final statusLabel = isPinned
@@ -3306,7 +3355,10 @@ class DetailsScreenState extends State<DetailsScreen> {
                                   : 'Pinned'
                               : health != null
                                   ? health.label
-                                  : index == 0 && smoothRanking
+                                  : index == 0 &&
+                                          !liveCheckAllowed &&
+                                          displayMode ==
+                                              SourceDisplayMode.smooth
                                       ? 'Smooth'
                                       : null;
                           // Provider seeds are a snapshot from the addon, not
@@ -3314,7 +3366,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                           // from the probe.
                           final providerText =
                               '${result.provider}${result.isMagnet ? ' • torrent / P2P' : ' • direct URL'}'
-                              '${freeStreamingRanking && result.isMagnet && result.seeders != null ? ' • ${result.seeders} seeders reported' : ''}'
+                              '${liveCheckAllowed && result.isMagnet && result.seeders != null ? ' • ${result.seeders} seeders reported' : ''}'
                               '${healthMetrics == null ? '' : ' • $healthMetrics'}'
                               '${result.compatibilityFriendly ? '' : ' • ⚠ compatibility risk'}';
 
@@ -3542,7 +3594,7 @@ class DetailsScreenState extends State<DetailsScreen> {
       ),
     );
 
-    if (selected != null && freeStreamingRanking) {
+    if (selected != null && liveCheckAllowed) {
       await liveProbe.prepareForPlayback(selected);
     } else if (ownsProbeSession) {
       await liveProbe.release();

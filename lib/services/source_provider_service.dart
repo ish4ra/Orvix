@@ -7,6 +7,29 @@ import '../models/media_item.dart';
 
 enum SourceSortMode { seeders, fileSize, quality }
 
+/// How the source picker orders rows. Display only: with Free P2P every mode
+/// keeps the live-health groups, and Quick Play / Normal Play use their own
+/// live-evidence gate whatever is chosen here.
+enum SourceDisplayMode {
+  /// Orvix's own order. Free P2P: health first, then measured speed, first
+  /// byte and live peers; unchecked rows by the static playability estimate.
+  recommended,
+
+  /// The user's Source Priority (inside each Free P2P health group).
+  myPriority,
+
+  /// Practical playback compatibility (inside each Free P2P health group).
+  smooth,
+}
+
+extension SourceDisplayModeLabel on SourceDisplayMode {
+  String get label => switch (this) {
+        SourceDisplayMode.recommended => 'Recommended',
+        SourceDisplayMode.myPriority => 'My Priority',
+        SourceDisplayMode.smooth => 'Smooth',
+      };
+}
+
 enum SourceSortCriterion {
   cache,
   releaseQuality,
@@ -322,6 +345,7 @@ class SourceProviderService {
   // Quality -> Seeders -> Size while still allowing the user to switch it.
   static const _sortKey = 'pikora_source_sort_mode_v2';
   static const _priorityKey = 'orvix_source_priority_v6';
+  static const _displayModeKey = 'orvix_source_display_mode_v1';
   static const _show3DKey = 'orvix_show_3d_sources_v1';
   static const _showLowQualityKey = 'orvix_show_low_quality_sources_v1';
   static const _preferredGroupsKey = 'orvix_preferred_release_groups_v1';
@@ -730,6 +754,31 @@ class SourceProviderService {
     return out;
   }
 
+  /// Saved picker display mode. Without a saved choice: My Priority for a
+  /// cloud/debrid path (its previous default order) or for a user who has
+  /// customized the Source Priority, otherwise Recommended.
+  Future<SourceDisplayMode> getDisplayMode({required bool liveCheck}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final stored = prefs.getString(_displayModeKey);
+    for (final mode in SourceDisplayMode.values) {
+      if (mode.name == stored) return mode;
+    }
+    if (!liveCheck) return SourceDisplayMode.myPriority;
+    final priority = await getPriorityOrder();
+    var customized = priority.length != defaultPriority.length;
+    for (var i = 0; !customized && i < priority.length; i++) {
+      customized = priority[i] != defaultPriority[i];
+    }
+    return customized
+        ? SourceDisplayMode.myPriority
+        : SourceDisplayMode.recommended;
+  }
+
+  Future<void> setDisplayMode(SourceDisplayMode mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_displayModeKey, mode.name);
+  }
+
   Future<bool> getShow3D() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_show3DKey) ?? false;
@@ -1002,6 +1051,23 @@ class SourceProviderService {
     final out = results.toList();
     out.sort(_compareSmoothPlayback);
     return out;
+  }
+
+  /// The Smooth order as a comparator, for use inside Free P2P health groups.
+  int compareSmoothPlayback(SourceResult a, SourceResult b) =>
+      _compareSmoothPlayback(a, b);
+
+  /// Recommended order without live evidence (cloud/debrid path): cached
+  /// sources first, then the static Free playability estimate.
+  List<SourceResult> sortRecommended(Iterable<SourceResult> results) {
+    final base = sortForFreeStreaming(results);
+    final index = <SourceResult, int>{
+      for (var i = 0; i < base.length; i++) base[i]: i,
+    };
+    return [...base]..sort((a, b) {
+        final c = (b.cached ? 1 : 0).compareTo(a.cached ? 1 : 0);
+        return c != 0 ? c : index[a]!.compareTo(index[b]!);
+      });
   }
 
   int _compareSmoothPlayback(SourceResult a, SourceResult b) {

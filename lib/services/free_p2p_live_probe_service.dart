@@ -68,6 +68,10 @@ class FreeP2pLiveProbeService {
   /// group and decides which unchecked rows are checked next.
   List<SourceSortCriterion> _priority;
 
+  /// How the picker orders rows inside the health groups. Display only:
+  /// probing, Quick Play and Normal Play never read it.
+  SourceDisplayMode _displayMode = SourceDisplayMode.myPriority;
+
   Future<void>? _running;
 
   /// Check generation. [clear] starts a new one; results of probes started
@@ -147,6 +151,18 @@ class FreeP2pLiveProbeService {
     return true;
   }
 
+  SourceDisplayMode get displayMode => _displayMode;
+
+  /// Applies a changed picker display mode. Like a priority change it is an
+  /// explicit ordering choice, so a frozen order is dropped. Returns whether
+  /// the mode changed.
+  bool setDisplayMode(SourceDisplayMode mode) {
+    if (mode == _displayMode) return false;
+    _displayMode = mode;
+    _frozenOrder = null;
+    return true;
+  }
+
   bool get isRunning => _running != null;
 
   /// Whether rows keep the order the user last chose from.
@@ -207,6 +223,14 @@ class FreeP2pLiveProbeService {
     );
   }
 
+  /// Row health for display: like [healthFor], but a torrent that has not
+  /// been probed reads NOT CHECKED instead of having no state. Unchecked is
+  /// never shown as a failure.
+  FreeP2pHealth? displayHealthFor(SourceResult source) {
+    if (!source.isMagnet) return null;
+    return healthFor(source) ?? FreeP2pHealth.notChecked;
+  }
+
   /// Whether [source] failed the live check the current order is based on:
   /// no usable media arrived (NO PEERS, STALLED, SOURCE ERROR). METADATA SLOW
   /// and ENGINE ERROR are unresolved, not failures, and unchecked rows are
@@ -223,6 +247,58 @@ class FreeP2pLiveProbeService {
       start--;
     }
     return start;
+  }
+
+  /// Health-group section headers for a displayed list, keyed by the row
+  /// index each group starts at. Uses the same evidence as the order. A pin
+  /// promoted to the first row gets no header (its chip says Pinned). Empty
+  /// until some torrent has been classified, so an unchecked list stays
+  /// plain.
+  Map<int, FreeP2pGroupHeader> groupHeaders(
+    List<SourceResult> ordered, {
+    bool Function(SourceResult source)? isPinned,
+  }) {
+    if (!ordered.any((s) => s.isMagnet && _evidenceFor(s) != null)) {
+      return const <int, FreeP2pGroupHeader>{};
+    }
+    FreeP2pGroup group(SourceResult s) {
+      if (!s.isMagnet) return FreeP2pGroup.direct;
+      return switch (evidenceTier(_evidenceFor(s))) {
+        3 => FreeP2pGroup.live,
+        2 => FreeP2pGroup.notChecked,
+        1 => FreeP2pGroup.metadataSlow,
+        _ => FreeP2pGroup.failed,
+      };
+    }
+
+    final headers = <int, FreeP2pGroupHeader>{};
+    FreeP2pGroup? previous;
+    for (var i = 0; i < ordered.length; i++) {
+      if (i == 0 && isPinned != null && isPinned(ordered[0])) continue;
+      final g = group(ordered[i]);
+      if (g == previous) continue;
+      previous = g;
+      var end = i + 1;
+      while (end < ordered.length && group(ordered[end]) == g) {
+        end++;
+      }
+      headers[i] = FreeP2pGroupHeader(g, end - i);
+    }
+    return headers;
+  }
+
+  /// The first [limit] rows of [ordered] (0 = all). When the limit would
+  /// hide every confirmed-live torrent, the best hidden one is kept as an
+  /// extra row, so a limit filled by a pin or direct links cannot hide them.
+  List<SourceResult> applyResultLimit(List<SourceResult> ordered, int limit) {
+    if (limit <= 0 || ordered.length <= limit) return ordered;
+    bool liveTorrent(SourceResult s) => s.isMagnet && quickPlayAllowed(s);
+    final shown = ordered.take(limit).toList();
+    if (!shown.any(liveTorrent)) {
+      final hidden = ordered.skip(limit).where(liveTorrent).firstOrNull;
+      if (hidden != null) shown.add(hidden);
+    }
+    return shown;
   }
 
   /// Whether Free P2P Quick Play may launch [source]: a direct HTTP source,
@@ -260,15 +336,18 @@ class FreeP2pLiveProbeService {
     );
   }
 
-  /// Free P2P order: live health groups first, the user's Source Priority
-  /// inside each group. See [compareFreeP2p].
+  /// Picker display order: live health groups first, then the
+  /// [displayMode] inside each group (Recommended: measured live evidence and
+  /// the static playability estimate; My Priority: the user's Source
+  /// Priority; Smooth: practical playback compatibility). Keeps a frozen
+  /// order. See [compareFreeP2p]. Playback uses [playbackOrder] instead.
   List<SourceResult> rank(
     Iterable<SourceResult> results,
     SourceProviderService sources,
   ) {
-    final base = sources.sortForFreeStreaming(results);
     final frozen = _frozenOrder;
     if (frozen != null) {
+      final base = sources.sortForFreeStreaming(results);
       final frozenIndex = <String, int>{
         for (var i = 0; i < frozen.length; i++) frozen[i]: i,
       };
@@ -277,7 +356,48 @@ class FreeP2pLiveProbeService {
           .compareTo(frozenIndex[_key(b)] ?? 999999));
       return stable;
     }
+    return switch (_displayMode) {
+      SourceDisplayMode.myPriority => _order(results, sources, _priority),
+      SourceDisplayMode.recommended => _order(results, sources, null),
+      SourceDisplayMode.smooth =>
+        _order(results, sources, null, within: sources.compareSmoothPlayback),
+    };
+  }
 
+  /// The order Normal Play and Quick Play choose from: health groups, then
+  /// the user's Source Priority inside each group. Independent of the picker
+  /// display mode and of any frozen order; it decides only among sources,
+  /// never whether an unconfirmed torrent may auto-play ([quickPlayAllowed]).
+  List<SourceResult> playbackOrder(
+    Iterable<SourceResult> results,
+    SourceProviderService sources,
+  ) =>
+      _order(results, sources, _priority);
+
+  /// Free P2P Quick Play source among [candidates]: the first source in
+  /// [playbackOrder] (a confirmed-live pin first) that [quickPlayAllowed].
+  /// Null when nothing is eligible yet; an unchecked or failed pin never
+  /// blocks a confirmed-live alternative.
+  SourceResult? quickPlayCandidate(
+    Iterable<SourceResult> candidates,
+    SourceProviderService sources, {
+    bool Function(SourceResult source)? isPinned,
+  }) {
+    var ordered = playbackOrder(candidates, sources);
+    if (isPinned != null) ordered = applyPinnedPreference(ordered, isPinned);
+    for (final source in ordered) {
+      if (quickPlayAllowed(source)) return source;
+    }
+    return null;
+  }
+
+  List<SourceResult> _order(
+    Iterable<SourceResult> results,
+    SourceProviderService sources,
+    List<SourceSortCriterion>? priority, {
+    int Function(SourceResult a, SourceResult b)? within,
+  }) {
+    final base = sources.sortForFreeStreaming(results);
     final baseIndex = <SourceResult, int>{
       for (var i = 0; i < base.length; i++) base[i]: i,
     };
@@ -290,7 +410,8 @@ class FreeP2pLiveProbeService {
         _evidenceFor(b),
         sources: sources,
         mediaDuration: mediaDuration,
-        priority: _priority,
+        priority: priority,
+        within: within,
       );
       if (live != 0) return live;
       return (baseIndex[a] ?? 999999).compareTo(baseIndex[b] ?? 999999);
@@ -378,7 +499,9 @@ class FreeP2pLiveProbeService {
   ///    file's bitrate need); among failures: closest to working (stalled >
   ///    no peers > error)
   ///
-  /// Inside a health group, [priority] (the user's Source Priority) decides.
+  /// Inside a health group, [within] decides when given, otherwise
+  /// [priority] (the user's Source Priority); with neither, the measured
+  /// live evidence and then the caller's static order decide.
   /// Provider seeders there are the reported snapshot, not live evidence.
   /// Live sources that still tie are ordered by first-byte latency,
   /// throughput, live connections, playback history, exact file routing,
@@ -391,9 +514,13 @@ class FreeP2pLiveProbeService {
     required SourceProviderService sources,
     Duration? mediaDuration,
     List<SourceSortCriterion>? priority,
+    int Function(SourceResult a, SourceResult b)? within,
   }) {
-    int byPriority() =>
-        priority == null ? 0 : sources.compareByPriority(a, b, priority);
+    int byPriority() => within != null
+        ? within(a, b)
+        : priority == null
+            ? 0
+            : sources.compareByPriority(a, b, priority);
 
     if (a.isMagnet != b.isMagnet) return a.isMagnet ? 1 : -1;
     if (!a.isMagnet) return byPriority();
@@ -564,12 +691,14 @@ class FreeP2pLiveProbeService {
   /// one small batch at a time, in the order the user's Source Priority and
   /// the diversity samples choose, until [pickerProbeLimit] torrents are
   /// classified, the picker closes, or a Re-check starts. At most
-  /// [probeConcurrency] probes run at once.
+  /// [probeConcurrency] probes run at once. An unchecked pinned torrent
+  /// ([preferred]) leads the first batch and takes one of its slots.
   Future<void> probeTopCandidates(
     Iterable<SourceResult> results,
     SourceProviderService sources, {
     void Function()? onUpdate,
     bool continueInBackground = false,
+    SourceResult? preferred,
   }) {
     _onUpdate = onUpdate;
     _continueInBackground = continueInBackground;
@@ -587,6 +716,7 @@ class FreeP2pLiveProbeService {
           sources,
           onUpdate: onUpdate,
           continueInBackground: continueInBackground,
+          preferred: preferred,
         );
       }();
     }
@@ -603,9 +733,25 @@ class FreeP2pLiveProbeService {
     var budget = pickerProbeLimit - _freshCount(all);
     bool open() => epoch == _epoch && !_closed;
 
+    final pin = preferred != null &&
+            preferred.isMagnet &&
+            resultFor(preferred) == null &&
+            all.any((source) => _key(source) == _key(preferred))
+        ? preferred
+        : null;
+
     List<SourceResult> next(int size) {
       final count = size < budget ? size : budget;
-      final picked = _selectCandidates(all, sources, count, const <String>{});
+      if (count <= 0) return const <SourceResult>[];
+      final List<SourceResult> picked;
+      if (pin != null && resultFor(pin) == null && !_active.contains(_key(pin))) {
+        picked = [
+          pin,
+          ..._selectCandidates(all, sources, count - 1, {_key(pin)}),
+        ];
+      } else {
+        picked = _selectCandidates(all, sources, count, const <String>{});
+      }
       budget -= picked.length;
       return picked;
     }
@@ -836,7 +982,7 @@ class FreeP2pLiveProbeService {
         // A confirmed-live pin is the user's preference: play it.
         if (pinConfirmedLive()) return pin;
 
-        final best = rank(base, sources).first;
+        final best = playbackOrder(base, sources).first;
         final live = _evidenceFor(best);
         // Stop as soon as one candidate has strong two-window evidence that
         // also covers this file's bitrate need.
@@ -851,7 +997,7 @@ class FreeP2pLiveProbeService {
     }
 
     _checkpoint();
-    final best = rank(base, sources).first;
+    final best = playbackOrder(base, sources).first;
     if (!best.isMagnet) return best;
     // Never auto-launch a torrent that did not prove it can play right now.
     return _evidenceFor(best)?.confirmedLive == true ? best : null;
@@ -904,6 +1050,7 @@ class FreeP2pLiveProbeService {
     SourceProviderService sources, {
     void Function()? onUpdate,
     bool continueInBackground = false,
+    SourceResult? preferred,
   }) {
     clear();
     return probeTopCandidates(
@@ -911,6 +1058,7 @@ class FreeP2pLiveProbeService {
       sources,
       onUpdate: onUpdate,
       continueInBackground: continueInBackground,
+      preferred: preferred,
     );
   }
 }
@@ -981,6 +1129,9 @@ enum FreeP2pHealthState {
   live,
   slow,
   checking,
+
+  /// Not probed in this session: says nothing about the swarm.
+  notChecked,
   metadataSlow,
   noPeers,
   stalled,
@@ -993,6 +1144,9 @@ class FreeP2pHealth {
 
   static const checking =
       FreeP2pHealth._(FreeP2pHealthState.checking, 'CHECKING');
+
+  static const notChecked =
+      FreeP2pHealth._(FreeP2pHealthState.notChecked, 'NOT CHECKED');
 
   factory FreeP2pHealth.fromResult(
     LocalTorrentProbeResult result,
@@ -1056,6 +1210,27 @@ class FreeP2pHealth {
         return null;
     }
   }
+}
+
+/// Live-health groups of the Free P2P order, best first.
+enum FreeP2pGroup { direct, live, notChecked, metadataSlow, failed }
+
+/// Section header shown above the first row of a health group.
+class FreeP2pGroupHeader {
+  const FreeP2pGroupHeader(this.group, this.count);
+
+  final FreeP2pGroup group;
+  final int count;
+
+  String get label => switch (group) {
+        FreeP2pGroup.direct => 'Direct links ($count)',
+        FreeP2pGroup.live => 'Confirmed live ($count)',
+        FreeP2pGroup.notChecked =>
+          'Not checked yet ($count) • reported seeders only',
+        FreeP2pGroup.metadataSlow => 'Metadata slow ($count) • may still start',
+        FreeP2pGroup.failed =>
+          'Failed the live check ($count) • still selectable',
+      };
 }
 
 class FreeP2pCheckSummary {
