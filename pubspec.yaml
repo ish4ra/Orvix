@@ -25,12 +25,12 @@ dependencies:
   file_picker: ^13.1.0
   # Cross-platform embedded subtitle extraction from HTTPS/debrid/local streams.
   # Pin the reviewed LGPL HTTPS build so Android/TV/Windows/macOS use one API.
-  ffmpeg_kit_flutter_new_https: 2.6.2
+  ffmpeg_kit_flutter_new_https: 2.6.7
   package_info_plus: ^10.1.0
   path_provider: ^2.1.5
   window_manager: ^0.5.2
   video_player: ^2.14.0
-  supabase_flutter: 2.15.4
+  supabase_flutter: 2.18.2
 
 # Debrify carries two media_kit fixes that matter for desktop stability:
 # safer NativeCallable ownership/disposal and waiting for native render-context
