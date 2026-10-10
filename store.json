@@ -22,7 +22,19 @@
         "entitlements": [],
         "privacy": {}
       },
-      "versions": []
+      "versions": [
+        {
+          "version": "0.7.9",
+          "buildVersion": "4209",
+          "marketingVersion": "0.7.9-beta.64",
+          "date": "2026-10-09T06:43:29Z",
+          "localizedDescription": "First Orvix iPhone/iPad sideload beta. Supports iOS/iPadOS 15.5 or later. Includes Free P2P live-first source selection and privacy-safe supporters.",
+          "downloadURL": "https://github.com/ish4ra/Orvix/releases/download/v0.7.9-beta.64/Orvix-v0.7.9-beta.64-iOS.ipa",
+          "size": 32208595,
+          "sha256": "807c6396426138fdddb905bbd1877d8192111546bc315d7fc4ad887c7d339635",
+          "minOSVersion": "15.5"
+        }
+      ]
     }
   ]
 }
