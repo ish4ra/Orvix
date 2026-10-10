@@ -1,0 +1,28 @@
+name: GitHub Star Notifications
+
+# The watch event only runs workflows on the repository's default branch.
+# A single issue is used so GitHub subscribers receive native notifications.
+on:
+  watch:
+    types: [started]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  notify:
+    name: Comment on star notification issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Post a GitHub notification comment
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          STARGAZER: ${{ github.event.sender.login }}
+          STARGAZER_URL: ${{ github.event.sender.html_url }}
+        run: |
+          body="$(printf '⭐ **New star** for **%s** from [@%s](%s).\n\n@ish4ra' "$REPOSITORY" "$STARGAZER" "$STARGAZER_URL")"
+          gh api --method POST "/repos/$REPOSITORY/issues/80/comments" --field body="$body" >/dev/null
