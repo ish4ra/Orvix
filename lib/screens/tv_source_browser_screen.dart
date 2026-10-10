@@ -27,8 +27,10 @@ class TvSourceBrowserScreen extends StatefulWidget {
     this.episode,
     this.onPlaySource,
     this.preferFreeP2p = true,
+    this.liveCheck = true,
     this.probeSession,
     this.liveEvidence,
+    this.onManualChoice,
   });
 
   final SourceProviderService sources;
@@ -37,6 +39,15 @@ class TvSourceBrowserScreen extends StatefulWidget {
   final Future<List<SourceResult>> resultsFuture;
   final Future<void> Function(SourceResult source)? onPlaySource;
   final bool preferFreeP2p;
+
+  /// Free P2P live check (probing, health groups, display modes). When
+  /// false, Free P2P is a plain list: no torrent is probed and a chosen row
+  /// goes straight to playback.
+  final bool liveCheck;
+
+  /// Called with a Free P2P source chosen from the plain list ([liveCheck]
+  /// false) before it plays.
+  final void Function(SourceResult source)? onManualChoice;
 
   /// Live-probe evidence already gathered by Normal Play. When provided, the
   /// browser shows and ranks with it instead of re-probing from scratch; the
@@ -67,6 +78,12 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
   late final FreeP2pLiveProbeService _liveProbe;
   bool _liveProbeStarted = false;
   bool _probeHandedToPlayback = false;
+
+  /// Free P2P with the live check on.
+  bool get _liveFree => widget.preferFreeP2p && widget.liveCheck;
+
+  /// Free P2P as a plain list.
+  bool get _manualFree => widget.preferFreeP2p && !widget.liveCheck;
 
   String get _pinKey =>
       widget.sources.sourceTargetKey(widget.item, episode: widget.episode);
@@ -147,7 +164,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
   void _startLiveProbe() {
     // Live probing belongs to the Free P2P playback path only; with a
     // cloud/debrid connection (preferFreeP2p false) playback never uses it.
-    if (!widget.preferFreeP2p || _liveProbeStarted || _results.isEmpty) {
+    if (!_liveFree || _liveProbeStarted || _results.isEmpty) {
       return;
     }
     _liveProbeStarted = true;
@@ -187,16 +204,18 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
 
   List<SourceResult> get _visibleResults {
     // Free P2P: every display mode keeps the live-health groups.
-    var sorted = widget.preferFreeP2p
+    var sorted = _liveFree
         ? _liveProbe.rank(_results, widget.sources)
-        : switch (_mode) {
-            SourceDisplayMode.recommended =>
-              widget.sources.sortRecommended(_results),
-            SourceDisplayMode.myPriority =>
-              widget.sources.sortResults(_results, _priority),
-            SourceDisplayMode.smooth =>
-              widget.sources.sortForSmoothPlayback(_results),
-          };
+        : _manualFree
+            ? widget.sources.sortManualFreeP2p(_results, _priority)
+            : switch (_mode) {
+                SourceDisplayMode.recommended =>
+                  widget.sources.sortRecommended(_results),
+                SourceDisplayMode.myPriority =>
+                  widget.sources.sortResults(_results, _priority),
+                SourceDisplayMode.smooth =>
+                  widget.sources.sortForSmoothPlayback(_results),
+              };
 
     if (_providerFilter != null) {
       sorted = sorted
@@ -211,7 +230,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
 
     var ordered = [...sorted];
     if (_pinnedIdentity != null) {
-      if (widget.preferFreeP2p) {
+      if (_liveFree) {
         // Same pin rule as mobile/desktop: a pin confirmed unplayable does not
         // hold a confirmed-live torrent below it.
         ordered = _liveProbe.applyPinnedPreference(ordered, _isPinned);
@@ -486,9 +505,11 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
   Future<void> _play(SourceResult source) async {
     if (_openingResource != null) return;
 
-    if (widget.preferFreeP2p) {
+    if (_liveFree) {
       await _liveProbe.prepareForPlayback(source);
       _probeHandedToPlayback = true;
+    } else if (_manualFree) {
+      widget.onManualChoice?.call(source);
     }
 
     final callback = widget.onPlaySource;
@@ -601,7 +622,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
   }
 
   Widget _sourceControls() {
-    final liveSummary = widget.preferFreeP2p && !_loading
+    final liveSummary = _liveFree && !_loading
         ? _liveProbe.summary(_results).text
         : null;
     return Column(
@@ -636,19 +657,20 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
           child: ListView(
             scrollDirection: Axis.horizontal,
             children: [
-              for (final mode in SourceDisplayMode.values) ...[
-                _TvFilterChip(
-                  selected: _mode == mode,
-                  label: mode.label,
-                  icon: switch (mode) {
-                    SourceDisplayMode.recommended => Icons.auto_awesome_rounded,
-                    SourceDisplayMode.myPriority => Icons.tune_rounded,
-                    SourceDisplayMode.smooth => Icons.speed_rounded,
-                  },
-                  onPressed: () => _selectMode(mode),
-                ),
-                const SizedBox(width: 8),
-              ],
+              if (!_manualFree)
+                for (final mode in SourceDisplayMode.values) ...[
+                  _TvFilterChip(
+                    selected: _mode == mode,
+                    label: mode.label,
+                    icon: switch (mode) {
+                      SourceDisplayMode.recommended => Icons.auto_awesome_rounded,
+                      SourceDisplayMode.myPriority => Icons.tune_rounded,
+                      SourceDisplayMode.smooth => Icons.speed_rounded,
+                    },
+                    onPressed: () => _selectMode(mode),
+                  ),
+                  const SizedBox(width: 8),
+                ],
               _TvFilterChip(
                 selected: false,
                 label: 'Order',
@@ -664,14 +686,16 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
                   () => _compatibilityOnly = !_compatibilityOnly,
                 ),
               ),
-              const SizedBox(width: 8),
-              _TvFilterChip(
-                selected: false,
-                label: 'What are these?',
-                icon: Icons.info_outline_rounded,
-                onPressed: () => unawaited(_showSourceModeHelp()),
-              ),
-              if (widget.preferFreeP2p) ...[
+              if (!_manualFree) ...[
+                const SizedBox(width: 8),
+                _TvFilterChip(
+                  selected: false,
+                  label: 'What are these?',
+                  icon: Icons.info_outline_rounded,
+                  onPressed: () => unawaited(_showSourceModeHelp()),
+                ),
+              ],
+              if (_liveFree) ...[
                 const SizedBox(width: 8),
                 _TvFilterChip(
                   selected: false,
@@ -780,7 +804,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
   /// Discards this browser's evidence (and any frozen order) and starts a
   /// fresh bounded check with the current Order setting.
   void _recheckLive() {
-    if (!widget.preferFreeP2p || _results.isEmpty) return;
+    if (!_liveFree || _results.isEmpty) return;
     setState(() {
       _liveProbe.clear();
       _liveProbeStarted = false;
@@ -851,7 +875,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
     final free = widget.preferFreeP2p;
     // Health-group labels; torrents that failed the live check sit together
     // at the bottom. Labels are not focusable and every row stays selectable.
-    final groupHeaders = free
+    final groupHeaders = _liveFree
         ? _liveProbe.groupHeaders(visible, isPinned: _isPinned)
         : const <int, FreeP2pGroupHeader>{};
 
@@ -874,7 +898,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
         final row = _TvSourceRow(
           key: const ValueKey('tv-row-card'),
           source: source,
-          assessment: free ? _freeAssessment(source) : null,
+          assessment: _liveFree ? _freeAssessment(source) : null,
           freeP2p: free,
           pinned: pinned,
           autofocus: index == 0,

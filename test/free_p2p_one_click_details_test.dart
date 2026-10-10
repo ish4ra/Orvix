@@ -287,7 +287,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
   }
 
-  group('Android Mobile one-click Play', () {
+  // The automatic one-click run now applies to Windows and macOS only (the
+  // host platform here); Android Mobile and Android TV open the plain source
+  // list, covered by free_p2p_manual_recovery_test.dart.
+  group('Windows/macOS one-click Play', () {
     testWidgets('starts the best verified source without the source list',
         (tester) async {
       mobileSize(tester);
@@ -452,8 +455,9 @@ void main() {
     });
 
     testWidgets(
-        'an automatic run never makes the player leave for another source '
-        'on a startup failure', (tester) async {
+        'Continue Watching opens the browser; a chosen source that fails to '
+        'start never makes the player leave for another source',
+        (tester) async {
       tvSize(tester);
       final engine = _Engine(live: {_best.hash, _second.hash});
       final player = _Player(failStartup: {_best.hash, _second.hash});
@@ -466,6 +470,10 @@ void main() {
         ));
         await settle(tester);
         unawaited(screen.currentState!.resumeContinueWatching(_movie, null));
+        await settle(tester, frames: 40);
+        expect(find.byType(TvSourceBrowserScreen), findsOneWidget);
+        expect(player.launched, isEmpty, reason: 'nothing auto-plays');
+        await key(tester, LogicalKeyboardKey.select);
         await settle(tester, frames: 80);
 
         expect(player.launched, hasLength(1),
@@ -473,12 +481,13 @@ void main() {
         expect(player.offeredFallback, [false]);
         final attempts = FreeP2pPlaybackTrace.instance.attempts;
         expect(attempts.single.outcome.name, 'playerFailure');
+        expect(attempts.single.selection, 'manual');
         expect(
           attempts.single.stages.map((s) => '${s['stage']}:${s['result']}'),
           isNot(contains('sourceFallback:playerLeft')),
         );
-        expect(
-            FreeP2pPlaybackTrace.instance.runs.single.result, 'stoppedByUser');
+        expect(FreeP2pPlaybackTrace.instance.runs, isEmpty,
+            reason: 'no automatic run on Android TV');
       });
     });
 
@@ -576,8 +585,8 @@ void main() {
   });
 
   group('ExoPlayer (chosen in Settings) releases the local P2P torrent', () {
-    // Driven by the automatic run (Continue Watching); TV Play itself opens
-    // the source browser.
+    // Driven by a row chosen in the TV source browser that Continue
+    // Watching opens.
     void exoPreferred() => SharedPreferences.setMockInitialValues(
         <String, Object>{'orvix_player_engine_v1': 'exoPlayer'});
 
@@ -600,6 +609,9 @@ void main() {
         ));
         await settle(tester);
         unawaited(screen.currentState!.resumeContinueWatching(_movie, null));
+        await settle(tester, frames: 40);
+        // OK on the focused first row of the source browser.
+        await key(tester, LogicalKeyboardKey.select);
         await settle(tester, frames: 60);
 
         expect(opened, [_best.hash]);
@@ -628,6 +640,9 @@ void main() {
         ));
         await settle(tester);
         unawaited(screen.currentState!.resumeContinueWatching(_movie, null));
+        await settle(tester, frames: 40);
+        // OK on the focused first row of the source browser.
+        await key(tester, LogicalKeyboardKey.select);
         await settle(tester, frames: 60);
 
         expect(opened, hasLength(1),
@@ -635,8 +650,6 @@ void main() {
         expect(engine.removed, contains(opened.single));
         expect(FreeP2pPlaybackTrace.instance.attempts.first.outcome.name,
             'playerFailure');
-        expect(
-            FreeP2pPlaybackTrace.instance.runs.single.result, 'stoppedByUser');
       });
     });
 
@@ -659,6 +672,9 @@ void main() {
         ));
         await settle(tester);
         unawaited(screen.currentState!.resumeContinueWatching(_movie, null));
+        await settle(tester, frames: 40);
+        // OK on the focused first row of the source browser.
+        await key(tester, LogicalKeyboardKey.select);
         await settle(tester, frames: 60);
         expect(opened, isTrue);
 

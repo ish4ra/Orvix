@@ -77,6 +77,26 @@ class PlayerScreen extends StatefulWidget {
   final ValueChanged<String>? onStartupFailed;
   final Future<void> Function(String message)? onStartupFallback;
 
+  /// Whether a stream that has not started when the startup watchdog fires
+  /// keeps waiting instead of showing a startup failure. True for a local
+  /// Free P2P torrent on Android (mobile and TV): a swarm that is still
+  /// connecting is not a failure, and the failure card replaced the video
+  /// so a torrent that would have started was abandoned. Real player errors
+  /// still show. Other platforms and stream types keep the watchdog.
+  static bool slowStartKeepsWaiting({
+    required bool isAndroid,
+    required String url,
+  }) {
+    if (!isAndroid) return false;
+    final uri = Uri.tryParse(url);
+    return uri != null &&
+        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
+        uri.port == 11470 &&
+        uri.pathSegments.length >= 2 &&
+        RegExp(r'^[0-9a-fA-F]{40}$').hasMatch(uri.pathSegments.first) &&
+        int.tryParse(uri.pathSegments[1]) != null;
+  }
+
   @override
   State<PlayerScreen> createState() => _PlayerScreenState();
 }
@@ -106,6 +126,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _successReported = false;
   bool _failureReported = false;
   bool _startupFailureVisible = false;
+  // A local P2P torrent is still connecting after the startup watchdog.
+  bool _slowStartNotice = false;
   bool _preflightWarmup = false;
   bool _exitPrepared = false;
   // One logical exit: _preparePlayerExitInternal runs once and the route pops
@@ -1545,6 +1567,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     try {
       _playbackStarted = false;
       _startupFailureVisible = false;
+      _slowStartNotice = false;
       _mobileEncodedLetterboxDetected = false;
       _startupTimer?.cancel();
       if (mounted && _error != null) {
@@ -1721,6 +1744,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
           if (!mounted || _closing) return;
           if (_hasPlaybackActivity()) {
             _markPlaybackStarted();
+            return;
+          }
+          if (PlayerScreen.slowStartKeepsWaiting(
+            isAndroid: Platform.isAndroid,
+            url: widget.url,
+          )) {
+            // Keep the torrent and the player: say it is slow, without a
+            // failure card. Back still leaves at any time.
+            setState(() => _slowStartNotice = true);
             return;
           }
           const message =
@@ -5703,10 +5735,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   PlayerLoadingOverlay(
                     item: widget.item,
                     title: widget.title,
-                    message: 'Starting playback…',
-                    detail: widget.episode == null
-                        ? 'Opening the selected stream…'
-                        : widget.title,
+                    message: _slowStartNotice
+                        ? 'Still connecting to peers…'
+                        : 'Starting playback…',
+                    detail: _slowStartNotice
+                        ? 'This torrent is starting slowly. Keep waiting, '
+                            'or go Back to choose another source.'
+                        : widget.episode == null
+                            ? 'Opening the selected stream…'
+                            : widget.title,
                   ),
                 if (_error == null &&
                     !_aiSubtitleLoading &&

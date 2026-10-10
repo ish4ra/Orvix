@@ -636,7 +636,11 @@ void main() {
     // One cloud/debrid eligibility check drives Normal Play, the picker,
     // Android TV and playback.
     expect(details, contains('if (autoUsePinned && !hasCloudConnection) {'));
-    expect(details, contains('final liveCheckAllowed = !hasCloudConnection;'));
+    // Android Mobile and Android TV use the plain manual Free P2P list.
+    expect(
+      details,
+      contains('final liveCheckAllowed = !hasCloudConnection && !manualFreeP2p;'),
+    );
     expect(details, isNot(contains('hasDebridConnection')));
     expect(details, contains('Future<bool> _hasCloudConnection() async'));
     expect(

@@ -1053,6 +1053,41 @@ class SourceProviderService {
     return out;
   }
 
+  /// Plain order of the manual Free P2P source list (Android Mobile and
+  /// Android TV): direct links first, then the user's Source Priority when
+  /// they customized it, otherwise the static Free playability order. No
+  /// live evidence is involved.
+  List<SourceResult> sortManualFreeP2p(
+    Iterable<SourceResult> results,
+    List<SourceSortCriterion> priority,
+  ) {
+    final base = _isDefaultPriority(priority)
+        ? sortForFreeStreaming(results)
+        : sortResults(results, priority);
+    return [
+      ...base.where((result) => !result.isMagnet),
+      ...base.where((result) => result.isMagnet),
+    ];
+  }
+
+  /// One line describing [sortManualFreeP2p] for the source list.
+  static String manualFreeP2pRankingText(List<SourceSortCriterion> priority) {
+    if (_isDefaultPriority(priority)) {
+      return 'Free P2P: direct links → reported swarm → exact file → '
+          'compatibility → seeders → practical size';
+    }
+    final order = priority.map((e) => e.label.toLowerCase()).join(' → ');
+    return 'Free P2P: direct links → $order';
+  }
+
+  static bool _isDefaultPriority(List<SourceSortCriterion> priority) {
+    if (priority.length != defaultPriority.length) return false;
+    for (var i = 0; i < priority.length; i++) {
+      if (priority[i] != defaultPriority[i]) return false;
+    }
+    return true;
+  }
+
   /// The Smooth order as a comparator, for use inside Free P2P health groups.
   int compareSmoothPlayback(SourceResult a, SourceResult b) =>
       _compareSmoothPlayback(a, b);

@@ -95,6 +95,11 @@ class DetailsScreenState extends State<DetailsScreen> {
   @visibleForTesting
   static Future<AndroidExoPlayerResult?> Function(String url)? debugExoLauncher;
 
+  /// Lets widget tests run the Android Mobile playback flow on the host
+  /// platform. Always null in the app.
+  @visibleForTesting
+  static bool? debugAndroidPlaybackOverride;
+
   static const _videoExtensions = <String>{
     'mkv',
     'mp4',
@@ -2076,13 +2081,16 @@ class DetailsScreenState extends State<DetailsScreen> {
               episode: episode,
               resultsFuture: resultsFuture,
               preferFreeP2p: !hasCloudConnection,
+              liveCheck: !_manualFreeP2p,
               liveEvidence: _liveEvidence,
               onPlaySource: (chosen) async {
+                final cloud = await _hasCloudConnection();
+                if (!cloud && _manualFreeP2p) _traceManualChoice(chosen);
                 await _playSourceResult(
                   chosen,
                   item,
                   episode,
-                  hasCloudConnection: await _hasCloudConnection(),
+                  hasCloudConnection: cloud,
                 );
               },
             ),
@@ -2141,7 +2149,22 @@ class DetailsScreenState extends State<DetailsScreen> {
         }
       }
 
-      // Free P2P (no cloud/debrid route): one press of Play finds the best
+      // Free P2P (no cloud/debrid route) on Android Mobile and Android TV:
+      // Play opens the source list and the user chooses. The automatic
+      // live-checked one-click run and its multi-source fallback are off
+      // there; they chose and abandoned torrents that play when picked by
+      // hand. A pin is listed first and plays when chosen.
+      if (!hasCloudConnection && _manualFreeP2p) {
+        await _runSourcePicker(
+          results,
+          item,
+          episode,
+          hasCloudConnection: false,
+        );
+        return;
+      }
+
+      // Free P2P on Windows and macOS: one press of Play finds the best
       // source the bounded live check verified, plays it and, when it does
       // not start, moves to the next verified source. A pin is a
       // preference, never a bypass of that check.
@@ -2325,7 +2348,14 @@ class DetailsScreenState extends State<DetailsScreen> {
   /// Android playback (mobile and TV). Always equal to Platform.isAndroid in
   /// the app; the Android TV test override also selects it on a test host.
   bool get _androidPlayback =>
-      Platform.isAndroid || PlatformProfile.isAndroidTv;
+      debugAndroidPlaybackOverride ??
+      (Platform.isAndroid || PlatformProfile.isAndroidTv);
+
+  /// Manual Free P2P on Android Mobile and Android TV: the source list is
+  /// plain (no live probe, health groups or display modes), Normal Play
+  /// opens it, and a chosen torrent goes straight to the engine and the
+  /// player. Windows and macOS keep the live check.
+  bool get _manualFreeP2p => _androidPlayback;
 
   /// Set while a one-click attempt may let MPV leave on a startup failure.
   bool _sourceFallbackArmed = false;
@@ -2379,6 +2409,17 @@ class DetailsScreenState extends State<DetailsScreen> {
       _showPlayError(failure);
     }
     return end;
+  }
+
+  /// Starts the privacy-safe playback report for a Free P2P source the user
+  /// chose by hand, so the report reads how it was chosen. No live check is
+  /// involved.
+  void _traceManualChoice(SourceResult source, {String selection = 'manual'}) {
+    FreeP2pPlaybackTrace.instance.begin(
+      source,
+      selection: selection,
+      liveCheck: source.isMagnet ? 'off' : 'directHttp',
+    );
   }
 
   /// Why one-click playback did not start, said once above the source
@@ -3131,7 +3172,11 @@ class DetailsScreenState extends State<DetailsScreen> {
               episode: episode,
               resultsFuture: Future.value(results),
               preferFreeP2p: !hasCloudConnection,
+              liveCheck: !_manualFreeP2p,
               probeSession: probeSession,
+              onManualChoice: !hasCloudConnection && _manualFreeP2p
+                  ? _traceManualChoice
+                  : null,
             ),
           ),
         ),
@@ -3142,8 +3187,10 @@ class DetailsScreenState extends State<DetailsScreen> {
     var compatibilityOnly = false;
     // Live probing and its playback gate belong to the Free P2P playback
     // path only; with a cloud/debrid connection playback never uses these
-    // torrent sessions. The display mode below never changes this.
-    final liveCheckAllowed = !hasCloudConnection;
+    // torrent sessions. The display mode below never changes this. Android
+    // Mobile shows a plain Free P2P list instead ([_manualFreeP2p]).
+    final manualFreeP2p = !hasCloudConnection && _manualFreeP2p;
+    final liveCheckAllowed = !hasCloudConnection && !manualFreeP2p;
     var displayMode =
         await widget.sources.getDisplayMode(liveCheck: liveCheckAllowed);
     final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
@@ -3311,14 +3358,16 @@ class DetailsScreenState extends State<DetailsScreen> {
           final desktopSheet = Platform.isWindows && sheetWidth >= 900;
           final ranked = liveCheckAllowed
               ? liveProbe.rank(results, widget.sources)
-              : switch (displayMode) {
-                  SourceDisplayMode.recommended =>
-                    widget.sources.sortRecommended(results),
-                  SourceDisplayMode.myPriority =>
-                    widget.sources.sortResults(results, priority),
-                  SourceDisplayMode.smooth =>
-                    widget.sources.sortForSmoothPlayback(results),
-                };
+              : manualFreeP2p
+                  ? widget.sources.sortManualFreeP2p(results, priority)
+                  : switch (displayMode) {
+                      SourceDisplayMode.recommended =>
+                        widget.sources.sortRecommended(results),
+                      SourceDisplayMode.myPriority =>
+                        widget.sources.sortResults(results, priority),
+                      SourceDisplayMode.smooth =>
+                        widget.sources.sortForSmoothPlayback(results),
+                    };
           final filtered = compatibilityOnly
               ? ranked
                   .where((result) => result.compatibilityFriendly)
@@ -3426,6 +3475,8 @@ class DetailsScreenState extends State<DetailsScreen> {
           const healthGroups =
               'live → not checked → metadata slow → failed check';
           final rankingText = switch (displayMode) {
+            _ when manualFreeP2p => SourceProviderService
+                .manualFreeP2pRankingText(priority),
             SourceDisplayMode.recommended => liveCheckAllowed
                 ? 'Recommended: $healthGroups; live by ready now, first byte, real speed and live peers'
                 : 'Recommended: cached → device compatibility, exact file, reported swarm, practical size',
@@ -3554,32 +3605,34 @@ class DetailsScreenState extends State<DetailsScreen> {
                       children: [
                         // One display mode at a time. Display only: the Free
                         // P2P live check and Quick Play gate stay the same.
-                        for (final mode in SourceDisplayMode.values)
-                          ChoiceChip(
-                            showCheckmark: false,
-                            selected: displayMode == mode,
-                            avatar: Icon(
-                              switch (mode) {
+                        // The manual Free P2P list has none.
+                        if (!manualFreeP2p)
+                          for (final mode in SourceDisplayMode.values)
+                            ChoiceChip(
+                              showCheckmark: false,
+                              selected: displayMode == mode,
+                              avatar: Icon(
+                                switch (mode) {
+                                  SourceDisplayMode.recommended =>
+                                    Icons.auto_awesome_rounded,
+                                  SourceDisplayMode.myPriority =>
+                                    Icons.format_list_numbered_rounded,
+                                  SourceDisplayMode.smooth => Icons.speed_rounded,
+                                },
+                                size: 18,
+                              ),
+                              label: Text(mode.label),
+                              tooltip: switch (mode) {
                                 SourceDisplayMode.recommended =>
-                                  Icons.auto_awesome_rounded,
+                                  'Orvix order: confirmed-live sources first, then the most playable ones.',
                                 SourceDisplayMode.myPriority =>
-                                  Icons.format_list_numbered_rounded,
-                                SourceDisplayMode.smooth => Icons.speed_rounded,
+                                  'Your Source Priority (Sort), inside each live-health group.',
+                                SourceDisplayMode.smooth =>
+                                  'Compatible, efficient 1080p/720p sources first, inside each live-health group.',
                               },
-                              size: 18,
+                              onSelected: (_) =>
+                                  selectDisplayMode(mode, setSheetState),
                             ),
-                            label: Text(mode.label),
-                            tooltip: switch (mode) {
-                              SourceDisplayMode.recommended =>
-                                'Orvix order: confirmed-live sources first, then the most playable ones.',
-                              SourceDisplayMode.myPriority =>
-                                'Your Source Priority (Sort), inside each live-health group.',
-                              SourceDisplayMode.smooth =>
-                                'Compatible, efficient 1080p/720p sources first, inside each live-health group.',
-                            },
-                            onSelected: (_) =>
-                                selectDisplayMode(mode, setSheetState),
-                          ),
                         FilterChip(
                           showCheckmark: false,
                           selected: compatibilityOnly,
@@ -3727,6 +3780,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                                   ? health.label
                                   : index == 0 &&
                                           !liveCheckAllowed &&
+                                          !manualFreeP2p &&
                                           displayMode ==
                                               SourceDisplayMode.smooth
                                       ? 'Smooth'
@@ -3736,7 +3790,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                           // from the probe.
                           final providerText =
                               '${result.provider}${result.isMagnet ? ' • torrent / P2P' : ' • direct URL'}'
-                              '${liveCheckAllowed && result.isMagnet && result.seeders != null ? ' • ${result.seeders} seeders reported' : ''}'
+                              '${(liveCheckAllowed || manualFreeP2p) && result.isMagnet && result.seeders != null ? ' • ${result.seeders} seeders reported' : ''}'
                               '${healthMetrics == null ? '' : ' • $healthMetrics'}'
                               '${result.compatibilityFriendly ? '' : ' • ⚠ compatibility risk'}';
 
@@ -3966,6 +4020,9 @@ class DetailsScreenState extends State<DetailsScreen> {
 
     if (selected != null && liveCheckAllowed) {
       await liveProbe.prepareForPlayback(selected, selection: selectedVia);
+    } else if (selected != null && manualFreeP2p) {
+      _traceManualChoice(selected, selection: selectedVia);
+      if (ownsProbeSession) await liveProbe.release();
     } else if (ownsProbeSession) {
       await liveProbe.release();
     }

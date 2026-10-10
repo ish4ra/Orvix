@@ -626,13 +626,10 @@ void main() {
 
   group('Android TV playback', () {
     testWidgets(
-        'Play opens the source browser at once; a row plays before the live '
-        'check finishes', (tester) async {
+        'Play opens the source browser at once; a row plays with no live '
+        'check', (tester) async {
       tvSize(tester);
-      final engine = _Engine(
-        live: {_best.hash, _second.hash},
-        holdLiveCheck: true,
-      );
+      final engine = _Engine(live: {_best.hash, _second.hash});
       final player = _Player();
       DetailsScreenState.debugPlayerLauncher = player.call;
       await withEngine(tester, engine, () async {
@@ -646,19 +643,21 @@ void main() {
         expect(find.byType(TvSourceBrowserScreen), findsOneWidget);
         expect(find.textContaining('Checking live P2P sources'), findsNothing);
         expect(player.launched, isEmpty, reason: 'nothing auto-plays');
+        expect(engine.totalCreates, 0, reason: 'browsing probes nothing');
 
         // OK on the focused first row.
         await key(tester, LogicalKeyboardKey.select);
         await settle(tester, frames: 40);
         expect(player.launched, hasLength(1));
+        expect(engine.totalCreates, 1, reason: 'only the chosen torrent');
       });
     });
 
-    // The automatic run (Continue Watching) on Android. The Android TV
-    // override is the only way to select Android playback on a test host;
-    // Android Mobile shares this player path.
+    // A manual choice on Android. The Android TV override is the only way to
+    // select Android playback on a test host; Android Mobile shares this
+    // player path.
     testWidgets(
-        'a verified source that starts slowly keeps its player and plays',
+        'a chosen source that starts slowly keeps its player and plays',
         (tester) async {
       tvSize(tester);
       final engine = _Engine(live: {_best.hash, _second.hash});
@@ -672,6 +671,10 @@ void main() {
         ));
         await settle(tester);
         unawaited(screen.currentState!.resumeContinueWatching(_movie, null));
+        await settle(tester, frames: 40);
+        expect(find.byType(TvSourceBrowserScreen), findsOneWidget);
+        // OK on the focused first row.
+        await key(tester, LogicalKeyboardKey.select);
         await settle(tester, frames: 80);
 
         expect(player.leftEarly, isEmpty,
