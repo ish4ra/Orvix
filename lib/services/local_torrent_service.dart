@@ -1277,6 +1277,16 @@ class LocalTorrentService {
     }
   }
 
+  /// Detaches one warm probe session, unless it is the active playback
+  /// torrent. Used for a probe that finished after its live check was closed
+  /// or restarted, so it cannot linger until the cleanup timer.
+  Future<void> releaseRetainedProbe(SourceResult source) async {
+    final hash = source.isMagnet ? _extractInfoHash(source.resource) : null;
+    if (hash == null || hash == _currentInfoHash) return;
+    if (!_retainedProbeInfoHashes.remove(hash)) return;
+    await _removeEngine(hash);
+  }
+
   Future<void> releaseRetainedProbeSessions() async {
     _probeCleanupTimer?.cancel();
     _probeCleanupTimer = null;
