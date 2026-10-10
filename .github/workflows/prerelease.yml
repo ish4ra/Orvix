@@ -32,7 +32,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       platforms: ${{ steps.platforms.outputs.platforms }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: platforms
         name: Resolve release platforms
         # A release/android-v* branch, or a manual run with platforms=android,
@@ -90,9 +90,9 @@ jobs:
     name: Validate Dart + regressions
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.22.x'
 
@@ -313,11 +313,11 @@ jobs:
     needs: [metadata, validate]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Prepare pinned Android native dependencies
         shell: bash
         run: bash tools/prepare_android_native.sh native
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: android-native-engine
           path: native/
@@ -327,9 +327,9 @@ jobs:
     name: Build macOS
     needs: [metadata, validate]
     if: needs.metadata.outputs.platforms == 'all'
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: subosito/flutter-action@v2
         with:
@@ -399,13 +399,13 @@ jobs:
           cp macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_512.png branding-preview-macos/app-icon-512.png
           cp assets/branding/orvix_logo.webp branding-preview-macos/in-app-logo.webp
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: branding-preview-macos
           if-no-files-found: error
           path: branding-preview-macos/*
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos
           if-no-files-found: error
@@ -415,9 +415,9 @@ jobs:
     name: Build iOS Modern sideload IPA
     needs: [metadata, validate]
     if: needs.metadata.outputs.platforms == 'all'
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: subosito/flutter-action@v2
         with:
@@ -444,7 +444,7 @@ jobs:
           PUBSPEC_VERSION="$(awk '$1 == "version:" {print $2}' pubspec.yaml)"
           bash tools/verify_ios_ipa.sh "Orvix-v$V-iOS-15.5-Plus.ipa" "$V" "${PUBSPEC_VERSION#*+}" modern
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ios-modern
           if-no-files-found: error
@@ -456,9 +456,9 @@ jobs:
     name: Build iOS Legacy sideload IPA
     needs: [metadata, validate]
     if: needs.metadata.outputs.platforms == 'all'
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Select Xcode 16.4
         shell: bash
@@ -498,7 +498,7 @@ jobs:
           PUBSPEC_VERSION="$(awk '$1 == "version:" {print $2}' pubspec.yaml)"
           bash tools/verify_ios_legacy_ipa.sh "Orvix-v$V-iOS-12-Legacy.ipa" "$V" "${PUBSPEC_VERSION#*+}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ios-legacy
           if-no-files-found: error
@@ -509,9 +509,9 @@ jobs:
     if: needs.metadata.outputs.platforms == 'all'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.22.x'
 
@@ -1151,13 +1151,13 @@ jobs:
             Copy-Item (Join-Path $env:RUNNER_TEMP 'orvix-exe-embedded-icon.png') branding-preview/windows-exe-embedded-icon.png
           }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: branding-preview
           if-no-files-found: error
           path: branding-preview/*
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           if-no-files-found: error
@@ -1169,12 +1169,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: [metadata, validate, android-native]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '25'
 
       - uses: subosito/flutter-action@v2
         with:
@@ -1184,7 +1184,7 @@ jobs:
       - name: Generate Android platform
         run: flutter create --platforms=android --org com.orvix --project-name orvix .
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: android-native-engine
           path: android-native
@@ -1331,13 +1331,13 @@ jobs:
           cp android/app/src/main/res/drawable-nodpi/orvix_foreground.png branding-preview-android-mobile/adaptive-foreground.png
           cp assets/branding/orvix_logo.webp branding-preview-android-mobile/in-app-logo.webp
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: branding-preview-android-mobile
           if-no-files-found: error
           path: branding-preview-android-mobile/*
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: android-mobile
           path: |
@@ -1350,12 +1350,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: [metadata, validate, android-native]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '25'
 
       - uses: subosito/flutter-action@v2
         with:
@@ -1365,7 +1365,7 @@ jobs:
       - name: Generate Android platform
         run: flutter create --platforms=android --org com.orvix --project-name orvix .
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: android-native-engine
           path: android-native
@@ -1475,13 +1475,13 @@ jobs:
           cp android/app/src/main/res/drawable-xhdpi/tv_banner.png branding-preview-android-tv/tv-banner.png
           cp assets/branding/orvix_logo.webp branding-preview-android-tv/in-app-logo.webp
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: branding-preview-android-tv
           if-no-files-found: error
           path: branding-preview-android-tv/*
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: android-tv
           path: Orvix-v${{ needs.metadata.outputs.version }}-Android-TV.apk
@@ -1505,37 +1505,37 @@ jobs:
     env:
       RELEASE_PLATFORMS: ${{ needs.metadata.outputs.platforms }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: needs.metadata.outputs.platforms == 'all'
         with:
           name: windows
           path: dist/windows
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: android-mobile
           path: dist/mobile
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: android-tv
           path: dist/tv
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: needs.metadata.outputs.platforms == 'all'
         with:
           name: macos
           path: dist/macos
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: needs.metadata.outputs.platforms == 'all'
         with:
           name: ios-modern
           path: dist/ios-modern
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: needs.metadata.outputs.platforms == 'all'
         with:
           name: ios-legacy
@@ -1710,7 +1710,7 @@ jobs:
             --download-url "https://github.com/$GITHUB_REPOSITORY/releases/download/v$V/Orvix-v$V-iOS-15.5-Plus.ipa" \
             --output dist/altstore/store.json
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: needs.metadata.outputs.platforms == 'all'
         continue-on-error: true
         with:
