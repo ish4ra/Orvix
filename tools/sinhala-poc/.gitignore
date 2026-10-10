@@ -1,0 +1,7 @@
+# Local test outputs and downloaded tools; never commit these.
+runs/
+journals/
+mpv/
+fonts/
+*.exe
+/sinhala-poc
