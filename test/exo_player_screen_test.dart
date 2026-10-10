@@ -103,6 +103,16 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
   }
 
+  test('Latin-1 subtitle files decode instead of failing', () {
+    final bytes = <int>[...'1\n00:00:01,000 --> 00:00:02,000\nCaf'.codeUnits, 0xE9];
+    expect(AndroidExoPlayerScreen.decodeSubtitleBytes(bytes), endsWith('Café'));
+    expect(
+      AndroidExoPlayerScreen.decodeSubtitleBytes([83, 101, 195, 177, 111, 114]),
+      'Señor',
+      reason: 'UTF-8 stays UTF-8',
+    );
+  });
+
   testWidgets('the default subtitle language is requested from the player',
       (tester) async {
     await openExo(tester, _url);

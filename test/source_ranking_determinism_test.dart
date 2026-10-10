@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:orvix/services/free_p2p_live_probe_service.dart';
 import 'package:orvix/services/local_torrent_service.dart';
@@ -376,6 +377,58 @@ void main() {
         reason: 'Playback engine: Failed to recognize file format.',
       );
       expect(sources.playbackHistoryRank(source), -2);
+    });
+  });
+
+  group('review follow-ups', () {
+    test('device log rows carry no release name and only a short hash',
+        () {
+      final sources = SourceProviderService();
+      final printed = <String>[];
+      final previous = debugPrint;
+      debugPrint = (String? message, {int? wrapWidth}) =>
+          printed.add(message ?? '');
+      try {
+        SourceRankingSnapshot.record(SourceRankingSnapshot.capture(
+          sources: sources,
+          target: 'series:tt0903747:1:1',
+          resolved: _answer(),
+          displayed: sources.sortForFreeStreaming(_answer()),
+          mode: 'freeP2p',
+          priority: SourceProviderService.defaultPriority,
+          cloudConnected: false,
+          platform: 'androidMobile',
+        ));
+      } finally {
+        debugPrint = previous;
+      }
+      final log = printed.join('\n');
+      expect(log, isNot(contains('Breaking.Bad')));
+      expect(log, isNot(contains('aa'.padRight(40, '0'))));
+      expect(log, contains('"id":"bt:aa000000|0"'));
+      expect(SourceRankingSnapshot.latest!.toReport(),
+          contains('Breaking.Bad'),
+          reason: 'the explicit report keeps the full rows');
+    });
+
+    test('the same torrent from another provider is its own row', () {
+      final sources = SourceProviderService();
+      SourceRankingSnapshot snap(List<SourceResult> input) =>
+          SourceRankingSnapshot.capture(
+            sources: sources,
+            target: 'series:tt0903747:1:1',
+            resolved: sources.sortResults(
+                input, SourceProviderService.defaultPriority),
+            displayed: sources.sortForFreeStreaming(input),
+            mode: 'freeP2p',
+            priority: SourceProviderService.defaultPriority,
+            cloudConnected: false,
+          );
+      final withoutMediaFusion = _answer()..removeAt(1);
+      final differences =
+          SourceRankingComparison.compare(snap(_answer()), snap(withoutMediaFusion));
+      expect(differences.single.kind, RankingDifferenceKind.providerResponse);
+      expect(differences.single.detail, startsWith('1 source(s) only on'));
     });
   });
 }

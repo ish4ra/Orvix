@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -108,7 +109,17 @@ class AndroidExoPlayerScreen extends StatefulWidget {
 
   static Future<String> _downloadSubtitle(OnlineSubtitleResult result) async {
     final file = await OnlineSubtitleService.materialize(result);
-    return file.readAsString();
+    return decodeSubtitleBytes(await file.readAsBytes());
+  }
+
+  /// Subtitle files are often Windows-1252/Latin-1 rather than UTF-8.
+  @visibleForTesting
+  static String decodeSubtitleBytes(List<int> bytes) {
+    try {
+      return utf8.decode(bytes);
+    } on FormatException {
+      return latin1.decode(bytes);
+    }
   }
 
   final String url;
@@ -148,6 +159,10 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
   Timer? _startupTimer;
   Timer? _autoSubtitleTimer;
   Timer? _noticeTimer;
+  // External subtitles are timed in Dart: the native position arrives every
+  // 500 ms, so it is extrapolated between reports and repainted often.
+  final Stopwatch _sinceState = Stopwatch()..start();
+  Timer? _externalSubtitleTimer;
   LocalP2pStartupMonitor? _p2pStartup;
   final ExoP2pRetryPolicy _p2pRetry = ExoP2pRetryPolicy();
   bool _controlsVisible = true;
@@ -313,6 +328,9 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       unawaited(_handleError(controller, value));
     }
     _updateSkipSegment(value.position);
+    if (value.position != _value.position || value.playing != _value.playing) {
+      _sinceState.reset();
+    }
     setState(() => _value = value);
   }
 
@@ -506,6 +524,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       _external = null;
       _subtitlesOff = false;
     });
+    _syncExternalSubtitleTimer();
     await _controller?.selectTextTrack(track);
     if (userChoice) {
       _showNotice('Subtitles: ${track.displayName}');
@@ -519,6 +538,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       _external = null;
       _subtitlesOff = true;
     });
+    _syncExternalSubtitleTimer();
     await _controller?.selectTextTrack(null);
     _showNotice('Subtitles off');
     _closePanel();
@@ -537,6 +557,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       _external = track;
       _subtitlesOff = false;
     });
+    _syncExternalSubtitleTimer();
     await _controller?.selectTextTrack(null);
     _showNotice('Subtitles: ${track.label}');
   }
@@ -573,7 +594,9 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     try {
       final path = await pickExternalSubtitlePath();
       if (path == null || path.isEmpty || !mounted) return;
-      final text = await File(path).readAsString();
+      final text = AndroidExoPlayerScreen.decodeSubtitleBytes(
+        await File(path).readAsBytes(),
+      );
       final name = path.split(Platform.pathSeparator).last;
       await _applyExternal(ExternalSubtitleTrack.parse(text, label: name));
       _closePanel();
@@ -596,11 +619,35 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     } catch (_) {}
   }
 
+  Duration get _estimatedPosition {
+    final value = _value;
+    if (!value.playing) return value.position;
+    final ahead = Duration(
+      microseconds:
+          (_sinceState.elapsedMicroseconds * value.speed).round().clamp(0, 1000000),
+    );
+    return value.position + ahead;
+  }
+
+  void _syncExternalSubtitleTimer() {
+    if (_external == null || _closing) {
+      _externalSubtitleTimer?.cancel();
+      _externalSubtitleTimer = null;
+      return;
+    }
+    _externalSubtitleTimer ??= Timer.periodic(
+      const Duration(milliseconds: 100),
+      (_) {
+        if (mounted && _value.playing) setState(() {});
+      },
+    );
+  }
+
   List<String> get _subtitleLines {
     if (_subtitlesOff) return const <String>[];
     final external = _external;
     if (external != null) {
-      return external.linesAt(_value.position, offset: _subtitleOffset);
+      return external.linesAt(_estimatedPosition, offset: _subtitleOffset);
     }
     return _value.cueText;
   }
@@ -796,6 +843,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     _saveTimer?.cancel();
     _startupTimer?.cancel();
     _autoSubtitleTimer?.cancel();
+    _externalSubtitleTimer?.cancel();
     _attemptTimer?.cancel();
     _p2pStartup?.stop();
 
@@ -842,6 +890,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     _startupTimer?.cancel();
     _autoSubtitleTimer?.cancel();
     _noticeTimer?.cancel();
+    _externalSubtitleTimer?.cancel();
     _attemptTimer?.cancel();
     _p2pStartup?.stop();
     final controller = _controller;

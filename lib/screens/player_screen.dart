@@ -1853,6 +1853,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return;
     }
     if (_localP2pStartupApplies) {
+      // A terminal startup failure is already shown; later lines change
+      // nothing.
+      if (_failureReported || _startupFailureVisible) return;
       // media_kit forwards every error-level mpv log line (for example a
       // tcp read timeout while the torrent is still waiting for pieces).
       // Such a line is not a failure while MPV keeps loading the stream.

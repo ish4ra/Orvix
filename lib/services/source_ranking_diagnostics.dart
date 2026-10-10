@@ -238,9 +238,24 @@ class SourceRankingSnapshot {
   static void record(SourceRankingSnapshot snapshot) {
     latest = snapshot;
     debugPrint('[orvix-ranking] ${jsonEncode(snapshot.headerJson())}');
+    // The device log gets no release names and only a short hash prefix;
+    // the full rows stay in [latest] for an explicitly copied report.
     for (final row in snapshot.rows) {
-      debugPrint('[orvix-ranking] ${jsonEncode(row.toJson())}');
+      final json = row.toJson()
+        ..remove('release')
+        ..['id'] = shortIdentity(row.identity);
+      debugPrint('[orvix-ranking] ${jsonEncode(json)}');
     }
+  }
+
+  /// `bt:<first 8 hash chars>|<file>` for logs; direct-link ids already
+  /// carry only a host and a digest.
+  static String shortIdentity(String identity) {
+    if (!identity.startsWith('bt:')) return identity;
+    final bar = identity.indexOf('|');
+    final hash = identity.substring(3, bar < 0 ? identity.length : bar);
+    final file = bar < 0 ? '' : identity.substring(bar);
+    return 'bt:${hash.length > 8 ? hash.substring(0, 8) : hash}$file';
   }
 }
 
@@ -292,8 +307,10 @@ class SourceRankingComparison {
       return out;
     }
 
-    final rowsA = {for (final row in a.rows) row.identity: row};
-    final rowsB = {for (final row in b.rows) row.identity: row};
+    // The same torrent from two providers is two rows, as in [capture].
+    String key(SourceRankingRow row) => '${row.identity}\u0000${row.provider}';
+    final rowsA = {for (final row in a.rows) key(row): row};
+    final rowsB = {for (final row in b.rows) key(row): row};
     final onlyA = rowsA.keys.where((id) => !rowsB.containsKey(id)).toList();
     final onlyB = rowsB.keys.where((id) => !rowsA.containsKey(id)).toList();
     if (onlyA.isNotEmpty || onlyB.isNotEmpty) {

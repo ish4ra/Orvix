@@ -473,6 +473,8 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
 
   Future<void> _play(SourceResult source) async {
     if (_openingResource != null) return;
+    // Busy from the first OK, so a second press cannot open a second player.
+    setState(() => _openingResource = source.resource);
 
     // Any source plays when chosen, checked or not. A running Re-check
     // stops here so its probes never compete with the chosen stream.
@@ -481,11 +483,10 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
 
     final callback = widget.onPlaySource;
     if (callback == null) {
-      Navigator.of(context).pop(source);
+      if (mounted) Navigator.of(context).pop(source);
       return;
     }
 
-    setState(() => _openingResource = source.resource);
     try {
       await callback(source);
       // The player closed and this browser is shown again.

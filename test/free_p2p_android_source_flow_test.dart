@@ -107,10 +107,13 @@ MockClient _provider(List<_Release> releases) =>
 /// The local stream engine. It serves no media bytes, so any live check
 /// would fail every torrent; manual playback must not care.
 class _Engine {
-  _Engine({this.hold});
+  _Engine({this.hold, this.missedHeartbeats = 0});
 
   /// When set, create waits for it (magnet metadata still resolving).
   final Completer<void>? hold;
+
+  /// Heartbeats to drop after the first create (a busy engine).
+  int missedHeartbeats;
 
   final creates = <String, int>{};
   final removed = <String>[];
@@ -126,6 +129,10 @@ class _Engine {
           Stream<List<int>>.value(utf8.encode(jsonEncode(value ?? {}))),
           status,
         );
+    if (path == '/heartbeat' && creates.isNotEmpty && missedHeartbeats > 0) {
+      missedHeartbeats--;
+      throw http.ClientException('busy', request.url);
+    }
     if (path == '/heartbeat' || path == '/settings') return json({});
     if (path == '/create') {
       final payload =
@@ -604,6 +611,60 @@ void main() {
         expect(player.launched, isEmpty);
         expect(engine.totalCreates, 0);
         expectNoBlockingLiveCheck();
+      });
+    });
+  });
+
+  group('review follow-ups', () {
+    testWidgets('one missed engine heartbeat does not end a slow resolve',
+        (tester) async {
+      androidMobile(tester);
+      final hold = Completer<void>();
+      final engine = _Engine(hold: hold, missedHeartbeats: 1);
+      final player = _Player(engine);
+      DetailsScreenState.debugPlayerLauncher = player.call;
+      await withEngine(tester, engine, () async {
+        await tester.pumpWidget(details(
+          sources: SourceProviderService(client: _provider([_first])),
+        ));
+        await settle(tester);
+        await tester.tap(find.widgetWithText(FilledButton, 'Play'));
+        await settle(tester, frames: 20);
+        await tester.tap(find.textContaining('x264-FIRST').first);
+        await settle(tester, frames: 10);
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(seconds: 5));
+          await settle(tester, frames: 1);
+        }
+        expect(engine.missedHeartbeats, 0, reason: 'a heartbeat was missed');
+        expect(find.byType(SnackBar), findsNothing);
+        hold.complete();
+        await settle(tester, frames: 40);
+        expect(player.launched, [_first.hash]);
+      });
+    });
+
+    testWidgets('a second OK on TV never opens a second player',
+        (tester) async {
+      androidTv(tester);
+      final engine = _Engine();
+      final closing = Completer<void>();
+      final player = _Player(engine, closing: closing);
+      DetailsScreenState.debugPlayerLauncher = player.call;
+      await withEngine(tester, engine, () async {
+        await tester.pumpWidget(details(
+          sources: SourceProviderService(client: _provider([_first, _second])),
+        ));
+        await settle(tester);
+        await tester.sendKeyEvent(LogicalKeyboardKey.select);
+        await settle(tester, frames: 30);
+        await tester.sendKeyEvent(LogicalKeyboardKey.select);
+        await tester.sendKeyEvent(LogicalKeyboardKey.select);
+        await settle(tester, frames: 40);
+        expect(player.launched, hasLength(1));
+        expect(engine.totalCreates, 1);
+        closing.complete();
+        await settle(tester, frames: 20);
       });
     });
   });

@@ -4734,12 +4734,12 @@ class DetailsScreenState extends State<DetailsScreen> {
           expectedSizeBytes: expectedSizeBytes,
           expectedVideoHash: expectedVideoHash,
         );
-        if (!mounted) return;
 
         final shouldFallback = result?.switchToMpv == true ||
             (preference == PlayerEnginePreference.auto &&
                 result?.failed == true);
-        if (!shouldFallback) {
+        // The torrent is released even when this screen is already gone.
+        if (!shouldFallback || !mounted) {
           // ExoPlayer has closed for good: detach its local torrent so it
           // does not keep downloading in the background.
           if (originalLocalP2p) {

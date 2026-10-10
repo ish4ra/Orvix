@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import 'free_p2p_playback_trace.dart';
+import 'local_p2p_startup_policy.dart';
 import 'platform_profile.dart';
 import 'source_provider_service.dart';
 
@@ -1035,12 +1036,15 @@ class LocalTorrentService {
     // The request may finish after a cancel; that late answer is unused.
     request.ignore();
     final watch = Stopwatch()..start();
+    var engineDownReadings = 0;
     while (true) {
       try {
         return await request.timeout(patientMetadataPollInterval);
       } on TimeoutException {
         if (isCancelled?.call() == true) throw const LocalTorrentCancelled();
-        if (!await _heartbeat()) {
+        // One missed heartbeat from a busy engine is not a dead engine.
+        engineDownReadings = await _heartbeat() ? 0 : engineDownReadings + 1;
+        if (engineDownReadings >= LocalP2pStartupPolicy.terminalConfirmations) {
           throw const LocalTorrentException(
             'The local torrent engine stopped answering while it was '
             'resolving this torrent.',
