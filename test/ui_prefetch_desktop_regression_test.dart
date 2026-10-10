@@ -32,13 +32,13 @@ void main() {
     expect(details, contains('class _MobileSeasonTileState'));
     expect(details, isNot(contains('poster: item.seasonPoster(season)')));
     expect(details, contains('const lime = Color(0xFFB9FF45)'));
-    expect(details, contains('final liveCheckAllowed = !hasCloudConnection'));
+    expect(details, contains('var freeStreamingRanking = !hasCloudConnection'));
     expect(details, isNot(contains("'Best'")));
     expect(details, contains('class _DesktopEpisodeCard'));
     expect(details, contains('_desktopDetailsLayout(item)'));
 
     expect(tvSources, contains('preferFreeP2p'));
-    expect(tvSources, contains('label: mode.label'));
+    expect(tvSources, contains("label: 'Default'"));
     expect(tvSources, isNot(contains("label: 'Best'")));
   });
 }

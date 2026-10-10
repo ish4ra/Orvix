@@ -263,7 +263,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                   const Text(
-                    'Auto: MPV on Android so embedded, external, and AI subtitles all use the subtitle-capable player path. If MPV cannot start, Orvix can fall back to ExoPlayer. Manual ExoPlayer remains a compatibility option for sources that need it, but subtitle features require MPV.',
+                    'Auto: ExoPlayer on Android, with embedded, external and OpenSubtitles subtitles. AI Sinhala uses MPV automatically. If ExoPlayer cannot play a stream, Orvix can fall back to MPV. MPV stays available here.',
                     style: TvText.caption,
                   ),
                 ]),
@@ -446,7 +446,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const SizedBox(height: 12),
                     const Text(
-                      'Auto: MPV on Android so embedded, external, and AI subtitles all use the subtitle-capable player path. If MPV cannot start, Orvix can fall back to ExoPlayer. Manual ExoPlayer remains a compatibility option for sources that need it, but subtitle features require MPV.',
+                      'Auto: ExoPlayer on Android, with embedded, external and OpenSubtitles subtitles. AI Sinhala uses MPV automatically. If ExoPlayer cannot play a stream, Orvix can fall back to MPV. MPV stays available here.',
                       style: TextStyle(
                         color: Color(0xFF9CA99E),
                         fontSize: 12.5,

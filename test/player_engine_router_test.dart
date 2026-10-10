@@ -1,106 +1,114 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:orvix/services/player_engine_preferences_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  test('Auto keeps Android mobile local P2P on subtitle-capable MPV', () {
-    final engine = PlayerEngineRouter.choose(
-      preference: PlayerEnginePreference.auto,
-      isAndroid: true,
-      url: 'http://127.0.0.1:11470/abc/-1',
-      releaseHint: 'Prison.Break.S01E01.1080p.WEB-DL.x264.mkv',
-    );
+  group('Android default player', () {
+    for (final tv in [false, true]) {
+      final surface = tv ? 'Android TV' : 'Android Mobile';
+      test('$surface: Auto uses ExoPlayer for local P2P and HTTP', () {
+        for (final url in [
+          'http://127.0.0.1:11470/${'a' * 40}/0',
+          'https://cdn.example.com/video/master.m3u8',
+          'https://cdn.example.com/movie.mkv',
+        ]) {
+          expect(
+            PlayerEngineRouter.choose(
+              preference: PlayerEnginePreference.auto,
+              isAndroid: true,
+              isAndroidTv: tv,
+              url: url,
+              releaseHint: 'Prison.Break.S01E01.1080p.WEB-DL.x264.mkv',
+            ),
+            PlayerEngineKind.exoPlayer,
+            reason: url,
+          );
+        }
+      });
+    }
 
-    expect(engine, PlayerEngineKind.mpv);
+    test('an install without a saved choice reads as Auto (ExoPlayer)',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      final preference = await PlayerEnginePreferencesService.get();
+      expect(preference, PlayerEnginePreference.auto);
+      expect(
+        PlayerEngineRouter.choose(
+          preference: preference,
+          isAndroid: true,
+          url: 'https://cdn.example.com/movie.mkv',
+        ),
+        PlayerEngineKind.exoPlayer,
+      );
+    });
+
+    test('a saved MPV choice is respected and never migrated', () async {
+      SharedPreferences.setMockInitialValues({
+        'orvix_player_engine_v1': 'mpv',
+      });
+      final preference = await PlayerEnginePreferencesService.get();
+      expect(preference, PlayerEnginePreference.mpv);
+      for (final tv in [false, true]) {
+        expect(
+          PlayerEngineRouter.choose(
+            preference: preference,
+            isAndroid: true,
+            isAndroidTv: tv,
+            url: 'http://127.0.0.1:11470/${'a' * 40}/0',
+          ),
+          PlayerEngineKind.mpv,
+        );
+      }
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('orvix_player_engine_v1'), 'mpv');
+    });
+
+    test('a saved ExoPlayer choice is respected', () async {
+      SharedPreferences.setMockInitialValues({
+        'orvix_player_engine_v1': 'exoPlayer',
+      });
+      final preference = await PlayerEnginePreferencesService.get();
+      expect(preference, PlayerEnginePreference.exoPlayer);
+      expect(
+        PlayerEngineRouter.choose(
+          preference: preference,
+          isAndroid: true,
+          url: 'https://cdn.example.com/video.mp4',
+        ),
+        PlayerEngineKind.exoPlayer,
+      );
+    });
   });
 
-  test('Auto keeps Android TV local P2P on subtitle-capable MPV', () {
-    final engine = PlayerEngineRouter.choose(
-      preference: PlayerEnginePreference.auto,
-      isAndroid: true,
-      isAndroidTv: true,
-      url: 'http://127.0.0.1:11470/abc/-1',
-      releaseHint: 'Prison.Break.S01E01.1080p.WEB-DL.x264.mkv',
-    );
-
-    expect(engine, PlayerEngineKind.mpv);
+  test('AI Sinhala keeps MPV on Android Mobile and TV, whatever the choice',
+      () {
+    for (final preference in PlayerEnginePreference.values) {
+      for (final tv in [false, true]) {
+        expect(
+          PlayerEngineRouter.choose(
+            preference: preference,
+            isAndroid: true,
+            isAndroidTv: tv,
+            url: 'https://cdn.example.com/video.mp4',
+            aiSinhalaEnabled: true,
+          ),
+          PlayerEngineKind.mpv,
+          reason: '$preference tv=$tv',
+        );
+      }
+    }
   });
 
-  test('Auto keeps Android TV remote HTTP on subtitle-capable MPV', () {
-    final engine = PlayerEngineRouter.choose(
-      preference: PlayerEnginePreference.auto,
-      isAndroid: true,
-      isAndroidTv: true,
-      url: 'https://cdn.example.com/video/master.m3u8',
-      releaseHint: 'Episode 1',
-    );
-
-    expect(engine, PlayerEngineKind.mpv);
-  });
-
-  test('Auto keeps ordinary Android HTTP streams on subtitle-capable MPV', () {
-    final engine = PlayerEngineRouter.choose(
-      preference: PlayerEnginePreference.auto,
-      isAndroid: true,
-      url: 'https://cdn.example.com/video/master.m3u8',
-      releaseHint: 'Episode 1',
-    );
-
-    expect(engine, PlayerEngineKind.mpv);
-  });
-
-  test('Auto uses MPV for complex release hints', () {
-    final engine = PlayerEngineRouter.choose(
-      preference: PlayerEnginePreference.auto,
-      isAndroid: true,
-      url: 'https://cdn.example.com/movie.mkv',
-      releaseHint: '2160p.DV.TrueHD.DTS-HD',
-    );
-
-    expect(engine, PlayerEngineKind.mpv);
-  });
-
-  test('AI Sinhala forces MPV on Android mobile and TV', () {
-    final mobile = PlayerEngineRouter.choose(
-      preference: PlayerEnginePreference.exoPlayer,
-      isAndroid: true,
-      url: 'https://cdn.example.com/video.mp4',
-      aiSinhalaEnabled: true,
-    );
-    final tv = PlayerEngineRouter.choose(
-      preference: PlayerEnginePreference.exoPlayer,
-      isAndroid: true,
-      isAndroidTv: true,
-      url: 'https://cdn.example.com/video.mp4',
-      aiSinhalaEnabled: true,
-    );
-
-    expect(mobile, PlayerEngineKind.mpv);
-    expect(tv, PlayerEngineKind.mpv);
-  });
-
-  test('Manual ExoPlayer remains an explicit Android compatibility choice', () {
-    final forcedExo = PlayerEngineRouter.choose(
-      preference: PlayerEnginePreference.exoPlayer,
-      isAndroid: true,
-      url: 'http://127.0.0.1:11470/abc/-1',
-    );
-    final forcedMpv = PlayerEngineRouter.choose(
-      preference: PlayerEnginePreference.mpv,
-      isAndroid: true,
-      url: 'https://cdn.example.com/master.m3u8',
-    );
-
-    expect(forcedExo, PlayerEngineKind.exoPlayer);
-    expect(forcedMpv, PlayerEngineKind.mpv);
-  });
-
-  test('Non-Android always routes to MPV', () {
-    final engine = PlayerEngineRouter.choose(
-      preference: PlayerEnginePreference.exoPlayer,
-      isAndroid: false,
-      url: 'https://cdn.example.com/master.m3u8',
-    );
-
-    expect(engine, PlayerEngineKind.mpv);
+  test('Windows and macOS always route to MPV (unchanged)', () {
+    for (final preference in PlayerEnginePreference.values) {
+      expect(
+        PlayerEngineRouter.choose(
+          preference: preference,
+          isAndroid: false,
+          url: 'https://cdn.example.com/master.m3u8',
+        ),
+        PlayerEngineKind.mpv,
+      );
+    }
   });
 }

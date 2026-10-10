@@ -106,7 +106,13 @@ def patch_android(tv: bool) -> None:
         "minSdk = 24",
     )
     aar_dep = 'implementation(files("libs/rustls-platform-verifier-0.1.1.aar"))'
-    deps = [aar_dep]
+    # Orvix's ExoPlayer bridge (OrvixExoPlayer.kt). Same Media3 version as
+    # the video_player plugin, so the app resolves a single ExoPlayer.
+    deps = [
+        aar_dep,
+        'implementation("androidx.media3:media3-exoplayer:1.9.2")',
+        'implementation("androidx.annotation:annotation-experimental:1.4.1")',
+    ]
     missing = [dep for dep in deps if dep not in gradle_text]
     if missing:
         gradle_text += "\n\ndependencies {\n" + "".join(
@@ -269,9 +275,16 @@ import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
     private val executor = Executors.newSingleThreadExecutor()
+    private var exoPlayer: OrvixExoPlayerChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        exoPlayer = OrvixExoPlayerChannel(
+            applicationContext,
+            flutterEngine.dartExecutor.binaryMessenger,
+            flutterEngine.renderer
+        )
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -389,6 +402,12 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        exoPlayer?.releaseAll()
+        exoPlayer = null
+        super.cleanUpFlutterEngine(flutterEngine)
+    }
+
     override fun onDestroy() {
         if (isFinishing) {
             try {
@@ -400,6 +419,12 @@ class MainActivity : FlutterActivity() {
     }
 }
 """
+    )
+
+    # Media3 ExoPlayer bridge used by the Android ExoPlayer screen.
+    exo_player = Path("android/app/src/main/kotlin/com/orvix/orvix/OrvixExoPlayer.kt")
+    exo_player.write_text(
+        (Path(__file__).resolve().parent / "android" / "OrvixExoPlayer.kt").read_text()
     )
 
     controller = Path(

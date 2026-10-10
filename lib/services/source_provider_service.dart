@@ -7,29 +7,6 @@ import '../models/media_item.dart';
 
 enum SourceSortMode { seeders, fileSize, quality }
 
-/// How the source picker orders rows. Display only: with Free P2P every mode
-/// keeps the live-health groups, and Quick Play / Normal Play use their own
-/// live-evidence gate whatever is chosen here.
-enum SourceDisplayMode {
-  /// Orvix's own order. Free P2P: health first, then measured speed, first
-  /// byte and live peers; unchecked rows by the static playability estimate.
-  recommended,
-
-  /// The user's Source Priority (inside each Free P2P health group).
-  myPriority,
-
-  /// Practical playback compatibility (inside each Free P2P health group).
-  smooth,
-}
-
-extension SourceDisplayModeLabel on SourceDisplayMode {
-  String get label => switch (this) {
-        SourceDisplayMode.recommended => 'Recommended',
-        SourceDisplayMode.myPriority => 'My Priority',
-        SourceDisplayMode.smooth => 'Smooth',
-      };
-}
-
 enum SourceSortCriterion {
   cache,
   releaseQuality,
@@ -86,6 +63,7 @@ class SourceResult {
     this.fileNameHint,
     this.videoHash,
     this.bingeGroup,
+    this.providerPosition,
   });
 
   final String provider;
@@ -126,6 +104,10 @@ class SourceResult {
   /// Torrentio/other addons can keep this stable across episodes, which makes
   /// a series-wide pin possible without guessing from filenames.
   final String? bingeGroup;
+
+  /// Zero-based position of this stream in its provider's own response.
+  /// Diagnostics only: it never affects ordering.
+  final int? providerPosition;
 
   int get qualityRank {
     var rank = switch (quality?.toUpperCase()) {
@@ -282,7 +264,23 @@ class _SourcePlaybackHistory {
       lastFailureReason: raw['lastFailureReason']?.toString(),
     );
   }
+
+  /// This history with its latest failure dropped when that failure only
+  /// recorded a slow start (see
+  /// [SourceProviderService.isSlowStartFailureReason]).
+  _SourcePlaybackHistory withoutSlowStartFailure() {
+    if (lastFailure == null ||
+        !SourceProviderService.isSlowStartFailureReason(lastFailureReason)) {
+      return this;
+    }
+    return _SourcePlaybackHistory(
+      successes: successes,
+      failures: failures > 0 ? failures - 1 : 0,
+      lastSuccess: lastSuccess,
+    );
+  }
 }
+
 class _SourceResolveCacheEntry {
   const _SourceResolveCacheEntry({
     required this.createdAt,
@@ -345,7 +343,6 @@ class SourceProviderService {
   // Quality -> Seeders -> Size while still allowing the user to switch it.
   static const _sortKey = 'pikora_source_sort_mode_v2';
   static const _priorityKey = 'orvix_source_priority_v6';
-  static const _displayModeKey = 'orvix_source_display_mode_v1';
   static const _show3DKey = 'orvix_show_3d_sources_v1';
   static const _showLowQualityKey = 'orvix_show_low_quality_sources_v1';
   static const _preferredGroupsKey = 'orvix_preferred_release_groups_v1';
@@ -424,9 +421,28 @@ class SourceProviderService {
   /// -2 recent failure.
   int playbackHistoryRank(SourceResult source) => _historyRank(source);
 
+  /// Whether a recorded failure only says the stream was slow to start.
+  /// Earlier builds recorded the player's 30-second "taking longer than
+  /// expected" watchdog, ExoPlayer's 35-second initialization timeout and
+  /// transient stream read errors as failures. None of them shows that the
+  /// release cannot play (such torrents often start minutes later), so they
+  /// never demote a source, including records already saved on a device.
+  static bool isSlowStartFailureReason(String? reason) {
+    final value = reason?.toLowerCase() ?? '';
+    if (value.isEmpty) return false;
+    return value.contains('taking longer than expected') ||
+        value.contains('still connecting') ||
+        value.contains('within 35 seconds') ||
+        value.contains('could not initialize this stream within') ||
+        value.contains('timed out while resolving magnet metadata') ||
+        value.startsWith('playback engine: tcp:') ||
+        value.contains('stream was slow');
+  }
+
   int _historyRank(SourceResult source) {
-    final history = _historyFor(source);
-    if (history == null) return 0;
+    final raw = _historyFor(source);
+    if (raw == null) return 0;
+    final history = raw.withoutSlowStartFailure();
 
     final now = DateTime.now();
     final lastSuccess = history.lastSuccess;
@@ -456,6 +472,8 @@ class SourceProviderService {
     required bool success,
     String? reason,
   }) async {
+    // A slow start is not a failure of the release.
+    if (!success && isSlowStartFailureReason(reason)) return;
     if (!_playbackHistoryLoaded) {
       await _ensurePlaybackHistoryLoaded();
     }
@@ -754,31 +772,6 @@ class SourceProviderService {
     return out;
   }
 
-  /// Saved picker display mode. Without a saved choice: My Priority for a
-  /// cloud/debrid path (its previous default order) or for a user who has
-  /// customized the Source Priority, otherwise Recommended.
-  Future<SourceDisplayMode> getDisplayMode({required bool liveCheck}) async {
-    final prefs = await SharedPreferences.getInstance();
-    final stored = prefs.getString(_displayModeKey);
-    for (final mode in SourceDisplayMode.values) {
-      if (mode.name == stored) return mode;
-    }
-    if (!liveCheck) return SourceDisplayMode.myPriority;
-    final priority = await getPriorityOrder();
-    var customized = priority.length != defaultPriority.length;
-    for (var i = 0; !customized && i < priority.length; i++) {
-      customized = priority[i] != defaultPriority[i];
-    }
-    return customized
-        ? SourceDisplayMode.myPriority
-        : SourceDisplayMode.recommended;
-  }
-
-  Future<void> setDisplayMode(SourceDisplayMode mode) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_displayModeKey, mode.name);
-  }
-
   Future<bool> getShow3D() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_show3DKey) ?? false;
@@ -995,25 +988,28 @@ class SourceProviderService {
     SourceResult b,
     List<SourceSortCriterion> priority,
   ) {
-    final cmp = compareByPriority(a, b, priority);
-    if (cmp != 0) return cmp;
-    return a.title.compareTo(b.title);
-  }
-
-  /// The user's Source Priority alone: 0 when every criterion ties, so a
-  /// caller can apply its own tie-break (Free P2P keeps its static order).
-  int compareByPriority(
-    SourceResult a,
-    SourceResult b,
-    List<SourceSortCriterion> priority,
-  ) {
     for (final criterion in priority) {
       final av = _criterionValue(a, criterion);
       final bv = _criterionValue(b, criterion);
       final cmp = bv.compareTo(av);
       if (cmp != 0) return cmp;
     }
-    return 0;
+    return compareSourceIdentity(a, b);
+  }
+
+  /// Final tie-break shared by every source order. Dart's sort is not
+  /// stable, so two rows that tie on every ranking signal (for example the
+  /// same release returned by two providers) must still compare in one
+  /// fixed way, or identical inputs could be shown in a different order on
+  /// another device. Title, provider, the source itself, then file index.
+  static int compareSourceIdentity(SourceResult a, SourceResult b) {
+    var c = a.title.compareTo(b.title);
+    if (c != 0) return c;
+    c = a.provider.compareTo(b.provider);
+    if (c != 0) return c;
+    c = a.resource.compareTo(b.resource);
+    if (c != 0) return c;
+    return (a.torrentFileIndex ?? -1).compareTo(b.torrentFileIndex ?? -1);
   }
 
   int _criterionValue(SourceResult result, SourceSortCriterion criterion) {
@@ -1053,58 +1049,6 @@ class SourceProviderService {
     return out;
   }
 
-  /// Plain order of the manual Free P2P source list (Android Mobile and
-  /// Android TV): direct links first, then the user's Source Priority when
-  /// they customized it, otherwise the static Free playability order. No
-  /// live evidence is involved.
-  List<SourceResult> sortManualFreeP2p(
-    Iterable<SourceResult> results,
-    List<SourceSortCriterion> priority,
-  ) {
-    final base = _isDefaultPriority(priority)
-        ? sortForFreeStreaming(results)
-        : sortResults(results, priority);
-    return [
-      ...base.where((result) => !result.isMagnet),
-      ...base.where((result) => result.isMagnet),
-    ];
-  }
-
-  /// One line describing [sortManualFreeP2p] for the source list.
-  static String manualFreeP2pRankingText(List<SourceSortCriterion> priority) {
-    if (_isDefaultPriority(priority)) {
-      return 'Free P2P: direct links → reported swarm → exact file → '
-          'compatibility → seeders → practical size';
-    }
-    final order = priority.map((e) => e.label.toLowerCase()).join(' → ');
-    return 'Free P2P: direct links → $order';
-  }
-
-  static bool _isDefaultPriority(List<SourceSortCriterion> priority) {
-    if (priority.length != defaultPriority.length) return false;
-    for (var i = 0; i < priority.length; i++) {
-      if (priority[i] != defaultPriority[i]) return false;
-    }
-    return true;
-  }
-
-  /// The Smooth order as a comparator, for use inside Free P2P health groups.
-  int compareSmoothPlayback(SourceResult a, SourceResult b) =>
-      _compareSmoothPlayback(a, b);
-
-  /// Recommended order without live evidence (cloud/debrid path): cached
-  /// sources first, then the static Free playability estimate.
-  List<SourceResult> sortRecommended(Iterable<SourceResult> results) {
-    final base = sortForFreeStreaming(results);
-    final index = <SourceResult, int>{
-      for (var i = 0; i < base.length; i++) base[i]: i,
-    };
-    return [...base]..sort((a, b) {
-        final c = (b.cached ? 1 : 0).compareTo(a.cached ? 1 : 0);
-        return c != 0 ? c : index[a]!.compareTo(index[b]!);
-      });
-  }
-
   int _compareSmoothPlayback(SourceResult a, SourceResult b) {
     final riskCmp = a.compatibilityRisk.compareTo(b.compatibilityRisk);
     if (riskCmp != 0) return riskCmp;
@@ -1133,7 +1077,7 @@ class SourceProviderService {
     final releaseCmp = b.releaseQualityRank.compareTo(a.releaseQualityRank);
     if (releaseCmp != 0) return releaseCmp;
 
-    return a.title.compareTo(b.title);
+    return compareSourceIdentity(a, b);
   }
 
   int _smoothResolutionRank(SourceResult result) {
@@ -1192,8 +1136,36 @@ class SourceProviderService {
     if (aSize != null && bSize == null) return -1;
     if (aSize == null && bSize != null) return 1;
 
-    return a.title.compareTo(b.title);
+    return compareSourceIdentity(a, b);
   }
+
+  /// The signals behind [sortForFreeStreaming] for one source, for ranking
+  /// diagnostics. Provider figures are the provider's snapshot; nothing here
+  /// is live evidence.
+  Map<String, int> freeStreamingFactors(SourceResult result) => <String, int>{
+        'score': _freeStreamingScore(result),
+        'direct': result.isMagnet ? 0 : 1,
+        'availability': _freeAvailabilityRank(result.seeders, result.peers),
+        'compatibility': _universalPlaybackRank(result),
+        'exactFile': result.torrentFileIndex != null ||
+                result.fileNameHint?.trim().isNotEmpty == true
+            ? 1
+            : 0,
+        'seederBand': _freeSeederHealthRank(result.seeders),
+        'peerBand': _freePeerHealthRank(result.peers),
+        'sizeBand': _freeSizeEfficiencyRank(result),
+        'history': _historyRank(result),
+      };
+
+  /// The value [compareResults] uses for each Source Priority criterion.
+  Map<String, int> priorityFactors(
+    SourceResult result,
+    List<SourceSortCriterion> priority,
+  ) =>
+      <String, int>{
+        for (final criterion in priority)
+          criterion.name: _criterionValue(result, criterion),
+      };
 
   int _freeStreamingScore(SourceResult result) {
     final history = _historyRank(result);
@@ -1540,7 +1512,9 @@ class SourceProviderService {
 
       final provider = providerName(addon);
       final out = <SourceResult>[];
+      var providerPosition = -1;
       for (final raw in streams.whereType<Map<String, dynamic>>()) {
+        providerPosition++;
         final directUrl = raw['url']?.toString();
         final infoHash = raw['infoHash']?.toString().trim();
         final rawTitle = (raw['title'] ?? raw['name'] ?? 'Source').toString();
@@ -1668,6 +1642,7 @@ class SourceProviderService {
             fileNameHint: fileNameHint,
             videoHash: videoHash,
             bingeGroup: bingeGroup,
+            providerPosition: providerPosition,
           ),
         );
       }

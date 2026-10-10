@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import 'free_p2p_playback_trace.dart';
+import 'local_p2p_startup_policy.dart';
 import 'platform_profile.dart';
 import 'source_provider_service.dart';
 
@@ -16,6 +17,15 @@ class LocalTorrentException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// The user backed out while a playback resolve was still waiting for the
+/// torrent. Not a torrent failure.
+class LocalTorrentCancelled implements Exception {
+  const LocalTorrentCancelled();
+
+  @override
+  String toString() => 'Torrent preparation was cancelled.';
 }
 
 class LocalTorrentHealth {
@@ -506,6 +516,8 @@ class LocalTorrentService {
     void Function(String message)? onProgress,
     bool warmForPlayback = true,
     FreeP2pPlaybackAttempt? trace,
+    bool patientMetadata = false,
+    bool Function()? isCancelled,
   }) async {
     if (!source.isMagnet) return source.resource;
 
@@ -530,6 +542,8 @@ class LocalTorrentService {
         onProgress: onProgress,
         warmForPlayback: warmForPlayback,
         trace: trace,
+        patientMetadata: patientMetadata,
+        isCancelled: isCancelled,
       );
       resolved = true;
       return url;
@@ -557,6 +571,8 @@ class LocalTorrentService {
     void Function(String message)? onProgress,
     required bool warmForPlayback,
     FreeP2pPlaybackAttempt? trace,
+    bool patientMetadata = false,
+    bool Function()? isCancelled,
   }) async {
     onProgress?.call('Preparing stream…');
     final engineWatch = Stopwatch()..start();
@@ -604,7 +620,18 @@ class LocalTorrentService {
     http.Response response;
     final metadataWatch = Stopwatch()..start();
     try {
-      response = await _createTorrent(body);
+      response = patientMetadata
+          ? await _createTorrentPatiently(
+              body,
+              infoHash,
+              onProgress: onProgress,
+              isCancelled: isCancelled,
+            )
+          : await _createTorrent(body);
+    } on LocalTorrentCancelled {
+      trace?.stage('metadata', 'cancelled', took: metadataWatch.elapsed);
+      trace?.finish(FreeP2pPlaybackOutcome.cancelled);
+      rethrow;
     } on TimeoutException {
       final swarm = await _engineSwarmStats(infoHash);
       trace?.stage(
@@ -990,14 +1017,63 @@ class LocalTorrentService {
     return null;
   }
 
-  Future<http.Response> _createTorrent(Map<String, dynamic> body) async {
-    Future<http.Response> send() => http
-        .post(
-          Uri.parse('$baseUrl/create'),
-          headers: const {'Content-Type': 'application/json'},
-          body: jsonEncode(body),
-        )
-        .timeout(const Duration(seconds: 45));
+  /// How often a patient metadata wait checks the engine and the user's
+  /// Back/Cancel. Tests shorten it.
+  @visibleForTesting
+  Duration patientMetadataPollInterval = const Duration(seconds: 5);
+
+  /// Playback create for a torrent the user chose on Android. Magnet
+  /// metadata can take minutes on a slow swarm, so the same create request
+  /// stays open until it answers, the user backs out, or the engine stops
+  /// answering. Elapsed time alone never fails the torrent.
+  Future<http.Response> _createTorrentPatiently(
+    Map<String, dynamic> body,
+    String infoHash, {
+    void Function(String message)? onProgress,
+    bool Function()? isCancelled,
+  }) async {
+    final request = _createTorrent(body, timeout: null);
+    // The request may finish after a cancel; that late answer is unused.
+    request.ignore();
+    final watch = Stopwatch()..start();
+    var engineDownReadings = 0;
+    while (true) {
+      try {
+        return await request.timeout(patientMetadataPollInterval);
+      } on TimeoutException {
+        if (isCancelled?.call() == true) throw const LocalTorrentCancelled();
+        // One missed heartbeat from a busy engine is not a dead engine.
+        engineDownReadings = await _heartbeat() ? 0 : engineDownReadings + 1;
+        if (engineDownReadings >= LocalP2pStartupPolicy.terminalConfirmations) {
+          throw const LocalTorrentException(
+            'The local torrent engine stopped answering while it was '
+            'resolving this torrent.',
+          );
+        }
+        final swarm = await _engineSwarmStats(infoHash);
+        if (isCancelled?.call() == true) throw const LocalTorrentCancelled();
+        final seconds = watch.elapsed.inSeconds;
+        final peers = swarm == null
+            ? ''
+            : ' • ${swarm.connectedPeers} connected'
+                '${swarm.discoveredPeers == null ? '' : ', ${swarm.discoveredPeers} found'}';
+        onProgress?.call('Finding peers for this torrent… ${seconds}s$peers');
+      }
+    }
+  }
+
+  Future<http.Response> _createTorrent(
+    Map<String, dynamic> body, {
+    Duration? timeout = const Duration(seconds: 45),
+  }) async {
+    Future<http.Response> send() {
+      final request = http.post(
+        Uri.parse('$baseUrl/create'),
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      );
+      return timeout == null ? request : request.timeout(timeout);
+    }
 
     try {
       return await send();
@@ -1751,6 +1827,10 @@ class LocalTorrentService {
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
   }
+
+  /// Whether the local torrent engine answers right now. A player uses it to
+  /// tell a slow torrent (engine alive) from a dead engine.
+  Future<bool> engineAnswering() => _heartbeat();
 
   Future<bool> _heartbeat() async {
     try {

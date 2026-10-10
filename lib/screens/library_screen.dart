@@ -17,6 +17,7 @@ import '../services/premiumize_service.dart';
 import '../tv/tv_focus.dart';
 import '../tv/tv_theme.dart';
 import '../tv/tv_widgets.dart';
+import '../services/ai_sinhala_preferences_service.dart';
 import 'android_exo_player_screen.dart';
 import 'player_screen.dart';
 
@@ -27,11 +28,15 @@ Future<void> _openCloudPlayer(
   required String title,
 }) async {
   final preference = await PlayerEnginePreferencesService.get();
+  // AI Sinhala runs in the MPV player; keep it there when it is enabled.
+  final aiSinhala =
+      Platform.isAndroid && await AiSinhalaPreferencesService.isEnabled();
   final engine = PlayerEngineRouter.choose(
     preference: preference,
     isAndroid: Platform.isAndroid,
     url: url,
     releaseHint: title,
+    aiSinhalaEnabled: aiSinhala,
   );
 
   if (engine == PlayerEngineKind.exoPlayer && Platform.isAndroid) {

@@ -624,23 +624,19 @@ void main() {
         File('lib/screens/tv_source_browser_screen.dart').readAsStringSync();
     for (final source in [details, tv]) {
       expect(source, contains('applyPinnedPreference('));
-      expect(source, contains('ealthFor('));
-      expect(source, contains('groupHeaders('));
+      expect(source, contains('healthFor('));
     }
     expect(details, contains('liveProbe.rank(results, widget.sources)'));
     expect(tv, contains('_liveProbe.rank(_results, widget.sources)'));
     // Normal Play hands its evidence to the picker instead of releasing it,
     // and TV receives the same session.
-    expect(details, contains('final session = probeSession ??'));
+    expect(details, contains('final probeSession = autoProbeSession ??'));
     expect(details, contains('probeSession: probeSession,'));
     // One cloud/debrid eligibility check drives Normal Play, the picker,
     // Android TV and playback.
-    expect(details, contains('if (autoUsePinned && !hasCloudConnection) {'));
-    // Android Mobile and Android TV use the plain manual Free P2P list.
-    expect(
-      details,
-      contains('final liveCheckAllowed = !hasCloudConnection && !manualFreeP2p;'),
-    );
+    // Android Mobile and Android TV never run Normal Play's live check.
+    expect(details, contains('!_androidPlayback &&\n          !hasCloudConnection &&\n          chosen == null'));
+    expect(details, contains('var freeStreamingRanking = !hasCloudConnection;'));
     expect(details, isNot(contains('hasDebridConnection')));
     expect(details, contains('Future<bool> _hasCloudConnection() async'));
     expect(
@@ -654,10 +650,8 @@ void main() {
     );
     // Pinned torrents go through the live check; Quick Play has no pin bypass.
     expect(details, contains('preferred: pinnedResult,'));
-    // A cloud path plays its pin directly; without one, the pin goes through
-    // the one-click live check (a direct HTTP pin is returned at once by
-    // probeBestCandidate, covered by its own tests).
-    expect(details, contains('final chosen = pinnedResult;'));
+    // Without a cloud path, only a direct HTTP pin skips the live check.
+    expect(details, contains('(hasCloudConnection || !pinnedResult.isMagnet)'));
     expect(details, contains('liveProbe.quickPlayAllowed(source)'));
     expect(details, isNot(contains('health.state == FreeP2pHealthState.checking')));
   });
@@ -769,11 +763,25 @@ void main() {
 
       Finder rowFor(SourceResult source) => find.byKey(ValueKey(
           'tv-source-${sources.sourceIdentity(source, seriesWide: false)}'));
-      // Static order while checking: 2160p (150 seeds), 1080p, 720p.
+      // Opening the browser checks nothing; the check runs only when the
+      // user asks for it with "Re-check live".
+      expect(pending, isEmpty);
+      expect(find.text('CHECKING'), findsNothing);
       expect(focusIn(tester, rowFor(first)), isTrue);
-      expect(find.text('CHECKING'), findsNWidgets(3));
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
       await settle(tester);
+      expect(focusIn(tester, rowFor(focused)), isTrue);
+      // Start the check from the chip without moving focus off the row.
+      final recheck = tester.widget(find.ancestor(
+        of: find.text('Re-check live'),
+        matching: find.byWidgetPredicate(
+          (widget) => widget.runtimeType.toString() == '_TvFilterChip',
+        ),
+      )) as dynamic;
+      (recheck.onPressed as VoidCallback)();
+      await settle(tester);
+      // Static order while checking: 2160p (150 seeds), 1080p, 720p.
+      expect(find.text('CHECKING'), findsNWidgets(3));
       expect(focusIn(tester, rowFor(focused)), isTrue);
 
       // After the check: 720p live, 2160p unresolved, the focused 1080p

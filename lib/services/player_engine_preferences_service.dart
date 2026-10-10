@@ -63,11 +63,10 @@ class PlayerEngineRouter {
         break;
     }
 
-    // The Flutter video_player/ExoPlayer compatibility screen does not expose
-    // embedded or external subtitle tracks to Orvix. Auto therefore uses the
-    // subtitle-capable MPV path on Android mobile and Android TV as well.
-    // ExoPlayer remains available as an explicit manual compatibility choice,
-    // and Auto can fall back to it only when MPV itself cannot start.
-    return PlayerEngineKind.mpv;
+    // Auto, and every install without a saved choice, uses ExoPlayer on
+    // Android Mobile and Android TV. Orvix's ExoPlayer screen renders embedded
+    // and external/OpenSubtitles subtitles itself. AI Sinhala (above) and an
+    // explicit MPV choice keep MPV.
+    return PlayerEngineKind.exoPlayer;
   }
 }

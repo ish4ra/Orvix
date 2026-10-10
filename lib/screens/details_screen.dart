@@ -11,7 +11,6 @@ import '../services/ai_sinhala_subtitle_service.dart';
 import '../services/ai_sinhala_trace_service.dart';
 import '../services/catalog_service.dart';
 import '../services/cloud_preferences_service.dart';
-import '../services/free_p2p_auto_play.dart';
 import '../services/free_p2p_live_probe_service.dart';
 import '../services/free_p2p_playback_trace.dart';
 import '../services/local_media_bridge_service.dart';
@@ -26,6 +25,7 @@ import '../services/platform_profile.dart';
 import '../services/playback_preparation.dart';
 import '../services/player_engine_preferences_service.dart';
 import '../services/source_provider_service.dart';
+import '../services/source_ranking_diagnostics.dart';
 import '../services/torbox_service.dart';
 import '../services/real_debrid_service.dart';
 import '../services/premiumize_service.dart';
@@ -95,10 +95,19 @@ class DetailsScreenState extends State<DetailsScreen> {
   @visibleForTesting
   static Future<AndroidExoPlayerResult?> Function(String url)? debugExoLauncher;
 
-  /// Lets widget tests run the Android Mobile playback flow on the host
-  /// platform. Always null in the app.
+  /// Lets widget tests run the Android playback flow on the test host.
+  /// Always null in the app.
   @visibleForTesting
   static bool? debugAndroidPlaybackOverride;
+
+  /// Android Mobile and Android TV playback. Equal to Platform.isAndroid in
+  /// the app.
+  bool get _androidPlayback =>
+      debugAndroidPlaybackOverride ??
+      (Platform.isAndroid || PlatformProfile.isAndroidTv);
+
+  /// The Free P2P trace of the local torrent being prepared or played.
+  FreeP2pPlaybackAttempt? _localAttempt;
 
   static const _videoExtensions = <String>{
     'mkv',
@@ -136,10 +145,6 @@ class DetailsScreenState extends State<DetailsScreen> {
   String _status = '';
   double? _resolveProgress;
   int? _selectedSeason;
-
-  /// Live-check results kept while this title is open, so reopening its
-  /// sources or pressing Play again does not probe the same torrents again.
-  final FreeP2pLiveEvidence _liveEvidence = FreeP2pLiveEvidence();
 
   // Source list -> chosen source -> player. The source sheet is closed while a
   // source is prepared, so the title screen is the top route during that time;
@@ -871,24 +876,10 @@ class DetailsScreenState extends State<DetailsScreen> {
                                           : 'Play',
                                       autofocus: true,
                                       busy: _resolving,
-                                      onPressed: () => _playTv(
+                                      onPressed: () => _findSourcesAndPlay(
                                         item,
                                         episode: series ? firstEpisode : null,
                                       ),
-                                    ),
-                                  if (!series || firstEpisode != null)
-                                    TvButton(
-                                      key: const ValueKey('tv-details-sources'),
-                                      icon: Icons.travel_explore_rounded,
-                                      label: 'Sources',
-                                      onPressed: _resolving
-                                          ? null
-                                          : () => _findSourcesAndPlay(
-                                                item,
-                                                episode: series
-                                                    ? firstEpisode
-                                                    : null,
-                                              ),
                                     ),
                                   TvButton(
                                     key: const ValueKey('tv-details-library'),
@@ -1015,9 +1006,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                     : episode.title.trim(),
                 subtitle: details.join('  •  '),
                 enabled: !_resolving,
-                onPressed: () => _playTv(item, episode: episode),
-                // The episode's source browser, for a manual choice.
-                onLongPress: () => _findSourcesAndPlay(item, episode: episode),
+                onPressed: () => _findSourcesAndPlay(item, episode: episode),
               );
             },
           ),
@@ -1967,6 +1956,12 @@ class DetailsScreenState extends State<DetailsScreen> {
   }
 
   Future<void> _play(MediaItem item, {EpisodeItem? episode}) async {
+    // Android Mobile and Android TV: Play opens the source list directly,
+    // without an automatic live-probe pick.
+    if (_androidPlayback) {
+      await _findSourcesAndPlay(item, episode: episode);
+      return;
+    }
     setState(() {
       _resolving = true;
       _resolveProgress = null;
@@ -2000,25 +1995,14 @@ class DetailsScreenState extends State<DetailsScreen> {
       await _findSourcesAndPlay(
         item,
         episode: episode,
-        // Android TV opens its source browser at once: rows are listed as
-        // soon as the providers answer and stay selectable while the live
-        // check runs in the background. This also prevents legacy
-        // series-wide pins from silently choosing a source the user did not
-        // select.
+        // Android TV stays manual while the playback path is being stabilized.
+        // This also prevents legacy series-wide pins from silently choosing a
+        // source the user did not select.
         autoUsePinned: !PlatformProfile.isAndroidTv,
       );
     } catch (e) {
       _showPlayError(e);
     }
-  }
-
-  /// Android TV Play (title or episode): opens the source browser at once,
-  /// with or without a cloud/debrid account. A blocking automatic live check
-  /// before the list made browsing wait and auto-picked sources the user
-  /// did not choose.
-  Future<void> _playTv(MediaItem item, {EpisodeItem? episode}) async {
-    if (_resolving) return;
-    await _findSourcesAndPlay(item, episode: episode);
   }
 
   Future<void> resumeContinueWatching(
@@ -2050,7 +2034,10 @@ class DetailsScreenState extends State<DetailsScreen> {
   }) async {
     if (!mounted) return;
 
-    if (PlatformProfile.isAndroidTv && !autoUsePinned) {
+    // Android TV: every entry point (Play, Sources, episodes, Continue
+    // Watching) opens the source browser at once. Provider results load
+    // inside it; no torrent is checked before the user can browse.
+    if (PlatformProfile.isAndroidTv) {
       setState(() {
         _resolving = false;
         _resolveProgress = null;
@@ -2081,16 +2068,12 @@ class DetailsScreenState extends State<DetailsScreen> {
               episode: episode,
               resultsFuture: resultsFuture,
               preferFreeP2p: !hasCloudConnection,
-              liveCheck: !_manualFreeP2p,
-              liveEvidence: _liveEvidence,
               onPlaySource: (chosen) async {
-                final cloud = await _hasCloudConnection();
-                if (!cloud && _manualFreeP2p) _traceManualChoice(chosen);
                 await _playSourceResult(
                   chosen,
                   item,
                   episode,
-                  hasCloudConnection: cloud,
+                  hasCloudConnection: await _hasCloudConnection(),
                 );
               },
             ),
@@ -2129,8 +2112,9 @@ class DetailsScreenState extends State<DetailsScreen> {
 
       final hasCloudConnection = await _hasCloudConnection();
 
+      SourceResult? chosen;
       SourceResult? pinnedResult;
-      String? pinnedIdentity;
+      FreeP2pLiveProbeService? autoProbeSession;
       if (autoUsePinned) {
         final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
         final pinned = await widget.sources.getPinnedSourceIdentity(pinKey);
@@ -2142,351 +2126,136 @@ class DetailsScreenState extends State<DetailsScreen> {
               seriesWide: item.kind == MediaKind.series,
             )) {
               pinnedResult = result;
-              pinnedIdentity = pinned;
               break;
             }
           }
         }
       }
-
-      // Free P2P (no cloud/debrid route) on Android Mobile and Android TV:
-      // Play opens the source list and the user chooses. The automatic
-      // live-checked one-click run and its multi-source fallback are off
-      // there; they chose and abandoned torrents that play when picked by
-      // hand. A pin is listed first and plays when chosen.
-      if (!hasCloudConnection && _manualFreeP2p) {
-        await _runSourcePicker(
-          results,
-          item,
-          episode,
-          hasCloudConnection: false,
+      // A pin is a preference, not a bypass of the Free P2P health gate. With
+      // a cloud/debrid path, or for a direct HTTP pin, it is used as before.
+      // A pinned torrent without a cloud path is probed first below and only
+      // auto-plays once it is confirmed live.
+      // Android never auto-starts a source here (Continue Watching
+      // included): the source list opens at once with the pin on top and
+      // "Play pinned" one tap away.
+      if (!_androidPlayback &&
+          pinnedResult != null &&
+          (hasCloudConnection || !pinnedResult.isMagnet)) {
+        chosen = pinnedResult;
+      }
+      // With no debrid/cloud connection, Normal Play validates a bounded,
+      // staged shortlist against the live swarm before auto-picking. It stops
+      // early on strong two-window evidence and only auto-picks a torrent that
+      // proved it can deliver media bytes now; otherwise it returns null and
+      // the source picker opens with the same evidence.
+      // Android Mobile and Android TV skip this check entirely: browsing and
+      // manual playback never wait for a live probe.
+      if (autoUsePinned &&
+          !_androidPlayback &&
+          !hasCloudConnection &&
+          chosen == null) {
+        autoProbeSession = FreeP2pLiveProbeService(
+          mediaDuration: FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
         );
-        return;
+        if (mounted) {
+          setState(() {
+            _resolving = true;
+            _resolveProgress = null;
+            _status = 'Checking the healthiest live P2P sources…';
+          });
+        }
+        try {
+          chosen = await autoProbeSession.probeBestCandidate(
+            results,
+            widget.sources,
+            preferred: pinnedResult,
+            onUpdate: (completed, total) {
+              if (!mounted) return;
+              setState(() {
+                _status = 'Checking live P2P sources… $completed/$total';
+              });
+            },
+          );
+          if (chosen?.isMagnet == true) {
+            await autoProbeSession.prepareForPlayback(chosen!);
+          }
+        } catch (_) {
+          await autoProbeSession.release();
+          rethrow;
+        }
       }
 
-      // Free P2P on Windows and macOS: one press of Play finds the best
-      // source the bounded live check verified, plays it and, when it does
-      // not start, moves to the next verified source. A pin is a
-      // preference, never a bypass of that check.
-      if (autoUsePinned && !hasCloudConnection) {
-        await _playFreeP2pOneClick(
-          results,
-          item,
-          episode,
-          pinnedResult: pinnedResult,
-          pinnedIdentity: pinnedIdentity,
-        );
-        return;
+      if (chosen == null && autoProbeSession != null) {
+        // No torrent proved it can play right now. Do not launch a failed
+        // candidate: keep the results and their live evidence and let the
+        // user choose (or re-check) in the source picker.
+        // The picker's live-check line states that nothing was confirmed.
+        if (mounted) {
+          setState(() {
+            _resolving = false;
+            _resolveProgress = null;
+          });
+        }
       }
 
-      // Cloud/debrid route, unchanged: a pin plays directly through the
-      // cloud path, otherwise the source picker opens. No live probe, local
-      // engine or Free P2P fallback is involved.
-      final chosen = pinnedResult;
       if (chosen == null) {
-        await _runSourcePicker(
-          results,
+        // A modal sheet cannot safely stay above/below a player route across
+        // nested Navigators. Close it before playback, then reopen it from the
+        // same in-memory result/probe session when the player returns. To the
+        // user this is still one-step navigation:
+        // player -> source list -> title, with no provider re-fetch.
+        // Reuse the Normal Play live evidence when there is any, so the picker
+        // shows the same health states instead of re-probing from scratch.
+        final probeSession = autoProbeSession ??
+            FreeP2pLiveProbeService(
+              mediaDuration:
+                  FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
+            );
+        try {
+          // Player returned, or Back cancelled the preparation: the loop
+          // reopens the source picker using the same
+          // already-resolved results and cached live-probe ranking.
+          await runSourcePlaybackLoop<SourceResult>(
+            controller: _preparation,
+            isActive: () => mounted,
+            chooseSource: () => _chooseSource(
+              results,
+              item,
+              episode,
+              probeSession: probeSession,
+            ),
+            prepareAndPlay: (selected) async {
+              _preparingSource = selected;
+              await _playSourceResult(
+                selected,
+                item,
+                episode,
+                hasCloudConnection: hasCloudConnection,
+              );
+            },
+            onError: _showPlayError,
+            onPreparationChanged: _onPreparationChanged,
+          );
+        } finally {
+          await probeSession.release();
+        }
+        return;
+      }
+
+      if (!mounted) return;
+      try {
+        await _playSourceResult(
+          chosen,
           item,
           episode,
           hasCloudConnection: hasCloudConnection,
         );
-        return;
+      } finally {
+        await autoProbeSession?.release();
       }
-
-      if (!mounted) return;
-      await _playSourceResult(
-        chosen,
-        item,
-        episode,
-        hasCloudConnection: hasCloudConnection,
-      );
     } catch (e) {
       _showPlayError(e);
     }
-  }
-
-  /// The source picker loop: pick, prepare and play, and come back to the
-  /// same list when the player closes or Back cancels the preparation. Reuses
-  /// [probeSession]'s live evidence (for example Normal Play's) instead of
-  /// probing from scratch, and releases it when the loop ends.
-  Future<void> _runSourcePicker(
-    List<SourceResult> results,
-    MediaItem item,
-    EpisodeItem? episode, {
-    required bool hasCloudConnection,
-    FreeP2pLiveProbeService? probeSession,
-  }) async {
-    // A modal sheet cannot safely stay above/below a player route across
-    // nested Navigators. Close it before playback, then reopen it from the
-    // same in-memory result/probe session when the player returns. To the
-    // user this is still one-step navigation:
-    // player -> source list -> title, with no provider re-fetch.
-    final session = probeSession ??
-        FreeP2pLiveProbeService(
-          mediaDuration: FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
-          priority: await widget.sources.getPriorityOrder(),
-          evidence: _liveEvidence,
-        );
-    try {
-      // Player returned, or Back cancelled the preparation: the loop
-      // reopens the source picker using the same
-      // already-resolved results and cached live-probe ranking.
-      await runSourcePlaybackLoop<SourceResult>(
-        controller: _preparation,
-        isActive: () => mounted,
-        chooseSource: () => _chooseSource(
-          results,
-          item,
-          episode,
-          probeSession: session,
-        ),
-        prepareAndPlay: (selected) async {
-          _preparingSource = selected;
-          await _playSourceResult(
-            selected,
-            item,
-            episode,
-            hasCloudConnection: hasCloudConnection,
-          );
-        },
-        onError: _showPlayError,
-        onPreparationChanged: _onPreparationChanged,
-      );
-    } finally {
-      await session.release();
-    }
-  }
-
-  /// Free P2P one-click playback; see [FreeP2pAutoPlay] for the selection
-  /// rules and budgets. When nothing verified starts, the source picker
-  /// opens with the same live evidence and an honest reason.
-  Future<void> _playFreeP2pOneClick(
-    List<SourceResult> results,
-    MediaItem item,
-    EpisodeItem? episode, {
-    SourceResult? pinnedResult,
-    String? pinnedIdentity,
-  }) async {
-    final probeSession = FreeP2pLiveProbeService(
-      mediaDuration: FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
-      priority: await widget.sources.getPriorityOrder(),
-      evidence: _liveEvidence,
-    );
-    final autoPlay = FreeP2pAutoPlay(
-      probe: probeSession,
-      sources: widget.sources,
-    );
-    void status(String message) {
-      if (!mounted) return;
-      setState(() {
-        _resolving = true;
-        _resolveProgress = null;
-        _status = message;
-      });
-    }
-
-    FreeP2pAutoPlayResult outcome;
-    try {
-      outcome = await autoPlay.run(
-        results,
-        preferred: pinnedResult,
-        isPinned: pinnedIdentity == null
-            ? null
-            : (source) => widget.sources.matchesPinned(
-                  source,
-                  pinnedIdentity,
-                  seriesWide: item.kind == MediaKind.series,
-                ),
-        onStatus: status,
-        onProbeProgress: (completed, total) =>
-            status('Checking live P2P sources… $completed/$total'),
-        attempt: (source, {required fallbackAvailable}) => _runOneClickAttempt(
-          source,
-          item,
-          episode,
-          fallbackAvailable: fallbackAvailable,
-        ),
-      );
-    } catch (_) {
-      await probeSession.release();
-      rethrow;
-    }
-
-    if (mounted) {
-      setState(() {
-        _resolving = false;
-        _resolveProgress = null;
-        _status = '';
-      });
-    }
-    if (!mounted ||
-        outcome.stop == FreeP2pAutoPlayStop.started ||
-        outcome.stop == FreeP2pAutoPlayStop.stoppedByUser) {
-      await probeSession.release();
-      return;
-    }
-
-    _showOneClickStop(outcome);
-    await _runSourcePicker(
-      results,
-      item,
-      episode,
-      hasCloudConnection: false,
-      probeSession: probeSession,
-    );
-  }
-
-  /// Whether a player may leave by itself on a startup failure so the next
-  /// verified source starts. Off on every platform: the player's 30 s
-  /// "taking longer than expected" watchdog and early engine errors also
-  /// fire for torrents that start a little later, and leaving stopped and
-  /// detached those working streams. A startup failure stays on screen and
-  /// the player keeps trying, as before one-click playback; resolve-stage
-  /// failures (no player opened yet) still fall back.
-  bool get _playerSourceFallbackSupported => false;
-
-  /// Android playback (mobile and TV). Always equal to Platform.isAndroid in
-  /// the app; the Android TV test override also selects it on a test host.
-  bool get _androidPlayback =>
-      debugAndroidPlaybackOverride ??
-      (Platform.isAndroid || PlatformProfile.isAndroidTv);
-
-  /// Manual Free P2P on Android Mobile and Android TV: the source list is
-  /// plain (no live probe, health groups or display modes), Normal Play
-  /// opens it, and a chosen torrent goes straight to the engine and the
-  /// player. Windows and macOS keep the live check.
-  bool get _manualFreeP2p => _androidPlayback;
-
-  /// Set while a one-click attempt may let MPV leave on a startup failure.
-  bool _sourceFallbackArmed = false;
-
-  /// Set when the player reported a startup failure and left for the next
-  /// source.
-  bool _sourceFallbackRequested = false;
-
-  /// One automatic attempt, run as a cancellable preparation so Back stops
-  /// it (and every later fallback).
-  Future<FreeP2pAttemptEnd> _runOneClickAttempt(
-    SourceResult source,
-    MediaItem item,
-    EpisodeItem? episode, {
-    required bool fallbackAvailable,
-  }) async {
-    if (!mounted) return FreeP2pAttemptEnd.stoppedByUser;
-    _sourceFallbackArmed = fallbackAvailable && _playerSourceFallbackSupported;
-    _sourceFallbackRequested = false;
-    FreeP2pPlaybackAttempt? traced;
-    Object? failure;
-    var completed = false;
-    try {
-      completed = await _preparation.run(
-        () async {
-          _preparingSource = source;
-          traced = await _playSourceResult(
-            source,
-            item,
-            episode,
-            hasCloudConnection: false,
-          );
-        },
-        onChanged: _onPreparationChanged,
-      );
-    } catch (error) {
-      failure = error;
-      completed = true;
-    } finally {
-      _sourceFallbackArmed = false;
-    }
-    if (!completed || !mounted) return FreeP2pAttemptEnd.stoppedByUser;
-    final attempt = traced ?? FreeP2pPlaybackTrace.instance.latest(source);
-    final end = classifyFreeP2pAttempt(
-      attempt?.outcome,
-      playerLeftForFallback: _sourceFallbackRequested,
-    );
-    _sourceFallbackRequested = false;
-    if (end == FreeP2pAttemptEnd.stoppedByUser && failure != null) {
-      // An error no stage explains: show it rather than hide it.
-      _showPlayError(failure);
-    }
-    return end;
-  }
-
-  /// Starts the privacy-safe playback report for a Free P2P source the user
-  /// chose by hand, so the report reads how it was chosen. No live check is
-  /// involved.
-  void _traceManualChoice(SourceResult source, {String selection = 'manual'}) {
-    FreeP2pPlaybackTrace.instance.begin(
-      source,
-      selection: selection,
-      liveCheck: source.isMagnet ? 'off' : 'directHttp',
-    );
-  }
-
-  /// Why one-click playback did not start, said once above the source
-  /// picker that opens next.
-  void _showOneClickStop(FreeP2pAutoPlayResult outcome) {
-    // The stage that ended the last attempt, in plain words.
-    final last = switch (FreeP2pPlaybackTrace.instance.attempts.firstOrNull
-        ?.outcome) {
-      FreeP2pPlaybackOutcome.metadataTimeout =>
-        ' Last one: its metadata did not arrive in time.',
-      FreeP2pPlaybackOutcome.sourceError =>
-        ' Last one: the torrent engine rejected it.',
-      FreeP2pPlaybackOutcome.playerFailure =>
-        ' Last one: the player could not start it.',
-      FreeP2pPlaybackOutcome.failed => ' Last one: it could not be opened.',
-      _ => '',
-    };
-    final message = switch (outcome.stop) {
-      FreeP2pAutoPlayStop.engineFailure =>
-        'The local P2P engine is not responding. Choose a direct source or try again.',
-      FreeP2pAutoPlayStop.exhausted => outcome.tried == 1
-          ? 'The verified source did not start.$last Choose another source or re-check.'
-          : 'None of the ${outcome.tried} verified sources started.$last Choose another source or re-check.',
-      _ =>
-        'No source was verified as playable right now. Choose one or re-check.',
-    };
-    _showNotice(message, action: _copyReportAction());
-  }
-
-  /// Copies the privacy-safe Free P2P playback report.
-  SnackBarAction _copyReportAction() => SnackBarAction(
-        label: 'Copy report',
-        onPressed: () => unawaited(
-          Clipboard.setData(
-            ClipboardData(text: FreeP2pPlaybackTrace.instance.report()),
-          ),
-        ),
-      );
-
-  /// Shows one short playback notice. It replaces any notice still on
-  /// screen, so automatic attempts never stack them, and it always closes by
-  /// itself: on current Flutter a SnackBar with an action otherwise stays
-  /// until it is dismissed, over the source list or the player. Android
-  /// Mobile also gets a close button. On Android TV a focusable action or
-  /// close button would pull the remote's focus away from the screen behind
-  /// it; TV shows the same report from the source browser's Live report
-  /// chip, and the mobile source list keeps its own copy button.
-  void _showNotice(
-    String message, {
-    SnackBarAction? action,
-    Duration duration = const Duration(seconds: 6),
-  }) {
-    final tv = PlatformProfile.isAndroidTv;
-    final messenger = ScaffoldMessenger.of(context)..clearSnackBars();
-    final controller = messenger.showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: duration,
-        action: tv ? null : action,
-        showCloseIcon: !tv,
-      ),
-    );
-    var open = true;
-    unawaited(controller.closed.then((_) => open = false));
-    Timer(duration, () {
-      if (open && messenger.mounted) controller.close();
-    });
   }
 
   /// One cloud/debrid eligibility check for the whole details flow. Any
@@ -2499,110 +2268,13 @@ class DetailsScreenState extends State<DetailsScreen> {
       (await RealDebridService.instance.isConnected) ||
       (await PremiumizeService.instance.isConnected);
 
-  /// Runs the player handoff of a traced Free P2P attempt and records a
-  /// cancellation or an error that ended it before the player answered.
-  Future<void> _traced(
-    FreeP2pPlaybackAttempt? trace,
-    Future<void> Function() handoff,
-  ) async {
-    try {
-      await handoff();
-      // Returned before any player was chosen (for example a fail-closed
-      // preflight): no player event will ever end this attempt.
-      if (trace != null &&
-          trace.isOpen &&
-          !trace.stages.any((stage) => stage['stage'] == 'player')) {
-        trace.finish(
-          FreeP2pPlaybackOutcome.failed,
-          detail: 'no player was opened',
-        );
-      }
-    } on PlaybackPreparationCancelled {
-      trace?.finish(FreeP2pPlaybackOutcome.cancelled);
-      rethrow;
-    } catch (error) {
-      trace?.finish(FreeP2pPlaybackOutcome.failed, detail: error.toString());
-      rethrow;
-    }
-  }
-
-  /// The player reported a start: record it and, for a local P2P stream,
-  /// what the engine measured at that moment. A start after a reported
-  /// startup failure (MPV keeps trying) turns that attempt into a playing
-  /// one.
-  Future<void> _tracePlayerStarted(SourceResult source, String url) async {
-    var trace = FreeP2pPlaybackTrace.instance.active(source);
-    if (trace != null) {
-      trace.stage('playerStart', 'started');
-      trace.finish(FreeP2pPlaybackOutcome.playing);
-    } else {
-      trace = FreeP2pPlaybackTrace.instance.latest(source);
-      if (trace?.outcome != FreeP2pPlaybackOutcome.playerFailure) return;
-      trace!.markRecovered();
-    }
-    if (!source.isMagnet) return;
-    _traceEngineStats(
-      trace,
-      await LocalTorrentService.instance.healthForStreamUrl(url),
-    );
-  }
-
-  /// What the engine measured for the stream when the player answered.
-  void _traceEngineStats(
-    FreeP2pPlaybackAttempt? trace,
-    LocalTorrentHealth? health,
-  ) {
-    trace?.stage(
-      'engineStats',
-      health == null ? 'unavailable' : 'sampled',
-      detail: health == null
-          ? const <String, Object?>{}
-          : <String, Object?>{
-              'livePeers': health.peers,
-              'liveConnections': health.connections,
-              'speedBps': health.downloadSpeedBytesPerSecond.round(),
-            },
-    );
-  }
-
-  /// The player gave up on [source]. [last] is false when another player
-  /// is tried next, so the attempt stays open for it. [sourceFallback]
-  /// records that the player left for the next verified source.
-  FreeP2pPlaybackAttempt? _tracePlayerFailed(
-    SourceResult source,
-    String? message, {
-    bool last = true,
-    bool sourceFallback = false,
-  }) {
-    final trace = FreeP2pPlaybackTrace.instance.active(source);
-    if (trace == null) return null;
-    trace.stage('playerStart', 'failed');
-    if (sourceFallback) trace.stage('sourceFallback', 'playerLeft');
-    if (last) {
-      trace.finish(FreeP2pPlaybackOutcome.playerFailure, detail: message);
-    }
-    return trace;
-  }
-
-  /// The player route closed. An attempt still open was neither started nor
-  /// reported as failed: the user left while it was still loading.
-  void _tracePlayerClosed(SourceResult? source) {
-    if (source == null) return;
-    final trace = FreeP2pPlaybackTrace.instance.active(source);
-    if (trace == null) return;
-    trace.stage('playerClosed', 'beforeStart');
-    trace.finish(FreeP2pPlaybackOutcome.closedBeforeStart);
-  }
-
   String _sourceReleaseHint(SourceResult source) {
     final fileName = source.fileNameHint?.trim();
     if (fileName != null && fileName.isNotEmpty) return fileName;
     return source.title.split('\n').last.trim();
   }
 
-  /// Plays [chosen]. Returns the Free P2P playback attempt it traced, or
-  /// null for a cloud/debrid route (never traced).
-  Future<FreeP2pPlaybackAttempt?> _playSourceResult(
+  Future<void> _playSourceResult(
     SourceResult chosen,
     MediaItem item,
     EpisodeItem? episode, {
@@ -2612,42 +2284,34 @@ class DetailsScreenState extends State<DetailsScreen> {
     final releaseHint = _sourceReleaseHint(chosen);
 
     if (!chosen.isMagnet) {
-      if (!mounted) return null;
+      if (!mounted) return;
       setState(() {
         _resolving = true;
         _resolveProgress = null;
         _status = 'Opening direct stream…';
       });
-      // Free P2P report only; cloud/debrid playback is not traced.
-      final trace = cloudConnected
-          ? null
-          : (FreeP2pPlaybackTrace.instance.attemptFor(chosen)
-            ..stage('route', 'directHttp'));
-      await _traced(
-        trace,
-        () => _openPlayerUrl(
-          chosen.resource,
-          item,
-          episode,
-          source: chosen,
-          releaseHint: releaseHint,
-          expectedSizeBytes: chosen.sizeBytes,
-          expectedVideoHash: chosen.videoHash,
-        ),
+      await _openPlayerUrl(
+        chosen.resource,
+        item,
+        episode,
+        source: chosen,
+        releaseHint: releaseHint,
+        expectedSizeBytes: chosen.sizeBytes,
+        expectedVideoHash: chosen.videoHash,
       );
-      return trace;
+      return;
     }
 
     if (!cloudConnected) {
-      if (!mounted) return null;
+      if (!mounted) return;
       setState(() {
         _resolving = true;
         _resolveProgress = null;
         _status = 'Starting local P2P torrent stream…';
       });
       final preparation = PlaybackPreparation.current;
-      final trace = FreeP2pPlaybackTrace.instance.attemptFor(chosen)
-        ..stage('route', 'localP2p');
+      final attempt = FreeP2pPlaybackTrace.instance.attemptFor(chosen);
+      _localAttempt = attempt;
       late final String localUrl;
       try {
         localUrl = await LocalTorrentService.instance.resolve(
@@ -2657,49 +2321,53 @@ class DetailsScreenState extends State<DetailsScreen> {
               setState(() => _status = message);
             }
           },
-          trace: trace,
+          trace: attempt,
+          // Android waits for slow magnet metadata until the torrent
+          // answers or the user goes Back, instead of failing at 45 s.
+          patientMetadata: _androidPlayback,
+          isCancelled: () => preparation?.isCancelled == true,
         );
       } catch (error) {
-        if (preparation?.isCancelled == true) {
-          trace.finish(FreeP2pPlaybackOutcome.cancelled);
+        if (preparation?.isCancelled == true ||
+            error is LocalTorrentCancelled) {
           throw const PlaybackPreparationCancelled();
         }
-        trace.finish(FreeP2pPlaybackOutcome.failed, detail: error.toString());
-        unawaited(
-          widget.sources.recordPlaybackOutcome(
-            chosen,
-            success: false,
-            reason: error.toString(),
-          ),
-        );
+        // Only an answer about this torrent counts against it. An engine
+        // that could not start or stopped answering says nothing about the
+        // release, and a slow swarm is not a failure.
+        if (isSourceSpecificTorrentFailure(error)) {
+          unawaited(
+            widget.sources.recordPlaybackOutcome(
+              chosen,
+              success: false,
+              reason: error.toString(),
+            ),
+          );
+        }
         rethrow;
       }
       if (preparation?.isCancelled == true) {
         // Back was pressed while the torrent was resolving. Do not open the
         // player for it, and do not leave its torrent attached.
-        trace.finish(FreeP2pPlaybackOutcome.cancelled);
         await _releaseAbandonedLocalStream(chosen);
         throw const PlaybackPreparationCancelled();
       }
-      if (!mounted) return null;
+      if (!mounted) return;
       setState(() => _status = 'P2P stream ready — opening player…');
-      await _traced(
-        trace,
-        () => _openPlayerUrl(
-          localUrl,
-          item,
-          episode,
-          source: chosen,
-          releaseHint: releaseHint,
-          expectedSizeBytes: chosen.sizeBytes,
-          expectedVideoHash: chosen.videoHash,
-        ),
+      await _openPlayerUrl(
+        localUrl,
+        item,
+        episode,
+        source: chosen,
+        releaseHint: releaseHint,
+        expectedSizeBytes: chosen.sizeBytes,
+        expectedVideoHash: chosen.videoHash,
       );
-      return trace;
+      return;
     }
 
     final cloud = await _chooseCloudProvider();
-    if (cloud == null || !mounted) return null;
+    if (cloud == null || !mounted) return;
     PlaybackPreparation.throwIfCurrentCancelled();
     if (cloud == CloudProvider.torbox) {
       await _sendSourceToTorBox(chosen, item, episode);
@@ -2710,7 +2378,18 @@ class DetailsScreenState extends State<DetailsScreen> {
     } else {
       await _sendSourceToPikPak(chosen, item, episode);
     }
-    return null;
+  }
+
+  /// Whether a failed playback resolve is evidence against the torrent itself
+  /// (the engine rejected it, or it has no usable info hash), rather than an
+  /// engine, transport or timing problem.
+  @visibleForTesting
+  static bool isSourceSpecificTorrentFailure(Object error) {
+    if (error is! LocalTorrentException) return false;
+    final message = error.toString();
+    return message.contains('Local torrent engine returned HTTP') ||
+        message.contains('Local torrent engine: ') ||
+        message.contains('did not include a usable BitTorrent info hash');
   }
 
   EpisodeItem? _episodeForPinnedRelease(
@@ -3154,6 +2833,9 @@ class DetailsScreenState extends State<DetailsScreen> {
     // Same eligibility as Normal Play and playback: Free P2P ranking and live
     // probing apply only when no cloud/debrid provider is connected.
     final hasCloudConnection = await _hasCloudConnection();
+    // The list is shown again after a player closed: a later Re-check may
+    // probe again.
+    probeSession?.resumeAfterPlayback();
 
     if (PlatformProfile.isAndroidTv) {
       if (!mounted) return null;
@@ -3172,11 +2854,7 @@ class DetailsScreenState extends State<DetailsScreen> {
               episode: episode,
               resultsFuture: Future.value(results),
               preferFreeP2p: !hasCloudConnection,
-              liveCheck: !_manualFreeP2p,
               probeSession: probeSession,
-              onManualChoice: !hasCloudConnection && _manualFreeP2p
-                  ? _traceManualChoice
-                  : null,
             ),
           ),
         ),
@@ -3185,14 +2863,8 @@ class DetailsScreenState extends State<DetailsScreen> {
     var priority = await widget.sources.getPriorityOrder();
     var resultLimit = await widget.sources.getResultLimit();
     var compatibilityOnly = false;
-    // Live probing and its playback gate belong to the Free P2P playback
-    // path only; with a cloud/debrid connection playback never uses these
-    // torrent sessions. The display mode below never changes this. Android
-    // Mobile shows a plain Free P2P list instead ([_manualFreeP2p]).
-    final manualFreeP2p = !hasCloudConnection && _manualFreeP2p;
-    final liveCheckAllowed = !hasCloudConnection && !manualFreeP2p;
-    var displayMode =
-        await widget.sources.getDisplayMode(liveCheck: liveCheckAllowed);
+    var smoothRanking = false;
+    var freeStreamingRanking = !hasCloudConnection;
     final pinKey = widget.sources.sourceTargetKey(item, episode: episode);
     final seriesWidePin = item.kind == MediaKind.series;
     var pinnedIdentity = await widget.sources.getPinnedSourceIdentity(pinKey);
@@ -3201,17 +2873,10 @@ class DetailsScreenState extends State<DetailsScreen> {
     final liveProbe = probeSession ??
         FreeP2pLiveProbeService(
           mediaDuration: FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
-          evidence: _liveEvidence,
         );
     final ownsProbeSession = probeSession == null;
-    // The user's Source Priority (My Priority) and the chosen display mode
-    // order rows inside each live-health group.
-    liveProbe.setPriority(priority);
-    liveProbe.setDisplayMode(displayMode);
-    // Reopened after playback: keep the list the user chose from while its
-    // evidence is fresh. Otherwise (first open, or after Normal Play) the
-    // picker continues the bounded check in the background.
-    var liveProbeStarted = liveProbe.isFrozen && liveProbe.hasAnyResult;
+    var liveProbeStarted = liveProbe.hasAnyResult;
+    var rankingRecorded = false;
 
     Future<void> customizePriority(
       BuildContext dialogContext,
@@ -3283,35 +2948,9 @@ class DetailsScreenState extends State<DetailsScreen> {
       );
       if (saved != null) {
         await widget.sources.setPriorityOrder(saved);
-        // Saving a priority is a request to sort by it: rows reorder at once
-        // under My Priority, and the background check also follows it.
-        await widget.sources.setDisplayMode(SourceDisplayMode.myPriority);
-        setSheetState(() {
-          priority = saved;
-          liveProbe.setPriority(saved);
-          displayMode = SourceDisplayMode.myPriority;
-          liveProbe.setDisplayMode(displayMode);
-        });
+        setSheetState(() => priority = saved);
       }
     }
-
-    void selectDisplayMode(SourceDisplayMode mode, StateSetter setSheetState) {
-      if (mode == displayMode) return;
-      setSheetState(() {
-        displayMode = mode;
-        liveProbe.setDisplayMode(mode);
-      });
-      unawaited(widget.sources.setDisplayMode(mode));
-    }
-
-    // How the sheet's result was chosen, for the playback report.
-    var selectedVia = 'manual';
-
-    bool isPinnedResult(SourceResult result) => widget.sources.matchesPinned(
-          result,
-          pinnedIdentity,
-          seriesWide: seriesWidePin,
-        );
 
     final selected = await showModalBottomSheet<SourceResult>(
       context: context,
@@ -3327,9 +2966,10 @@ class DetailsScreenState extends State<DetailsScreen> {
       constraints: const BoxConstraints(maxWidth: 1080),
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) {
-          // The live check runs whatever the display mode, so changing the
-          // order can never skip or reset playback safety.
-          if (liveCheckAllowed && !liveProbeStarted) {
+          // Android Mobile never starts a background torrent check: the list
+          // is usable at once, rows keep the static Free P2P order, and no
+          // probe session competes with the stream the user then chooses.
+          if (freeStreamingRanking && !liveProbeStarted && !_androidPlayback) {
             liveProbeStarted = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {
               unawaited(
@@ -3337,11 +2977,6 @@ class DetailsScreenState extends State<DetailsScreen> {
                     .probeTopCandidates(
                       results,
                       widget.sources,
-                      // While the picker is open, keep classifying more rows
-                      // in small bounded batches.
-                      continueInBackground: true,
-                      // An unchecked pin is checked in the first batch.
-                      preferred: results.where(isPinnedResult).firstOrNull,
                       onUpdate: () {
                         if (sheetContext.mounted) {
                           setSheetState(() {});
@@ -3356,18 +2991,11 @@ class DetailsScreenState extends State<DetailsScreen> {
           final sheetWidth = MediaQuery.sizeOf(context).width;
           final compactSheet = sheetWidth < 680;
           final desktopSheet = Platform.isWindows && sheetWidth >= 900;
-          final ranked = liveCheckAllowed
+          final ranked = freeStreamingRanking
               ? liveProbe.rank(results, widget.sources)
-              : manualFreeP2p
-                  ? widget.sources.sortManualFreeP2p(results, priority)
-                  : switch (displayMode) {
-                      SourceDisplayMode.recommended =>
-                        widget.sources.sortRecommended(results),
-                      SourceDisplayMode.myPriority =>
-                        widget.sources.sortResults(results, priority),
-                      SourceDisplayMode.smooth =>
-                        widget.sources.sortForSmoothPlayback(results),
-                    };
+              : smoothRanking
+                  ? widget.sources.sortForSmoothPlayback(results)
+                  : widget.sources.sortResults(results, priority);
           final filtered = compatibilityOnly
               ? ranked
                   .where((result) => result.compatibilityFriendly)
@@ -3377,7 +3005,13 @@ class DetailsScreenState extends State<DetailsScreen> {
 
           var ordered = [...filtered];
           if (pinnedIdentity != null) {
-            if (liveCheckAllowed) {
+            bool isPinnedResult(SourceResult result) =>
+                widget.sources.matchesPinned(
+                  result,
+                  pinnedIdentity,
+                  seriesWide: seriesWidePin,
+                );
+            if (freeStreamingRanking) {
               // A pin stays on top unless it was just confirmed unplayable
               // while another torrent is confirmed live.
               ordered = liveProbe.applyPinnedPreference(
@@ -3394,126 +3028,75 @@ class DetailsScreenState extends State<DetailsScreen> {
           }
 
           final totalAfterFilter = ordered.length;
-          // In Free P2P the limit never hides every confirmed-live torrent.
-          final sorted = liveCheckAllowed
-              ? liveProbe.applyResultLimit(ordered, resultLimit)
-              : resultLimit > 0 && ordered.length > resultLimit
-                  ? ordered.take(resultLimit).toList(growable: false)
-                  : ordered;
+          final sorted = resultLimit > 0 && ordered.length > resultLimit
+              ? ordered.take(resultLimit).toList(growable: false)
+              : ordered;
           final limitHiddenCount = totalAfterFilter - sorted.length;
           final best = sorted.isEmpty ? null : sorted.first;
-          // Quick Play must not depend on display order. In Free P2P it takes
-          // the best eligible source (a confirmed-live pin first) from the
-          // playback order, and never an unconfirmed or failed torrent.
-          final quickPlaySource = liveCheckAllowed
-              ? liveProbe.quickPlayCandidate(
-                  filtered,
-                  widget.sources,
-                  isPinned: isPinnedResult,
-                )
-              : best;
-          final color = Theme.of(context).colorScheme;
-          // Health-group labels (Confirmed live, Not checked yet, Metadata
-          // slow, Failed the live check). Failed torrents sit together at the
-          // bottom and stay selectable for a manual choice.
-          final groupHeaders = liveCheckAllowed
-              ? liveProbe.groupHeaders(sorted, isPinned: isPinnedResult)
-              : const <int, FreeP2pGroupHeader>{};
-
-          // Same shape for every row, so a row that gains or loses a group
-          // label keeps its element (and any keyboard focus).
-          Widget withGroupHeader(int index, Widget row) {
-            final header = groupHeaders[index];
-            final failed = header?.group == FreeP2pGroup.failed;
-            final headerColor = failed ? color.error : color.onSurfaceVariant;
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (header != null)
-                  Padding(
-                    key: ValueKey(
-                      failed ? 'free-p2p-failed-group' : 'free-p2p-group',
-                    ),
-                    padding: const EdgeInsets.fromLTRB(4, 6, 4, 8),
-                    child: Row(
-                      children: [
-                        Icon(
-                          switch (header.group) {
-                            FreeP2pGroup.direct => Icons.link_rounded,
-                            FreeP2pGroup.live => Icons.bolt_rounded,
-                            FreeP2pGroup.notChecked =>
-                              Icons.radio_button_unchecked_rounded,
-                            FreeP2pGroup.metadataSlow =>
-                              Icons.hourglass_bottom_rounded,
-                            FreeP2pGroup.failed =>
-                              Icons.report_gmailerrorred_rounded,
-                          },
-                          size: 16,
-                          color: headerColor,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            header.label,
-                            style: TextStyle(
-                              color: headerColor,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                KeyedSubtree(key: const ValueKey('source-row'), child: row),
-              ],
+          if (!rankingRecorded) {
+            rankingRecorded = true;
+            SourceRankingSnapshot.record(
+              SourceRankingSnapshot.capture(
+                sources: widget.sources,
+                target: _rankingTarget(item, episode),
+                resolved: results,
+                displayed: sorted,
+                mode: freeStreamingRanking
+                    ? 'freeP2p'
+                    : smoothRanking
+                        ? 'smooth'
+                        : 'priority',
+                priority: priority,
+                cloudConnected: hasCloudConnection,
+                compatibilityOnly: compatibilityOnly,
+                resultLimit: resultLimit,
+                isPinned: (source) => widget.sources.matchesPinned(
+                  source,
+                  pinnedIdentity,
+                  seriesWide: seriesWidePin,
+                ),
+                liveProbe: liveProbe,
+              ),
             );
           }
+          final color = Theme.of(context).colorScheme;
           final priorityText =
               priority.map((e) => e.label.toLowerCase()).join(' → ');
-          const healthGroups =
-              'live → not checked → metadata slow → failed check';
-          final rankingText = switch (displayMode) {
-            _ when manualFreeP2p => SourceProviderService
-                .manualFreeP2pRankingText(priority),
-            SourceDisplayMode.recommended => liveCheckAllowed
-                ? 'Recommended: $healthGroups; live by ready now, first byte, real speed and live peers'
-                : 'Recommended: cached → device compatibility, exact file, reported swarm, practical size',
-            SourceDisplayMode.myPriority => liveCheckAllowed
-                ? 'My Priority: $healthGroups; within each group: $priorityText'
-                : 'My Priority: $priorityText',
-            SourceDisplayMode.smooth => liveCheckAllowed
-                ? 'Smooth: $healthGroups; within each group: compatibility → 1080/720 → efficient codec → seeders → smaller files'
-                : 'Smooth: compatibility → 1080/720 → efficient codec → seeders → smaller files → cache',
-          };
+          final rankingText = freeStreamingRanking
+              ? 'Free P2P: live data now → first byte → real speed vs bitrate → live peers → history → provider seeds → exact file → size; quality only breaks ties'
+              : smoothRanking
+                  ? 'Smooth: compatibility → 1080/720 → efficient codec → seeders → smaller files → cache'
+                  : 'Default: $priorityText';
           final summaryParts = <String>[
             resultLimit > 0
                 ? 'Showing ${sorted.length} of $totalAfterFilter results'
                 : '${sorted.length} result${sorted.length == 1 ? '' : 's'} shown',
-            if (liveCheckAllowed) 'Free P2P live check on',
+            if (freeStreamingRanking) 'free P2P ranking on',
+            if (smoothRanking) 'smooth ranking on',
             if (compatibilityHiddenCount > 0)
               '$compatibilityHiddenCount risky hidden',
             if (limitHiddenCount > 0) '$limitHiddenCount beyond limit',
           ];
 
           final liveSummary =
-              liveCheckAllowed ? liveProbe.summary(results).text : null;
+              freeStreamingRanking ? liveProbe.summary(results).text : null;
 
           Widget quickPlayButton(SourceResult source) {
             // Quick Play in Free P2P only launches a torrent that is confirmed
             // live, pinned or not. Every row stays selectable for a manual
             // choice, including an unconfirmed pin.
             final pinned = widget.sources.matchesPinned(source, pinnedIdentity);
-            final waitingForProbe =
-                liveCheckAllowed && !liveProbe.quickPlayAllowed(source);
-            final checking = liveCheckAllowed && liveProbe.isRunning;
+            // Android: Quick Play is a manual choice and never waits for a
+            // live check. Other platforms keep their live-check gate.
+            final waitingForProbe = freeStreamingRanking &&
+                !_androidPlayback &&
+                !liveProbe.quickPlayAllowed(source);
+            final checking = freeStreamingRanking && liveProbe.isRunning;
             return FilledButton.tonalIcon(
               onPressed: waitingForProbe
                   ? null
                   : () {
                       liveProbe.freezeRanking(results, widget.sources);
-                      selectedVia = 'quickPlay';
                       Navigator.pop(sheetContext, source);
                     },
               icon: Icon(
@@ -3603,36 +3186,18 @@ class DetailsScreenState extends State<DetailsScreen> {
                       runSpacing: 8,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        // One display mode at a time. Display only: the Free
-                        // P2P live check and Quick Play gate stay the same.
-                        // The manual Free P2P list has none.
-                        if (!manualFreeP2p)
-                          for (final mode in SourceDisplayMode.values)
-                            ChoiceChip(
-                              showCheckmark: false,
-                              selected: displayMode == mode,
-                              avatar: Icon(
-                                switch (mode) {
-                                  SourceDisplayMode.recommended =>
-                                    Icons.auto_awesome_rounded,
-                                  SourceDisplayMode.myPriority =>
-                                    Icons.format_list_numbered_rounded,
-                                  SourceDisplayMode.smooth => Icons.speed_rounded,
-                                },
-                                size: 18,
-                              ),
-                              label: Text(mode.label),
-                              tooltip: switch (mode) {
-                                SourceDisplayMode.recommended =>
-                                  'Orvix order: confirmed-live sources first, then the most playable ones.',
-                                SourceDisplayMode.myPriority =>
-                                  'Your Source Priority (Sort), inside each live-health group.',
-                                SourceDisplayMode.smooth =>
-                                  'Compatible, efficient 1080p/720p sources first, inside each live-health group.',
-                              },
-                              onSelected: (_) =>
-                                  selectDisplayMode(mode, setSheetState),
-                            ),
+                        FilterChip(
+                          showCheckmark: false,
+                          selected: freeStreamingRanking,
+                          avatar: const Icon(Icons.bolt_rounded, size: 18),
+                          label: const Text('Free P2P'),
+                          tooltip:
+                              'Rank viable sources by broad device compatibility, exact file routing, swarm health and practical size. Resolution is not a priority.',
+                          onSelected: (value) => setSheetState(() {
+                            freeStreamingRanking = value;
+                            if (value) smoothRanking = false;
+                          }),
+                        ),
                         FilterChip(
                           showCheckmark: false,
                           selected: compatibilityOnly,
@@ -3647,6 +3212,23 @@ class DetailsScreenState extends State<DetailsScreen> {
                               'Hide known-risk formats such as AV1, 8K, Hi10P and Dolby Vision-only releases.',
                           onSelected: (value) =>
                               setSheetState(() => compatibilityOnly = value),
+                        ),
+                        FilterChip(
+                          showCheckmark: false,
+                          selected: smoothRanking,
+                          avatar: Icon(
+                            smoothRanking
+                                ? Icons.speed_rounded
+                                : Icons.speed_outlined,
+                            size: 18,
+                          ),
+                          label: const Text('Smooth'),
+                          tooltip:
+                              'Prioritize compatible, efficient and healthy sources.',
+                          onSelected: (value) => setSheetState(() {
+                            smoothRanking = value;
+                            if (value) freeStreamingRanking = false;
+                          }),
                         ),
                         if (!PlatformProfile.isAndroidMobile)
                           OutlinedButton.icon(
@@ -3669,7 +3251,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                           ),
                           if (best != null) ...[
                             const SizedBox(width: 10),
-                            Flexible(child: quickPlayButton(quickPlaySource ?? best)),
+                            Flexible(child: quickPlayButton(best)),
                           ],
                         ],
                       ),
@@ -3677,7 +3259,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                       const SizedBox(height: 10),
                       Align(
                         alignment: Alignment.centerRight,
-                        child: quickPlayButton(quickPlaySource ?? best),
+                        child: quickPlayButton(best),
                       ),
                     ],
                     const SizedBox(height: 12),
@@ -3735,19 +3317,23 @@ class DetailsScreenState extends State<DetailsScreen> {
                             onPressed: () => unawaited(
                               Clipboard.setData(
                                 ClipboardData(
-                                  text: liveProbe.diagnosticReport(results),
+                                  text: <String>[
+                                    liveProbe.diagnosticReport(results),
+                                    if (SourceRankingSnapshot.latest != null)
+                                      SourceRankingSnapshot.latest!.toReport(),
+                                    FreeP2pPlaybackTrace.instance.report(),
+                                  ].join('\n'),
                                 ),
                               ),
                             ),
                           ),
                           TextButton.icon(
-                            // Discards this picker's evidence (and any frozen
-                            // order) and starts a fresh bounded check with the
-                            // current Source Priority.
-                            onPressed: () => setSheetState(() {
-                              liveProbe.clear();
-                              liveProbeStarted = false;
-                            }),
+                            onPressed: liveProbe.isRunning
+                                ? null
+                                : () => setSheetState(() {
+                                      liveProbe.clear();
+                                      liveProbeStarted = false;
+                                    }),
                             icon: const Icon(Icons.refresh_rounded, size: 18),
                             label: const Text('Re-check'),
                           ),
@@ -3760,16 +3346,15 @@ class DetailsScreenState extends State<DetailsScreen> {
                       child: ListView.separated(
                         itemCount: sorted.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 8),
-                        itemBuilder: (context, index) => withGroupHeader(
-                            index, Builder(builder: (context) {
+                        itemBuilder: (context, index) {
                           final result = sorted[index];
                           final isPinned = widget.sources.matchesPinned(
                             result,
                             pinnedIdentity,
                             seriesWide: seriesWidePin,
                           );
-                          final health = liveCheckAllowed
-                              ? liveProbe.displayHealthFor(result)
+                          final health = freeStreamingRanking
+                              ? liveProbe.healthFor(result)
                               : null;
                           final healthMetrics = health?.metrics;
                           final statusLabel = isPinned
@@ -3778,11 +3363,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                                   : 'Pinned'
                               : health != null
                                   ? health.label
-                                  : index == 0 &&
-                                          !liveCheckAllowed &&
-                                          !manualFreeP2p &&
-                                          displayMode ==
-                                              SourceDisplayMode.smooth
+                                  : index == 0 && smoothRanking
                                       ? 'Smooth'
                                       : null;
                           // Provider seeds are a snapshot from the addon, not
@@ -3790,7 +3371,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                           // from the probe.
                           final providerText =
                               '${result.provider}${result.isMagnet ? ' • torrent / P2P' : ' • direct URL'}'
-                              '${(liveCheckAllowed || manualFreeP2p) && result.isMagnet && result.seeders != null ? ' • ${result.seeders} seeders reported' : ''}'
+                              '${freeStreamingRanking && result.isMagnet && result.seeders != null ? ' • ${result.seeders} seeders reported' : ''}'
                               '${healthMetrics == null ? '' : ' • $healthMetrics'}'
                               '${result.compatibilityFriendly ? '' : ' • ⚠ compatibility risk'}';
 
@@ -4006,7 +3587,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                               ),
                             ),
                           );
-                        })),
+                        },
                       ),
                     ),
                   ],
@@ -4018,16 +3599,18 @@ class DetailsScreenState extends State<DetailsScreen> {
       ),
     );
 
-    if (selected != null && liveCheckAllowed) {
-      await liveProbe.prepareForPlayback(selected, selection: selectedVia);
-    } else if (selected != null && manualFreeP2p) {
-      _traceManualChoice(selected, selection: selectedVia);
-      if (ownsProbeSession) await liveProbe.release();
+    if (selected != null && freeStreamingRanking) {
+      await liveProbe.prepareForPlayback(selected);
     } else if (ownsProbeSession) {
       await liveProbe.release();
     }
     return selected;
   }
+
+  static String _rankingTarget(MediaItem item, EpisodeItem? episode) =>
+      episode == null
+          ? '${item.kind.name}:${item.id}'
+          : '${item.kind.name}:${item.id}:${episode.season}:${episode.episode}';
 
   Future<TorBoxItem?> _findInTorBox(
     MediaItem item, {
@@ -5122,7 +4705,7 @@ class DetailsScreenState extends State<DetailsScreen> {
       PlaybackPreparation.throwIfCurrentCancelled();
       final preference = await PlayerEnginePreferencesService.get();
       final aiEnabled =
-          Platform.isAndroid && aiSettingEnabled;
+          _androidPlayback && aiSettingEnabled;
       final engine = PlayerEngineRouter.choose(
         preference: preference,
         isAndroid: _androidPlayback,
@@ -5132,20 +4715,11 @@ class DetailsScreenState extends State<DetailsScreen> {
         aiSinhalaEnabled: aiEnabled && !useLocalMediaBridge,
       );
 
-      final androidAutoFallbackToExo = Platform.isAndroid &&
+      final androidAutoFallbackToExo = _androidPlayback &&
           preference == PlayerEnginePreference.auto &&
           !aiSettingEnabled &&
           !useLocalMediaBridge &&
           source?.isMagnet != true;
-      if (source != null) {
-        FreeP2pPlaybackTrace.instance.active(source)?.stage(
-          'player',
-          engine == PlayerEngineKind.exoPlayer && _androidPlayback
-              ? 'exoPlayer'
-              : 'libmpv',
-          detail: <String, Object?>{'preference': preference.name},
-        );
-      }
 
       if (engine == PlayerEngineKind.exoPlayer && _androidPlayback) {
         final result = await _openExoPlayer(
@@ -5155,18 +4729,26 @@ class DetailsScreenState extends State<DetailsScreen> {
           episode,
           source: source,
           autoFallbackToMpv: preference == PlayerEnginePreference.auto,
+          next: next,
+          releaseHint: releaseHint,
+          expectedSizeBytes: expectedSizeBytes,
+          expectedVideoHash: expectedVideoHash,
         );
 
-        final shouldFallback = mounted &&
-            (result?.switchToMpv == true ||
-                (preference == PlayerEnginePreference.auto &&
-                    result?.failed == true));
-        if (!shouldFallback) {
-          // ExoPlayer closed (normal exit, startup failure, or this screen
-          // went away meanwhile) and MPV does not take over: detach the
-          // local P2P torrent exactly like the MPV exit does, so it never
-          // keeps downloading after the player is gone.
-          if (originalLocalP2p) await _releaseLocalP2pAfterPlayer();
+        final shouldFallback = result?.switchToMpv == true ||
+            (preference == PlayerEnginePreference.auto &&
+                result?.failed == true);
+        // The torrent is released even when this screen is already gone.
+        if (!shouldFallback || !mounted) {
+          // ExoPlayer has closed for good: detach its local torrent so it
+          // does not keep downloading in the background.
+          if (originalLocalP2p) {
+            await Future<void>.delayed(const Duration(milliseconds: 120));
+            await LocalTorrentService.instance.releaseCurrentStream();
+          }
+          if (result?.playNext == true && next != null && mounted) {
+            await _play(item, episode: next);
+          }
           return;
         }
 
@@ -5214,10 +4796,16 @@ class DetailsScreenState extends State<DetailsScreen> {
     EpisodeItem? episode, {
     SourceResult? source,
     bool autoFallbackToMpv = false,
+    EpisodeItem? next,
+    String? releaseHint,
+    int? expectedSizeBytes,
+    String? expectedVideoHash,
   }) async {
     if (!mounted || !_androidPlayback) return null;
     // Never open a player for a preparation the user already backed out of.
     PlaybackPreparation.throwIfCurrentCancelled();
+    final attempt = _attemptFor(source);
+    attempt?.stage('player', 'exoPlayer');
     final exoLauncher = debugExoLauncher;
     final result = exoLauncher != null
         ? await exoLauncher(url)
@@ -5230,14 +4818,33 @@ class DetailsScreenState extends State<DetailsScreen> {
                 item: item,
                 episode: episode,
                 autoFallbackToMpv: autoFallbackToMpv,
+                nextEpisodeLabel:
+                    next == null ? null : '${next.label} ${next.title}',
+                releaseHint: releaseHint,
+                expectedSizeBytes: expectedSizeBytes,
+                expectedVideoHash: expectedVideoHash,
+                onStartupStage: attempt == null
+                    ? null
+                    : (stage, result, detail) =>
+                        attempt.stage(stage, result, detail: detail),
               ),
             ),
           );
+    if (result?.started == true) {
+      attempt?.stage('playerStart', 'started');
+      attempt?.finish(FreeP2pPlaybackOutcome.playing);
+    } else if (result?.failed == true) {
+      attempt?.finish(
+        FreeP2pPlaybackOutcome.playerFailure,
+        detail: result?.error,
+      );
+    } else if (result?.switchToMpv != true) {
+      attempt?.finish(FreeP2pPlaybackOutcome.closedBeforeStart);
+    }
     if (!mounted) return result;
 
     if (source != null && result?.started == true) {
       unawaited(widget.sources.recordPlaybackOutcome(source, success: true));
-      unawaited(_tracePlayerStarted(source, url));
     } else if (source != null && result?.failed == true) {
       unawaited(
         widget.sources.recordPlaybackOutcome(
@@ -5246,33 +4853,25 @@ class DetailsScreenState extends State<DetailsScreen> {
           reason: result?.error,
         ),
       );
-      // Auto falls back to MPV after an ExoPlayer failure.
-      _tracePlayerFailed(source, result?.error, last: !autoFallbackToMpv);
-    } else if (result?.switchToMpv != true) {
-      _tracePlayerClosed(source);
     }
     return result;
+  }
+
+  /// The open trace attempt for [source]'s local torrent, if any.
+  FreeP2pPlaybackAttempt? _attemptFor(SourceResult? source) {
+    final attempt = _localAttempt;
+    if (source == null || attempt == null || !attempt.isOpen) return null;
+    return attempt.isFor(source) ? attempt : null;
   }
 
   Future<void> _recordSourceStartupFailure(
     SourceResult source,
     String url,
-    String message, {
-    bool fallbackFollows = false,
-    bool sourceFallback = false,
-  }) async {
-    // Recorded before any await: the player may close right after this
-    // callback, and the attempt must already read as a startup failure.
-    final trace = _tracePlayerFailed(
-      source,
-      message,
-      last: !fallbackFollows,
-      sourceFallback: sourceFallback,
-    );
+    String message,
+  ) async {
     var reason = message.trim();
     if (source.isMagnet) {
       final health = await LocalTorrentService.instance.healthForStreamUrl(url);
-      _traceEngineStats(trace, health);
       if (health != null) {
         reason = '$reason • ${health.summary}';
       }
@@ -5310,39 +4909,43 @@ class DetailsScreenState extends State<DetailsScreen> {
         RegExp(r'^[0-9a-fA-F]{40}$').hasMatch(uri.pathSegments.first) &&
         int.tryParse(uri.pathSegments[1]) != null;
 
-    // A one-click Free P2P attempt with a verified next source lets MPV
-    // leave by itself on a startup failure, so the next source starts
-    // without the user. Never combined with the MPV-to-ExoPlayer fallback.
-    final sourceFallback =
-        _sourceFallbackArmed && !fallbackToExo && source != null;
+    final attempt = _attemptFor(source);
+    attempt?.stage('player', 'mpv');
     final VoidCallback? onPlaybackStarted = source == null
         ? null
         : () {
+            if (attempt != null) {
+              if (attempt.isOpen) {
+                attempt.stage('playerStart', 'started');
+                attempt.finish(FreeP2pPlaybackOutcome.playing);
+              } else {
+                attempt.markRecovered();
+              }
+            }
             unawaited(
               widget.sources.recordPlaybackOutcome(
                 source,
                 success: true,
               ),
             );
-            unawaited(_tracePlayerStarted(source, url));
           };
     final ValueChanged<String>? onStartupFailed = source == null
         ? null
         : (message) {
-            if (sourceFallback) _sourceFallbackRequested = true;
+            attempt?.finish(
+              FreeP2pPlaybackOutcome.playerFailure,
+              detail: message,
+            );
             unawaited(
-              _recordSourceStartupFailure(
-                source,
-                url,
-                message,
-                fallbackFollows: fallbackToExo,
-                sourceFallback: sourceFallback,
-              ),
+              _recordSourceStartupFailure(source, url, message),
             );
           };
+    // Keep the originally selected local torrent/player; do not
+    // automatically switch to ExoPlayer while it gathers peers.
     final Future<void> Function(String message)? onStartupFallback =
-        fallbackToExo
-            ? (message) async {
+        !fallbackToExo || (_androidPlayback && localP2p)
+            ? null
+            : (message) async {
                 if (!mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
@@ -5358,13 +4961,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                   source: source,
                   autoFallbackToMpv: false,
                 );
-              }
-            : sourceFallback
-                ? (message) async {
-                    // The player has left; the one-click run starts the
-                    // next verified source once this route is gone.
-                  }
-                : null;
+              };
 
     // Never open a player for a preparation the user already backed out of.
     PlaybackPreparation.throwIfCurrentCancelled();
@@ -5401,6 +4998,10 @@ class DetailsScreenState extends State<DetailsScreen> {
             onPlaybackStarted: onPlaybackStarted,
             onStartupFailed: onStartupFailed,
             onStartupFallback: onStartupFallback,
+            onStartupStage: attempt == null
+                ? null
+                : (stage, result, detail) =>
+                    attempt.stage(stage, result, detail: detail),
             onNext: next == null
                 ? null
                 : () async {
@@ -5411,24 +5012,18 @@ class DetailsScreenState extends State<DetailsScreen> {
         ),
       );
     }
-
-    // With an ExoPlayer fallback the MPV route closes before ExoPlayer
-    // answers; ExoPlayer records the outcome then.
-    if (!fallbackToExo) _tracePlayerClosed(source);
+    if (attempt != null && attempt.isOpen && onStartupFallback == null) {
+      attempt.finish(FreeP2pPlaybackOutcome.closedBeforeStart);
+    }
 
     // Only detach after the MPV route and native video surface are fully gone.
     // Android TV may still need the same P2P URL for its Exo fallback, so that
     // handoff path deliberately keeps the torrent attached.
-    if ((localP2p || releaseLocalP2pOnExit) && !fallbackToExo) {
-      await _releaseLocalP2pAfterPlayer();
+    if ((localP2p || releaseLocalP2pOnExit) &&
+        (!fallbackToExo || (_androidPlayback && localP2p))) {
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      await LocalTorrentService.instance.releaseCurrentStream();
     }
-  }
-
-  /// Detaches the local P2P torrent once a player route and its native
-  /// video surface are fully gone. Shared by the MPV and ExoPlayer exits.
-  Future<void> _releaseLocalP2pAfterPlayer() async {
-    await Future<void>.delayed(const Duration(milliseconds: 120));
-    await LocalTorrentService.instance.releaseCurrentStream();
   }
 
   EpisodeItem? _nextEpisode(MediaItem item, EpisodeItem? current) {
@@ -5463,17 +5058,8 @@ class DetailsScreenState extends State<DetailsScreen> {
       _resolving = false;
       _resolveProgress = null;
     });
-    // A failed Free P2P attempt can be copied for a bug report. Cloud/debrid
-    // playback is not traced, so it never offers this.
-    final traced = FreeP2pPlaybackTrace.instance.attempts.firstOrNull;
-    final offerReport = traced != null &&
-        traced.outcome != FreeP2pPlaybackOutcome.playing &&
-        traced.outcome != FreeP2pPlaybackOutcome.cancelled &&
-        (traced.sinceEnd ?? Duration.zero) < const Duration(seconds: 30);
-    _showNotice(
-      'Could not play: $error',
-      action: offerReport ? _copyReportAction() : null,
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('Could not play: $error')));
   }
 }
 
