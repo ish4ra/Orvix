@@ -1912,6 +1912,13 @@ class DetailsScreenState extends State<DetailsScreen> {
   }
 
   Future<void> _play(MediaItem item, {EpisodeItem? episode}) async {
+    // beta.64 recovery: on Android, Play opens the original source browser
+    // directly, without an automatic live-probe pick. No other beta.64
+    // Free P2P behavior or source-list UI is changed.
+    if (Platform.isAndroid) {
+      await _findSourcesAndPlay(item, episode: episode);
+      return;
+    }
     setState(() {
       _resolving = true;
       _resolveProgress = null;
