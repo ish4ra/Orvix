@@ -264,7 +264,10 @@ void main() {
       // Changing display order must not disable the Free P2P safety gate.
       await tester.tap(find.widgetWithText(FilterChip, 'Free P2P'));
       await settle(tester);
-      final afterToggle = find.widgetWithText(FilledButton, 'Checking live…');
+      // Turning off display ranking must not bypass playback safety.
+      // The active probing spinner is hidden with the display mode,
+      // but the unconfirmed pinned torrent remains unplayable via Quick Play.
+      final afterToggle = find.widgetWithText(FilledButton, 'No live source');
       expect(afterToggle, findsOneWidget);
       expect(tester.widget<FilledButton>(afterToggle).onPressed, isNull);
       // The pinned row itself stays selectable for a manual choice.
