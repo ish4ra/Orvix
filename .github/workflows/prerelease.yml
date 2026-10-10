@@ -3,16 +3,25 @@ name: Orvix prerelease
 on:
   push:
     branches:
-      - 'release/all-v0.7.9-beta.59'
+      - 'release/android-v0.7.9-beta.65'
     paths:
       - 'pubspec.yaml'
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms to build and publish (auto = android on a release/android-v* branch, otherwise all; android = Android Mobile + Android TV only)'
+        type: choice
+        options:
+          - auto
+          - all
+          - android
+        default: auto
 permissions:
   contents: write
 
 
 concurrency:
-  group: orvix-prerelease-beta59
+  group: orvix-prerelease-beta65
   cancel-in-progress: true
 
 jobs:
@@ -21,8 +30,41 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      platforms: ${{ steps.platforms.outputs.platforms }}
     steps:
       - uses: actions/checkout@v4
+      - id: platforms
+        name: Resolve release platforms
+        # A release/android-v* branch, or a manual run with platforms=android,
+        # builds and publishes only the Android Mobile and Android TV APKs.
+        # Every other trigger keeps the full multi-platform release.
+        shell: bash
+        env:
+          REQUESTED_PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          set -euo pipefail
+          PLATFORMS="${REQUESTED_PLATFORMS:-auto}"
+          if [ "$PLATFORMS" = auto ]; then
+            case "$GITHUB_REF_NAME" in
+              release/android-v*) PLATFORMS=android ;;
+              *) PLATFORMS=all ;;
+            esac
+          fi
+          case "$GITHUB_REF_NAME:$PLATFORMS" in
+            release/android-v*:all)
+              echo "An Android release branch cannot publish every platform." >&2
+              exit 1
+              ;;
+          esac
+          case "$PLATFORMS" in
+            all|android) ;;
+            *)
+              echo "Unknown release platforms: $PLATFORMS" >&2
+              exit 1
+              ;;
+          esac
+          echo "Release platforms: $PLATFORMS"
+          echo "platforms=$PLATFORMS" >> "$GITHUB_OUTPUT"
       - id: version
         name: Read version from pubspec
         shell: bash
@@ -85,7 +127,8 @@ jobs:
             tools/ios_profiles.py \
             tools/ios_signing.py \
             tools/update_altstore_source.py \
-            tools/verify_android_apk.py
+            tools/verify_android_apk.py \
+            tools/check_android_update_path.py
           bash -n tools/publish_orvix_release.sh
           bash -n tools/ios_ipa_common.sh
           bash -n tools/build_ios_ipa.sh
@@ -283,6 +326,7 @@ jobs:
   macos:
     name: Build macOS
     needs: [metadata, validate]
+    if: needs.metadata.outputs.platforms == 'all'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -370,6 +414,7 @@ jobs:
   ios-modern:
     name: Build iOS Modern sideload IPA
     needs: [metadata, validate]
+    if: needs.metadata.outputs.platforms == 'all'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -410,6 +455,7 @@ jobs:
   ios-legacy:
     name: Build iOS Legacy sideload IPA
     needs: [metadata, validate]
+    if: needs.metadata.outputs.platforms == 'all'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -460,6 +506,7 @@ jobs:
 
   windows:
     needs: [metadata, validate]
+    if: needs.metadata.outputs.platforms == 'all'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -1242,6 +1289,39 @@ jobs:
             "Orvix-v$V-Android-Mobile-armeabi-v7a.apk=armeabi-v7a" \
             "Orvix-v$V-Android-Mobile-x86_64.apk=x86_64"
 
+      - name: Verify Android Mobile APKs update the latest published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          V="${{ needs.metadata.outputs.version }}"
+          # Android accepts an update only from the same package and signer
+          # with a strictly higher versionCode. Compare every new Mobile APK
+          # with the universal APK of the newest published release, which is
+          # what the in-app updater installs on phones.
+          PREVIOUS_TAG="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" \
+            --jq '[.[] | select(.draft == false) | select(any(.assets[]; .name | endswith("-Android-Mobile.apk")))][0].tag_name // empty')"
+          if [ -z "$PREVIOUS_TAG" ]; then
+            echo "No published Android Mobile APK found to compare against." >&2
+            exit 1
+          fi
+          if [ "$PREVIOUS_TAG" = "v$V" ]; then
+            echo "v$V is already published." >&2
+            exit 1
+          fi
+          gh release download "$PREVIOUS_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "Orvix-$PREVIOUS_TAG-Android-Mobile.apk" \
+            --output /tmp/orvix-published-android-mobile.apk
+          python3 tools/check_android_update_path.py \
+            --build-tools "$(dirname "$APKSIGNER")" \
+            --previous /tmp/orvix-published-android-mobile.apk \
+            "Orvix-v$V-Android-Mobile.apk" \
+            "Orvix-v$V-Android-Mobile-arm64-v8a.apk" \
+            "Orvix-v$V-Android-Mobile-armeabi-v7a.apk" \
+            "Orvix-v$V-Android-Mobile-x86_64.apk"
+
       - name: Export Android mobile branding previews
         shell: bash
         run: |
@@ -1358,6 +1438,34 @@ jobs:
       - name: Rename APK
         run: cp build/app/outputs/flutter-apk/app-release.apk Orvix-v${{ needs.metadata.outputs.version }}-Android-TV.apk
 
+      - name: Verify Android TV APK updates the latest published release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          V="${{ needs.metadata.outputs.version }}"
+          # Same update rule as Android Mobile, against the newest published
+          # Android TV APK that the TV in-app updater installed.
+          PREVIOUS_TAG="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" \
+            --jq '[.[] | select(.draft == false) | select(any(.assets[]; .name | endswith("-Android-TV.apk")))][0].tag_name // empty')"
+          if [ -z "$PREVIOUS_TAG" ]; then
+            echo "No published Android TV APK found to compare against." >&2
+            exit 1
+          fi
+          if [ "$PREVIOUS_TAG" = "v$V" ]; then
+            echo "v$V is already published." >&2
+            exit 1
+          fi
+          gh release download "$PREVIOUS_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "Orvix-$PREVIOUS_TAG-Android-TV.apk" \
+            --output /tmp/orvix-published-android-tv.apk
+          python3 tools/check_android_update_path.py \
+            --build-tools "$(dirname "$APKSIGNER")" \
+            --previous /tmp/orvix-published-android-tv.apk \
+            "Orvix-v$V-Android-TV.apk"
+
       - name: Export Android TV branding previews
         shell: bash
         run: |
@@ -1381,11 +1489,26 @@ jobs:
   release:
     name: Publish Orvix prerelease
     needs: [metadata, validate, windows, macos, ios-modern, ios-legacy, android-mobile, android-tv]
+    # Desktop and iOS jobs are skipped for an Android-only release. Publish
+    # only when every job of the selected platform set succeeded.
+    if: >-
+      ${{ !cancelled()
+      && needs.validate.result == 'success'
+      && needs.android-mobile.result == 'success'
+      && needs.android-tv.result == 'success'
+      && (needs.metadata.outputs.platforms == 'android'
+          || (needs.windows.result == 'success'
+              && needs.macos.result == 'success'
+              && needs.ios-modern.result == 'success'
+              && needs.ios-legacy.result == 'success')) }}
     runs-on: ubuntu-latest
+    env:
+      RELEASE_PLATFORMS: ${{ needs.metadata.outputs.platforms }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
+        if: needs.metadata.outputs.platforms == 'all'
         with:
           name: windows
           path: dist/windows
@@ -1401,34 +1524,72 @@ jobs:
           path: dist/tv
 
       - uses: actions/download-artifact@v4
+        if: needs.metadata.outputs.platforms == 'all'
         with:
           name: macos
           path: dist/macos
 
       - uses: actions/download-artifact@v4
+        if: needs.metadata.outputs.platforms == 'all'
         with:
           name: ios-modern
           path: dist/ios-modern
 
       - uses: actions/download-artifact@v4
+        if: needs.metadata.outputs.platforms == 'all'
         with:
           name: ios-legacy
           path: dist/ios-legacy
 
-      - name: Verify release assets
+      - name: Select release assets
         shell: bash
         run: |
           set -euo pipefail
-          test -s dist/windows/Orvix-v${{ needs.metadata.outputs.version }}-Windows-x64.zip
-          test -s dist/windows/installer-output/Orvix-Setup-v${{ needs.metadata.outputs.version }}-Windows-x64.exe
-          test -s dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile.apk
-          test -s dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-arm64-v8a.apk
-          test -s dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-armeabi-v7a.apk
-          test -s dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-x86_64.apk
-          test -s dist/tv/Orvix-v${{ needs.metadata.outputs.version }}-Android-TV.apk
-          test -s dist/macos/Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip
-          test -s dist/ios-modern/Orvix-v${{ needs.metadata.outputs.version }}-iOS-15.5-Plus.ipa
-          test -s dist/ios-legacy/Orvix-v${{ needs.metadata.outputs.version }}-iOS-12-Legacy.ipa
+          V="${{ needs.metadata.outputs.version }}"
+          case "$RELEASE_PLATFORMS" in
+            android)
+              # Android Mobile (universal + ABI) and Android TV only.
+              ASSETS=(
+                "dist/mobile/Orvix-v$V-Android-Mobile.apk"
+                "dist/mobile/Orvix-v$V-Android-Mobile-arm64-v8a.apk"
+                "dist/mobile/Orvix-v$V-Android-Mobile-armeabi-v7a.apk"
+                "dist/mobile/Orvix-v$V-Android-Mobile-x86_64.apk"
+                "dist/tv/Orvix-v$V-Android-TV.apk"
+              )
+              ;;
+            all)
+              ASSETS=(
+                "dist/windows/Orvix-v$V-Windows-x64.zip"
+                "dist/windows/installer-output/Orvix-Setup-v$V-Windows-x64.exe"
+                "dist/mobile/Orvix-v$V-Android-Mobile.apk"
+                "dist/mobile/Orvix-v$V-Android-Mobile-arm64-v8a.apk"
+                "dist/mobile/Orvix-v$V-Android-Mobile-armeabi-v7a.apk"
+                "dist/mobile/Orvix-v$V-Android-Mobile-x86_64.apk"
+                "dist/tv/Orvix-v$V-Android-TV.apk"
+                "dist/macos/Orvix-v$V-macOS.zip"
+                "dist/ios-modern/Orvix-v$V-iOS-15.5-Plus.ipa"
+                "dist/ios-legacy/Orvix-v$V-iOS-12-Legacy.ipa"
+              )
+              ;;
+            *)
+              echo "Unknown release platforms: $RELEASE_PLATFORMS" >&2
+              exit 1
+              ;;
+          esac
+          for asset in "${ASSETS[@]}"; do
+            test -s "$asset"
+            if [ "$RELEASE_PLATFORMS" = android ]; then
+              case "$asset" in
+                *Windows*|*macOS*|*iOS*)
+                  echo "Android-only release selected a non-Android asset: $asset" >&2
+                  exit 1
+                  ;;
+              esac
+            fi
+          done
+          printf '%s\n' "${ASSETS[@]}" > /tmp/orvix-release-assets.txt
+          echo "Publishing ${#ASSETS[@]} assets:"
+          cat /tmp/orvix-release-assets.txt
 
       - name: Publish Orvix prerelease
         env:
@@ -1456,6 +1617,14 @@ jobs:
             echo "- **Android TV / Google TV:** \`Orvix-v$V-Android-TV.apk\`."
             echo "- Smaller phone downloads for one processor type: \`-arm64-v8a\` (most modern phones), \`-armeabi-v7a\` (older 32-bit phones), \`-x86_64\` (emulators and Chromebooks). Any Android Mobile file can update or replace another."
             echo
+            if [ "$RELEASE_PLATFORMS" = android ]; then
+            echo "### Platforms in this release"
+            echo
+            echo "This is an Android Mobile and Android TV test release. It has no Windows, macOS or iPhone / iPad files; those platforms stay on their previous release."
+            echo
+            echo "- [Privacy policy](https://github.com/$GITHUB_REPOSITORY/blob/v$V/PRIVACY.md)"
+            echo
+            else
             echo "### Windows code signing"
             echo
             echo "The Windows installer and portable ZIP in this release are **not code signed**, so Windows SmartScreen may warn before running them. Download Orvix only from this GitHub Releases page. Orvix is applying for free open-source code signing from SignPath Foundation; signed releases will say so here."
@@ -1499,25 +1668,22 @@ jobs:
             echo "- Built-in local Free P2P is not included on iOS yet. Use supported cloud, debrid or direct playback sources."
             echo "- Embedded subtitle extraction and the AI audio subtitle fallback are not available on iOS."
             echo
+            fi
             cat /tmp/generated-notes.md
           } > /tmp/notes.md
 
+          TITLE="Orvix v$V"
+          if [ "$RELEASE_PLATFORMS" = android ]; then
+            TITLE="Orvix v$V Android Mobile + TV"
+          fi
+          mapfile -t ASSETS < /tmp/orvix-release-assets.txt
           chmod +x tools/publish_orvix_release.sh
           tools/publish_orvix_release.sh \
-            v${{ needs.metadata.outputs.version }} \
-            "Orvix v${{ needs.metadata.outputs.version }}" \
+            "v$V" \
+            "$TITLE" \
             /tmp/notes.md \
             "${{ github.sha }}" \
-            dist/windows/Orvix-v${{ needs.metadata.outputs.version }}-Windows-x64.zip \
-            dist/windows/installer-output/Orvix-Setup-v${{ needs.metadata.outputs.version }}-Windows-x64.exe \
-            dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile.apk \
-            dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-arm64-v8a.apk \
-            dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-armeabi-v7a.apk \
-            dist/mobile/Orvix-v${{ needs.metadata.outputs.version }}-Android-Mobile-x86_64.apk \
-            dist/tv/Orvix-v${{ needs.metadata.outputs.version }}-Android-TV.apk \
-            dist/macos/Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip \
-            dist/ios-modern/Orvix-v${{ needs.metadata.outputs.version }}-iOS-15.5-Plus.ipa \
-            dist/ios-legacy/Orvix-v${{ needs.metadata.outputs.version }}-iOS-12-Legacy.ipa
+            "${ASSETS[@]}"
 
       - name: Prepare AltStore / SideStore source entry
         # store.json changes go to develop through a normal PR. This only
@@ -1525,6 +1691,8 @@ jobs:
         # Only the Modern IPA is listed: current AltStore / SideStore apps do
         # not run on iOS 12, and one bundle ID must not get two entries for
         # the same version/build. The Legacy IPA is a direct download.
+        # An Android-only release has no IPA and leaves the source untouched.
+        if: needs.metadata.outputs.platforms == 'all'
         continue-on-error: true
         shell: bash
         run: |
@@ -1543,6 +1711,7 @@ jobs:
             --output dist/altstore/store.json
 
       - uses: actions/upload-artifact@v4
+        if: needs.metadata.outputs.platforms == 'all'
         continue-on-error: true
         with:
           name: altstore-source

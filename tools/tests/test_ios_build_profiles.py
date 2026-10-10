@@ -554,16 +554,19 @@ class WorkflowTest(unittest.TestCase):
                 self.assertEqual(workflow.count("xcode-select -s"), 1)
 
     def test_release_publishes_both_ipas_with_unambiguous_names(self):
-        version = "${{ needs.metadata.outputs.version }}"
-        modern = f"dist/ios-modern/Orvix-v{version}-iOS-15.5-Plus.ipa"
-        legacy = f"dist/ios-legacy/Orvix-v{version}-iOS-12-Legacy.ipa"
+        modern = '"dist/ios-modern/Orvix-v$V-iOS-15.5-Plus.ipa"\n'
+        legacy = '"dist/ios-legacy/Orvix-v$V-iOS-12-Legacy.ipa"\n'
         release = job_block(self.prerelease, "release")
         self.assertIn("ios-modern, ios-legacy", release)
-        self.assertIn(f"test -s {modern}\n", release)
-        self.assertIn(f"test -s {legacy}\n", release)
+        # The full release selects both IPAs; every selected asset must exist
+        # and is passed to the publisher.
+        select = release[release.index("- name: Select release assets"):]
+        full = select[select.index("            all)\n"):select.index("            *)\n")]
+        self.assertIn(modern, full)
+        self.assertIn(legacy, full)
+        self.assertIn('test -s "$asset"', select)
         publish = release[release.index("tools/publish_orvix_release.sh \\"):]
-        self.assertIn(modern, publish)
-        self.assertIn(legacy, publish)
+        self.assertIn('"${ASSETS[@]}"', publish)
         self.assertNotIn("-iOS.ipa", self.prerelease)
         for job, artifact in (("ios-modern", "ios-modern"), ("ios-legacy", "ios-legacy")):
             self.assertIn(f"name: {artifact}\n", job_block(self.prerelease, job))
