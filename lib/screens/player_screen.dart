@@ -1717,23 +1717,33 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (_hasPlaybackActivity()) {
         _markPlaybackStarted();
       } else {
-        _startupTimer = Timer(const Duration(seconds: 30), () {
-          if (!mounted || _closing) return;
-          if (_hasPlaybackActivity()) {
-            _markPlaybackStarted();
-            return;
-          }
-          const message =
-              'The stream is taking longer than expected to start. '
-              'Orvix will recover automatically if media begins playing.';
-          final switchingEngine = _reportStartupFailure(message);
-          if (!switchingEngine && mounted) {
-            setState(() {
-              _startupFailureVisible = true;
-              _error = message;
-            });
-          }
-        });
+        // Do not treat slow peer discovery as a failed torrent. Android
+        // localhost P2P streams can begin playing minutes after opening.
+        // Keep waiting until real playback, a genuine player error, or Back.
+        final streamUri = Uri.tryParse(widget.url);
+        final waitingForLocalP2p = Platform.isAndroid &&
+            streamUri != null &&
+            (streamUri.host == '127.0.0.1' || streamUri.host == 'localhost') &&
+            streamUri.port == 11470;
+        if (!waitingForLocalP2p) {
+          _startupTimer = Timer(const Duration(seconds: 30), () {
+            if (!mounted || _closing) return;
+            if (_hasPlaybackActivity()) {
+              _markPlaybackStarted();
+              return;
+            }
+            const message =
+                'The stream is taking longer than expected to start. '
+                'Orvix will recover automatically if media begins playing.';
+            final switchingEngine = _reportStartupFailure(message);
+            if (!switchingEngine && mounted) {
+              setState(() {
+                _startupFailureVisible = true;
+                _error = message;
+              });
+            }
+          });
+        }
       }
 
       final currentVolume = widget.playback.player.state.volume;
