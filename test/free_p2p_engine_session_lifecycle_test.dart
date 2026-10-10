@@ -345,6 +345,34 @@ void main() {
       });
     });
 
+    test(
+        'probes that give up on metadata never detach the stream that is '
+        'playing', () async {
+      // Every create answers after the probes' metadata deadline.
+      final engine =
+          _SessionEngine(createDelay: const Duration(milliseconds: 700));
+      final playing = _torrent('p');
+      await withEngine(engine, () async {
+        final url = await service.resolve(playing);
+        final results = await Future.wait([
+          _probe(_torrent('q'), retain: false),
+          // Another provider's row of the playing torrent.
+          _probe(_torrent('p', fileIndex: 2), retain: false),
+        ]);
+
+        expect(results.map((r) => r.status),
+            everyElement(LocalTorrentProbeStatus.metadataTimeout));
+        expect(engine.removed, ['q' * 40],
+            reason: 'only the probed torrent that nothing else uses');
+        final read = await http.get(
+          Uri.parse(url),
+          headers: const {'Range': 'bytes=0-1023'},
+        );
+        expect(read.statusCode, 206,
+            reason: 'the playing stream still serves media');
+      });
+    });
+
     test('starting another stream still detaches the unused previous one',
         () async {
       final engine = _SessionEngine();

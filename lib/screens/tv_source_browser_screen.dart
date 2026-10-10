@@ -28,6 +28,7 @@ class TvSourceBrowserScreen extends StatefulWidget {
     this.onPlaySource,
     this.preferFreeP2p = true,
     this.probeSession,
+    this.liveEvidence,
   });
 
   final SourceProviderService sources;
@@ -41,6 +42,11 @@ class TvSourceBrowserScreen extends StatefulWidget {
   /// browser shows and ranks with it instead of re-probing from scratch; the
   /// caller owns its release.
   final FreeP2pLiveProbeService? probeSession;
+
+  /// Live-check results of earlier visits to this title, used when no
+  /// [probeSession] is given so reopening the browser does not probe the
+  /// same torrents again.
+  final FreeP2pLiveEvidence? liveEvidence;
 
   @override
   State<TvSourceBrowserScreen> createState() => _TvSourceBrowserScreenState();
@@ -74,6 +80,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
         FreeP2pLiveProbeService(
           mediaDuration:
               FreeP2pLiveProbeService.parseMediaRuntime(widget.item.runtime),
+          evidence: widget.liveEvidence,
         );
     // Reopened after playback: keep the list the user chose from while its
     // evidence is fresh. Otherwise the open browser continues the bounded

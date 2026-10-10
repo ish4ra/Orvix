@@ -132,6 +132,10 @@ class DetailsScreenState extends State<DetailsScreen> {
   double? _resolveProgress;
   int? _selectedSeason;
 
+  /// Live-check results kept while this title is open, so reopening its
+  /// sources or pressing Play again does not probe the same torrents again.
+  final FreeP2pLiveEvidence _liveEvidence = FreeP2pLiveEvidence();
+
   // Source list -> chosen source -> player. The source sheet is closed while a
   // source is prepared, so the title screen is the top route during that time;
   // Back must cancel the preparation and return to the same source list
@@ -981,8 +985,7 @@ class DetailsScreenState extends State<DetailsScreen> {
           TvRow(
             key: ValueKey('tv-episodes-$selected'),
             title: selected == 0 ? 'Specials' : 'Season $selected',
-            trailing: '${episodes.length} episode${episodes.length == 1 ? '' : 's'}'
-                '  •  hold OK to choose a source',
+            trailing: '${episodes.length} episode${episodes.length == 1 ? '' : 's'}',
             horizontalPadding: TvMetrics.pageHorizontal + 8,
             itemCount: episodes.length,
             itemWidth: episodeWidth,
@@ -1984,15 +1987,6 @@ class DetailsScreenState extends State<DetailsScreen> {
         return;
       }
 
-      // Free P2P is one-click on every platform. Android TV with a
-      // cloud/debrid account keeps its manual source browser, so no legacy
-      // series-wide pin chooses a cloud source the user did not select.
-      final oneClick =
-          !PlatformProfile.isAndroidTv || !await _hasCloudConnection();
-      if (PlatformProfile.isAndroidTv && oneClick) {
-        await widget.sources.clearLegacyTvPinsOnce();
-      }
-
       if (!mounted) return;
       setState(() {
         _resolving = false;
@@ -2001,24 +1995,25 @@ class DetailsScreenState extends State<DetailsScreen> {
       await _findSourcesAndPlay(
         item,
         episode: episode,
-        autoUsePinned: oneClick,
+        // Android TV opens its source browser at once: rows are listed as
+        // soon as the providers answer and stay selectable while the live
+        // check runs in the background. This also prevents legacy
+        // series-wide pins from silently choosing a source the user did not
+        // select.
+        autoUsePinned: !PlatformProfile.isAndroidTv,
       );
     } catch (e) {
       _showPlayError(e);
     }
   }
 
-  /// Android TV Play (title or episode): Free P2P one-click playback. With
-  /// a cloud/debrid account it opens the source browser exactly as before.
-  /// The browser stays one remote press away (Sources, or hold OK on an
-  /// episode) for a manual choice.
+  /// Android TV Play (title or episode): opens the source browser at once,
+  /// with or without a cloud/debrid account. A blocking automatic live check
+  /// before the list made browsing wait and auto-picked sources the user
+  /// did not choose.
   Future<void> _playTv(MediaItem item, {EpisodeItem? episode}) async {
     if (_resolving) return;
-    if (await _hasCloudConnection()) {
-      await _findSourcesAndPlay(item, episode: episode);
-      return;
-    }
-    await _play(item, episode: episode);
+    await _findSourcesAndPlay(item, episode: episode);
   }
 
   Future<void> resumeContinueWatching(
@@ -2081,6 +2076,7 @@ class DetailsScreenState extends State<DetailsScreen> {
               episode: episode,
               resultsFuture: resultsFuture,
               preferFreeP2p: !hasCloudConnection,
+              liveEvidence: _liveEvidence,
               onPlaySource: (chosen) async {
                 await _playSourceResult(
                   chosen,
@@ -2206,6 +2202,7 @@ class DetailsScreenState extends State<DetailsScreen> {
         FreeP2pLiveProbeService(
           mediaDuration: FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
           priority: await widget.sources.getPriorityOrder(),
+          evidence: _liveEvidence,
         );
     try {
       // Player returned, or Back cancelled the preparation: the loop
@@ -2250,6 +2247,7 @@ class DetailsScreenState extends State<DetailsScreen> {
     final probeSession = FreeP2pLiveProbeService(
       mediaDuration: FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
       priority: await widget.sources.getPriorityOrder(),
+      evidence: _liveEvidence,
     );
     final autoPlay = FreeP2pAutoPlay(
       probe: probeSession,
@@ -2315,11 +2313,14 @@ class DetailsScreenState extends State<DetailsScreen> {
     );
   }
 
-  /// Players may leave by themselves for a source fallback only on Android
-  /// (mobile and TV): on Windows and macOS that exit path does not restore
-  /// fullscreen, so a player startup failure there stays on screen as
-  /// before and only resolve-stage failures fall back.
-  bool get _playerSourceFallbackSupported => _androidPlayback;
+  /// Whether a player may leave by itself on a startup failure so the next
+  /// verified source starts. Off on every platform: the player's 30 s
+  /// "taking longer than expected" watchdog and early engine errors also
+  /// fire for torrents that start a little later, and leaving stopped and
+  /// detached those working streams. A startup failure stays on screen and
+  /// the player keeps trying, as before one-click playback; resolve-stage
+  /// failures (no player opened yet) still fall back.
+  bool get _playerSourceFallbackSupported => false;
 
   /// Android playback (mobile and TV). Always equal to Platform.isAndroid in
   /// the app; the Android TV test override also selects it on a test host.
@@ -2404,26 +2405,47 @@ class DetailsScreenState extends State<DetailsScreen> {
       _ =>
         'No source was verified as playable right now. Choose one or re-check.',
     };
+    _showNotice(message, action: _copyReportAction());
+  }
+
+  /// Copies the privacy-safe Free P2P playback report.
+  SnackBarAction _copyReportAction() => SnackBarAction(
+        label: 'Copy report',
+        onPressed: () => unawaited(
+          Clipboard.setData(
+            ClipboardData(text: FreeP2pPlaybackTrace.instance.report()),
+          ),
+        ),
+      );
+
+  /// Shows one short playback notice. It replaces any notice still on
+  /// screen, so automatic attempts never stack them, and it always closes by
+  /// itself: on current Flutter a SnackBar with an action otherwise stays
+  /// until it is dismissed, over the source list or the player. Android
+  /// Mobile also gets a close button. On Android TV a focusable action or
+  /// close button would pull the remote's focus away from the screen behind
+  /// it; TV shows the same report from the source browser's Live report
+  /// chip, and the mobile source list keeps its own copy button.
+  void _showNotice(
+    String message, {
+    SnackBarAction? action,
+    Duration duration = const Duration(seconds: 6),
+  }) {
     final tv = PlatformProfile.isAndroidTv;
-    ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.of(context)..clearSnackBars();
+    final controller = messenger.showSnackBar(
       SnackBar(
         content: Text(message),
-        // A focusable action would pull the TV remote's focus away from the
-        // source browser; TV shows the same report from its Live report chip.
-        action: tv
-            ? null
-            : SnackBarAction(
-                label: 'Copy report',
-                onPressed: () => unawaited(
-                  Clipboard.setData(
-                    ClipboardData(
-                      text: FreeP2pPlaybackTrace.instance.report(),
-                    ),
-                  ),
-                ),
-              ),
+        duration: duration,
+        action: tv ? null : action,
+        showCloseIcon: !tv,
       ),
     );
+    var open = true;
+    unawaited(controller.closed.then((_) => open = false));
+    Timer(duration, () {
+      if (open && messenger.mounted) controller.close();
+    });
   }
 
   /// One cloud/debrid eligibility check for the whole details flow. Any
@@ -3132,10 +3154,11 @@ class DetailsScreenState extends State<DetailsScreen> {
     final liveProbe = probeSession ??
         FreeP2pLiveProbeService(
           mediaDuration: FreeP2pLiveProbeService.parseMediaRuntime(item.runtime),
+          evidence: _liveEvidence,
         );
     final ownsProbeSession = probeSession == null;
-    // The user's Source Priority (My Priority, Quick Play) and the chosen
-    // display mode order rows inside each live-health group.
+    // The user's Source Priority (My Priority) and the chosen display mode
+    // order rows inside each live-health group.
     liveProbe.setPriority(priority);
     liveProbe.setDisplayMode(displayMode);
     // Reopened after playback: keep the list the user chose from while its
@@ -5390,22 +5413,9 @@ class DetailsScreenState extends State<DetailsScreen> {
         traced.outcome != FreeP2pPlaybackOutcome.playing &&
         traced.outcome != FreeP2pPlaybackOutcome.cancelled &&
         (traced.sinceEnd ?? Duration.zero) < const Duration(seconds: 30);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Could not play: $error'),
-        action: offerReport
-            ? SnackBarAction(
-                label: 'Copy report',
-                onPressed: () => unawaited(
-                  Clipboard.setData(
-                    ClipboardData(
-                      text: FreeP2pPlaybackTrace.instance.report(),
-                    ),
-                  ),
-                ),
-              )
-            : null,
-      ),
+    _showNotice(
+      'Could not play: $error',
+      action: offerReport ? _copyReportAction() : null,
     );
   }
 }

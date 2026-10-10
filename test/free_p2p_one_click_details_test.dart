@@ -236,9 +236,11 @@ void main() {
     bool torbox = false,
     required SourceProviderService sources,
     MediaItem item = _movie,
+    Key? key,
   }) =>
       MaterialApp(
         home: DetailsScreen(
+          key: key,
           item: item,
           catalog: _OfflineCatalog(),
           pikpak: _PikPak(signedIn: pikpak),
@@ -427,8 +429,8 @@ void main() {
     });
   });
 
-  group('Android TV one-click Play', () {
-    testWidgets('Play starts automatic selection; no source browser',
+  group('Android TV Play', () {
+    testWidgets('Play opens the source browser; nothing auto-plays',
         (tester) async {
       tvSize(tester);
       final engine = _Engine(live: {_best.hash, _second.hash});
@@ -443,54 +445,40 @@ void main() {
         await key(tester, LogicalKeyboardKey.select);
         await settle(tester, frames: 60);
 
-        expect(player.launched, hasLength(1));
-        expect(find.byType(TvSourceBrowserScreen), findsNothing);
-        expect(FreeP2pPlaybackTrace.instance.runs.single.result, 'started');
+        expect(find.byType(TvSourceBrowserScreen), findsOneWidget);
+        expect(player.launched, isEmpty);
+        expect(FreeP2pPlaybackTrace.instance.runs, isEmpty);
       });
     });
 
     testWidgets(
-        'a player startup failure falls back to the next verified '
-        'source by itself', (tester) async {
+        'an automatic run never makes the player leave for another source '
+        'on a startup failure', (tester) async {
       tvSize(tester);
       final engine = _Engine(live: {_best.hash, _second.hash});
       final player = _Player(failStartup: {_best.hash, _second.hash});
-      // Only the first launched torrent fails.
-      final launcher = player.call;
-      var first = true;
-      DetailsScreenState.debugPlayerLauncher = (launch) async {
-        if (first) {
-          first = false;
-          return launcher(launch);
-        }
-        final hash = Uri.parse(launch.url).pathSegments.first;
-        player.launched.add(hash);
-        player.offeredFallback.add(launch.onStartupFallback != null);
-        launch.onPlaybackStarted?.call();
-      };
+      DetailsScreenState.debugPlayerLauncher = player.call;
+      final screen = GlobalKey<DetailsScreenState>();
       await withEngine(tester, engine, () async {
         await tester.pumpWidget(details(
+          key: screen,
           sources: SourceProviderService(client: _provider([_best, _second])),
         ));
         await settle(tester);
-        await key(tester, LogicalKeyboardKey.select);
+        unawaited(screen.currentState!.resumeContinueWatching(_movie, null));
         await settle(tester, frames: 80);
 
-        expect(player.launched, hasLength(2));
-        expect(player.launched.toSet(), hasLength(2),
-            reason: 'never the same torrent twice');
-        expect(player.offeredFallback.first, isTrue,
-            reason: 'the player may leave because a verified next exists');
-        expect(engine.removed, contains(player.launched.first),
-            reason: 'the failed attempt was detached before the next one');
+        expect(player.launched, hasLength(1),
+            reason: 'the failure stays on screen; the user decides');
+        expect(player.offeredFallback, [false]);
         final attempts = FreeP2pPlaybackTrace.instance.attempts;
-        expect(attempts.last.outcome.name, 'playerFailure');
+        expect(attempts.single.outcome.name, 'playerFailure');
         expect(
-          attempts.last.stages.map((s) => '${s['stage']}:${s['result']}'),
-          contains('sourceFallback:playerLeft'),
+          attempts.single.stages.map((s) => '${s['stage']}:${s['result']}'),
+          isNot(contains('sourceFallback:playerLeft')),
         );
-        expect(attempts.first.outcome.name, 'playing');
-        expect(find.byType(TvSourceBrowserScreen), findsNothing);
+        expect(
+            FreeP2pPlaybackTrace.instance.runs.single.result, 'stoppedByUser');
       });
     });
 
@@ -543,7 +531,7 @@ void main() {
       expect(onEpisode, isTrue, reason: 'the D-pad reaches the episode');
     }
 
-    testWidgets('OK on an episode plays it with one click', (tester) async {
+    testWidgets('OK on an episode opens its source browser', (tester) async {
       tvSize(tester);
       final engine = _Engine(live: {_best.hash});
       final player = _Player();
@@ -558,8 +546,8 @@ void main() {
         await key(tester, LogicalKeyboardKey.select);
         await settle(tester, frames: 60);
 
-        expect(player.launched, [_best.hash]);
-        expect(find.byType(TvSourceBrowserScreen), findsNothing);
+        expect(find.byType(TvSourceBrowserScreen), findsOneWidget);
+        expect(player.launched, isEmpty);
       });
     });
 
@@ -575,8 +563,6 @@ void main() {
           sources: SourceProviderService(client: _provider([_best])),
         ));
         await settle(tester);
-        expect(
-            find.textContaining('hold OK to choose a source'), findsOneWidget);
         await focusFirstEpisode(tester);
         await tester.sendKeyDownEvent(LogicalKeyboardKey.select);
         await tester.pump(const Duration(milliseconds: 800));
@@ -590,6 +576,8 @@ void main() {
   });
 
   group('ExoPlayer (chosen in Settings) releases the local P2P torrent', () {
+    // Driven by the automatic run (Continue Watching); TV Play itself opens
+    // the source browser.
     void exoPreferred() => SharedPreferences.setMockInitialValues(
         <String, Object>{'orvix_player_engine_v1': 'exoPlayer'});
 
@@ -604,12 +592,14 @@ void main() {
         opened.add(Uri.parse(url).pathSegments.first);
         return const AndroidExoPlayerResult(started: true);
       };
+      final screen = GlobalKey<DetailsScreenState>();
       await withEngine(tester, engine, () async {
         await tester.pumpWidget(details(
+          key: screen,
           sources: SourceProviderService(client: _provider([_best])),
         ));
         await settle(tester);
-        await key(tester, LogicalKeyboardKey.select);
+        unawaited(screen.currentState!.resumeContinueWatching(_movie, null));
         await settle(tester, frames: 60);
 
         expect(opened, [_best.hash]);
@@ -630,12 +620,14 @@ void main() {
         opened.add(Uri.parse(url).pathSegments.first);
         return const AndroidExoPlayerResult(failed: true, error: 'decoder');
       };
+      final screen = GlobalKey<DetailsScreenState>();
       await withEngine(tester, engine, () async {
         await tester.pumpWidget(details(
+          key: screen,
           sources: SourceProviderService(client: _provider([_best, _second])),
         ));
         await settle(tester);
-        await key(tester, LogicalKeyboardKey.select);
+        unawaited(screen.currentState!.resumeContinueWatching(_movie, null));
         await settle(tester, frames: 60);
 
         expect(opened, hasLength(1),
@@ -659,12 +651,14 @@ void main() {
         opened = true;
         return closing.future;
       };
+      final screen = GlobalKey<DetailsScreenState>();
       await withEngine(tester, engine, () async {
         await tester.pumpWidget(details(
+          key: screen,
           sources: SourceProviderService(client: _provider([_best])),
         ));
         await settle(tester);
-        await key(tester, LogicalKeyboardKey.select);
+        unawaited(screen.currentState!.resumeContinueWatching(_movie, null));
         await settle(tester, frames: 60);
         expect(opened, isTrue);
 
