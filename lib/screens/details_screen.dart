@@ -12,6 +12,7 @@ import '../services/ai_sinhala_trace_service.dart';
 import '../services/catalog_service.dart';
 import '../services/cloud_preferences_service.dart';
 import '../services/free_p2p_live_probe_service.dart';
+import '../services/free_p2p_playback_trace.dart';
 import '../services/local_media_bridge_service.dart';
 import '../services/local_torrent_service.dart';
 import '../services/media_state_service.dart';
@@ -2116,7 +2117,10 @@ class DetailsScreenState extends State<DetailsScreen> {
             },
           );
           if (chosen?.isMagnet == true) {
-            await autoProbeSession.prepareForPlayback(chosen!);
+            await autoProbeSession.prepareForPlayback(
+              chosen!,
+              selection: 'normalPlay',
+            );
           }
         } catch (_) {
           await autoProbeSession.release();
@@ -2208,6 +2212,90 @@ class DetailsScreenState extends State<DetailsScreen> {
       (await RealDebridService.instance.isConnected) ||
       (await PremiumizeService.instance.isConnected);
 
+  /// Runs the player handoff of a traced Free P2P attempt and records a
+  /// cancellation or an error that ended it before the player answered.
+  Future<void> _traced(
+    FreeP2pPlaybackAttempt? trace,
+    Future<void> Function() handoff,
+  ) async {
+    try {
+      await handoff();
+      // Returned before any player was chosen (for example a fail-closed
+      // preflight): no player event will ever end this attempt.
+      if (trace != null &&
+          trace.isOpen &&
+          !trace.stages.any((stage) => stage['stage'] == 'player')) {
+        trace.finish(
+          FreeP2pPlaybackOutcome.failed,
+          detail: 'no player was opened',
+        );
+      }
+    } on PlaybackPreparationCancelled {
+      trace?.finish(FreeP2pPlaybackOutcome.cancelled);
+      rethrow;
+    } catch (error) {
+      trace?.finish(FreeP2pPlaybackOutcome.failed, detail: error.toString());
+      rethrow;
+    }
+  }
+
+  /// The player reported a start: record it and, for a local P2P stream,
+  /// what the engine measured at that moment.
+  Future<void> _tracePlayerStarted(SourceResult source, String url) async {
+    final trace = FreeP2pPlaybackTrace.instance.active(source);
+    if (trace == null) return;
+    trace.stage('playerStart', 'started');
+    trace.finish(FreeP2pPlaybackOutcome.playing);
+    if (!source.isMagnet) return;
+    final health = await LocalTorrentService.instance.healthForStreamUrl(url);
+    trace.stage(
+      'engineStats',
+      health == null ? 'unavailable' : 'sampled',
+      detail: health == null
+          ? const <String, Object?>{}
+          : <String, Object?>{
+              'livePeers': health.peers,
+              'liveConnections': health.connections,
+              'speedBps': health.downloadSpeedBytesPerSecond.round(),
+            },
+    );
+  }
+
+  /// The player gave up on [source]. [last] is false when another player
+  /// is tried next, so the attempt stays open for it.
+  void _tracePlayerFailed(
+    SourceResult source,
+    String? message, {
+    LocalTorrentHealth? health,
+    bool last = true,
+  }) {
+    final trace = FreeP2pPlaybackTrace.instance.active(source);
+    if (trace == null) return;
+    trace.stage(
+      'playerStart',
+      'failed',
+      detail: <String, Object?>{
+        'engineStats': source.isMagnet ? health != null : null,
+        'livePeers': health?.peers,
+        'liveConnections': health?.connections,
+        'speedBps': health?.downloadSpeedBytesPerSecond.round(),
+      },
+    );
+    if (last) {
+      trace.finish(FreeP2pPlaybackOutcome.playerFailure, detail: message);
+    }
+  }
+
+  /// The player route closed. An attempt still open was neither started nor
+  /// reported as failed: the user left while it was still loading.
+  void _tracePlayerClosed(SourceResult? source) {
+    if (source == null) return;
+    final trace = FreeP2pPlaybackTrace.instance.active(source);
+    if (trace == null) return;
+    trace.stage('playerClosed', 'beforeStart');
+    trace.finish(FreeP2pPlaybackOutcome.closedBeforeStart);
+  }
+
   String _sourceReleaseHint(SourceResult source) {
     final fileName = source.fileNameHint?.trim();
     if (fileName != null && fileName.isNotEmpty) return fileName;
@@ -2230,14 +2318,22 @@ class DetailsScreenState extends State<DetailsScreen> {
         _resolveProgress = null;
         _status = 'Opening direct stream…';
       });
-      await _openPlayerUrl(
-        chosen.resource,
-        item,
-        episode,
-        source: chosen,
-        releaseHint: releaseHint,
-        expectedSizeBytes: chosen.sizeBytes,
-        expectedVideoHash: chosen.videoHash,
+      // Free P2P report only; cloud/debrid playback is not traced.
+      final trace = cloudConnected
+          ? null
+          : (FreeP2pPlaybackTrace.instance.attemptFor(chosen)
+            ..stage('route', 'directHttp'));
+      await _traced(
+        trace,
+        () => _openPlayerUrl(
+          chosen.resource,
+          item,
+          episode,
+          source: chosen,
+          releaseHint: releaseHint,
+          expectedSizeBytes: chosen.sizeBytes,
+          expectedVideoHash: chosen.videoHash,
+        ),
       );
       return;
     }
@@ -2250,6 +2346,8 @@ class DetailsScreenState extends State<DetailsScreen> {
         _status = 'Starting local P2P torrent stream…';
       });
       final preparation = PlaybackPreparation.current;
+      final trace = FreeP2pPlaybackTrace.instance.attemptFor(chosen)
+        ..stage('route', 'localP2p');
       late final String localUrl;
       try {
         localUrl = await LocalTorrentService.instance.resolve(
@@ -2259,11 +2357,14 @@ class DetailsScreenState extends State<DetailsScreen> {
               setState(() => _status = message);
             }
           },
+          trace: trace,
         );
       } catch (error) {
         if (preparation?.isCancelled == true) {
+          trace.finish(FreeP2pPlaybackOutcome.cancelled);
           throw const PlaybackPreparationCancelled();
         }
+        trace.finish(FreeP2pPlaybackOutcome.failed, detail: error.toString());
         unawaited(
           widget.sources.recordPlaybackOutcome(
             chosen,
@@ -2276,19 +2377,23 @@ class DetailsScreenState extends State<DetailsScreen> {
       if (preparation?.isCancelled == true) {
         // Back was pressed while the torrent was resolving. Do not open the
         // player for it, and do not leave its torrent attached.
+        trace.finish(FreeP2pPlaybackOutcome.cancelled);
         await _releaseAbandonedLocalStream(chosen);
         throw const PlaybackPreparationCancelled();
       }
       if (!mounted) return;
       setState(() => _status = 'P2P stream ready — opening player…');
-      await _openPlayerUrl(
-        localUrl,
-        item,
-        episode,
-        source: chosen,
-        releaseHint: releaseHint,
-        expectedSizeBytes: chosen.sizeBytes,
-        expectedVideoHash: chosen.videoHash,
+      await _traced(
+        trace,
+        () => _openPlayerUrl(
+          localUrl,
+          item,
+          episode,
+          source: chosen,
+          releaseHint: releaseHint,
+          expectedSizeBytes: chosen.sizeBytes,
+          expectedVideoHash: chosen.videoHash,
+        ),
       );
       return;
     }
@@ -2891,6 +2996,9 @@ class DetailsScreenState extends State<DetailsScreen> {
       unawaited(widget.sources.setDisplayMode(mode));
     }
 
+    // How the sheet's result was chosen, for the playback report.
+    var selectedVia = 'manual';
+
     bool isPinnedResult(SourceResult result) => widget.sources.matchesPinned(
           result,
           pinnedIdentity,
@@ -3093,6 +3201,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                   ? null
                   : () {
                       liveProbe.freezeRanking(results, widget.sources);
+                      selectedVia = 'quickPlay';
                       Navigator.pop(sheetContext, source);
                     },
               icon: Icon(
@@ -3595,7 +3704,7 @@ class DetailsScreenState extends State<DetailsScreen> {
     );
 
     if (selected != null && liveCheckAllowed) {
-      await liveProbe.prepareForPlayback(selected);
+      await liveProbe.prepareForPlayback(selected, selection: selectedVia);
     } else if (ownsProbeSession) {
       await liveProbe.release();
     }
@@ -4710,6 +4819,15 @@ class DetailsScreenState extends State<DetailsScreen> {
           !aiSettingEnabled &&
           !useLocalMediaBridge &&
           source?.isMagnet != true;
+      if (source != null) {
+        FreeP2pPlaybackTrace.instance.active(source)?.stage(
+          'player',
+          engine == PlayerEngineKind.exoPlayer && Platform.isAndroid
+              ? 'exoPlayer'
+              : 'libmpv',
+          detail: <String, Object?>{'preference': preference.name},
+        );
+      }
 
       if (engine == PlayerEngineKind.exoPlayer && Platform.isAndroid) {
         final result = await _openExoPlayer(
@@ -4791,6 +4909,7 @@ class DetailsScreenState extends State<DetailsScreen> {
 
     if (source != null && result?.started == true) {
       unawaited(widget.sources.recordPlaybackOutcome(source, success: true));
+      unawaited(_tracePlayerStarted(source, url));
     } else if (source != null && result?.failed == true) {
       unawaited(
         widget.sources.recordPlaybackOutcome(
@@ -4799,6 +4918,10 @@ class DetailsScreenState extends State<DetailsScreen> {
           reason: result?.error,
         ),
       );
+      // Auto falls back to MPV after an ExoPlayer failure.
+      _tracePlayerFailed(source, result?.error, last: !autoFallbackToMpv);
+    } else if (result?.switchToMpv != true) {
+      _tracePlayerClosed(source);
     }
     return result;
   }
@@ -4806,15 +4929,23 @@ class DetailsScreenState extends State<DetailsScreen> {
   Future<void> _recordSourceStartupFailure(
     SourceResult source,
     String url,
-    String message,
-  ) async {
+    String message, {
+    bool fallbackFollows = false,
+  }) async {
     var reason = message.trim();
+    LocalTorrentHealth? health;
     if (source.isMagnet) {
-      final health = await LocalTorrentService.instance.healthForStreamUrl(url);
+      health = await LocalTorrentService.instance.healthForStreamUrl(url);
       if (health != null) {
         reason = '$reason • ${health.summary}';
       }
     }
+    _tracePlayerFailed(
+      source,
+      message,
+      health: health,
+      last: !fallbackFollows,
+    );
     await widget.sources.recordPlaybackOutcome(
       source,
       success: false,
@@ -4878,12 +5009,18 @@ class DetailsScreenState extends State<DetailsScreen> {
                       success: true,
                     ),
                   );
+                  unawaited(_tracePlayerStarted(source, url));
                 },
           onStartupFailed: source == null
               ? null
               : (message) {
                   unawaited(
-                    _recordSourceStartupFailure(source, url, message),
+                    _recordSourceStartupFailure(
+                      source,
+                      url,
+                      message,
+                      fallbackFollows: fallbackToExo,
+                    ),
                   );
                 },
           onStartupFallback: !fallbackToExo
@@ -4914,6 +5051,10 @@ class DetailsScreenState extends State<DetailsScreen> {
         ),
       ),
     );
+
+    // With an ExoPlayer fallback the MPV route closes before ExoPlayer
+    // answers; ExoPlayer records the outcome then.
+    if (!fallbackToExo) _tracePlayerClosed(source);
 
     // Only detach after the MPV route and native video surface are fully gone.
     // Android TV may still need the same P2P URL for its Exo fallback, so that
@@ -4956,8 +5097,30 @@ class DetailsScreenState extends State<DetailsScreen> {
       _resolving = false;
       _resolveProgress = null;
     });
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('Could not play: $error')));
+    // A failed Free P2P attempt can be copied for a bug report. Cloud/debrid
+    // playback is not traced, so it never offers this.
+    final traced = FreeP2pPlaybackTrace.instance.attempts.firstOrNull;
+    final offerReport = traced != null &&
+        traced.outcome != FreeP2pPlaybackOutcome.playing &&
+        traced.outcome != FreeP2pPlaybackOutcome.cancelled &&
+        (traced.sinceEnd ?? Duration.zero) < const Duration(seconds: 30);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Could not play: $error'),
+        action: offerReport
+            ? SnackBarAction(
+                label: 'Copy report',
+                onPressed: () => unawaited(
+                  Clipboard.setData(
+                    ClipboardData(
+                      text: FreeP2pPlaybackTrace.instance.report(),
+                    ),
+                  ),
+                ),
+              )
+            : null,
+      ),
+    );
   }
 }
 

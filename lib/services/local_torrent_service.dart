@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import 'free_p2p_playback_trace.dart';
 import 'platform_profile.dart';
 import 'source_provider_service.dart';
 
@@ -311,6 +312,30 @@ class LocalTorrentProbeResult {
   }
 }
 
+/// What the pre-playback warm-up read from the local stream.
+class _LocalStreamPrime {
+  const _LocalStreamPrime({
+    required this.result,
+    required this.bytes,
+    required this.targetBytes,
+    required this.firstByte,
+    required this.elapsed,
+  });
+
+  /// complete, partial, noData, error or httpNNN.
+  final String result;
+  final int bytes;
+  final int targetBytes;
+  final Duration? firstByte;
+  final Duration elapsed;
+
+  double? get bytesPerSecond {
+    final micros = elapsed.inMicroseconds;
+    if (bytes <= 0 || micros <= 0) return null;
+    return bytes / (micros / 1e6);
+  }
+}
+
 class _EngineSwarmStats {
   const _EngineSwarmStats({
     required this.connectedPeers,
@@ -448,22 +473,76 @@ class LocalTorrentService {
   final Set<String> _retainedProbeInfoHashes = <String>{};
   Timer? _probeCleanupTimer;
 
+  /// Torrents a playback [resolve] is creating right now. The engine keeps one
+  /// session per info hash, so a probe or cleanup that detached one of these
+  /// would destroy the torrent playback is still waiting for.
+  final Set<String> _resolvingInfoHashes = <String>{};
+
+  /// Probes in flight per info hash. Two rows of the same torrent (another
+  /// provider or file routing) share one engine session; only the last probe
+  /// to finish may detach it.
+  final Map<String, int> _probesInFlight = <String, int>{};
+
+  bool _playbackOwns(String infoHash) =>
+      infoHash == _currentInfoHash || _resolvingInfoHashes.contains(infoHash);
+
+  bool _sessionInUse(String infoHash) =>
+      _playbackOwns(infoHash) || (_probesInFlight[infoHash] ?? 0) > 0;
+
   Future<String> resolve(
     SourceResult source, {
     void Function(String message)? onProgress,
     bool warmForPlayback = true,
+    FreeP2pPlaybackAttempt? trace,
   }) async {
     if (!source.isMagnet) return source.resource;
 
     final infoHash = _extractInfoHash(source.resource);
     if (infoHash == null) {
+      trace?.stage('engine', 'notStarted');
+      trace?.finish(
+        FreeP2pPlaybackOutcome.sourceError,
+        detail: 'no usable BitTorrent info hash',
+      );
       throw const LocalTorrentException(
         'This torrent source did not include a usable BitTorrent info hash.',
       );
     }
 
+    _resolvingInfoHashes.add(infoHash);
+    try {
+      return await _resolveTorrent(
+        source,
+        infoHash,
+        onProgress: onProgress,
+        warmForPlayback: warmForPlayback,
+        trace: trace,
+      );
+    } finally {
+      _resolvingInfoHashes.remove(infoHash);
+    }
+  }
+
+  Future<String> _resolveTorrent(
+    SourceResult source,
+    String infoHash, {
+    void Function(String message)? onProgress,
+    required bool warmForPlayback,
+    FreeP2pPlaybackAttempt? trace,
+  }) async {
     onProgress?.call('Preparing stream…');
-    await ensureRunning();
+    final engineWatch = Stopwatch()..start();
+    try {
+      await ensureRunning();
+    } catch (error) {
+      trace?.stage('engine', 'failed', took: engineWatch.elapsed);
+      trace?.finish(
+        FreeP2pPlaybackOutcome.engineFailure,
+        detail: error.toString(),
+      );
+      rethrow;
+    }
+    trace?.stage('engine', 'ready', took: engineWatch.elapsed);
 
     final fileHint = source.fileNameHint?.trim();
     final engineMagnet = normalizeMagnetForEngine(source.resource);
@@ -495,19 +574,58 @@ class LocalTorrentService {
     }
 
     http.Response response;
+    final metadataWatch = Stopwatch()..start();
     try {
       response = await _createTorrent(body);
     } on TimeoutException {
-      throw LocalTorrentException(
-        _metadataTimeoutMessage(await _engineSwarmStats(infoHash)),
+      final swarm = await _engineSwarmStats(infoHash);
+      trace?.stage(
+        'metadata',
+        'timeout',
+        took: metadataWatch.elapsed,
+        detail: <String, Object?>{
+          'engineStats': swarm != null,
+          'discoveredPeers': swarm?.discoveredPeers,
+          'connectedPeers': swarm?.connectedPeers,
+          'connections': swarm?.connections,
+        },
       );
+      trace?.finish(FreeP2pPlaybackOutcome.metadataTimeout);
+      throw LocalTorrentException(_metadataTimeoutMessage(swarm));
     } catch (error) {
+      if (trace != null) {
+        // Only an engine that stopped answering makes this an engine
+        // failure; otherwise the request itself failed.
+        final engineAlive = await _heartbeat();
+        trace.stage(
+          'metadata',
+          'transportError',
+          took: metadataWatch.elapsed,
+          detail: <String, Object?>{'engineAnswering': engineAlive},
+        );
+        trace.finish(
+          engineAlive
+              ? FreeP2pPlaybackOutcome.failed
+              : FreeP2pPlaybackOutcome.engineFailure,
+          detail: error.toString(),
+        );
+      }
       throw LocalTorrentException(
         'Could not send the torrent to the local streaming engine: $error',
       );
     }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
+      trace?.stage(
+        'metadata',
+        'httpError',
+        took: metadataWatch.elapsed,
+        detail: <String, Object?>{'status': response.statusCode},
+      );
+      trace?.finish(
+        FreeP2pPlaybackOutcome.sourceError,
+        detail: 'engine HTTP ${response.statusCode}',
+      );
       throw LocalTorrentException(
         'Local torrent engine returned HTTP ${response.statusCode}.',
       );
@@ -521,6 +639,8 @@ class LocalTorrentService {
 
     final engineError = payload?['error']?.toString().trim();
     if (engineError != null && engineError.isNotEmpty) {
+      trace?.stage('metadata', 'engineRejected', took: metadataWatch.elapsed);
+      trace?.finish(FreeP2pPlaybackOutcome.sourceError, detail: engineError);
       throw LocalTorrentException('Local torrent engine: $engineError');
     }
 
@@ -532,6 +652,18 @@ class LocalTorrentService {
         guessedFileIndex ??
         _asInt(payload?['fileIdx']) ??
         -1;
+    trace?.stage(
+      'metadata',
+      'resolved',
+      took: metadataWatch.elapsed,
+      detail: <String, Object?>{
+        'file': explicitFileIndex != null
+            ? 'provider'
+            : fileIndex >= 0
+                ? 'engineGuess'
+                : 'unresolved',
+      },
+    );
 
     // Windows ships the Orvix stream-server extension. If upstream-style
     // creation still returns -1, ask the running engine to resolve the same
@@ -540,6 +672,7 @@ class LocalTorrentService {
     // extract subtitles from the exact episode instead of guessing.
     if (fileIndex < 0 && Platform.isWindows) {
       onProgress?.call('Resolving exact episode file…');
+      final fileWatch = Stopwatch()..start();
       final resolved = await _resolveOrvixFileIndex(
         infoHash,
         fileHint: fileHint,
@@ -547,6 +680,11 @@ class LocalTorrentService {
       if (resolved != null) {
         fileIndex = resolved;
       }
+      trace?.stage(
+        'fileResolve',
+        resolved != null ? 'resolved' : 'unresolved',
+        took: fileWatch.elapsed,
+      );
     }
 
     // If an older/non-Orvix engine cannot resolve the index, playback keeps
@@ -565,11 +703,12 @@ class LocalTorrentService {
     // up on marginal sources. Prime a small HTTP range into the stream-server
     // cache before handing the URL to the player. This mirrors TorrServer's
     // preload idea without changing the player or downloading the whole file.
+    _LocalStreamPrime? prime;
     if (warmForPlayback &&
         Platform.isAndroid &&
         PlatformProfile.isAndroidTv) {
       onProgress?.call('Connecting peers and pre-buffering…');
-      await _primeLocalStream(
+      prime = await _primeLocalStream(
         streamUrl,
         targetBytes: 1024 * 1024,
         timeout: const Duration(seconds: 10),
@@ -579,11 +718,30 @@ class LocalTorrentService {
       // produced real bytes before libmpv opens it. Subtitle-only probes do
       // not need a 2 MiB video warm-up, so they skip this delay entirely.
       onProgress?.call('Connecting peers and warming Windows playback…');
-      await _primeLocalStream(
+      prime = await _primeLocalStream(
         streamUrl,
         targetBytes: 2 * 1024 * 1024,
         timeout: const Duration(seconds: 12),
       );
+    }
+    if (trace != null) {
+      if (prime == null) {
+        // Android mobile and macOS hand the URL to the player at once; the
+        // first byte is then measured by the player, not here.
+        trace.stage('prebuffer', 'notRun');
+      } else {
+        trace.stage(
+          'prebuffer',
+          prime.result,
+          took: prime.elapsed,
+          detail: <String, Object?>{
+            'bytes': prime.bytes,
+            'targetBytes': prime.targetBytes,
+            'firstByteMs': prime.firstByte?.inMilliseconds,
+            'speedBps': prime.bytesPerSecond?.round(),
+          },
+        );
+      }
     }
 
     onProgress?.call(
@@ -830,31 +988,53 @@ class LocalTorrentService {
     }
   }
 
-  Future<void> _primeLocalStream(
+  Future<_LocalStreamPrime> _primeLocalStream(
     String streamUrl, {
     required int targetBytes,
     required Duration timeout,
   }) async {
     final client = http.Client();
+    final watch = Stopwatch()..start();
+    var received = 0;
+    Duration? firstByte;
+    String? result;
     try {
       await (() async {
         final request = http.Request('GET', Uri.parse(streamUrl));
         request.headers['Range'] = 'bytes=0-${targetBytes - 1}';
         final response = await client.send(request);
-        if (response.statusCode != 200 && response.statusCode != 206) return;
+        if (response.statusCode != 200 && response.statusCode != 206) {
+          result = 'http${response.statusCode}';
+          return;
+        }
 
-        var received = 0;
         await for (final chunk in response.stream) {
+          if (chunk.isNotEmpty) firstByte ??= watch.elapsed;
           received += chunk.length;
           if (received >= targetBytes) break;
         }
       })().timeout(timeout);
+    } on TimeoutException {
+      result = 'timeout';
     } catch (_) {
       // Warm-up is best effort. A slow swarm still gets a chance in the real
       // player, while healthy swarms usually seed the requested prefix.
+      result = 'error';
     } finally {
+      watch.stop();
       client.close();
     }
+    return _LocalStreamPrime(
+      result: received >= targetBytes
+          ? 'complete'
+          : received == 0
+              ? (result == null || result == 'timeout' ? 'noData' : result!)
+              : 'partial',
+      bytes: received,
+      targetBytes: targetBytes,
+      firstByte: firstByte,
+      elapsed: watch.elapsed,
+    );
   }
   Future<void> _removeEngine(String infoHash) async {
     try {
@@ -1047,6 +1227,7 @@ class LocalTorrentService {
     };
 
     var retainedProbe = false;
+    _probesInFlight[infoHash] = (_probesInFlight[infoHash] ?? 0) + 1;
     try {
       final metadataWatch = Stopwatch()..start();
       final createFuture = _createTorrent(body);
@@ -1055,6 +1236,7 @@ class LocalTorrentService {
       createFuture.ignore();
       http.Response? response;
       var metadataTimedOut = false;
+      var createTransportFailed = false;
       try {
         response = await createFuture.timeout(metadataFastDeadline);
       } on TimeoutException {
@@ -1070,6 +1252,7 @@ class LocalTorrentService {
             metadataTimedOut = true;
           } catch (_) {
             response = null;
+            createTransportFailed = true;
           }
         } else {
           metadataTimedOut = true;
@@ -1078,6 +1261,7 @@ class LocalTorrentService {
         // A transport/engine error for this candidate must not abort probing
         // the other sources.
         response = null;
+        createTransportFailed = true;
       }
       metadataWatch.stop();
 
@@ -1087,6 +1271,14 @@ class LocalTorrentService {
           LocalTorrentProbeStatus.metadataTimeout,
           metadataElapsed: metadataWatch.elapsed,
           swarm: swarm,
+        );
+      }
+      // A request that never got an HTTP answer says nothing about the
+      // torrent when the engine itself stopped answering.
+      if (createTransportFailed && !await _heartbeat()) {
+        return failed(
+          LocalTorrentProbeStatus.engineUnavailable,
+          metadataElapsed: metadataWatch.elapsed,
         );
       }
       if (response == null ||
@@ -1182,6 +1374,15 @@ class LocalTorrentService {
       final speed = measuredSpeed > engineSpeed ? measuredSpeed : engineSpeed;
       final playable = sampleWindowsPassed >= 2 && bytes >= 512 * 1024;
 
+      // No stream data and no statistics: when the engine stopped answering,
+      // the empty sample is an engine failure, not evidence of a dead swarm.
+      if (!playable && health == null && !await _heartbeat()) {
+        return failed(
+          LocalTorrentProbeStatus.engineUnavailable,
+          metadataElapsed: metadataWatch.elapsed,
+        );
+      }
+
       // Only a source that proved it can deliver media is worth keeping warm
       // for a playback handoff. Failed candidates are detached immediately so
       // probing never accumulates idle torrent sessions.
@@ -1203,8 +1404,17 @@ class LocalTorrentService {
         metadataElapsed: metadataWatch.elapsed,
       );
     } finally {
-      // Never detach a torrent that is currently being used by the player.
-      if (!retainedProbe && _currentInfoHash != infoHash) {
+      final remaining = (_probesInFlight[infoHash] ?? 1) - 1;
+      if (remaining > 0) {
+        _probesInFlight[infoHash] = remaining;
+      } else {
+        _probesInFlight.remove(infoHash);
+      }
+      // Never detach a torrent that the player uses or is resolving, that
+      // another probe is still sampling, or that a live probe kept warm.
+      if (!retainedProbe &&
+          !_sessionInUse(infoHash) &&
+          !_retainedProbeInfoHashes.contains(infoHash)) {
         await _removeEngine(infoHash);
       }
     }
@@ -1257,11 +1467,11 @@ class LocalTorrentService {
     final selectedHash =
         source.isMagnet ? _extractInfoHash(source.resource) : null;
     final stale = _retainedProbeInfoHashes
-        .where((hash) => hash != selectedHash && hash != _currentInfoHash)
+        .where((hash) => hash != selectedHash && !_playbackOwns(hash))
         .toList(growable: false);
     for (final hash in stale) {
-      await _removeEngine(hash);
       _retainedProbeInfoHashes.remove(hash);
+      if (!_sessionInUse(hash)) await _removeEngine(hash);
     }
 
     if (selectedHash != null && _retainedProbeInfoHashes.contains(selectedHash)) {
@@ -1269,7 +1479,7 @@ class LocalTorrentService {
       // this warm probe into the active playback torrent.
       _probeCleanupTimer?.cancel();
       _probeCleanupTimer = Timer(const Duration(seconds: 25), () {
-        if (_currentInfoHash != selectedHash) {
+        if (!_playbackOwns(selectedHash)) {
           _retainedProbeInfoHashes.remove(selectedHash);
           unawaited(_removeEngine(selectedHash));
         }
@@ -1282,20 +1492,21 @@ class LocalTorrentService {
   /// or restarted, so it cannot linger until the cleanup timer.
   Future<void> releaseRetainedProbe(SourceResult source) async {
     final hash = source.isMagnet ? _extractInfoHash(source.resource) : null;
-    if (hash == null || hash == _currentInfoHash) return;
+    if (hash == null || _playbackOwns(hash)) return;
     if (!_retainedProbeInfoHashes.remove(hash)) return;
-    await _removeEngine(hash);
+    if (!_sessionInUse(hash)) await _removeEngine(hash);
   }
 
   Future<void> releaseRetainedProbeSessions() async {
     _probeCleanupTimer?.cancel();
     _probeCleanupTimer = null;
     final stale = _retainedProbeInfoHashes
-        .where((hash) => hash != _currentInfoHash)
+        .where((hash) => !_playbackOwns(hash))
         .toList(growable: false);
     for (final hash in stale) {
-      await _removeEngine(hash);
       _retainedProbeInfoHashes.remove(hash);
+      // A probe still sampling this torrent detaches it when it finishes.
+      if (!_sessionInUse(hash)) await _removeEngine(hash);
     }
   }
 

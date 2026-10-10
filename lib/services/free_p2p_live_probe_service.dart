@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show debugPrint, listEquals;
 
+import 'free_p2p_playback_trace.dart';
 import 'local_torrent_service.dart';
 import 'source_provider_service.dart';
 
@@ -12,7 +13,11 @@ class FreeP2pLiveProbeService {
     FreeP2pProbeRunner? probeRunner,
     FreeP2pProbeEngine? engine,
     List<SourceSortCriterion>? priority,
-  })  : _engine = engine ??
+    DateTime Function()? clock,
+    FreeP2pPlaybackTrace? playbackTrace,
+  })  : _now = clock ?? DateTime.now,
+        _playbackTrace = playbackTrace ?? FreeP2pPlaybackTrace.instance,
+        _engine = engine ??
             (probeRunner != null
                 ? _RunnerProbeEngine(probeRunner)
                 : const LocalFreeP2pProbeEngine()),
@@ -21,6 +26,12 @@ class FreeP2pLiveProbeService {
         );
 
   final Duration? mediaDuration;
+
+  /// Time source for evidence freshness; tests inject a fixed clock.
+  final DateTime Function() _now;
+
+  /// Records what happens to a source after it is handed to playback.
+  final FreeP2pPlaybackTrace _playbackTrace;
 
   static Duration? parseMediaRuntime(String? raw) {
     final value = raw?.trim().toLowerCase() ?? '';
@@ -86,7 +97,9 @@ class FreeP2pLiveProbeService {
   /// batch starts, and a probe finishing afterwards does not keep a warm
   /// session (except for the source handed to playback).
   bool _closed = false;
-  String? _handoffKey;
+
+  /// Engine session ([_sessionKey]) of the source handed to playback.
+  String? _handoffSession;
 
   void Function()? _onUpdate;
 
@@ -139,6 +152,17 @@ class FreeP2pLiveProbeService {
     return '${source.resource}|$file';
   }
 
+  /// The torrent engine keeps one session per info hash, whichever file or
+  /// provider a row routes to. Releasing a probe's warm session releases the
+  /// torrent, so the playback handoff is protected per torrent, not per row.
+  String _sessionKey(SourceResult source) {
+    if (source.isMagnet) {
+      final hash = _btih.firstMatch(source.resource)?.group(1)?.toLowerCase();
+      if (hash != null && hash.isNotEmpty) return 'bt:$hash';
+    }
+    return source.resource;
+  }
+
   List<SourceSortCriterion> get priority => _priority;
 
   /// Applies a changed Source Priority. A frozen order is dropped, so an open
@@ -168,7 +192,7 @@ class FreeP2pLiveProbeService {
   /// Whether rows keep the order the user last chose from.
   bool get isFrozen => _frozenOrder != null;
 
-  bool _fresh(DateTime at) => DateTime.now().difference(at) <= _evidenceTtl;
+  bool _fresh(DateTime at) => _now().difference(at) <= _evidenceTtl;
 
   bool get hasAnyResult => _cache.values.any((entry) => _fresh(entry.at));
 
@@ -613,16 +637,17 @@ class FreeP2pLiveProbeService {
           final result = await _engine.probe(source, retainSession: retain);
           final stale = epoch != _epoch;
           if (!stale) {
-            _cache[key] = (at: DateTime.now(), result: result);
+            _cache[key] = (at: _now(), result: result);
             _log(source, result);
           }
           // A probe that outlived its check (Re-check, or the picker closed)
-          // must not leave a warm session behind. The source handed to
-          // playback keeps its own.
+          // must not leave a warm session behind. The torrent handed to
+          // playback keeps its own, even when this row routes to another
+          // file of it.
           if (retain &&
               result.confirmedLive &&
               (stale || _closed) &&
-              key != _handoffKey) {
+              _sessionKey(source) != _handoffSession) {
             await _engine.releaseRetained(source);
           }
         } finally {
@@ -657,8 +682,9 @@ class FreeP2pLiveProbeService {
     };
   }
 
-  /// Copyable live-check report for a user's bug report. Contains provider
-  /// metadata and probe numbers only.
+  /// Copyable live-check report for a user's bug report: the live check of
+  /// these results plus the recent playback attempts. Contains provider
+  /// metadata, hosts, states and measured numbers only.
   String diagnosticReport(Iterable<SourceResult> results) {
     final lines = <String>[];
     final seen = <String>{};
@@ -671,9 +697,14 @@ class FreeP2pLiveProbeService {
     final s = summary(results);
     return <String>[
       'Orvix Free P2P live check',
+      FreeP2pPlaybackTrace.deviceLine(),
       'live=${s.live} failed=${s.failed} unresolved=${s.unresolved} '
           'checking=${s.checking} notChecked=${s.notChecked}',
+      'providerSeeders/providerPeers: reported by the provider, not verified. '
+          'livePeers/liveConnections/firstByteMs/speedBps: measured on this '
+          'device. Rows without a line were not checked.',
       ...lines,
+      ..._playbackTrace.reportLines(),
     ].join('\n');
   }
 
@@ -726,7 +757,7 @@ class FreeP2pLiveProbeService {
     // New evidence is about to arrive: never keep showing an old frozen order.
     _frozenOrder = null;
     _closed = false;
-    _handoffKey = null;
+    _handoffSession = null;
     final completer = Completer<void>();
     _running = completer.future;
     final all = results.toList(growable: false);
@@ -1015,11 +1046,34 @@ class FreeP2pLiveProbeService {
   }
 
   /// Hands [source] to playback: no further probe batch starts, and every
-  /// other warm probe session is detached.
-  Future<void> prepareForPlayback(SourceResult source) async {
+  /// other warm probe session is detached. [selection] says how it was
+  /// chosen (normalPlay, quickPlay or manual) for the playback report, which
+  /// also records the live-check state the source had at this moment.
+  Future<void> prepareForPlayback(
+    SourceResult source, {
+    String selection = 'manual',
+  }) async {
     _closed = true;
     _continueInBackground = false;
-    _handoffKey = _key(source);
+    _handoffSession = _sessionKey(source);
+    final cached = source.isMagnet ? _cache[_key(source)] : null;
+    final fresh = cached != null && _fresh(cached.at);
+    _playbackTrace.begin(
+      source,
+      selection: selection,
+      liveCheck: source.isMagnet
+          ? displayHealthFor(source)!.state.name
+          : 'directHttp',
+      liveEvidence: fresh
+          ? <String, Object?>{
+              ...cached.result.toDiagnostics(),
+              'health': cached.result
+                  .statusFor(source, mediaDuration: mediaDuration)
+                  .name,
+              'ageSec': _now().difference(cached.at).inSeconds,
+            }
+          : null,
+    );
     await _engine.prepareForPlayback(source);
   }
 
