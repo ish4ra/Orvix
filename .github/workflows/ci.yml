@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - develop
-      - fix/beta68-android-p2p-patient-startup
     paths:
       - 'lib/**'
       - 'test/**'
