@@ -1595,6 +1595,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ORVIX_RELEASE_PRERELEASE: "true"
+          ORVIX_RELEASE_DRAFT_ONLY: "true"
         shell: bash
         run: |
           set -euo pipefail
@@ -1678,26 +1679,12 @@ jobs:
           fi
           mapfile -t ASSETS < /tmp/orvix-release-assets.txt
           chmod +x tools/publish_orvix_release.sh
-          # INTERNAL TEST: draft releases are invisible to GitHub public
-          # releases API, releases.atom, and the existing in-app updater.
-          # NEVER publish or undraft automatically in this workflow.
-          TAG="v$V"
-          if gh release view "$TAG" --json isDraft --jq '.isDraft' >/tmp/existing-draft 2>/dev/null; then
-            if [ "$(cat /tmp/existing-draft)" != true ]; then
-              echo "Refusing to modify already-public $TAG" >&2
-              exit 1
-            fi
-            gh release upload "$TAG" --clobber "${ASSETS[@]}"
-          else
-            gh release create "$TAG" \
-              --draft \
-              --prerelease \
-              --target "${{ github.sha }}" \
-              --title "$TITLE (PRIVATE TEST - NOT PUBLISHED)" \
-              --notes-file /tmp/notes.md \
-              "${ASSETS[@]}"
-          fi
-          echo "Private draft staged. Do NOT publish without owner approval."
+          tools/publish_orvix_release.sh \
+            "v$V" \
+            "$TITLE" \
+            /tmp/notes.md \
+            "${{ github.sha }}" \
+            "${ASSETS[@]}"
 
       - name: Prepare AltStore / SideStore source entry
         # store.json changes go to develop through a normal PR. This only
