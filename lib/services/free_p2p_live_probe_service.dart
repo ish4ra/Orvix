@@ -15,7 +15,10 @@ class FreeP2pLiveProbeService {
     List<SourceSortCriterion>? priority,
     DateTime Function()? clock,
     FreeP2pPlaybackTrace? playbackTrace,
-  })  : _now = clock ?? DateTime.now,
+    FreeP2pLiveEvidence? evidence,
+  })  : _cache = evidence?._entries ??
+            <String, ({DateTime at, LocalTorrentProbeResult result})>{},
+        _now = clock ?? DateTime.now,
         _playbackTrace = playbackTrace ?? FreeP2pPlaybackTrace.instance,
         _engine = engine ??
             (probeRunner != null
@@ -23,7 +26,11 @@ class FreeP2pLiveProbeService {
                 : const LocalFreeP2pProbeEngine()),
         _priority = List.unmodifiable(
           priority ?? SourceProviderService.defaultPriority,
-        );
+        ) {
+    // Evidence an earlier check of this title left behind orders the rows
+    // from the first frame.
+    _checkpoint();
+  }
 
   final Duration? mediaDuration;
 
@@ -62,8 +69,9 @@ class FreeP2pLiveProbeService {
         : null;
   }
 
-  final Map<String, ({DateTime at, LocalTorrentProbeResult result})> _cache =
-      <String, ({DateTime at, LocalTorrentProbeResult result})>{};
+  /// Live-check results by row. Shared with other sessions of the same
+  /// title when a [FreeP2pLiveEvidence] is given.
+  final Map<String, ({DateTime at, LocalTorrentProbeResult result})> _cache;
 
   /// Evidence used for ordering. It is a snapshot of [_cache] taken only at
   /// checkpoints (end of a probe stage or background batch), so rows do not
@@ -75,8 +83,9 @@ class FreeP2pLiveProbeService {
   /// torrent engine; tests inject deterministic results.
   final FreeP2pProbeEngine _engine;
 
-  /// The user's Source Priority. It orders sources inside each live-health
-  /// group and decides which unchecked rows are checked next.
+  /// The user's Source Priority. It orders the My Priority display inside
+  /// each live-health group and decides which unchecked rows are checked
+  /// next; it never decides what plays automatically ([playbackOrder]).
   List<SourceSortCriterion> _priority;
 
   /// How the picker orders rows inside the health groups. Display only:
@@ -522,14 +531,18 @@ class FreeP2pLiveProbeService {
   }
 
   /// The order Normal Play and Quick Play choose from: health groups, then
-  /// the user's Source Priority inside each group. Independent of the picker
+  /// the measured live evidence (first byte, throughput against the file's
+  /// bitrate, live peers, compatibility; quality only breaks ties), then the
+  /// static Free order. The user's Source Priority orders the My Priority
+  /// display only: ranking the largest, highest-quality release first is
+  /// not a safe automatic choice on a P2P stream. Independent of the picker
   /// display mode and of any frozen order; it decides only among sources,
   /// never whether an unconfirmed torrent may auto-play ([quickPlayAllowed]).
   List<SourceResult> playbackOrder(
     Iterable<SourceResult> results,
     SourceProviderService sources,
   ) =>
-      _order(results, sources, _priority);
+      _order(results, sources, null);
 
   /// Free P2P Quick Play source among [candidates]: the first source in
   /// [playbackOrder] (a confirmed-live pin first) that [quickPlayAllowed].
@@ -1107,6 +1120,21 @@ class FreeP2pLiveProbeService {
       return base.first;
     }
 
+    // Fresh evidence from an earlier check of this title already confirms
+    // the pin or a source that is ready now: no new check is needed.
+    _checkpoint();
+    if (pinConfirmedLive()) return pin;
+    if (pin == null) {
+      final known = playbackOrder(base, sources).first;
+      final evidence = _evidenceFor(known);
+      if (known.isMagnet &&
+          evidence != null &&
+          evidence.statusFor(known, mediaDuration: mediaDuration) ==
+              LocalTorrentProbeStatus.readyNow) {
+        return known;
+      }
+    }
+
     final watch = Stopwatch()..start();
     final probed = <String>{};
     final stages = <int>[initialShortlistSize, expansionBatchSize];
@@ -1251,6 +1279,15 @@ class FreeP2pLiveProbeService {
       preferred: preferred,
     );
   }
+}
+
+/// Live-check results one screen keeps across its check sessions, so
+/// reopening the source list or pressing Play again on the same title does
+/// not probe the same torrents again while their evidence is fresh (three
+/// minutes). Re-check clears it. Warm torrent sessions are never shared.
+class FreeP2pLiveEvidence {
+  final Map<String, ({DateTime at, LocalTorrentProbeResult result})> _entries =
+      <String, ({DateTime at, LocalTorrentProbeResult result})>{};
 }
 
 /// Torrent-engine operations behind the Free P2P live check.

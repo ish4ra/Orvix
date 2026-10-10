@@ -30,11 +30,12 @@ void main() {
 
   test('pubspec carries a beta version with a monotonic build number', () {
     expect(match, isNotNull, reason: 'expected X.Y.Z-beta.N+BUILD, got $version');
-    // Every v0.7.9-beta.64 Android APK (universal, ABI and TV) was published
-    // with versionCode 4209. develop once lagged at beta.59+204 because
-    // beta.60-64 were versioned only on their release branches; a build from
-    // that state would have been a downgrade Android refuses to install.
-    expect(int.parse(match!.group(3)!), greaterThan(4209));
+    // Every v0.7.9-beta.65 Android APK (universal, ABI and TV) was published
+    // with versionCode 4210 (beta.64: 4209). develop once lagged at
+    // beta.59+204 because beta.60-64 were versioned only on their release
+    // branches; a build from that state would have been a downgrade Android
+    // refuses to install.
+    expect(int.parse(match!.group(3)!), greaterThan(4210));
   });
 
   test('release trigger and concurrency group match the pubspec version', () {

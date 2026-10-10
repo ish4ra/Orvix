@@ -72,9 +72,9 @@ typedef FreeP2pAttempt = Future<FreeP2pAttemptEnd> Function(
 ///   torrents are never auto-launched, whatever their reported seeders.
 /// - The choice follows [FreeP2pLiveProbeService.playbackOrder]: measured
 ///   health band first (ready now > live > slow, which already weighs
-///   throughput against the file's bitrate need), then the user's Source
-///   Priority, then first byte, throughput and live peers. Display modes
-///   never change it.
+///   throughput against the file's bitrate need), then first byte,
+///   throughput, live peers and compatibility. Neither the Source Priority
+///   nor the display mode changes it.
 /// - At most [maxAttempts] sources per press (the first plus two
 ///   fallbacks). A torrent or file that failed is never tried again in the
 ///   same run.

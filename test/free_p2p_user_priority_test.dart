@@ -857,18 +857,19 @@ void main() {
       expect(await probedIn(SourceDisplayMode.smooth), reference);
     });
 
-    test('Quick Play and Normal Play choose the same source in every mode '
-        'and ignore a frozen order', () async {
+    test('Quick Play and Normal Play each choose the same source in every '
+        'mode and ignore a frozen order', () async {
       final sources = SourceProviderService();
       final results = [dead, unchecked, seeded, fast];
-      final choices = <SourceResult?>{};
+      final quickPlay = <SourceResult?>{};
+      final normalPlay = <SourceResult?>{};
       for (final mode in SourceDisplayMode.values) {
         final probe = await checked(sources);
         probe.setDisplayMode(mode);
         probe.freezeRanking(results, sources);
-        choices.add(probe.quickPlayCandidate(results, sources));
+        quickPlay.add(probe.quickPlayCandidate(results, sources));
 
-        final normalPlay = FreeP2pLiveProbeService(
+        final session = FreeP2pLiveProbeService(
           priority: _seedersFirst,
           engine: _Engine({
             fast.title: _liveAfter(const Duration(milliseconds: 300)),
@@ -876,10 +877,15 @@ void main() {
             dead.title: _stalled,
           }),
         )..setDisplayMode(mode);
-        choices.add(await normalPlay.probeBestCandidate(results, sources));
+        normalPlay.add(await session.probeBestCandidate(results, sources));
       }
-      expect(choices, {seeded},
-          reason: 'one playback order (health, then Source Priority)');
+      // Among checked sources the faster first byte wins over the
+      // Seeders-first priority: automatic choice follows measured evidence.
+      expect(quickPlay, {fast},
+          reason: 'one playback order (health, then measured evidence)');
+      // Normal Play stops at the first READY NOW source of its first batch,
+      // before the 2-seeder row is checked.
+      expect(normalPlay, {seeded});
     });
 
     test('Quick Play never picks an unchecked or failed torrent', () async {
