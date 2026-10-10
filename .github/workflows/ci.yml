@@ -33,7 +33,8 @@ concurrency:
 jobs:
   quality:
     name: Analyze + regressions
-    runs-on: ubuntu-latest
+    # Runner benchmark only; other jobs and prerelease remain unchanged.
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
