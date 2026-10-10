@@ -21,6 +21,8 @@ import '../services/playback_service.dart';
 import '../services/platform_profile.dart';
 import '../services/player_exit_controller.dart';
 import '../services/player_resize_preferences_service.dart';
+import '../services/local_p2p_startup_policy.dart';
+import '../services/local_torrent_service.dart';
 import '../services/subtitle_file_picker.dart';
 import '../services/subtitle_preferences_service.dart';
 import '../services/subtitle_render_policy.dart';
@@ -51,6 +53,7 @@ class PlayerScreen extends StatefulWidget {
     this.onPlaybackStarted,
     this.onStartupFailed,
     this.onStartupFallback,
+    this.onStartupStage,
   });
 
   final PlaybackService playback;
@@ -77,6 +80,11 @@ class PlayerScreen extends StatefulWidget {
   final ValueChanged<String>? onStartupFailed;
   final Future<void> Function(String message)? onStartupFallback;
 
+  /// Privacy-safe startup stages (slow start, transient player errors,
+  /// terminal failure) for the Free P2P playback trace.
+  final void Function(String stage, String result, Map<String, Object?> detail)?
+      onStartupStage;
+
   /// Whether a stream that has not started when the startup watchdog fires
   /// keeps waiting instead of showing a startup failure. True for a local
   /// Free P2P torrent on Android (mobile and TV): a swarm that is still
@@ -86,16 +94,8 @@ class PlayerScreen extends StatefulWidget {
   static bool slowStartKeepsWaiting({
     required bool isAndroid,
     required String url,
-  }) {
-    if (!isAndroid) return false;
-    final uri = Uri.tryParse(url);
-    return uri != null &&
-        (uri.host == '127.0.0.1' || uri.host == 'localhost') &&
-        uri.port == 11470 &&
-        uri.pathSegments.length >= 2 &&
-        RegExp(r'^[0-9a-fA-F]{40}$').hasMatch(uri.pathSegments.first) &&
-        int.tryParse(uri.pathSegments[1]) != null;
-  }
+  }) =>
+      LocalP2pStartupPolicy.appliesTo(isAndroid: isAndroid, url: url);
 
   @override
   State<PlayerScreen> createState() => _PlayerScreenState();
@@ -128,6 +128,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _startupFailureVisible = false;
   // A local P2P torrent is still connecting after the startup watchdog.
   bool _slowStartNotice = false;
+  // Android local Free P2P only: decides when a stream that has not started
+  // is really dead. Elapsed time alone never is.
+  LocalP2pStartupMonitor? _p2pStartup;
   bool _preflightWarmup = false;
   bool _exitPrepared = false;
   // One logical exit: _preparePlayerExitInternal runs once and the route pops
@@ -980,10 +983,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (_closing || _preflightWarmup) return;
     final firstStart = !_playbackStarted;
     _startupTimer?.cancel();
+    _p2pStartup?.stop();
 
     if (mounted) {
       setState(() {
         _playbackStarted = true;
+        _slowStartNotice = false;
         if (_startupFailureVisible) {
           _startupFailureVisible = false;
           _error = null;
@@ -1570,6 +1575,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _slowStartNotice = false;
       _mobileEncodedLetterboxDetected = false;
       _startupTimer?.cancel();
+      _p2pStartup?.stop();
+      _p2pStartup = null;
       if (mounted && _error != null) {
         setState(() => _error = null);
       }
@@ -1739,20 +1746,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       if (_hasPlaybackActivity()) {
         _markPlaybackStarted();
+      } else if (_localP2pStartupApplies) {
+        // Android local Free P2P: no startup deadline. The monitor shows a
+        // calm "still connecting" note after 30 s and ends the attempt only
+        // when MPV gave up on the stream or the torrent engine stopped
+        // answering. Back leaves at any time.
+        _localP2pStartup().begin();
       } else {
         _startupTimer = Timer(const Duration(seconds: 30), () {
           if (!mounted || _closing) return;
           if (_hasPlaybackActivity()) {
             _markPlaybackStarted();
-            return;
-          }
-          if (PlayerScreen.slowStartKeepsWaiting(
-            isAndroid: Platform.isAndroid,
-            url: widget.url,
-          )) {
-            // Keep the torrent and the player: say it is slow, without a
-            // failure card. Back still leaves at any time.
-            setState(() => _slowStartNotice = true);
             return;
           }
           const message =
@@ -1790,6 +1794,55 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  bool get _localP2pStartupApplies => PlayerScreen.slowStartKeepsWaiting(
+        isAndroid: Platform.isAndroid,
+        url: widget.url,
+      );
+
+  LocalP2pStartupMonitor _localP2pStartup() {
+    final existing = _p2pStartup;
+    if (existing != null && existing.active) return existing;
+    final monitor = LocalP2pStartupMonitor(
+      playerGaveUp: _mpvGaveUpOnStream,
+      engineAnswering: LocalTorrentService.instance.engineAnswering,
+      started: () => _closing || _hasPlaybackActivity(),
+      onSlow: () {
+        if (mounted && !_closing) setState(() => _slowStartNotice = true);
+      },
+      onTerminal: (reason) {
+        if (!mounted || _closing || _hasPlaybackActivity()) return;
+        final switchingEngine = _reportStartupFailure(reason);
+        if (!switchingEngine && mounted) {
+          setState(() {
+            _slowStartNotice = false;
+            _startupFailureVisible = true;
+            _error = reason;
+          });
+        }
+      },
+      onStage: widget.onStartupStage,
+    );
+    _p2pStartup = monitor;
+    monitor.begin();
+    return monitor;
+  }
+
+  /// MPV returns to idle once it stops loading a file it could not open or
+  /// play. While a slow torrent is still being read it stays busy.
+  Future<bool> _mpvGaveUpOnStream() async {
+    final platform = widget.playback.player.platform;
+    if (platform is! mk.NativePlayer) return false;
+    try {
+      final idle = await platform.getProperty(
+        'idle-active',
+        waitForInitialization: false,
+      );
+      return idle == 'yes';
+    } catch (_) {
+      return false;
+    }
+  }
+
   void _onPlaybackError(String message) {
     if (_closing ||
         _preflightWarmup ||
@@ -1797,6 +1850,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
         !mounted ||
         message.trim().isEmpty ||
         _hasPlaybackActivity()) {
+      return;
+    }
+    if (_localP2pStartupApplies) {
+      // media_kit forwards every error-level mpv log line (for example a
+      // tcp read timeout while the torrent is still waiting for pieces).
+      // Such a line is not a failure while MPV keeps loading the stream.
+      _localP2pStartup().playerError(message);
       return;
     }
     final detail = 'Playback engine: ${message.trim()}';
@@ -3469,6 +3529,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _saveTimer?.cancel();
     _nextTimer?.cancel();
     _startupTimer?.cancel();
+    _p2pStartup?.stop();
     _nativeSubtitleClockTimer?.cancel();
     _liveCueClearTimer?.cancel();
     _liveCueGeneration++;
@@ -5618,6 +5679,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _saveTimer?.cancel();
     _nextTimer?.cancel();
     _startupTimer?.cancel();
+    _p2pStartup?.stop();
     _nativeSubtitleClockTimer?.cancel();
     _liveCueClearTimer?.cancel();
     _liveCueGeneration++;

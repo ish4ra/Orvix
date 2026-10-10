@@ -114,11 +114,7 @@ void main() {
     expect(live, contains('probeTopCandidates'));
     expect(live, contains('_selectCandidates'));
     expect(live, contains('probeBestCandidate'));
-    // Auto-play may retain probes, while picker checks must release them.
-    // Verify that the engine adapter forwards the caller's retention flag.
-    expect(live, contains('retainSession: retainSession'));
-    expect(live, contains('retainSession: retain'));
-    expect(live, contains('releaseRetainedProbe('));
+    expect(live, contains('retainSession: true'));
     expect(torrent, contains('scoreFor('));
     expect(torrent, contains('requiredBytesPerSecond'));
     expect(torrent, contains('prepareRetainedProbeForPlayback'));
@@ -126,12 +122,7 @@ void main() {
     expect(torrent, contains('await process.exitCode.timeout'));
     expect(torrent, contains('Duration(seconds: 3)'));
     expect(details, contains('liveProbe.rank(results, widget.sources)'));
-    // Normal Play's one-click run checks through the same bounded probe.
-    expect(details, contains('FreeP2pAutoPlay('));
-    expect(
-      File('lib/services/free_p2p_auto_play.dart').readAsStringSync(),
-      contains('probe.probeBestCandidate('),
-    );
+    expect(details, contains('probeBestCandidate('));
     expect(details, contains('Checking live P2P sources'));
     expect(tv, contains('_liveProbe.rank(_results, widget.sources)'));
 

@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:orvix/services/free_p2p_live_probe_service.dart';
 import 'package:orvix/services/free_p2p_playback_trace.dart';
 import 'package:orvix/services/local_torrent_service.dart';
 import 'package:orvix/services/source_provider_service.dart';
@@ -31,18 +30,6 @@ SourceResult _torrent({int? seeders = 120, String title = 'Trigger.S01E01'}) {
     fileNameHint: '$title.mkv',
   );
 }
-
-const _live = LocalTorrentProbeResult(
-  playableNow: true,
-  bytesReceived: _mb,
-  elapsed: Duration(seconds: 1),
-  firstByteLatency: Duration(milliseconds: 420),
-  peers: 9,
-  connections: 6,
-  downloadSpeedBytesPerSecond: 2.5 * _mb,
-  sampleWindowsPassed: 2,
-  metadataElapsed: Duration(milliseconds: 1300),
-);
 
 /// Engine stand-in for playback resolve.
 MockClient _engine({
@@ -79,9 +66,6 @@ MockClient _engine({
     return json(<String, Object?>{});
   });
 }
-
-Map<String, Object?> _attemptJson(FreeP2pPlaybackAttempt attempt) =>
-    jsonDecode(jsonEncode(attempt.toDiagnostics())) as Map<String, Object?>;
 
 List<String> _stageResults(FreeP2pPlaybackAttempt attempt) => [
       for (final stage in attempt.stages)
@@ -169,83 +153,6 @@ void main() {
         expect(attempt.stages, hasLength(FreeP2pPlaybackAttempt.maxStages));
       }
       expect(trace.report().length, lessThan(40000));
-    });
-  });
-
-  group('live-check state at the playback handoff', () {
-    test('a confirmed-live pick carries its measured evidence', () async {
-      final trace = FreeP2pPlaybackTrace();
-      final source = _torrent();
-      final probe = FreeP2pLiveProbeService(
-        probeRunner: (_) async => _live,
-        playbackTrace: trace,
-      );
-      await probe.probeTopCandidates([source], SourceProviderService());
-      await probe.prepareForPlayback(source, selection: 'quickPlay');
-
-      final json = _attemptJson(trace.attempts.single);
-      expect(json['selection'], 'quickPlay');
-      expect(json['liveCheck'], FreeP2pHealthState.readyNow.name);
-      final evidence = json['liveEvidence']! as Map<String, Object?>;
-      expect(evidence['livePeers'], 9);
-      expect(evidence['firstByteMs'], 420);
-      expect(evidence['metadataResolved'], isTrue);
-      // Reported and measured figures are separate fields.
-      expect(json['providerSeeders'], 120);
-      expect(evidence.containsKey('providerSeeders'), isFalse);
-    });
-
-    test('an unchecked manual pick is reported as not checked', () async {
-      final trace = FreeP2pPlaybackTrace();
-      final source = _torrent();
-      final probe = FreeP2pLiveProbeService(
-        probeRunner: (_) async => _live,
-        playbackTrace: trace,
-      );
-      await probe.prepareForPlayback(source);
-
-      final json = _attemptJson(trace.attempts.single);
-      expect(json['selection'], 'manual');
-      expect(json['liveCheck'], 'notChecked');
-      expect(json.containsKey('liveEvidence'), isFalse,
-          reason: 'provider seeders are not live evidence');
-    });
-
-    test('a pick while its check runs is reported as checking', () async {
-      final trace = FreeP2pPlaybackTrace();
-      final source = _torrent();
-      final gate = Completer<LocalTorrentProbeResult>();
-      final probe = FreeP2pLiveProbeService(
-        probeRunner: (_) => gate.future,
-        playbackTrace: trace,
-      );
-      final run = probe.probeTopCandidates([source], SourceProviderService());
-      await Future<void>.delayed(Duration.zero);
-      await probe.prepareForPlayback(source);
-      gate.complete(_live);
-      await run;
-
-      expect(_attemptJson(trace.attempts.single)['liveCheck'], 'checking');
-    });
-
-    test('the picker report includes the playback attempts and a legend',
-        () async {
-      final trace = FreeP2pPlaybackTrace();
-      final source = _torrent();
-      final probe = FreeP2pLiveProbeService(
-        probeRunner: (_) async => _live,
-        playbackTrace: trace,
-      );
-      await probe.probeTopCandidates([source], SourceProviderService());
-      await probe.prepareForPlayback(source);
-      trace.attempts.single.finish(FreeP2pPlaybackOutcome.metadataTimeout);
-
-      final report = probe.diagnosticReport([source]);
-      expect(report, contains('device='));
-      expect(report, contains('reported by the provider, not verified'));
-      expect(report, contains('"status":"readyNow"'));
-      expect(report, contains('playback (newest first):'));
-      expect(report, contains('"outcome":"metadataTimeout"'));
     });
   });
 

@@ -808,9 +808,6 @@ void main() {
       _expectFocus(tester, find.byKey(const ValueKey('tv-details-play')),
           'Play is focused');
       await _key(tester, LogicalKeyboardKey.arrowRight);
-      _expectFocus(tester, find.byKey(const ValueKey('tv-details-sources')),
-          'the manual source browser is next to Play');
-      await _key(tester, LogicalKeyboardKey.arrowRight);
       _expectFocus(
           tester, find.byKey(const ValueKey('tv-details-library')), 'Library');
       await _key(tester, LogicalKeyboardKey.arrowRight);

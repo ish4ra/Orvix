@@ -59,7 +59,8 @@ void main() {
       player,
       contains('if (!await _exit.leave(PlayerExitIntent.startupFallback)) return;'),
     );
-    expect(exo, contains('await controller.dispose();'));
+    // The native ExoPlayer is released (and awaited) before the route pops.
+    expect(exo, contains('await controller.close();'));
     expect(exo, contains('ReadingOrderTraversalPolicy'));
     expect(
       exo,
@@ -112,7 +113,7 @@ void main() {
     // closes before player push, then reopens from cached results when the
     // player returns. This avoids rendering the player underneath the sheet.
     expect(details, contains('FreeP2pLiveProbeService? probeSession'));
-    expect(details, contains('final session = probeSession ??'));
+    expect(details, contains('final probeSession = autoProbeSession ??'));
     expect(details, contains('FreeP2pLiveProbeService('));
     expect(details, contains('parseMediaRuntime(item.runtime)'));
     // The loop lives in runSourcePlaybackLoop so Back during pre-player

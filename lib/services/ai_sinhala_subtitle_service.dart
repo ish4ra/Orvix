@@ -3567,6 +3567,11 @@ class AiSinhalaSubtitleService {
     return _TranslationResponse(status: response.statusCode, data: data);
   }
 
+  /// Parses SRT, WebVTT or ASS/SSA text into timed cues. Shared with the
+  /// ExoPlayer screen for external and OpenSubtitles files.
+  static List<AiSubtitleCue> parseSubtitleText(String input) =>
+      _parseSubtitle(input);
+
   // Regression-test hook for subtitle container formats. Keeping parsing in
   // the production service lets tests exercise the exact ASS/SRT/VTT path
   // used by embedded source subtitles.
