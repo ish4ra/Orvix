@@ -2956,6 +2956,13 @@ class DetailsScreenState extends State<DetailsScreen> {
               : ordered;
           final limitHiddenCount = totalAfterFilter - sorted.length;
           final best = sorted.isEmpty ? null : sorted.first;
+          // Quick Play must not depend on display order or pin promotion.
+          // A different visible sort cannot bypass the live-evidence gate.
+          final quickPlaySource = liveCheckAllowed
+              ? liveProbe.rank(results, widget.sources)
+                  .where(liveProbe.quickPlayAllowed)
+                  .firstOrNull
+              : best;
           final color = Theme.of(context).colorScheme;
           // Torrents that failed the live check sit together at the bottom
           // under one label. They stay selectable for a manual choice.
@@ -3027,7 +3034,7 @@ class DetailsScreenState extends State<DetailsScreen> {
             // choice, including an unconfirmed pin.
             final pinned = widget.sources.matchesPinned(source, pinnedIdentity);
             final waitingForProbe =
-                freeStreamingRanking && !liveProbe.quickPlayAllowed(source);
+                liveCheckAllowed && !liveProbe.quickPlayAllowed(source);
             final checking = freeStreamingRanking && liveProbe.isRunning;
             return FilledButton.tonalIcon(
               onPressed: waitingForProbe
@@ -3188,7 +3195,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                           ),
                           if (best != null) ...[
                             const SizedBox(width: 10),
-                            Flexible(child: quickPlayButton(best)),
+                            Flexible(child: quickPlayButton(quickPlaySource ?? best)),
                           ],
                         ],
                       ),
@@ -3196,7 +3203,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                       const SizedBox(height: 10),
                       Align(
                         alignment: Alignment.centerRight,
-                        child: quickPlayButton(best),
+                        child: quickPlayButton(quickPlaySource ?? best),
                       ),
                     ],
                     const SizedBox(height: 12),
