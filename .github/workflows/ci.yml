@@ -59,7 +59,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile             tools/configure_android_build.py             tools/configure_android_mobile_compat.py             tools/configure_android_mobile_media_kit.py             tools/configure_android_signing.py             tools/generate_desktop_branding.py             tools/configure_ios_build.py             tools/ios_ipa_checks.py             tools/ios_macho.py             tools/ios_profiles.py             tools/ios_signing.py             tools/update_altstore_source.py             tools/verify_android_apk.py
+          python3 -m py_compile             tools/configure_android_build.py             tools/configure_android_mobile_compat.py             tools/configure_android_mobile_media_kit.py             tools/configure_android_signing.py             tools/generate_desktop_branding.py             tools/configure_ios_build.py             tools/ios_ipa_checks.py             tools/ios_macho.py             tools/ios_profiles.py             tools/ios_signing.py             tools/update_altstore_source.py             tools/verify_android_apk.py             tools/check_android_update_path.py
           bash -n tools/publish_orvix_release.sh
           bash -n tools/prepare_android_native.sh
           bash -n tools/ios_ipa_common.sh
