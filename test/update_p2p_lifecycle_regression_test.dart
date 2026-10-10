@@ -114,7 +114,11 @@ void main() {
     expect(live, contains('probeTopCandidates'));
     expect(live, contains('_selectCandidates'));
     expect(live, contains('probeBestCandidate'));
-    expect(live, contains('retainSession: true'));
+    // Auto-play may retain probes, while picker checks must release them.
+    // Verify that the engine adapter forwards the caller's retention flag.
+    expect(live, contains('retainSession: retainSession'));
+    expect(live, contains('retainSession: retain'));
+    expect(live, contains('releaseRetainedProbe('));
     expect(torrent, contains('scoreFor('));
     expect(torrent, contains('requiredBytesPerSecond'));
     expect(torrent, contains('prepareRetainedProbeForPlayback'));
