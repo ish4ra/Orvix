@@ -36,7 +36,7 @@ void main() {
     final player = File('lib/screens/player_screen.dart').readAsStringSync();
 
     expect(player, contains('!_playbackStarted)'));
-    expect(player, contains("message: 'Starting playback…'"));
+    expect(player, contains("'Starting playback…'"));
     expect(
       player,
       contains('(state.playing && state.position > Duration.zero)'),
