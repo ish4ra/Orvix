@@ -261,6 +261,12 @@ void main() {
       expect(tester.widget<FilledButton>(quickPlay).onPressed, isNull,
           reason: 'Quick Play needs a confirmed-live torrent, pin or not');
       expect(find.widgetWithText(FilledButton, 'Play pinned'), findsNothing);
+      // Changing display order must not disable the Free P2P safety gate.
+      await tester.tap(find.widgetWithText(FilterChip, 'Free P2P'));
+      await settle(tester);
+      final afterToggle = find.widgetWithText(FilledButton, 'Checking live…');
+      expect(afterToggle, findsOneWidget);
+      expect(tester.widget<FilledButton>(afterToggle).onPressed, isNull);
       // The pinned row itself stays selectable for a manual choice.
       expect(find.textContaining(_release), findsWidgets);
 
