@@ -464,7 +464,11 @@ void main() {
       );
       expect(player, contains('if (_closing || _playbackStarted || _failureReported) return false;'));
       expect(player, contains('if (_closing ||\n        _preflightWarmup ||\n        _aiSubtitleLoading'));
-      expect(player, contains('if (!mounted || _closing) return;\n          if (_hasPlaybackActivity())'));
+      // Timeout still guards non-P2P streams, but local Android torrents
+      // must not fail merely for taking longer than 30 seconds.
+      expect(player, contains('if (!waitingForLocalP2p) {'));
+      expect(player, contains('if (!mounted || _closing) return;'));
+      expect(player, contains('if (_hasPlaybackActivity())'));
       expect(player, contains('if (!_exitPrepared && !_exit.teardownStarted) {'));
     });
   });
