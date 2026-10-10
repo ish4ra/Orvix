@@ -145,7 +145,10 @@ void main() {
         detail: 'engine error for magnet:?xt=urn:btih:$_hash&tr=udp://x',
       );
       final report = trace.report();
-      expect(report, contains('"hash8":"c0ffee12"'));
+      // An opaque per-report label, never any part of the info hash.
+      expect(report, contains('"torrent":"T1"'));
+      expect(report, isNot(contains('c0ffee12')));
+      expect(report, isNot(contains('hash8')));
       expect(report, isNot(contains(_hash)));
       expect(report, isNot(contains('magnet:?')));
       expect(report, isNot(contains('tracker.private.example')));

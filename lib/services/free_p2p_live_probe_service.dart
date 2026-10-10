@@ -111,6 +111,14 @@ class FreeP2pLiveProbeService {
   final Set<String> _active = <String>{};
   List<String>? _frozenOrder;
 
+  /// Torrents ([_sessionKey]) whose playback failed before any file was
+  /// served (metadata, engine rejection, transport): every row of them is
+  /// excluded from automatic playback in this session.
+  final Set<String> _failedTorrents = <String>{};
+
+  /// Rows ([_key]) whose stream opened but whose player never started.
+  final Set<String> _failedFiles = <String>{};
+
   static const Duration _evidenceTtl = Duration(minutes: 3);
 
   /// First bounded batch: the rows the user's Source Priority puts first,
@@ -163,6 +171,70 @@ class FreeP2pLiveProbeService {
     return source.resource;
   }
 
+  /// Records that playback of [source] did not start. With
+  /// [wholeTorrent] (the torrent itself failed: metadata, engine rejection,
+  /// transport) every row of the same torrent is excluded; otherwise only
+  /// rows that may route to the same file. Automatic playback (Normal Play,
+  /// fallback, Quick Play) never picks an excluded row again in this
+  /// session; it stays manually selectable and reads START FAILED.
+  void markStartFailed(SourceResult source, {required bool wholeTorrent}) {
+    if (wholeTorrent && source.isMagnet) {
+      _failedTorrents.add(_sessionKey(source));
+    } else {
+      _failedFiles.add(_key(source));
+    }
+    _checkpoint();
+  }
+
+  /// Whether playback of [source], or of a row that is effectively the same
+  /// torrent file, already failed to start in this session.
+  bool isStartFailed(SourceResult source) =>
+      _startFailedKey(_key(source));
+
+  bool _startFailedKey(String key) {
+    if (_failedFiles.contains(key)) return true;
+    if (!key.startsWith('bt:')) return false;
+    final split = key.indexOf('|');
+    if (split < 0) return false;
+    final session = key.substring(0, split);
+    if (_failedTorrents.contains(session)) return true;
+    // A row without explicit file routing lets the engine guess the file,
+    // so it cannot be told apart from a failed file of the same torrent
+    // (and the other way round).
+    final auto = '$session|auto';
+    if (key == auto) {
+      return _failedFiles.any((failed) => failed.startsWith('$session|'));
+    }
+    return _failedFiles.contains(auto);
+  }
+
+  /// Whether a start failure of [a] would also exclude [b]: the same row,
+  /// the same torrent file from another provider, or a row of the same
+  /// torrent whose file the engine has to guess.
+  bool sameStartTarget(SourceResult a, SourceResult b) {
+    final keyA = _key(a);
+    final keyB = _key(b);
+    if (keyA == keyB) return true;
+    if (!a.isMagnet || !b.isMagnet) return false;
+    if (_sessionKey(a) != _sessionKey(b)) return false;
+    return keyA.endsWith('|auto') || keyB.endsWith('|auto');
+  }
+
+  /// Evidence a start-failed row ranks with: below every live row, with the
+  /// other failures. Its probe result stays visible in its metrics.
+  static const LocalTorrentProbeResult _startFailedEvidence =
+      LocalTorrentProbeResult(
+    playableNow: false,
+    bytesReceived: 0,
+    elapsed: Duration.zero,
+    firstByteLatency: null,
+    peers: 0,
+    connections: 0,
+    downloadSpeedBytesPerSecond: 0,
+    sampleWindowsPassed: 0,
+    outcome: LocalTorrentProbeStatus.createError,
+  );
+
   List<SourceSortCriterion> get priority => _priority;
 
   /// Applies a changed Source Priority. A frozen order is dropped, so an open
@@ -196,8 +268,11 @@ class FreeP2pLiveProbeService {
 
   bool get hasAnyResult => _cache.values.any((entry) => _fresh(entry.at));
 
-  bool get hasPlayableResult => _cache.values.any(
-        (entry) => _fresh(entry.at) && entry.result.confirmedLive,
+  bool get hasPlayableResult => _cache.entries.any(
+        (entry) =>
+            _fresh(entry.value.at) &&
+            entry.value.result.confirmedLive &&
+            !_startFailedKey(entry.key),
       );
 
   /// Probing finished, produced results, and none of them proved playable.
@@ -219,6 +294,7 @@ class FreeP2pLiveProbeService {
   }
 
   LocalTorrentProbeResult? _evidenceFor(SourceResult source) {
+    if (isStartFailed(source)) return _startFailedEvidence;
     final entry = _rankEvidence[_key(source)];
     if (entry == null || !_fresh(entry.at)) return null;
     return entry.result;
@@ -235,6 +311,9 @@ class FreeP2pLiveProbeService {
   /// probed right now.
   FreeP2pHealth? healthFor(SourceResult source) {
     if (!source.isMagnet) return null;
+    if (isStartFailed(source)) {
+      return FreeP2pHealth.startFailed(resultFor(source));
+    }
     final result = resultFor(source);
     if (result == null) {
       return _pending.contains(_key(source))
@@ -329,7 +408,61 @@ class FreeP2pLiveProbeService {
   /// or a torrent confirmed live by this session's probe. Pins get no
   /// exception; an unconfirmed pinned torrent stays manually selectable.
   bool quickPlayAllowed(SourceResult source) =>
-      !source.isMagnet || healthFor(source)?.isLive == true;
+      !isStartFailed(source) &&
+      (!source.isMagnet || healthFor(source)?.isLive == true);
+
+  /// Torrents of [results] confirmed live right now, counted once per row
+  /// identity and never counting a start-failed row.
+  int confirmedLiveCount(Iterable<SourceResult> results) {
+    final keys = <String>{};
+    for (final source in results) {
+      if (source.isMagnet && quickPlayAllowed(source)) keys.add(_key(source));
+    }
+    return keys.length;
+  }
+
+  /// Whether every torrent of [results] checked so far failed only because
+  /// the local engine did not start (and at least one was checked).
+  bool engineLooksDown(Iterable<SourceResult> results) {
+    var checked = 0;
+    for (final source in results) {
+      if (!source.isMagnet) continue;
+      final result = resultFor(source);
+      if (result == null) continue;
+      if (result.status != LocalTorrentProbeStatus.engineUnavailable) {
+        return false;
+      }
+      checked++;
+    }
+    return checked > 0;
+  }
+
+  /// Torrent rows of [results] with fresh live-check evidence.
+  int classifiedCount(Iterable<SourceResult> results) => _freshCount(results);
+
+  /// Why an automatic choice picked [chosen] from [results]: its live
+  /// health, how many verified alternatives existed and what decided the
+  /// order. Provider seeders are reported as such, never as evidence.
+  Map<String, Object?> choiceSummary(
+    SourceResult chosen,
+    Iterable<SourceResult> results, {
+    bool pinned = false,
+  }) {
+    final health = healthFor(chosen);
+    return <String, Object?>{
+      'health': chosen.isMagnet ? health?.state.name : 'directHttp',
+      'confirmedLive': confirmedLiveCount(results),
+      'startFailedExcluded': results
+          .where((source) => isStartFailed(source))
+          .map(_key)
+          .toSet()
+          .length,
+      'pinned': pinned,
+      'orderedBy': chosen.isMagnet
+          ? 'liveHealth>sourcePriority>firstByte>throughput>livePeers'
+          : 'directHttpFirst',
+    };
+  }
 
   /// Counts for a concise live-check summary line.
   FreeP2pCheckSummary summary(Iterable<SourceResult> results) {
@@ -669,10 +802,10 @@ class FreeP2pLiveProbeService {
     SourceResult source,
     LocalTorrentProbeResult result,
   ) {
-    final hash = _btih.firstMatch(source.resource)?.group(1)?.toLowerCase();
+    final torrent = _playbackTrace.torrentLabel(source);
     return <String, Object?>{
       'provider': source.provider,
-      if (hash != null && hash.length >= 8) 'hash8': hash.substring(0, 8),
+      if (torrent != null) 'torrent': torrent,
       if (source.quality != null) 'quality': source.quality,
       if (source.sizeBytes != null) 'sizeMb': source.sizeBytes! ~/ (1024 * 1024),
       if (source.seeders != null) 'providerSeeders': source.seeders,
@@ -1049,18 +1182,20 @@ class FreeP2pLiveProbeService {
   /// other warm probe session is detached. [selection] says how it was
   /// chosen (normalPlay, quickPlay or manual) for the playback report, which
   /// also records the live-check state the source had at this moment.
-  Future<void> prepareForPlayback(
+  Future<FreeP2pPlaybackAttempt> prepareForPlayback(
     SourceResult source, {
     String selection = 'manual',
+    Map<String, Object?>? choice,
   }) async {
     _closed = true;
     _continueInBackground = false;
     _handoffSession = _sessionKey(source);
     final cached = source.isMagnet ? _cache[_key(source)] : null;
     final fresh = cached != null && _fresh(cached.at);
-    _playbackTrace.begin(
+    final attempt = _playbackTrace.begin(
       source,
       selection: selection,
+      choice: choice,
       liveCheck: source.isMagnet
           ? displayHealthFor(source)!.state.name
           : 'directHttp',
@@ -1075,6 +1210,7 @@ class FreeP2pLiveProbeService {
           : null,
     );
     await _engine.prepareForPlayback(source);
+    return attempt;
   }
 
   /// Stops the check (no further batch starts) and detaches every warm probe
@@ -1191,6 +1327,9 @@ enum FreeP2pHealthState {
   stalled,
   engineError,
   sourceError,
+
+  /// Confirmed live by the check, but playback of it did not start.
+  startFailed,
 }
 
 class FreeP2pHealth {
@@ -1201,6 +1340,15 @@ class FreeP2pHealth {
 
   static const notChecked =
       FreeP2pHealth._(FreeP2pHealthState.notChecked, 'NOT CHECKED');
+
+  /// Playback of this source did not start in this session. Keeps the probe
+  /// result, so the row still shows what the live check measured.
+  factory FreeP2pHealth.startFailed(LocalTorrentProbeResult? result) =>
+      FreeP2pHealth._(
+        FreeP2pHealthState.startFailed,
+        'START FAILED',
+        result: result,
+      );
 
   factory FreeP2pHealth.fromResult(
     LocalTorrentProbeResult result,
@@ -1256,6 +1404,8 @@ class FreeP2pHealth {
         final peers = r.discoveredPeers ?? r.peers;
         return 'no metadata in ${seconds}s'
             '${peers > 0 ? ' • $peers peers seen' : ''}';
+      case FreeP2pHealthState.startFailed:
+        return 'playback did not start • still selectable';
       case FreeP2pHealthState.stalled:
         return r.peers > 0 || r.connections > 0
             ? '${r.peers > r.connections ? r.peers : r.connections} peers, no usable data'

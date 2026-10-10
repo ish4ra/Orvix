@@ -52,15 +52,27 @@ class FreeP2pPlaybackAttempt {
     required this.selection,
     required this.liveCheck,
     required this.liveEvidence,
+    required this.choice,
+    required String? torrentLabel,
     required DateTime Function() clock,
   })  : _clock = clock,
+        _torrentLabel = torrentLabel,
         _startedAt = clock();
 
   final int id;
   final SourceResult _source;
 
-  /// How the source was chosen: normalPlay, quickPlay, manual or other.
+  /// Opaque per-report torrent name (T1, T2, …). Rows and attempts of the
+  /// same torrent share it, without revealing the info hash.
+  final String? _torrentLabel;
+
+  /// How the source was chosen: oneClick, fallback, normalPlay, quickPlay,
+  /// manual or other.
   final String selection;
+
+  /// Why an automatic choice picked this source, from the live evidence the
+  /// choice was based on. Null for a manual choice.
+  final Map<String, Object?>? choice;
 
   /// Live-check state of the source when it was chosen (for example live,
   /// notChecked, checking, stalled), or directHttp.
@@ -120,6 +132,16 @@ class FreeP2pPlaybackAttempt {
     debugPrint('[orvix-p2p] ${jsonEncode({'attempt': id, ...entry})}');
   }
 
+  /// The player reported a start after it had reported a startup failure
+  /// (MPV keeps trying after its startup timeout): the attempt did play.
+  void markRecovered() {
+    if (_outcome != FreeP2pPlaybackOutcome.playerFailure) return;
+    stage('playerStart', 'recovered');
+    _outcome = FreeP2pPlaybackOutcome.playing;
+    _endedMs = elapsedMs;
+    _endedAt = _clock();
+  }
+
   /// Ends the attempt. Only the first outcome counts, so a later generic
   /// error cannot overwrite the stage that actually failed.
   void finish(FreeP2pPlaybackOutcome outcome, {String? detail}) {
@@ -138,18 +160,12 @@ class FreeP2pPlaybackAttempt {
 
   Map<String, Object?> toDiagnostics() {
     final source = _source;
-    final hash = source.isMagnet
-        ? RegExp(r'xt=urn:btih:([a-z0-9]+)', caseSensitive: false)
-            .firstMatch(source.resource)
-            ?.group(1)
-            ?.toLowerCase()
-        : null;
     final host = source.isMagnet ? null : Uri.tryParse(source.resource)?.host;
     return <String, Object?>{
       'attempt': id,
       'sourceType': source.isMagnet ? 'torrent' : 'directHttp',
       'provider': _safeText(source.provider),
-      if (hash != null && hash.length >= 8) 'hash8': hash.substring(0, 8),
+      if (_torrentLabel != null) 'torrent': _torrentLabel,
       if (host != null && host.isNotEmpty) 'host': host,
       if (source.quality != null) 'quality': source.quality,
       if (source.releaseQuality != null) 'release': source.releaseQuality,
@@ -162,6 +178,7 @@ class FreeP2pPlaybackAttempt {
       if (source.seeders != null) 'providerSeeders': source.seeders,
       if (source.peers != null) 'providerPeers': source.peers,
       'selection': selection,
+      if (choice != null) 'choice': choice,
       'liveCheck': liveCheck,
       if (liveEvidence != null) 'liveEvidence': liveEvidence,
       'stages': _stages,
@@ -193,10 +210,47 @@ class FreeP2pPlaybackTrace {
   static final FreeP2pPlaybackTrace instance = FreeP2pPlaybackTrace();
 
   static const int maxAttempts = 5;
+  static const int maxRuns = 3;
+  static const int maxTorrentLabels = 64;
 
   final DateTime Function() _clock;
   final List<FreeP2pPlaybackAttempt> _attempts = <FreeP2pPlaybackAttempt>[];
+  final List<FreeP2pAutoPlayRun> _runs = <FreeP2pAutoPlayRun>[];
+  final Map<String, String> _torrentLabels = <String, String>{};
   int _nextId = 1;
+  int _nextRunId = 1;
+  int _nextTorrent = 1;
+
+  static final RegExp _btih =
+      RegExp(r'xt=urn:btih:([a-z0-9]+)', caseSensitive: false);
+
+  /// Opaque label for [source]'s torrent (T1, T2, …), stable while this
+  /// trace lives, so a report can show that two rows or attempts share a
+  /// torrent without revealing its info hash. Null for direct HTTP.
+  String? torrentLabel(SourceResult source) {
+    if (!source.isMagnet) return null;
+    final hash = _btih.firstMatch(source.resource)?.group(1)?.toLowerCase();
+    if (hash == null || hash.isEmpty) return null;
+    final known = _torrentLabels[hash];
+    if (known != null) return known;
+    if (_torrentLabels.length >= maxTorrentLabels) {
+      _torrentLabels.remove(_torrentLabels.keys.first);
+    }
+    return _torrentLabels[hash] = 'T${_nextTorrent++}';
+  }
+
+  /// Newest first.
+  List<FreeP2pAutoPlayRun> get runs => List.unmodifiable(_runs.reversed);
+
+  /// Starts recording one press of Play in Free P2P mode.
+  FreeP2pAutoPlayRun beginRun() {
+    final run = FreeP2pAutoPlayRun._(_nextRunId++, _clock);
+    _runs.add(run);
+    while (_runs.length > maxRuns) {
+      _runs.removeAt(0);
+    }
+    return run;
+  }
 
   /// Newest first.
   List<FreeP2pPlaybackAttempt> get attempts =>
@@ -208,6 +262,7 @@ class FreeP2pPlaybackTrace {
     String selection = 'other',
     String? liveCheck,
     Map<String, Object?>? liveEvidence,
+    Map<String, Object?>? choice,
   }) {
     final attempt = FreeP2pPlaybackAttempt._(
       _nextId++,
@@ -215,6 +270,8 @@ class FreeP2pPlaybackTrace {
       selection: selection,
       liveCheck: liveCheck ?? (source.isMagnet ? 'notChecked' : 'directHttp'),
       liveEvidence: liveEvidence,
+      choice: choice,
+      torrentLabel: torrentLabel(source),
       clock: _clock,
     );
     _attempts.add(attempt);
@@ -232,6 +289,14 @@ class FreeP2pPlaybackTrace {
     return null;
   }
 
+  /// The newest attempt for [source], ended or not.
+  FreeP2pPlaybackAttempt? latest(SourceResult source) {
+    for (final attempt in _attempts.reversed) {
+      if (attempt.isFor(source)) return attempt;
+    }
+    return null;
+  }
+
   /// The attempt the picker or Normal Play just began for [source], or a new
   /// one when the source reached playback without that handoff (for example
   /// a pinned-release shortcut). An attempt that already recorded stages
@@ -244,15 +309,25 @@ class FreeP2pPlaybackTrace {
 
   void clear() {
     _attempts.clear();
+    _runs.clear();
+    _torrentLabels.clear();
+    _nextTorrent = 1;
   }
 
-  /// Report lines for the recent attempts, newest first.
+  /// Report lines for the recent one-click runs and attempts, newest first.
   List<String> reportLines() {
-    if (_attempts.isEmpty) return const <String>['playback: no attempt yet'];
     return <String>[
-      'playback (newest first):',
-      for (final attempt in _attempts.reversed)
-        jsonEncode(attempt.toDiagnostics()),
+      if (_runs.isNotEmpty) ...[
+        'one-click play (newest first):',
+        for (final run in _runs.reversed) jsonEncode(run.toDiagnostics()),
+      ],
+      if (_attempts.isEmpty)
+        'playback: no attempt yet'
+      else ...[
+        'playback (newest first):',
+        for (final attempt in _attempts.reversed)
+          jsonEncode(attempt.toDiagnostics()),
+      ],
     ];
   }
 
@@ -272,4 +347,94 @@ class FreeP2pPlaybackTrace {
             : Platform.operatingSystem;
     return 'device=$surface';
   }
+}
+
+/// One press of Play in Free P2P mode: the live check that chose the first
+/// source, every automatic attempt and fallback, and how the run ended.
+class FreeP2pAutoPlayRun {
+  FreeP2pAutoPlayRun._(this.id, this._clock) : _startedAt = _clock();
+
+  final int id;
+  final DateTime Function() _clock;
+  final DateTime _startedAt;
+  final List<Map<String, Object?>> _steps = <Map<String, Object?>>[];
+  String _result = 'inProgress';
+  String? _detail;
+  int? _totalMs;
+
+  static const int maxSteps = 12;
+
+  String get result => _result;
+
+  int get elapsedMs => _clock().difference(_startedAt).inMilliseconds;
+
+  List<Map<String, Object?>> get steps => List.unmodifiable(_steps);
+
+  /// A bounded live check that ran to find candidates.
+  void probeRound(
+    String purpose, {
+    required int classified,
+    required int confirmedLive,
+    required Duration took,
+  }) =>
+      _add(<String, Object?>{
+        'step': 'liveCheck',
+        'purpose': purpose,
+        'classified': classified,
+        'confirmedLive': confirmedLive,
+        'ms': took.inMilliseconds,
+      });
+
+  /// An automatic attempt started for [attempt]'s source.
+  void attemptStarted(FreeP2pPlaybackAttempt attempt, {required int number}) =>
+      _add(<String, Object?>{
+        'step': number == 1 ? 'firstAttempt' : 'fallbackAttempt',
+        'number': number,
+        'attempt': attempt.id,
+      });
+
+  /// How an automatic attempt ended, as the fallback decision saw it.
+  void attemptEnded(
+    FreeP2pPlaybackAttempt? attempt, {
+    required int number,
+    required String end,
+    required Duration took,
+  }) =>
+      _add(<String, Object?>{
+        'step': 'attemptEnded',
+        'number': number,
+        if (attempt != null) 'attempt': attempt.id,
+        'end': end,
+        'ms': took.inMilliseconds,
+      });
+
+  void _add(Map<String, Object?> step) {
+    if (_steps.length >= maxSteps) return;
+    final entry = <String, Object?>{...step, 'atMs': elapsedMs};
+    _steps.add(entry);
+    debugPrint('[orvix-p2p] ${jsonEncode({'run': id, ...entry})}');
+  }
+
+  /// Ends the run: started, stoppedByUser, noVerifiedSource, exhausted or
+  /// engineFailure. Only the first result counts.
+  void finish(String result, {String? detail}) {
+    if (_result != 'inProgress') return;
+    _result = result;
+    _detail = detail;
+    _totalMs = elapsedMs;
+    debugPrint('[orvix-p2p] ${jsonEncode({
+          'run': id,
+          'result': result,
+          if (detail != null) 'detail': detail,
+          'totalMs': _totalMs,
+        })}');
+  }
+
+  Map<String, Object?> toDiagnostics() => <String, Object?>{
+        'run': id,
+        'steps': _steps,
+        'result': _result,
+        if (_detail != null) 'detail': _detail,
+        'totalMs': _totalMs ?? elapsedMs,
+      };
 }

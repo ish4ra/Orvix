@@ -631,11 +631,11 @@ void main() {
     expect(tv, contains('_liveProbe.rank(_results, widget.sources)'));
     // Normal Play hands its evidence to the picker instead of releasing it,
     // and TV receives the same session.
-    expect(details, contains('final probeSession = autoProbeSession ??'));
+    expect(details, contains('final session = probeSession ??'));
     expect(details, contains('probeSession: probeSession,'));
     // One cloud/debrid eligibility check drives Normal Play, the picker,
     // Android TV and playback.
-    expect(details, contains('if (autoUsePinned && !hasCloudConnection && chosen == null)'));
+    expect(details, contains('if (autoUsePinned && !hasCloudConnection) {'));
     expect(details, contains('final liveCheckAllowed = !hasCloudConnection;'));
     expect(details, isNot(contains('hasDebridConnection')));
     expect(details, contains('Future<bool> _hasCloudConnection() async'));
@@ -650,8 +650,10 @@ void main() {
     );
     // Pinned torrents go through the live check; Quick Play has no pin bypass.
     expect(details, contains('preferred: pinnedResult,'));
-    // Without a cloud path, only a direct HTTP pin skips the live check.
-    expect(details, contains('(hasCloudConnection || !pinnedResult.isMagnet)'));
+    // A cloud path plays its pin directly; without one, the pin goes through
+    // the one-click live check (a direct HTTP pin is returned at once by
+    // probeBestCandidate, covered by its own tests).
+    expect(details, contains('final chosen = pinnedResult;'));
     expect(details, contains('liveProbe.quickPlayAllowed(source)'));
     expect(details, isNot(contains('health.state == FreeP2pHealthState.checking')));
   });

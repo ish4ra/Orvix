@@ -35,6 +35,9 @@ class _SessionEngine {
   /// itself keeps answering.
   bool createTransportError = false;
 
+  /// Torrents whose `/create` the engine rejects (HTTP 500).
+  final rejected = <String>{};
+
   final removed = <String>[];
   final _destroyed = <String>{};
 
@@ -53,6 +56,9 @@ class _SessionEngine {
           .firstMatch(payload['from'] as String)!
           .group(1)!;
       _destroyed.remove(hash);
+      if (rejected.contains(hash)) {
+        return _json(<String, Object?>{'error': 'rejected'}, status: 500);
+      }
       await Future<void>.delayed(createDelay);
       if (!alive) throw http.ClientException('Connection reset', request.url);
       if (_destroyed.contains(hash)) {
@@ -221,6 +227,83 @@ void main() {
       await withEngine(engine, () async {
         expect((await _probe(_torrent('d'))).confirmedLive, isFalse);
         expect(engine.removed, ['d' * 40]);
+      });
+    });
+  });
+
+  group('playback attempts never leave torrents behind', () {
+    test('a failed playback resolve detaches its torrent', () async {
+      final engine = _SessionEngine()..rejected.add('a' * 40);
+      await withEngine(engine, () async {
+        await expectLater(
+          service.resolve(_torrent('a')),
+          throwsA(isA<LocalTorrentException>()),
+        );
+        expect(engine.removed, ['a' * 40],
+            reason: 'an abandoned attempt must not keep connecting to peers');
+      });
+    });
+
+    test('a failed resolve keeps a torrent a live probe kept warm', () async {
+      final engine = _SessionEngine();
+      final source = _torrent('b');
+      await withEngine(engine, () async {
+        expect((await _probe(source)).confirmedLive, isTrue);
+        engine.rejected.add('b' * 40);
+        await expectLater(
+          service.resolve(source),
+          throwsA(isA<LocalTorrentException>()),
+        );
+        expect(engine.removed, isEmpty);
+      });
+    });
+
+    test('a failed resolve keeps a torrent another probe is still sampling',
+        () async {
+      final engine =
+          _SessionEngine(readDelay: const Duration(milliseconds: 200));
+      final source = _torrent('c');
+      await withEngine(engine, () async {
+        final probe = _probe(source, retain: false);
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        engine.rejected.add('c' * 40);
+        await expectLater(
+          service.resolve(source),
+          throwsA(isA<LocalTorrentException>()),
+        );
+        expect(engine.removed, isEmpty,
+            reason: 'the probe still needs the session');
+        await probe;
+        // The probe was the last user: now it is detached once.
+        expect(engine.removed, ['c' * 40]);
+      });
+    });
+
+    test(
+        'a player exit never detaches the torrent a newer resolve is '
+        'creating', () async {
+      final engine =
+          _SessionEngine(createDelay: const Duration(milliseconds: 200));
+      final old = _torrent('d');
+      await withEngine(engine, () async {
+        await service.resolve(old);
+        engine.removed.clear();
+        // The next fallback source is the same torrent (another file): its
+        // resolve starts while the previous player's exit cleanup runs.
+        final next = service.resolve(_torrent('d', fileIndex: 3));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        await service.releaseCurrentStream();
+        expect(engine.removed, isEmpty);
+        expect(await next, contains('d' * 40));
+      });
+    });
+
+    test('a player exit detaches the torrent it played', () async {
+      final engine = _SessionEngine();
+      await withEngine(engine, () async {
+        await service.resolve(_torrent('e'));
+        await service.releaseCurrentStream();
+        expect(engine.removed, ['e' * 40]);
       });
     });
   });

@@ -559,6 +559,7 @@ class TvLandscapeCard extends StatelessWidget {
     this.preferred = false,
     this.enabled = true,
     this.onFocusChange,
+    this.onLongPress,
   });
 
   final String? imageUrl;
@@ -577,6 +578,9 @@ class TvLandscapeCard extends StatelessWidget {
   final bool enabled;
   final ValueChanged<bool>? onFocusChange;
 
+  /// Called when OK is held (or on a pointer long press).
+  final VoidCallback? onLongPress;
+
   static double heightFor(double width) => width * 9 / 16;
 
   @override
@@ -590,6 +594,7 @@ class TvLandscapeCard extends StatelessWidget {
       preferred: preferred,
       enabled: enabled,
       onPressed: onPressed,
+      onLongPress: onLongPress,
       onFocusChange: onFocusChange,
       semanticLabel: title,
       builder: (context, focused) => AnimatedScale(

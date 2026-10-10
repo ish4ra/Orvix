@@ -324,8 +324,11 @@ void main() {
     final tv =
         File('lib/screens/tv_source_browser_screen.dart').readAsStringSync();
 
-    // Normal Play and the mobile picker name how the source was chosen.
-    expect(details, contains("selection: 'normalPlay'"));
+    // One-click play and the mobile picker name how the source was chosen.
+    expect(
+      File('lib/services/free_p2p_auto_play.dart').readAsStringSync(),
+      contains("selection: number == 1 ? 'oneClick' : 'fallback'"),
+    );
     expect(details, contains("selectedVia = 'quickPlay';"));
     expect(
         details,
@@ -339,7 +342,7 @@ void main() {
     // Only the Free P2P branches trace; a cloud/debrid route never does and
     // never resolves through the local torrent engine.
     final play = details.substring(
-      details.indexOf('Future<void> _playSourceResult('),
+      details.indexOf('Future<FreeP2pPlaybackAttempt?> _playSourceResult('),
       details.indexOf('EpisodeItem? _episodeForPinnedRelease('),
     );
     final cloud = play

@@ -476,7 +476,7 @@ class LocalTorrentService {
   /// Torrents a playback [resolve] is creating right now. The engine keeps one
   /// session per info hash, so a probe or cleanup that detached one of these
   /// would destroy the torrent playback is still waiting for.
-  final Set<String> _resolvingInfoHashes = <String>{};
+  final Map<String, int> _resolvingInfoHashes = <String, int>{};
 
   /// Probes in flight per info hash. Two rows of the same torrent (another
   /// provider or file routing) share one engine session; only the last probe
@@ -484,7 +484,8 @@ class LocalTorrentService {
   final Map<String, int> _probesInFlight = <String, int>{};
 
   bool _playbackOwns(String infoHash) =>
-      infoHash == _currentInfoHash || _resolvingInfoHashes.contains(infoHash);
+      infoHash == _currentInfoHash ||
+      (_resolvingInfoHashes[infoHash] ?? 0) > 0;
 
   bool _sessionInUse(String infoHash) =>
       _playbackOwns(infoHash) || (_probesInFlight[infoHash] ?? 0) > 0;
@@ -509,17 +510,33 @@ class LocalTorrentService {
       );
     }
 
-    _resolvingInfoHashes.add(infoHash);
+    _resolvingInfoHashes[infoHash] = (_resolvingInfoHashes[infoHash] ?? 0) + 1;
+    var resolved = false;
     try {
-      return await _resolveTorrent(
+      final url = await _resolveTorrent(
         source,
         infoHash,
         onProgress: onProgress,
         warmForPlayback: warmForPlayback,
         trace: trace,
       );
+      resolved = true;
+      return url;
     } finally {
-      _resolvingInfoHashes.remove(infoHash);
+      final remaining = (_resolvingInfoHashes[infoHash] ?? 1) - 1;
+      if (remaining > 0) {
+        _resolvingInfoHashes[infoHash] = remaining;
+      } else {
+        _resolvingInfoHashes.remove(infoHash);
+      }
+      // A failed resolve leaves its torrent connecting to peers in the
+      // engine. Detach it, unless playback, another resolve, a probe or a
+      // warm probe session still uses it.
+      if (!resolved &&
+          !_sessionInUse(infoHash) &&
+          !_retainedProbeInfoHashes.contains(infoHash)) {
+        await _removeEngine(infoHash);
+      }
     }
   }
 
@@ -1757,7 +1774,8 @@ class LocalTorrentService {
   Future<void> releaseCurrentStream() async {
     final activeInfoHash = _currentInfoHash;
     _currentInfoHash = null;
-    if (activeInfoHash != null) {
+    // Never detach a torrent that a newer resolve or a probe is using.
+    if (activeInfoHash != null && !_sessionInUse(activeInfoHash)) {
       await _removeEngine(activeInfoHash);
     }
   }
