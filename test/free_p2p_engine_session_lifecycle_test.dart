@@ -231,6 +231,131 @@ void main() {
     });
   });
 
+  group('every detach path respects torrent-level ownership', () {
+    tearDown(() => service.probeHandoffWindow = const Duration(seconds: 25));
+
+    test(
+        'a cancelled preparation never detaches a torrent a probe is still '
+        'sampling', () async {
+      // Back cancelled the preparation of A; its resolve finishes late while
+      // the reopened source list (or a new Play) is already probing A.
+      final engine =
+          _SessionEngine(readDelay: const Duration(milliseconds: 200));
+      final source = _torrent('a');
+      await withEngine(engine, () async {
+        await service.resolve(source);
+        final probe = _probe(_torrent('a', fileIndex: 2), retain: false);
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+
+        await service.releaseAbandonedStream(source);
+        expect(engine.removed, isEmpty,
+            reason: 'the probe still uses this torrent session');
+
+        final result = await probe;
+        expect(result.confirmedLive, isTrue,
+            reason: 'the session was not destroyed under the probe');
+        // The probe was the last user: detached exactly once.
+        expect(engine.removed, ['a' * 40]);
+      });
+    });
+
+    test('a cancelled preparation keeps a torrent a live probe kept warm',
+        () async {
+      final engine = _SessionEngine();
+      final source = _torrent('b');
+      await withEngine(engine, () async {
+        await service.resolve(source);
+        expect(
+            (await _probe(_torrent('b', fileIndex: 2))).confirmedLive, isTrue);
+
+        await service.releaseAbandonedStream(source);
+        expect(engine.removed, isEmpty);
+
+        await service.releaseRetainedProbeSessions();
+        expect(engine.removed, ['b' * 40]);
+      });
+    });
+
+    test('a cancelled preparation still detaches its own unused torrent',
+        () async {
+      final engine = _SessionEngine();
+      final source = _torrent('c');
+      await withEngine(engine, () async {
+        await service.resolve(source);
+        await service.releaseAbandonedStream(source);
+        expect(engine.removed, ['c' * 40]);
+      });
+    });
+
+    test(
+        'the handoff timeout never detaches a torrent a probe is still '
+        'sampling', () async {
+      service.probeHandoffWindow = const Duration(milliseconds: 150);
+      final engine =
+          _SessionEngine(readDelay: const Duration(milliseconds: 500));
+      final handedOff = _torrent('d');
+      await withEngine(engine, () async {
+        expect((await _probe(handedOff)).confirmedLive, isTrue);
+        await service.prepareRetainedProbeForPlayback(handedOff);
+        // Playback never resolved it (for example its attempt failed), and
+        // the reopened list probes another file of the same torrent across
+        // the handoff timeout.
+        final sibling = _probe(_torrent('d', fileIndex: 3), retain: false);
+        // After the timeout fired, while the probe is still reading.
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        expect(engine.removed, isEmpty,
+            reason: 'the timeout fired while the probe used the session');
+
+        expect((await sibling).confirmedLive, isTrue);
+        expect(engine.removed, ['d' * 40],
+            reason: 'detached once, by its last user');
+      });
+    });
+
+    test('the handoff timeout still detaches an unused warm session', () async {
+      service.probeHandoffWindow = const Duration(milliseconds: 100);
+      final engine = _SessionEngine();
+      final handedOff = _torrent('e');
+      await withEngine(engine, () async {
+        expect((await _probe(handedOff)).confirmedLive, isTrue);
+        await service.prepareRetainedProbeForPlayback(handedOff);
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        expect(engine.removed, ['e' * 40]);
+      });
+    });
+
+    test(
+        'starting another stream never detaches the previous torrent while '
+        'a probe still samples it', () async {
+      // The previous stream stayed current (its player never opened), and
+      // the source list is probing another file of it when the user picks a
+      // different torrent.
+      final engine =
+          _SessionEngine(readDelay: const Duration(milliseconds: 200));
+      await withEngine(engine, () async {
+        await service.resolve(_torrent('f'));
+        final probe = _probe(_torrent('f', fileIndex: 4), retain: false);
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+
+        await service.resolve(_torrent('9'));
+        expect(engine.removed, isNot(contains('f' * 40)));
+
+        expect((await probe).confirmedLive, isTrue);
+        expect(engine.removed, ['f' * 40]);
+      });
+    });
+
+    test('starting another stream still detaches the unused previous one',
+        () async {
+      final engine = _SessionEngine();
+      await withEngine(engine, () async {
+        await service.resolve(_torrent('7'));
+        await service.resolve(_torrent('8'));
+        expect(engine.removed, ['7' * 40]);
+      });
+    });
+  });
+
   group('playback attempts never leave torrents behind', () {
     test('a failed playback resolve detaches its torrent', () async {
       final engine = _SessionEngine()..rejected.add('a' * 40);

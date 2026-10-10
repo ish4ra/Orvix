@@ -490,6 +490,17 @@ class LocalTorrentService {
   bool _sessionInUse(String infoHash) =>
       _playbackOwns(infoHash) || (_probesInFlight[infoHash] ?? 0) > 0;
 
+  /// Detaches [infoHash] from the engine unless playback, a resolve, a probe
+  /// or a warm probe session still uses it. Whichever of them finishes last
+  /// detaches it then, so nothing leaks.
+  Future<void> _removeEngineIfUnused(String infoHash) async {
+    if (_sessionInUse(infoHash) ||
+        _retainedProbeInfoHashes.contains(infoHash)) {
+      return;
+    }
+    await _removeEngine(infoHash);
+  }
+
   Future<String> resolve(
     SourceResult source, {
     void Function(String message)? onProgress,
@@ -586,8 +597,8 @@ class LocalTorrentService {
     // accumulate stale torrent sessions in the native server.
     final previousInfoHash = _currentInfoHash;
     if (previousInfoHash != null && previousInfoHash != infoHash) {
-      await _removeEngine(previousInfoHash);
       _currentInfoHash = null;
+      await _removeEngineIfUnused(previousInfoHash);
     }
 
     http.Response response;
@@ -1480,6 +1491,11 @@ class LocalTorrentService {
     });
   }
 
+  /// How long a warm probe session handed to playback waits for resolve()
+  /// before it is detached. Tests shorten it.
+  @visibleForTesting
+  Duration probeHandoffWindow = const Duration(seconds: 25);
+
   Future<void> prepareRetainedProbeForPlayback(SourceResult source) async {
     final selectedHash =
         source.isMagnet ? _extractInfoHash(source.resource) : null;
@@ -1495,11 +1511,11 @@ class LocalTorrentService {
       // Give the caller a short handoff window to call resolve(), which turns
       // this warm probe into the active playback torrent.
       _probeCleanupTimer?.cancel();
-      _probeCleanupTimer = Timer(const Duration(seconds: 25), () {
-        if (!_playbackOwns(selectedHash)) {
-          _retainedProbeInfoHashes.remove(selectedHash);
-          unawaited(_removeEngine(selectedHash));
-        }
+      _probeCleanupTimer = Timer(probeHandoffWindow, () {
+        if (_playbackOwns(selectedHash)) return;
+        _retainedProbeInfoHashes.remove(selectedHash);
+        // A probe of another row of this torrent may still be sampling it.
+        unawaited(_removeEngineIfUnused(selectedHash));
       });
     }
   }
@@ -1789,7 +1805,9 @@ class LocalTorrentService {
     final infoHash = _extractInfoHash(source.resource);
     if (infoHash == null) return;
     if (_currentInfoHash == infoHash) _currentInfoHash = null;
-    await _removeEngine(infoHash);
+    // The reopened source list or a new Play may already be probing, keeping
+    // warm or resolving the same torrent.
+    await _removeEngineIfUnused(infoHash);
   }
 
   /// Whether two magnet sources point at the same torrent.
