@@ -4770,7 +4770,10 @@ class DetailsScreenState extends State<DetailsScreen> {
                     _recordSourceStartupFailure(source, url, message),
                   );
                 },
-          onStartupFallback: !fallbackToExo
+          // Keep the originally selected local torrent/player; do not
+          // automatically switch to ExoPlayer while it gathers peers.
+          onStartupFallback: !fallbackToExo ||
+                  (Platform.isAndroid && localP2p)
               ? null
               : (message) async {
                   if (!mounted) return;
@@ -4802,7 +4805,8 @@ class DetailsScreenState extends State<DetailsScreen> {
     // Only detach after the MPV route and native video surface are fully gone.
     // Android TV may still need the same P2P URL for its Exo fallback, so that
     // handoff path deliberately keeps the torrent attached.
-    if ((localP2p || releaseLocalP2pOnExit) && !fallbackToExo) {
+    if ((localP2p || releaseLocalP2pOnExit) &&
+        (!fallbackToExo || (Platform.isAndroid && localP2p))) {
       await Future<void>.delayed(const Duration(milliseconds: 120));
       await LocalTorrentService.instance.releaseCurrentStream();
     }
