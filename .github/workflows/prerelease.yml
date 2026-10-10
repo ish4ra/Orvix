@@ -569,13 +569,19 @@ jobs:
               cat "docs/release-notes/v$V.md"
               echo
             fi
-            echo "### Android downloads"
+            echo "### Which Android file should I download?"
             echo
-            echo "- **Android phones and tablets:** Orvix-v$V-Android-Mobile.apk (universal)."
+            echo "- **Android phones and tablets:** \`Orvix-v$V-Android-Mobile.apk\` (recommended, universal APK)."
             echo "- **Android TV:** Orvix-v$V-Android-TV.apk."
             echo "- Smaller arm64-v8a / armeabi-v7a / x86_64 Mobile APKs are also supplied."
             echo
             echo "This release only updates Android Mobile and Android TV."
+            echo
+            echo "### Windows signing information"
+            echo "Older Orvix Windows releases are **not code signed**. This Android-only release contains no Windows downloads."
+            echo
+            echo "- [Code signing policy](https://github.com/$GITHUB_REPOSITORY/blob/v$V/CODE_SIGNING_POLICY.md)"
+            echo "- [Privacy policy](https://github.com/$GITHUB_REPOSITORY/blob/v$V/PRIVACY.md)"
           } > /tmp/notes.md
           chmod +x tools/publish_orvix_release.sh
           tools/publish_orvix_release.sh \
