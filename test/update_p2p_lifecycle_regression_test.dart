@@ -126,7 +126,12 @@ void main() {
     expect(torrent, contains('await process.exitCode.timeout'));
     expect(torrent, contains('Duration(seconds: 3)'));
     expect(details, contains('liveProbe.rank(results, widget.sources)'));
-    expect(details, contains('probeBestCandidate('));
+    // Normal Play's one-click run checks through the same bounded probe.
+    expect(details, contains('FreeP2pAutoPlay('));
+    expect(
+      File('lib/services/free_p2p_auto_play.dart').readAsStringSync(),
+      contains('probe.probeBestCandidate('),
+    );
     expect(details, contains('Checking live P2P sources'));
     expect(tv, contains('_liveProbe.rank(_results, widget.sources)'));
 

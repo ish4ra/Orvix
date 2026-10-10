@@ -144,6 +144,9 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
       return;
     }
     _liveProbeStarted = true;
+    // A new check owns new probes and warm sessions, so leaving the browser
+    // must release them again even after an earlier source was played.
+    _probeHandedToPlayback = false;
     unawaited(
       _liveProbe
           .probeTopCandidates(
@@ -669,6 +672,13 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
                   icon: Icons.radar_rounded,
                   onPressed: _recheckLive,
                 ),
+                const SizedBox(width: 8),
+                _TvFilterChip(
+                  selected: false,
+                  label: 'Live report',
+                  icon: Icons.assignment_rounded,
+                  onPressed: () => unawaited(_showLiveReport()),
+                ),
               ],
             ],
           ),
@@ -717,6 +727,46 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
                   : 'Did not deliver usable media in the live check.'),
       recommended: health.isLive,
       warning: !health.isLive && !checking,
+    );
+  }
+
+  /// Shows the same live-check and playback report the mobile picker copies,
+  /// so a TV failure can be read off the screen or copied.
+  Future<void> _showLiveReport() async {
+    final report = _liveProbe.diagnosticReport(_results);
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF121613),
+        title: const Text('Live check and playback report'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 900, maxHeight: 520),
+          child: SingleChildScrollView(
+            child: SelectableText(
+              report,
+              style: const TextStyle(
+                color: Color(0xFFC7CEC8),
+                fontFamily: 'monospace',
+                fontSize: 12,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => unawaited(
+              Clipboard.setData(ClipboardData(text: report)),
+            ),
+            child: const Text('Copy'),
+          ),
+          FilledButton(
+            autofocus: true,
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
     );
   }
 
