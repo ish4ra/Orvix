@@ -34,6 +34,7 @@ Future<void> _openCloudPlayer(
   final engine = PlayerEngineRouter.choose(
     preference: preference,
     isAndroid: Platform.isAndroid,
+    isAndroidTv: PlatformProfile.isAndroidTv,
     url: url,
     releaseHint: title,
     aiSinhalaEnabled: aiSinhala,
@@ -45,17 +46,13 @@ Future<void> _openCloudPlayer(
         builder: (_) => AndroidExoPlayerScreen(
           url: url,
           title: title,
-          autoFallbackToMpv:
-              preference == PlayerEnginePreference.auto,
         ),
       ),
     );
     if (!context.mounted) return;
 
-    final shouldFallback = result?.switchToMpv == true ||
-        (preference == PlayerEnginePreference.auto &&
-            result?.failed == true);
-    if (!shouldFallback) return;
+    // MPV opens only when the user chose it from the ExoPlayer screen.
+    if (result?.switchToMpv != true) return;
   }
 
   if (!context.mounted) return;

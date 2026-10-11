@@ -171,14 +171,29 @@ class _Player {
   final removedBeforeLaunch = <bool>[];
   DebugPlayerLaunch? last;
 
+  /// Engines that were opened, in order ('mpv' or 'exo').
+  final engines = <String>[];
+
   Future<void> call(DebugPlayerLaunch launch) async {
     final hash = Uri.parse(launch.url).pathSegments.first;
     launched.add(hash);
     urls.add(launch.url);
+    engines.add('mpv');
     removedBeforeLaunch.add(engine.removed.contains(hash));
     last = launch;
     if (startPlayback) launch.onPlaybackStarted?.call();
     if (closing != null) await closing!.future;
+  }
+
+  /// Stands in for the ExoPlayer route (Android TV Auto).
+  Future<AndroidExoPlayerResult?> exo(String url) async {
+    final hash = Uri.parse(url).pathSegments.first;
+    launched.add(hash);
+    urls.add(url);
+    engines.add('exo');
+    removedBeforeLaunch.add(engine.removed.contains(hash));
+    if (closing != null) await closing!.future;
+    return AndroidExoPlayerResult(started: startPlayback);
   }
 }
 
@@ -574,6 +589,7 @@ void main() {
       final engine = _Engine();
       final player = _Player(engine);
       DetailsScreenState.debugPlayerLauncher = player.call;
+      DetailsScreenState.debugExoLauncher = player.exo;
       await withEngine(tester, engine, () async {
         await tester.pumpWidget(details(
           sources: SourceProviderService(client: _provider([_first, _second])),
@@ -586,8 +602,32 @@ void main() {
         await settle(tester, frames: 40);
 
         expect(player.launched, hasLength(1));
+        expect(player.engines, ['exo'],
+            reason: 'Android TV Auto plays in ExoPlayer');
         expect(engine.totalCreates, 1);
         expect(player.removedBeforeLaunch, [false]);
+      });
+    });
+
+    testWidgets('a saved MPV choice on TV still plays in MPV', (tester) async {
+      androidTv(tester);
+      final engine = _Engine();
+      final player = _Player(engine);
+      DetailsScreenState.debugPlayerLauncher = player.call;
+      DetailsScreenState.debugExoLauncher = player.exo;
+      await PlayerEnginePreferencesService.set(PlayerEnginePreference.mpv);
+      await withEngine(tester, engine, () async {
+        await tester.pumpWidget(details(
+          sources: SourceProviderService(client: _provider([_first, _second])),
+        ));
+        await settle(tester);
+        await tester.sendKeyEvent(LogicalKeyboardKey.select);
+        await settle(tester, frames: 30);
+        await tester.sendKeyEvent(LogicalKeyboardKey.select);
+        await settle(tester, frames: 40);
+
+        expect(player.engines, ['mpv']);
+        expect(engine.totalCreates, 1);
       });
     });
 
@@ -651,6 +691,7 @@ void main() {
       final closing = Completer<void>();
       final player = _Player(engine, closing: closing);
       DetailsScreenState.debugPlayerLauncher = player.call;
+      DetailsScreenState.debugExoLauncher = player.exo;
       await withEngine(tester, engine, () async {
         await tester.pumpWidget(details(
           sources: SourceProviderService(client: _provider([_first, _second])),
