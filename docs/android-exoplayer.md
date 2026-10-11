@@ -13,8 +13,10 @@ moving Android Mobile to ExoPlayer.
 | Android Mobile | MPV (temporary) | ExoPlayer, MPV |
 | Windows, macOS, iOS | MPV (unchanged) | — |
 
-- AI Sinhala always uses MPV, whatever the choice (its progressive native-cue
-  pipeline lives in the MPV player).
+- With AI Sinhala on, Free P2P playback uses MPV whatever the choice (the
+  progressive native-cue pipeline lives in the MPV player). AI Sinhala does
+  not run on cloud/debrid sources played from a title page, so those follow
+  the normal engine choice (ExoPlayer under TV Auto).
 - Android TV and Android Mobile store their choices separately
   (`orvix_player_engine_android_tv_v2`, `orvix_player_engine_android_mobile_v2`).
   A choice saved by v0.7.9 or earlier (`orvix_player_engine_v1`) is still
@@ -100,7 +102,7 @@ Neither contains URLs, request headers, info hashes, magnets or tokens.
 | TTML, CEA-608/708 | Yes | Text |
 | PGS, VobSub (DVD), DVB | Yes | Shown as images at the file's position; text style does not apply |
 | External SRT, WebVTT, ASS/SSA files, OpenSubtitles | Yes | Parsed and timed in Dart; ASS as text |
-| AI Sinhala | MPV only | Routing keeps AI Sinhala on MPV |
+| AI Sinhala | MPV only | Free P2P with AI Sinhala on is routed to MPV |
 
 Style settings (all applied to the rendered subtitles, saved between
 sessions): size, font (Default, Sans serif, Serif, Monospace, Condensed,

@@ -263,7 +263,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                   const Text(
-                    'Auto: ExoPlayer on Android TV, with embedded, external and OpenSubtitles subtitles and full subtitle styling. AI Sinhala uses MPV automatically. If ExoPlayer cannot play a stream, its error screen offers MPV. MPV stays available here.',
+                    'Auto: ExoPlayer on Android TV, with embedded, external and OpenSubtitles subtitles and full subtitle styling. With AI Sinhala on, Free P2P plays in MPV automatically. If ExoPlayer cannot play a stream, its error screen offers MPV. MPV stays available here.',
                     style: TvText.caption,
                   ),
                 ]),
@@ -446,7 +446,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const SizedBox(height: 12),
                     const Text(
-                      'Auto: MPV on Android phones and tablets for now, and ExoPlayer on Android TV. Choose ExoPlayer to try it on this device; its error screen offers MPV if a stream will not play. AI Sinhala always uses MPV.',
+                      'Auto: MPV on Android phones and tablets for now, and ExoPlayer on Android TV. Choose ExoPlayer to try it on this device; its error screen offers MPV if a stream will not play. With AI Sinhala on, Free P2P plays in MPV.',
                       style: TextStyle(
                         color: Color(0xFF9CA99E),
                         fontSize: 12.5,

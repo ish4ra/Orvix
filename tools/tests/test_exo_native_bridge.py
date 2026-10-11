@@ -77,9 +77,9 @@ class ExoNativeBridgeContractTest(unittest.TestCase):
             "println(",
         ):
             self.assertNotIn(forbidden, KOTLIN, forbidden)
-        # Exceptions are reported by class name, never by message, except the
-        # Media3 PlaybackException message, which Dart redacts.
-        self.assertNotIn("error.message ?: \"\"", KOTLIN)
+        # Exceptions are reported by class name and error code, never by
+        # message: Media3 messages can carry request details.
+        self.assertNotIn("error.message", KOTLIN)
         self.assertIn("error::class.java.simpleName", KOTLIN)
 
     def test_analytics_listener_exists_before_the_player_is_built(self):

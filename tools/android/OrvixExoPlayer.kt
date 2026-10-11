@@ -635,7 +635,9 @@ private class OrvixExoSession(
                 "event" to "error",
                 "code" to error.errorCodeName,
                 "codeNumber" to error.errorCode,
-                "message" to (error.message ?: error.errorCodeName),
+                // Media3's message can carry request details; only the code
+                // name crosses to Dart.
+                "message" to error.errorCodeName,
                 "cause" to causes.joinToString(" > "),
                 "causes" to causes,
                 "httpStatus" to httpStatus,
