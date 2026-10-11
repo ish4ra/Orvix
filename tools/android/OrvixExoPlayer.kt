@@ -230,9 +230,14 @@ private class TransferStats : TransferListener {
 
     override fun onTransferEnd(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
 
-    private fun header(headers: Map<String?, List<String>?>, name: String): String? {
-        for ((key, values) in headers) {
-            if (key != null && key.equals(name, ignoreCase = true)) return values?.firstOrNull()
+    private fun header(headers: Map<String, List<String>>, name: String): String? {
+        for (entry in headers.entries) {
+            // HttpURLConnection reports the status line under a null key.
+            val key: String? = entry.key
+            if (key != null && key.equals(name, ignoreCase = true)) {
+                val values: List<String>? = entry.value
+                return values?.firstOrNull()
+            }
         }
         return null
     }
