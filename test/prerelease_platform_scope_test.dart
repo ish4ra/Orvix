@@ -25,28 +25,22 @@ void main() {
   final version = RegExp(r'^version: (\S+)$', multiLine: true)
       .firstMatch(pubspec)!
       .group(1)!;
-  final match =
-      RegExp(r'^(\d+\.\d+\.\d+-beta\.(\d+))\+(\d+)$').firstMatch(version);
+  final match = RegExp(r'^(\\d+\\.\\d+\\.\\d+)(?:-beta\\.(\\d+))?\\+(\\d+)$')
+      .firstMatch(version);
 
-  test('pubspec carries a beta version with a monotonic build number', () {
-    expect(match, isNotNull, reason: 'expected X.Y.Z-beta.N+BUILD, got $version');
-    // Every v0.7.9-beta.65 Android APK (universal, ABI and TV) was published
-    // with versionCode 4210 (beta.64: 4209). develop once lagged at
-    // beta.59+204 because beta.60-64 were versioned only on their release
-    // branches; a build from that state would have been a downgrade Android
-    // refuses to install.
-    expect(int.parse(match!.group(3)!), greaterThan(4210));
+  test('pubspec has a version and higher Android build number', () {
+    expect(match, isNotNull,
+        reason: 'expected X.Y.Z[beta]+BUILD, got $version');
+    expect(int.parse(match!.group(3)!), greaterThan(4222));
   });
 
-  test('release trigger and concurrency group match the pubspec version', () {
-    final beta = match!.group(2)!;
-    final trigger = RegExp(r"^      - 'release/(all|android)-v([^']+)'$",
-            multiLine: true)
-        .allMatches(prerelease)
-        .toList();
-    expect(trigger, hasLength(1), reason: 'exactly one release branch trigger');
-    expect(trigger.single.group(2), match.group(1));
-    expect(prerelease, contains('  group: orvix-prerelease-beta$beta\n'));
+  test('stable branch trigger matches release and public channel', () {
+    expect(prerelease, contains("'release/stable-v0.7.9'"));
+    expect(prerelease, contains('  group: orvix-release-079\\n'));
+    expect(prerelease, contains("release/stable-v0.7.9:0.7.9)"));
+    expect(prerelease, contains("!startsWith(github.ref_name, 'release/stable-v')"));
+    expect(match!.group(1), '0.7.9');
+    expect(match.group(2), isNull, reason: 'public v0.7.9 is not beta');
   });
 
   test('manual runs infer the platforms or choose all / Android only', () {
