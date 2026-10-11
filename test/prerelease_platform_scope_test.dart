@@ -31,7 +31,8 @@ void main() {
   test('pubspec has a version and higher Android build number', () {
     expect(match, isNotNull,
         reason: 'expected X.Y.Z[beta]+BUILD, got $version');
-    expect(int.parse(match!.group(3)!), greaterThan(4222));
+    expect(int.parse(match!.group(3)!), greaterThan(4223),
+        reason: 'above public v0.7.9 (4223) so it installs as an update');
   });
 
   test('stable branch trigger matches release and public channel', () {
@@ -39,8 +40,15 @@ void main() {
     expect(prerelease, contains('  group: orvix-release-079\n'));
     expect(prerelease, contains("release/stable-v0.7.9:0.7.9)"));
     expect(prerelease, contains("!startsWith(github.ref_name, 'release/stable-v')"));
-    expect(match!.group(1), '0.7.9');
-    expect(match.group(2), isNull, reason: 'public v0.7.9 is not beta');
+  });
+
+  test('develop carries the v0.7.10 beta, a prerelease above public v0.7.9',
+      () {
+    expect(match!.group(1), '0.7.10');
+    expect(match.group(2), isNotNull,
+        reason: 'v0.7.10 is a beta until the owner approves otherwise');
+    expect(prerelease,
+        contains("      - 'release/android-v${match.group(1)}-beta.${match.group(2)}'\n"));
   });
 
   test('manual runs infer the platforms or choose all / Android only', () {
