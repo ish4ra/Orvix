@@ -1591,7 +1591,7 @@ jobs:
           echo "Publishing ${#ASSETS[@]} assets:"
           cat /tmp/orvix-release-assets.txt
 
-      - name: Stage PRIVATE draft release (no public publishing)
+      - name: Publish Orvix prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           ORVIX_RELEASE_PRERELEASE: "true"
