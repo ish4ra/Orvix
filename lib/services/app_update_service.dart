@@ -135,7 +135,8 @@ class AppUpdateService {
     }
 
     final privateUpdate = await _checkInternalForUpdate(currentVersion);
-    if (privateUpdate != null) return privateUpdate;
+    // Compare private and public updates. Owner accounts must not be pinned
+    // to an older draft beta when a newer public stable version exists.
     try {
       final releasesUri = Uri.parse(_releasesBaseUrl).replace(
         queryParameters: <String, String>{
@@ -203,7 +204,7 @@ class AppUpdateService {
               best = candidate;
             }
           }
-          if (best != null) return best;
+          if (best != null) return _newestUpdate(privateUpdate, best);
         }
       }
     } catch (_) {
@@ -213,7 +214,14 @@ class AppUpdateService {
       _resetClient();
     }
 
-    return _checkReleaseFeedFallback(currentVersion);
+    final publicFallback = await _checkReleaseFeedFallback(currentVersion);
+    return _newestUpdate(privateUpdate, publicFallback);
+  }
+
+  static AppUpdateInfo? _newestUpdate(AppUpdateInfo? internal, AppUpdateInfo? public) {
+    if (internal == null) return public;
+    if (public == null) return internal;
+    return isVersionNewer(internal.version, public.version) ? internal : public;
   }
 
   Future<AppUpdateInfo?> _checkReleaseFeedFallback(
