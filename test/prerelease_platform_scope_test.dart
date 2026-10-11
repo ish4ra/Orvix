@@ -25,7 +25,7 @@ void main() {
   final version = RegExp(r'^version: (\S+)$', multiLine: true)
       .firstMatch(pubspec)!
       .group(1)!;
-  final match = RegExp(r'^(\d+\.\d+\.\d+)(?:-beta\.(\d+))?\+(\d+)
+  final match = RegExp(r'^(\d+\.\d+\.\d+)(?:-beta\.(\d+))?\+(\d+)$')
       .firstMatch(version);
 
   test('pubspec has a version and higher Android build number', () {
