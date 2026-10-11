@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/app_update_service.dart';
 
@@ -20,6 +21,7 @@ class OrvixUpdateGate extends StatefulWidget {
 class _OrvixUpdateGateState extends State<OrvixUpdateGate>
 {
   final AppUpdateService _updates = AppUpdateService();
+  StreamSubscription<AuthState>? _authChanges;
 
   AppUpdateInfo? _update;
   bool _dismissed = false;
@@ -33,6 +35,26 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
   @override
   void initState() {
     super.initState();
+    // Recheck private entitlements after login. On logout, immediately drop
+    // any sensitive manifest previously held by this widget.
+    try {
+      _authChanges = Supabase.instance.client.auth.onAuthStateChange.listen((state) {
+        if (!mounted) return;
+        if (state.event == AuthChangeEvent.signedOut ||
+            state.event == AuthChangeEvent.userDeleted) {
+          setState(() {
+            _update = null;
+            _downloadedFile = null;
+            _dismissed = false;
+          });
+          unawaited(_checkForUpdate());
+        } else if (state.event == AuthChangeEvent.signedIn) {
+          unawaited(_checkForUpdate());
+        }
+      });
+    } catch (_) {
+      // Public app updates must still work without Supabase initialized.
+    }
     unawaited(_reportPreviousWindowsUpdate());
     unawaited(_checkSoon());
   }
@@ -78,6 +100,7 @@ class _OrvixUpdateGateState extends State<OrvixUpdateGate>
 
   @override
   void dispose() {
+    _authChanges?.cancel();
     _updates.dispose();
     super.dispose();
   }

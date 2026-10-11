@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -24,6 +25,7 @@ class AppUpdateInfo {
     required this.assetUrl,
     this.assetDigest,
     this.assetSize,
+    this.internalVersion,
   });
 
   final String tag;
@@ -35,6 +37,7 @@ class AppUpdateInfo {
   final String assetUrl;
   final String? assetDigest;
   final int? assetSize;
+  final String? internalVersion;
 }
 
 enum AppUpdateInstallResult {
@@ -131,6 +134,8 @@ class AppUpdateService {
       return null;
     }
 
+    final privateUpdate = await _checkInternalForUpdate(currentVersion);
+    if (privateUpdate != null) return privateUpdate;
     try {
       final releasesUri = Uri.parse(_releasesBaseUrl).replace(
         queryParameters: <String, String>{
@@ -278,6 +283,90 @@ class AppUpdateService {
       }
     }
     return null;
+  }
+
+  String? _internalPlatform() {
+    if (Platform.isWindows) return 'windows';
+    if (Platform.isAndroid) {
+      return PlatformProfile.isAndroidTv ? 'android_tv' : 'android_mobile';
+    }
+    if (Platform.isMacOS) return 'macos';
+    if (Platform.isIOS) return 'ios_modern';
+    return null;
+  }
+
+  Future<AppUpdateInfo?> _checkInternalForUpdate(String installed) async {
+    final platform = _internalPlatform();
+    if (platform == null) return null;
+    try {
+      final client = Supabase.instance.client;
+      if (client.auth.currentSession == null) return null;
+      final response = await client.functions.invoke(
+        'orvix-internal-update',
+        body: {'action': 'check', 'platform': platform},
+      ).timeout(const Duration(seconds: 8));
+      final data = response.data;
+      if (data is! Map || data['releases'] is! List) return null;
+      AppUpdateInfo? best;
+      for (final item in data['releases'] as List) {
+        if (item is! Map) continue;
+        final version = item['version']?.toString() ?? '';
+        final name = item['asset_name']?.toString() ?? '';
+        final digest = item['sha256']?.toString() ?? '';
+        final size = item['size_bytes'];
+        if (version.isEmpty || name.isEmpty || digest.length != 64 ||
+            RegExp(r'[^0-9a-f]').hasMatch(digest) ||
+            size is! num || size <= 0 ||
+            !isVersionNewer(version, installed)) continue;
+        final candidate = AppUpdateInfo(
+          tag: 'v$version',
+          version: version,
+          title: 'Orvix Internal $version',
+          notes: item['notes']?.toString() ?? '',
+          releaseUrl: '',
+          assetName: name,
+          assetUrl: '',
+          assetDigest: 'sha256:$digest',
+          assetSize: size.toInt(),
+          internalVersion: version,
+        );
+        if (best == null || isVersionNewer(version, best.version)) {
+          best = candidate;
+        }
+      }
+      return best;
+    } catch (_) {
+      // Private update failures never interrupt the public update channel.
+      return null;
+    }
+  }
+
+  Future<String> _internalSignedDownloadUrl(AppUpdateInfo update) async {
+    final platform = _internalPlatform();
+    if (platform == null || Supabase.instance.client.auth.currentSession == null) {
+      throw StateError('Sign in to your authorized Orvix account.');
+    }
+    final response = await Supabase.instance.client.functions.invoke(
+      'orvix-internal-update',
+      body: {
+        'action': 'download',
+        'platform': platform,
+        'version': update.internalVersion,
+      },
+    ).timeout(const Duration(seconds: 15));
+    final data = response.data;
+    if (data is! Map || data['url'] is! String) {
+      throw StateError('Private update download is not available.');
+    }
+    if (data['sha256']?.toString() !=
+        update.assetDigest?.replaceFirst('sha256:', '')) {
+      throw StateError('Private update checksum metadata changed.');
+    }
+    final uri = Uri.tryParse(data['url'] as String);
+    if (uri == null || uri.scheme != 'https') {
+      throw StateError('Private update URL is invalid.');
+    }
+    return uri.toString();
   }
 
   String? _expectedAssetName(String version) {
@@ -448,7 +537,10 @@ class AppUpdateService {
 
       IOSink? sink;
       try {
-        final request = http.Request('GET', Uri.parse(update.assetUrl));
+        final assetUrl = update.internalVersion != null
+            ? await _internalSignedDownloadUrl(update)
+            : update.assetUrl;
+        final request = http.Request('GET', Uri.parse(assetUrl));
         request.headers['User-Agent'] = 'Orvix-Updater';
         if (received > 0) request.headers['Range'] = 'bytes=$received-';
 
