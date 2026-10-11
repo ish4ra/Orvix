@@ -16,6 +16,13 @@ on:
           - all
           - android
         default: auto
+      distribution:
+        description: 'internal = private admin-only Supabase Storage; public requires explicit approval'
+        type: choice
+        options:
+          - internal
+          - public
+        default: internal
 permissions:
   contents: write
 
@@ -1592,6 +1599,7 @@ jobs:
           cat /tmp/orvix-release-assets.txt
 
       - name: Publish Orvix prerelease
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.distribution == 'public' }}
         env:
           GH_TOKEN: ${{ github.token }}
           ORVIX_RELEASE_PRERELEASE: "true"
@@ -1684,6 +1692,17 @@ jobs:
             /tmp/notes.md \
             "${{ github.sha }}" \
             "${ASSETS[@]}"
+
+      - name: Publish authenticated INTERNAL installers
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.distribution == 'internal' && needs.metadata.outputs.platforms == 'all' }}
+        env:
+          SUPABASE_URL: ${{ secrets.ORVIX_INTERNAL_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.ORVIX_INTERNAL_SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          python3 tools/publish_internal_updates.py \
+            --version "${{ needs.metadata.outputs.version }}" \
+            --asset-list /tmp/orvix-release-assets.txt
 
       - name: Prepare AltStore / SideStore source entry
         # store.json changes go to develop through a normal PR. This only
