@@ -90,6 +90,15 @@ for asset in "${assets[@]}"; do
   fi
 done
 
+# Internal tester releases remain private drafts so public Orvix updater
+# never sees a newer published tag. Require explicit owner approval before
+# publishing a release outside this workflow.
+if [[ "${ORVIX_RELEASE_DRAFT_ONLY:-false}" == "true" ]]; then
+  trap - ERR
+  echo "verified $expected_count assets in PRIVATE draft $tag; publication intentionally skipped"
+  exit 0
+fi
+
 # Draft releases are not available through /releases/tags/{tag}. Publish by
 # concrete release ID only after every updater asset has been verified.
 # Beta workflows keep the historical prerelease default. Stable workflows can
