@@ -36,7 +36,7 @@ void main() {
     expect(api, contains('ios_legacy:'));
     expect(api, contains('r.draft === true'));
     expect(api, contains('action === "check"'));
-    expect(api, contains('action === "download"'));
+    expect(api, contains('action !== "check" && action !== "download"'));
   });
 
   test('private download requires matching checksum and HTTPS URL', () {
