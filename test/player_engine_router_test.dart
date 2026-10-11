@@ -6,7 +6,7 @@ void main() {
   group('Android default player', () {
     for (final tv in [false, true]) {
       final surface = tv ? 'Android TV' : 'Android Mobile';
-      test('$surface: Auto uses ExoPlayer for local P2P and HTTP', () {
+      test('$surface: Auto uses MPV for local P2P and HTTP', () {
         for (final url in [
           'http://127.0.0.1:11470/${'a' * 40}/0',
           'https://cdn.example.com/video/master.m3u8',
@@ -20,14 +20,14 @@ void main() {
               url: url,
               releaseHint: 'Prison.Break.S01E01.1080p.WEB-DL.x264.mkv',
             ),
-            PlayerEngineKind.exoPlayer,
+            PlayerEngineKind.mpv,
             reason: url,
           );
         }
       });
     }
 
-    test('an install without a saved choice reads as Auto (ExoPlayer)',
+    test('an install without a saved choice reads as Auto (MPV)',
         () async {
       SharedPreferences.setMockInitialValues({});
       final preference = await PlayerEnginePreferencesService.get();
@@ -38,7 +38,7 @@ void main() {
           isAndroid: true,
           url: 'https://cdn.example.com/movie.mkv',
         ),
-        PlayerEngineKind.exoPlayer,
+        PlayerEngineKind.mpv,
       );
     });
 

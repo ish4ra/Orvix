@@ -63,10 +63,9 @@ class PlayerEngineRouter {
         break;
     }
 
-    // Auto, and every install without a saved choice, uses ExoPlayer on
-    // Android Mobile and Android TV. Orvix's ExoPlayer screen renders embedded
-    // and external/OpenSubtitles subtitles itself. AI Sinhala (above) and an
-    // explicit MPV choice keep MPV.
-    return PlayerEngineKind.exoPlayer;
+    // Default to MPV on Android Mobile and TV until the Exo startup failure
+    // is fixed and device-tested. An explicit Exo choice is retained for
+    // diagnostics, but never silently routes Auto users through broken Exo.
+    return PlayerEngineKind.mpv;
   }
 }
