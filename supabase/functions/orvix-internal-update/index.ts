@@ -51,11 +51,11 @@ Deno.serve(async (request) => {
   const list = rows ?? [];
   // Client may compare versions semantically; server only returns entitled data.
   if (action === "check") return json({ releases: list.map(({ object_path: _private, ...r }) => r) });
-  const requestedPath = body.object_path;
-  if (typeof requestedPath !== "string" || requestedPath.length > 500) {
-    return json({ error: "invalid_path" }, 400);
+  const requestedVersion = body.version;
+  if (typeof requestedVersion !== "string" || requestedVersion.length > 100) {
+    return json({ error: "invalid_version" }, 400);
   }
-  const selected = list.find((r) => r.object_path === requestedPath);
+  const selected = list.find((r) => r.version === requestedVersion);
   if (!selected) return json({ error: "not_found" }, 404);
   // Short lifetime, per-request authorization, private bucket. Never cache URL.
   const { data: signed, error: signError } = await admin.storage
