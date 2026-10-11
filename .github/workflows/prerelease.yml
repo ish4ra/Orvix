@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - 'release/android-v0.7.9-beta.70'
+      - 'release/internal-v*'
     paths:
       - 'pubspec.yaml'
   workflow_dispatch:
@@ -1599,11 +1600,11 @@ jobs:
           cat /tmp/orvix-release-assets.txt
 
       - name: Publish Orvix prerelease
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+        if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
         env:
           GH_TOKEN: ${{ github.token }}
           ORVIX_RELEASE_PRERELEASE: "true"
-          ORVIX_RELEASE_DRAFT_ONLY: ${{ inputs.distribution != 'public' }}
+          ORVIX_RELEASE_DRAFT_ONLY: ${{ github.event_name == 'push' || inputs.distribution != 'public' }}
         shell: bash
         run: |
           set -euo pipefail
