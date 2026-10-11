@@ -362,12 +362,28 @@ void main() {
       expect(backend.disposed, contains(backend.lastId));
     });
 
-    testWidgets('a direct (non-P2P) stream keeps the 35-second limit',
-        (tester) async {
+    testWidgets(
+        'a slow direct (non-P2P) stream is never failed by a timer; Media3 '
+        'errors still end it', (tester) async {
       await openExo(tester, 'https://cdn.example.org/video.mkv');
       expect(backend.created.single['patientStartup'], isFalse);
-      await tester.pump(const Duration(seconds: 36));
-      expect(find.textContaining('within 35 seconds'), findsOneWidget);
+      final id = backend.lastId;
+      for (var second = 0; second < 150; second += 5) {
+        backend.state(id, state: 2, playing: false);
+        await tester.pump(const Duration(seconds: 5));
+      }
+      expect(find.text('Could not play this stream'), findsNothing,
+          reason: 'elapsed time alone never fails a stream');
+      expect(find.text('Still waiting for the source…'), findsOneWidget);
+      expect(backend.created, hasLength(1));
+
+      // Media3 gives up on its own (its connect/read timeouts and retries).
+      backend.error(id, 'ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT');
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('Could not play this stream'), findsOneWidget);
+      expect(find.text('Connection problem'), findsOneWidget);
+      expect(backend.created, hasLength(1),
+          reason: 'a remote stream is not silently reopened');
     });
   });
 }
