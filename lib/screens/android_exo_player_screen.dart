@@ -202,6 +202,25 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
   bool _skipDismissed = false;
 
   bool get _tv => PlatformProfile.isAndroidTv;
+  bool _mobileOrientationLocked = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // MPV already requests landscape on Android phones. Apply the same route
+    // policy to an explicitly selected ExoPlayer so it cannot open portrait.
+    if (!_tv && !_mobileOrientationLocked &&
+        MediaQuery.sizeOf(context).shortestSide < 600) {
+      _mobileOrientationLocked = true;
+      unawaited(SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.immersiveSticky,
+      ));
+      unawaited(SystemChrome.setPreferredOrientations(const [
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]));
+    }
+  }
 
   @override
   void initState() {
@@ -884,6 +903,14 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
 
   @override
   void dispose() {
+    if (_mobileOrientationLocked) {
+      unawaited(SystemChrome.setPreferredOrientations(
+        const [DeviceOrientation.portraitUp],
+      ));
+      unawaited(SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.edgeToEdge,
+      ));
+    }
     _closing = true;
     _hideTimer?.cancel();
     _saveTimer?.cancel();
