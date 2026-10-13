@@ -30,7 +30,11 @@ const json = (body: unknown, status = 200) =>
 type Asset = { id: number; name: string; size: number; digest?: string };
 type Release = { draft: boolean; tag_name: string; body?: string; assets: Asset[] };
 
-async function getDrafts(): Promise<Release[]> {
+type DraftLookup =
+  | { ok: true; drafts: Release[] }
+  | { ok: false; githubStatus: number };
+
+async function getDrafts(): Promise<DraftLookup> {
   const response = await fetch(api + "/releases?per_page=50", {
     headers: {
       Authorization: "Bearer " + githubToken,
@@ -40,12 +44,19 @@ async function getDrafts(): Promise<Release[]> {
     },
     signal: AbortSignal.timeout(10000),
   });
-  if (!response.ok) throw new Error("GitHub draft retrieval failed");
+  // Only the HTTP status is reported (to admins). Never echo GitHub's body
+  // or headers: they can carry token scope details.
+  if (!response.ok) return { ok: false, githubStatus: response.status };
   const releases: Release[] = await response.json();
   // Include only unpublished Orvix version tags. NEVER expose public releases
   // through the private endpoint, and never use client-provided URLs.
-  return releases.filter((r) =>
-    r.draft === true && /^v[0-9]+\.[0-9]+\.[0-9]+(?:-beta\.[0-9]+)?$/.test(r.tag_name));
+  // GitHub lists draft releases only to tokens with push access to the
+  // repository, so a read-only token sees zero drafts here.
+  return {
+    ok: true,
+    drafts: releases.filter((r) =>
+      r.draft === true && /^v[0-9]+\.[0-9]+\.[0-9]+(?:-beta\.[0-9]+)?$/.test(r.tag_name)),
+  };
 }
 
 function assetFor(release: Release, platform: string): Asset | undefined {
@@ -57,8 +68,8 @@ function assetFor(release: Release, platform: string): Asset | undefined {
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response(null, { headers: cors });
   if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
-  if (!supabaseUrl || !anonKey || !serviceKey || !githubToken)
-    return json({ error: "internal_updates_unconfigured" }, 503);
+  if (!supabaseUrl || !anonKey || !serviceKey)
+    return json({ error: "unavailable" }, 503);
 
   const bearer = /^Bearer (.+)$/i.exec(request.headers.get("authorization") ?? "");
   if (!bearer) return json({ error: "unauthorized" }, 401);
@@ -72,6 +83,9 @@ Deno.serve(async (request) => {
       .from("orvix_admins").select("user_id").eq("user_id", identity.user.id).maybeSingle();
     if (adminError) return json({ error: "unavailable" }, 503);
     if (!adminRow) return json({ error: "forbidden" }, 403);
+    // Reported only after the caller is a verified admin, so ordinary users
+    // learn nothing about the private channel's configuration.
+    if (!githubToken) return json({ error: "internal_updates_unconfigured" }, 503);
 
     let body: Record<string, unknown>;
     try { body = await request.json(); } catch { return json({ error: "invalid_json" }, 400); }
@@ -82,18 +96,32 @@ Deno.serve(async (request) => {
     if (action !== "check" && action !== "download")
       return json({ error: "invalid_action" }, 400);
 
-    const releases = await getDrafts();
+    const lookup = await getDrafts();
+    if (!lookup.ok)
+      return json({ error: "github_unavailable", github_status: lookup.githubStatus }, 502);
+    const releases = lookup.drafts;
     if (action === "check") {
+      const skipped: { version: string; reason: string }[] = [];
       const rows = releases.flatMap((release) => {
         const asset = assetFor(release, platform);
-        if (!asset) return [];
+        if (!asset) {
+          const named = release.assets.some((a) => assets[platform](a.name));
+          skipped.push({
+            version: release.tag_name.slice(1),
+            reason: named ? "asset_unverified" : "no_platform_asset",
+          });
+          return [];
+        }
         return [{
           version: release.tag_name.slice(1), asset_name: asset.name,
           size_bytes: asset.size, sha256: asset.digest!.slice(7),
           notes: release.body ?? "",
         }];
       });
-      return json({ releases: rows });
+      // drafts_visible and skipped are admin-only diagnostics: they explain
+      // an empty result (no drafts visible to the token, or drafts without
+      // this platform's installer) without exposing any URL or secret.
+      return json({ releases: rows, drafts_visible: releases.length, skipped });
     }
 
     const version = body.version;

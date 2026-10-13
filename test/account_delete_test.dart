@@ -455,8 +455,9 @@ void main() {
     final build = source.indexOf('Widget build(BuildContext context)');
     expect(source.indexOf('return _buildTvAccount(context, user);', build),
         greaterThan(build));
-    final tvLayout = source.substring(source.indexOf('class _TvAccountView'),
-        source.indexOf('class _OrvixTvQrScannerScreen'));
+    // The TV view is the last part of the file (the phone's QR scanner
+    // lives in tv_qr_scanner_screen.dart).
+    final tvLayout = source.substring(source.indexOf('class _TvAccountView'));
     expect(tvLayout, isNot(contains('Delete account')));
     expect(tvLayout, isNot(contains('deleteAccount')));
     // The phone/desktop section is also guarded against TV builds.

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:orvix/tv/tv_shell.dart';
+import 'package:orvix/tv/tv_theme.dart';
 import 'package:orvix/tv/tv_widgets.dart';
 
 const _destinations = [
@@ -225,5 +226,37 @@ void main() {
     expect(primary, isNotNull);
     expect(primary, isNot(isA<FocusScopeNode>()));
     expect(_focused(tester, 'Settings-a'), isTrue);
+  });
+
+  testWidgets('focus and selection never share the same highlight',
+      (tester) async {
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 2;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(const _Host());
+    await tester.pumpAndSettle();
+
+    Color? pill(String label) {
+      final box = tester.widget<AnimatedContainer>(find
+          .descendant(
+              of: find.byKey(ValueKey('tv-nav-$label')),
+              matching: find.byType(AnimatedContainer))
+          .first);
+      return (box.decoration as BoxDecoration?)?.color;
+    }
+
+    // Home is selected; focus moves to Search in the menu.
+    await _press(tester, LogicalKeyboardKey.arrowLeft);
+    await _press(tester, LogicalKeyboardKey.arrowDown);
+    expect(_focused(tester, 'tv-nav-Search'), isTrue);
+    expect(pill('Search'), TvColors.primary,
+        reason: 'The focused item is a solid lime pill.');
+    expect(pill('Home'), Colors.transparent,
+        reason: 'The selected item has no competing fill or outline.');
+
+    // Icons and labels sit in the middle of the focus pill.
+    final item = tester.getRect(find.byKey(const ValueKey('tv-nav-Search')));
+    final label = tester.getRect(find.text('Search').first);
+    expect((label.center.dy - item.center.dy).abs(), lessThan(1.5));
   });
 }

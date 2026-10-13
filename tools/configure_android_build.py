@@ -238,21 +238,20 @@ def patch_android(tv: bool) -> None:
     )
 
     if tv:
-        # Use the supplied wide TV artwork directly. Preserve its aspect ratio
-        # and fit it inside Android TV's 320x180 banner without stretching.
+        # The launcher banner is designed full-bleed at 16:9
+        # (tools/make_tv_banner.py), so it scales to Android TV's 320x180
+        # xhdpi banner without letterboxing or cropping.
         banner_path = Path(
             "android/app/src/main/res/drawable-xhdpi/tv_banner.png"
         )
         banner_path.parent.mkdir(parents=True, exist_ok=True)
-        supplied_banner = Image.open("assets/branding/tv_banner.png").convert("RGBA")
-        banner = Image.new("RGBA", (320, 180), (5, 8, 6, 255))
-        fitted = supplied_banner.copy()
-        fitted.thumbnail((320, 180), Image.Resampling.LANCZOS)
-        banner.alpha_composite(
-            fitted,
-            ((320 - fitted.width) // 2, (180 - fitted.height) // 2),
-        )
-        banner.convert("RGB").save(banner_path, format="PNG", optimize=True)
+        supplied_banner = Image.open(
+            "assets/branding/tv_launcher_banner.png"
+        ).convert("RGB")
+        if supplied_banner.width * 9 != supplied_banner.height * 16:
+            raise SystemExit("TV launcher banner artwork must be 16:9.")
+        banner = supplied_banner.resize((320, 180), Image.Resampling.LANCZOS)
+        banner.save(banner_path, format="PNG", optimize=True)
 
     main_activity = Path(
         "android/app/src/main/kotlin/com/orvix/orvix/MainActivity.kt"
@@ -401,9 +400,28 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        cameraPermission = OrvixCameraPermissionChannel(
+            this,
+            flutterEngine.dartExecutor.binaryMessenger
+        )
+    }
+
+    // Camera permission state for the phone's TV QR scanner.
+    private var cameraPermission: OrvixCameraPermissionChannel? = null
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        cameraPermission?.onRequestPermissionsResult(requestCode)
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        cameraPermission?.dispose()
+        cameraPermission = null
         exoPlayer?.releaseAll()
         exoPlayer = null
         super.cleanUpFlutterEngine(flutterEngine)
@@ -420,6 +438,14 @@ class MainActivity : FlutterActivity() {
     }
 }
 """
+    )
+
+    # Camera permission state for the phone's TV QR scanner.
+    camera_permission = Path(
+        "android/app/src/main/kotlin/com/orvix/orvix/OrvixCameraPermission.kt"
+    )
+    camera_permission.write_text(
+        (Path(__file__).resolve().parent / "android" / "OrvixCameraPermission.kt").read_text()
     )
 
     # Media3 ExoPlayer bridge used by the Android ExoPlayer screen.

@@ -13,6 +13,7 @@ import '../services/skip_segment_service.dart';
 import '../tv/tv_focus.dart';
 import '../tv/tv_theme.dart';
 import '../tv/tv_widgets.dart';
+import '../widgets/update_check_section.dart';
 
 /// Preferred online subtitle languages, in picker order.
 const _subtitleLanguages = <(String, String)>[
@@ -220,9 +221,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildTv(BuildContext context) {
     final engine = _playerEngine;
     const engines = [
-      (PlayerEnginePreference.auto, 'Auto', Icons.auto_awesome_rounded),
+      (PlayerEnginePreference.auto, 'Auto', Icons.alt_route_rounded),
       (PlayerEnginePreference.exoPlayer, 'ExoPlayer', Icons.android_rounded),
-      (PlayerEnginePreference.mpv, 'MPV', Icons.movie_filter_rounded),
+      (PlayerEnginePreference.mpv, 'MPV', Icons.smart_display_rounded),
     ];
     return ListView(
       padding: const EdgeInsets.fromLTRB(
@@ -244,6 +245,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   subtitle: 'Playback and subtitle preferences for Orvix.',
                 ),
                 const SizedBox(height: 24),
+                _tvSection('App updates', const [TvUpdateCheckSection()]),
                 _tvSection('Player engine', [
                   TvTabGroup(
                     child: Wrap(
@@ -313,7 +315,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ]),
                 _tvSection('Built-in addon stack', const [
                   TvInfoCard(
-                    icon: Icons.movie_filter_outlined,
+                    icon: Icons.local_movies_outlined,
                     title: 'AIO Metadata + Cinemeta',
                     text:
                         'Rich metadata first, with Cinemeta v3 as the built-in movie/series fallback.',
@@ -373,6 +375,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               const SizedBox(height: 26),
+              const UpdateCheckCard(),
+              const SizedBox(height: 22),
               Container(
                 padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
@@ -414,7 +418,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         _EngineChoice(
                           selected:
                               _playerEngine == PlayerEnginePreference.auto,
-                          icon: Icons.auto_awesome_rounded,
+                          icon: Icons.alt_route_rounded,
                           label: 'Auto',
                           enabled: Platform.isAndroid,
                           onPressed: () => _setPlayerEngine(
@@ -435,7 +439,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           selected:
                               _playerEngine == PlayerEnginePreference.mpv ||
                               !Platform.isAndroid,
-                          icon: Icons.movie_filter_rounded,
+                          icon: Icons.smart_display_rounded,
                           label: 'MPV',
                           enabled: true,
                           onPressed: () => _setPlayerEngine(
@@ -645,7 +649,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const SizedBox(height: 12),
                     const _AddonLine(
-                      icon: Icons.movie_filter_outlined,
+                      icon: Icons.local_movies_outlined,
                       title: 'AIO Metadata + Cinemeta',
                       detail:
                           'Rich metadata first, with Cinemeta v3 as the built-in movie/series fallback.',
