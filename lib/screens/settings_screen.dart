@@ -221,9 +221,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildTv(BuildContext context) {
     final engine = _playerEngine;
     const engines = [
-      (PlayerEnginePreference.auto, 'Auto', Icons.auto_awesome_rounded),
+      (PlayerEnginePreference.auto, 'Auto', Icons.alt_route_rounded),
       (PlayerEnginePreference.exoPlayer, 'ExoPlayer', Icons.android_rounded),
-      (PlayerEnginePreference.mpv, 'MPV', Icons.movie_filter_rounded),
+      (PlayerEnginePreference.mpv, 'MPV', Icons.smart_display_rounded),
     ];
     return ListView(
       padding: const EdgeInsets.fromLTRB(
@@ -315,7 +315,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ]),
                 _tvSection('Built-in addon stack', const [
                   TvInfoCard(
-                    icon: Icons.movie_filter_outlined,
+                    icon: Icons.local_movies_outlined,
                     title: 'AIO Metadata + Cinemeta',
                     text:
                         'Rich metadata first, with Cinemeta v3 as the built-in movie/series fallback.',
@@ -418,7 +418,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         _EngineChoice(
                           selected:
                               _playerEngine == PlayerEnginePreference.auto,
-                          icon: Icons.auto_awesome_rounded,
+                          icon: Icons.alt_route_rounded,
                           label: 'Auto',
                           enabled: Platform.isAndroid,
                           onPressed: () => _setPlayerEngine(
@@ -439,7 +439,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           selected:
                               _playerEngine == PlayerEnginePreference.mpv ||
                               !Platform.isAndroid,
-                          icon: Icons.movie_filter_rounded,
+                          icon: Icons.smart_display_rounded,
                           label: 'MPV',
                           enabled: true,
                           onPressed: () => _setPlayerEngine(
@@ -649,7 +649,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const SizedBox(height: 12),
                     const _AddonLine(
-                      icon: Icons.movie_filter_outlined,
+                      icon: Icons.local_movies_outlined,
                       title: 'AIO Metadata + Cinemeta',
                       detail:
                           'Rich metadata first, with Cinemeta v3 as the built-in movie/series fallback.',

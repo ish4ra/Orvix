@@ -879,7 +879,7 @@ class _AboutScreen extends StatelessWidget {
   const _AboutScreen();
 
   static const _features = <(IconData, String)>[
-    (Icons.movie_filter_outlined,
+    (Icons.explore_outlined,
         'Rich movie & TV discovery with AIOMetadata/Cinemeta fallback'),
     (Icons.cloud_outlined,
         'Debrid and cloud-service connections, libraries and transfer bridge'),

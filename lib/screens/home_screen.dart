@@ -1717,7 +1717,7 @@ class _TvHomeViewState extends State<_TvHomeView> {
 
         if (widget.hero == null && rows.isEmpty) {
           return TvMessage(
-            icon: Icons.movie_filter_outlined,
+            icon: Icons.movie_outlined,
             title: 'Nothing to show yet',
             message: 'Home rows could not be loaded. Check the connection and try again.',
             action: TvButton(
