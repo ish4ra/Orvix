@@ -35,8 +35,8 @@ jobs:
     name: Analyze + regressions
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.22.x'
       - uses: subosito/flutter-action@v2
@@ -90,8 +90,8 @@ jobs:
     needs: quality
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.22.x'
       - uses: subosito/flutter-action@v2
@@ -122,11 +122,11 @@ jobs:
     needs: quality
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '25'
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -176,7 +176,7 @@ jobs:
             "$OUT/app-arm64-v8a-release.apk=arm64-v8a" \
             "$OUT/app-armeabi-v7a-release.apk=armeabi-v7a" \
             "$OUT/app-x86_64-release.apk=x86_64"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: android-mobile-ci-apks
           retention-days: 1
@@ -192,8 +192,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: android-mobile-ci-apks
           path: apks
@@ -220,11 +220,11 @@ jobs:
     needs: quality
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '25'
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -259,9 +259,9 @@ jobs:
   macos:
     name: Build macOS
     needs: quality
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -279,9 +279,9 @@ jobs:
   ios-modern:
     name: Build iOS Modern sideload IPA
     needs: quality
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -303,7 +303,7 @@ jobs:
           PUBSPEC_VERSION="$(awk '$1 == "version:" {print $2}' pubspec.yaml)"
           V="${PUBSPEC_VERSION%%+*}"
           bash tools/verify_ios_ipa.sh "Orvix-v$V-iOS-15.5-Plus.ipa" "$V" "${PUBSPEC_VERSION#*+}" modern
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ios-modern
           retention-days: 1
@@ -317,9 +317,9 @@ jobs:
   ios-legacy:
     name: Build iOS Legacy sideload IPA
     needs: quality
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Select Xcode 16.4
         shell: bash
         run: |
@@ -353,7 +353,7 @@ jobs:
           PUBSPEC_VERSION="$(awk '$1 == "version:" {print $2}' pubspec.yaml)"
           V="${PUBSPEC_VERSION%%+*}"
           bash tools/verify_ios_legacy_ipa.sh "Orvix-v$V-iOS-12-Legacy.ipa" "$V" "${PUBSPEC_VERSION#*+}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ios-legacy
           retention-days: 1
