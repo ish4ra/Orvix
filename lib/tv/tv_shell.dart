@@ -38,9 +38,14 @@ class TvShell extends StatefulWidget {
     required this.onSelected,
     required this.screenBuilder,
     this.brand,
+    this.secondaryStart,
   });
 
   final List<TvDestination> destinations;
+
+  /// Index of the first secondary destination (Settings, Account…). A quiet
+  /// divider separates the two groups in the navigation.
+  final int? secondaryStart;
   final int selectedIndex;
   final ValueChanged<int> onSelected;
   final Widget Function(BuildContext context, int index) screenBuilder;
@@ -77,12 +82,12 @@ class TvShellState extends State<TvShell> {
     _visited.add(widget.selectedIndex);
     _navScope.addListener(_handleNavFocus);
     FocusManager.instance.addListener(_scheduleGuard);
+    TvTopTarget.returnFocus = _returnFromTopTarget;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (!focusContent()) focusNavigation();
     });
   }
-    TvTopTarget.returnFocus = _returnFromTopTarget;
 
   @override
   void didUpdateWidget(covariant TvShell oldWidget) {
@@ -92,14 +97,14 @@ class TvShellState extends State<TvShell> {
 
   @override
   void dispose() {
+    if (TvTopTarget.returnFocus == _returnFromTopTarget) {
+      TvTopTarget.returnFocus = null;
+    }
     FocusManager.instance.removeListener(_scheduleGuard);
     _navScope.removeListener(_handleNavFocus);
     _navScope.dispose();
     for (final node in _navNodes) {
       node.dispose();
-    if (TvTopTarget.returnFocus == _returnFromTopTarget) {
-      TvTopTarget.returnFocus = null;
-    }
     }
     super.dispose();
   }
@@ -135,24 +140,19 @@ class TvShellState extends State<TvShell> {
     });
   }
 
-  KeyEventResult _handleNavigationKey(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
-      return KeyEventResult.ignored;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
   void _returnFromTopTarget() {
     if (!mounted) return;
     if (!focusContent()) focusNavigation();
   }
 
+  KeyEventResult _handleNavigationKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
       focusContent();
       return KeyEventResult.handled;
     }
-    if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-      return KeyEventResult.handled;
-    }
-    return KeyEventResult.ignored;
-  }
     // Up from the first destination reaches a control above the shell (the
     // update banner) when one is shown. Held keys never jump out of the menu.
     if (event is KeyDownEvent &&
@@ -162,18 +162,23 @@ class TvShellState extends State<TvShell> {
       TvTopTarget.focus();
       return KeyEventResult.handled;
     }
+    if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
 
   KeyEventResult _handleContentKey(FocusNode node, KeyEvent event) {
-    if ((event is! KeyDownEvent && event is! KeyRepeatEvent) ||
-        event.logicalKey != LogicalKeyboardKey.arrowLeft) {
-      return KeyEventResult.ignored;
-    }
-    final primary = FocusManager.instance.primaryFocus;
     if (event is KeyDownEvent &&
         event.logicalKey == LogicalKeyboardKey.arrowUp &&
         TvTopTarget.available) {
       return _handleContentUp();
     }
+    if ((event is! KeyDownEvent && event is! KeyRepeatEvent) ||
+        event.logicalKey != LogicalKeyboardKey.arrowLeft) {
+      return KeyEventResult.ignored;
+    }
+    final primary = FocusManager.instance.primaryFocus;
     if (primary == null) return KeyEventResult.ignored;
     // Left inside a field being typed in moves the caret.
     final field = primary.context?.findAncestorStateOfType<TvTextFieldState>();
@@ -182,11 +187,6 @@ class TvShellState extends State<TvShell> {
     return KeyEventResult.handled;
   }
 
-  void _scheduleGuard() {
-    if (_guardScheduled) return;
-    _guardScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _guardScheduled = false;
   /// Up at the top edge of a destination moves to the control above the
   /// shell. Only consulted while such a control is shown; otherwise Up keeps
   /// its normal behaviour.
@@ -200,6 +200,11 @@ class TvShellState extends State<TvShell> {
     return KeyEventResult.handled;
   }
 
+  void _scheduleGuard() {
+    if (_guardScheduled) return;
+    _guardScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _guardScheduled = false;
       _restoreLostFocus();
     });
     WidgetsBinding.instance.scheduleFrame();
@@ -285,6 +290,7 @@ class TvShellState extends State<TvShell> {
                 selectedIndex: widget.selectedIndex,
                 expanded: _navExpanded,
                 brand: widget.brand,
+                secondaryStart: widget.secondaryStart,
                 onKeyEvent: _handleNavigationKey,
                 onSelected: (index) => _select(index, enterContent: true),
               ),
@@ -304,6 +310,7 @@ class _TvNavigation extends StatelessWidget {
     required this.selectedIndex,
     required this.expanded,
     required this.brand,
+    required this.secondaryStart,
     required this.onKeyEvent,
     required this.onSelected,
   });
@@ -314,25 +321,26 @@ class _TvNavigation extends StatelessWidget {
   final int selectedIndex;
   final bool expanded;
   final Widget Function(bool expanded)? brand;
+  final int? secondaryStart;
   final FocusOnKeyEventCallback onKeyEvent;
   final ValueChanged<int> onSelected;
 
   @override
   Widget build(BuildContext context) {
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 170),
+      duration: const Duration(milliseconds: 180),
       curve: Curves.easeOutCubic,
       width:
           expanded ? TvMetrics.navExpandedWidth : TvMetrics.navCollapsedWidth,
       decoration: BoxDecoration(
         color: TvColors.canvas,
-        border: const Border(right: BorderSide(color: Color(0xFF141C15))),
+        border: const Border(right: BorderSide(color: Color(0xFF121914))),
         boxShadow: expanded
             ? const [
                 BoxShadow(
-                  color: Color(0xAA000000),
-                  blurRadius: 28,
-                  offset: Offset(6, 0),
+                  color: Color(0x99000000),
+                  blurRadius: 24,
+                  offset: Offset(4, 0),
                 ),
               ]
             : const [],
@@ -353,22 +361,26 @@ class _TvNavigation extends StatelessWidget {
               child: LayoutBuilder(
                 builder: (context, constraints) {
                   final compact = constraints.maxHeight < 560;
+                  final itemHeight = compact ? 40.0 : 44.0;
                   return Padding(
-                    padding: EdgeInsets.symmetric(vertical: compact ? 18 : 28),
+                    padding: EdgeInsets.symmetric(vertical: compact ? 18 : 26),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         SizedBox(
-                          height: 44,
+                          height: 40,
                           child: brand?.call(expanded) ?? const SizedBox(),
                         ),
-                        SizedBox(height: compact ? 10 : 22),
+                        SizedBox(height: compact ? 14 : 24),
                         Expanded(
                           child: SingleChildScrollView(
                             physics: const NeverScrollableScrollPhysics(),
                             child: Column(
                               children: [
-                                for (var i = 0; i < destinations.length; i++)
+                                for (var i = 0; i < destinations.length; i++) ...[
+                                  if (i == secondaryStart)
+                                    _TvNavDivider(
+                                        compact: compact, expanded: expanded),
                                   _TvNavItem(
                                     key: ValueKey(
                                         'tv-nav-${destinations[i].label}'),
@@ -376,9 +388,10 @@ class _TvNavigation extends StatelessWidget {
                                     destination: destinations[i],
                                     selected: i == selectedIndex,
                                     expanded: expanded,
-                                    height: compact ? 46 : 52,
+                                    height: itemHeight,
                                     onPressed: () => onSelected(i),
                                   ),
+                                ],
                               ],
                             ),
                           ),
@@ -396,6 +409,33 @@ class _TvNavigation extends StatelessWidget {
   }
 }
 
+class _TvNavDivider extends StatelessWidget {
+  const _TvNavDivider({required this.compact, required this.expanded});
+
+  final bool compact;
+  final bool expanded;
+
+  @override
+  Widget build(BuildContext context) {
+    // Collapsed, the line spans the icon column only.
+    final right = expanded
+        ? 22.0
+        : TvMetrics.navExpandedWidth - TvMetrics.navCollapsedWidth + 24;
+    return Padding(
+      padding:
+          EdgeInsets.fromLTRB(24, compact ? 6 : 10, right, compact ? 6 : 10),
+      child: Container(height: 1, color: const Color(0xFF1A231C)),
+    );
+  }
+}
+
+/// One navigation entry.
+///
+/// Focus and selection are drawn differently so they never compete:
+/// * focused (the remote is on it): a solid lime pill with dark content;
+/// * selected (the destination on screen): a lime marker and lime icon,
+///   with no fill or outline;
+/// * otherwise: muted icon and label.
 class _TvNavItem extends StatelessWidget {
   const _TvNavItem({
     super.key,
@@ -422,86 +462,88 @@ class _TvNavItem extends StatelessWidget {
       revealMargin: 8,
       semanticLabel: destination.label,
       builder: (context, focused) {
-        final iconColor = focused
-            ? TvColors.text
+        final foreground = focused
+            ? TvColors.onPrimary
             : selected
                 ? TvColors.primary
-                : TvColors.textDim;
+                : TvColors.textMuted;
         return SizedBox(
-          height: height,
+          height: height + 4,
           child: Stack(
             children: [
-              // The focus pill spans the expanded width.
+              // The focus pill spans the expanded width; collapsed it is a
+              // rounded square around the icon.
               Positioned(
-                left: 12,
+                left: 14,
                 right: 14,
-                top: 3,
-                bottom: 3,
+                top: 2,
+                bottom: 2,
                 child: AnimatedContainer(
                   duration: TvMetrics.focusDuration,
+                  curve: Curves.easeOutCubic,
                   decoration: BoxDecoration(
-                    color: focused
-                        ? TvColors.cardFocused
-                        : selected && expanded
-                            ? const Color(0xFF111A11)
-                            : Colors.transparent,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: focused ? TvColors.primary : Colors.transparent,
-                      width: TvMetrics.focusBorder,
-                    ),
+                    color: focused ? TvColors.primary : Colors.transparent,
+                    borderRadius: BorderRadius.circular(12),
                   ),
                 ),
               ),
               // Selected marker, visible in both widths.
               Positioned(
                 left: 4,
-                top: height / 2 - 11,
+                top: (height + 4) / 2 - 9,
                 child: AnimatedContainer(
                   duration: TvMetrics.focusDuration,
-                  width: 4,
-                  height: 22,
+                  width: 3,
+                  height: 18,
                   decoration: BoxDecoration(
-                    color: selected ? TvColors.primary : Colors.transparent,
-                    borderRadius: BorderRadius.circular(4),
+                    color: selected && !focused
+                        ? TvColors.primary
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(3),
                   ),
                 ),
               ),
-              Row(
-                children: [
-                  SizedBox(
-                    width: TvMetrics.navCollapsedWidth,
-                    child: Icon(
-                      selected ? destination.selectedIcon : destination.icon,
-                      size: 25,
-                      color: iconColor,
+              Positioned.fill(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: TvMetrics.navCollapsedWidth,
+                      child: Icon(
+                        selected ? destination.selectedIcon : destination.icon,
+                        size: 22,
+                        color: foreground,
+                        semanticLabel: null,
+                      ),
                     ),
-                  ),
-                  Expanded(
-                    child: AnimatedOpacity(
-                      opacity: expanded ? 1 : 0,
-                      duration: const Duration(milliseconds: 140),
-                      child: Text(
-                        destination.label,
-                        maxLines: 1,
-                        softWrap: false,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: focused
-                              ? TvColors.text
-                              : selected
-                                  ? TvColors.lime
-                                  : TvColors.textMuted,
-                          fontSize: 16,
-                          fontWeight: focused || selected
-                              ? FontWeight.w800
-                              : FontWeight.w600,
+                    Expanded(
+                      child: AnimatedOpacity(
+                        opacity: expanded ? 1 : 0,
+                        duration: const Duration(milliseconds: 140),
+                        child: Text(
+                          destination.label,
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: focused
+                                ? TvColors.onPrimary
+                                : selected
+                                    ? TvColors.text
+                                    : TvColors.textMuted,
+                            fontSize: 15.5,
+                            height: 1.1,
+                            letterSpacing: .1,
+                            fontWeight: focused || selected
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 20),
-                ],
+                    const SizedBox(width: 26),
+                  ],
+                ),
               ),
             ],
           ),
