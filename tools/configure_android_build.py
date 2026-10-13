@@ -399,9 +399,28 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        cameraPermission = OrvixCameraPermissionChannel(
+            this,
+            flutterEngine.dartExecutor.binaryMessenger
+        )
+    }
+
+    // Camera permission state for the phone's TV QR scanner.
+    private var cameraPermission: OrvixCameraPermissionChannel? = null
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        cameraPermission?.onRequestPermissionsResult(requestCode)
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        cameraPermission?.dispose()
+        cameraPermission = null
         exoPlayer?.releaseAll()
         exoPlayer = null
         super.cleanUpFlutterEngine(flutterEngine)
@@ -418,6 +437,14 @@ class MainActivity : FlutterActivity() {
     }
 }
 """
+    )
+
+    # Camera permission state for the phone's TV QR scanner.
+    camera_permission = Path(
+        "android/app/src/main/kotlin/com/orvix/orvix/OrvixCameraPermission.kt"
+    )
+    camera_permission.write_text(
+        (Path(__file__).resolve().parent / "android" / "OrvixCameraPermission.kt").read_text()
     )
 
     # Media3 ExoPlayer bridge used by the Android ExoPlayer screen.

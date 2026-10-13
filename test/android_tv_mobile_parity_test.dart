@@ -8,21 +8,24 @@ void main() {
 
   test('Android mobile TV QR scanner owns camera lifecycle and recovery', () {
     final account = File('lib/screens/account_screen.dart').readAsStringSync();
+    final scanner =
+        File('lib/screens/tv_qr_scanner_screen.dart').readAsStringSync();
     final mobileCompat =
         File('tools/configure_android_mobile_compat.py').readAsStringSync();
 
-    expect(account, contains('MobileScannerController(autoStart: false)'));
-    expect(account, contains('with WidgetsBindingObserver'));
-    expect(account, contains('didChangeAppLifecycleState'));
-    expect(account, contains('_scannerController.start()'));
-    expect(account, contains('_scannerController.stop()'));
-    expect(account, contains('errorBuilder: _cameraError'));
-    expect(account, contains("'Retry camera'"));
-    expect(account, contains("'Enter TV code'"));
-    expect(account, contains("orvix-tv-qr-scanner-"));
+    expect(scanner, contains('MobileScannerController(autoStart: false)'));
+    expect(scanner, contains('with WidgetsBindingObserver'));
+    expect(scanner, contains('didChangeAppLifecycleState'));
+    expect(scanner, contains('_scannerController.start()'));
+    expect(scanner, contains('_scannerController.stop()'));
+    expect(scanner, contains('errorBuilder: _cameraError'));
+    expect(scanner, contains("'Retry camera'"));
+    expect(scanner, contains("'Enter TV code'"));
+    expect(scanner, contains("orvix-tv-qr-scanner-"));
     expect(account, contains("'Scan TV QR'"));
+    expect(account, contains('const OrvixTvQrScannerScreen()'));
     // One scan approves once, after the user confirms the code.
-    expect(account, contains('_scanGate.accept(value)'));
+    expect(scanner, contains('_scanGate.accept(value)'));
     expect(account, contains("'Sign in on this TV?'"));
     expect(account, contains('TvDeviceLoginService.approveScanned(code)'));
     final backend = File('lib/services/supabase_orvix_account_backend.dart')
