@@ -59,6 +59,8 @@ class FakeExoBackend implements OrvixExoBackend {
     int positionMs = 0,
     int durationMs = 2640000,
     double speed = 1.0,
+    int bytesLoaded = 0,
+    int httpStatus = -1,
   }) =>
       emit(id, {
         'event': 'state',
@@ -69,18 +71,48 @@ class FakeExoBackend implements OrvixExoBackend {
         'durationMs': durationMs,
         'bufferedMs': positionMs + 20000,
         'speed': speed,
+        'bytesLoaded': bytesLoaded,
+        'connections': bytesLoaded > 0 ? 1 : 0,
+        'httpStatus': httpStatus,
+        'firstByteMs': bytesLoaded > 0 ? 900 : -1,
+        'firstFrameMs': -1,
       });
 
-  void error(int id, String code, {String message = 'Source error'}) => emit(
+  void error(
+    int id,
+    String code, {
+    String message = 'Source error',
+    int? httpStatus,
+    List<String> causes = const [],
+    String? rendererMime,
+    String? rendererCodecs,
+  }) =>
+      emit(id, {
+        'event': 'error',
+        'code': code,
+        'message': message,
+        'cause': causes.join(' > '),
+        'causes': causes,
+        'httpStatus': httpStatus,
+        'rendererMime': rendererMime,
+        'rendererCodecs': rendererCodecs,
+      });
+
+  void diag(int id, String kind, [Map<String, Object?> detail = const {}]) =>
+      emit(id, {'event': 'diag', 'kind': kind, ...detail});
+
+  void video(int id, int width, int height, {int rotation = 0}) => emit(
         id,
-        {'event': 'error', 'code': code, 'message': message, 'cause': ''},
+        {'event': 'video', 'width': width, 'height': height, 'rotation': rotation},
       );
 
   void tracks(int id, List<Map<String, Object?>> tracks) =>
       emit(id, {'event': 'tracks', 'tracks': tracks});
 
-  void cues(int id, List<String> lines) =>
-      emit(id, {'event': 'cues', 'text': lines, 'bitmaps': const []});
+  void cues(int id, List<String> lines, {bool top = false}) => emit(
+        id,
+        {'event': 'cues', 'text': lines, 'bitmaps': const [], 'top': top},
+      );
 }
 
 class ExoUnderTest {
