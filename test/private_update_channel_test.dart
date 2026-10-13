@@ -191,6 +191,16 @@ void main() {
       expect(describeUpdateCheck(github).details.join(' '),
           contains('HTTP 401'));
 
+      // A body that arrives as text (non-JSON content type) is decoded too.
+      final textBody = await _service(
+        invoker: (_) async => throw const FunctionException(
+          status: 502,
+          details: '{"error":"github_unavailable","github_status":403}',
+        ),
+      ).checkForUpdateReport();
+      expect(textBody.private.status, PrivateUpdateStatus.githubUnavailable);
+      expect(textBody.private.githubStatus, 403);
+
       final unconfigured = await _service(
         invoker: (_) async => throw const FunctionException(
           status: 503,

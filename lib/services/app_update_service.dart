@@ -459,16 +459,19 @@ class AppUpdateService {
     return response.data;
   }
 
-  static String? _errorCode(Object? details) {
-    if (details is Map) return details['error']?.toString();
-    if (details is String) {
-      try {
-        final decoded = jsonDecode(details);
-        if (decoded is Map) return decoded['error']?.toString();
-      } catch (_) {}
+  /// Error bodies normally arrive decoded; a non-JSON content type leaves
+  /// them as text.
+  static Object? _decodeDetails(Object? details) {
+    if (details is! String) return details;
+    try {
+      return jsonDecode(details);
+    } catch (_) {
+      return details;
     }
-    return null;
   }
+
+  static String? _errorCode(Object? details) =>
+      details is Map ? details['error']?.toString() : null;
 
   /// Asks the owner-only private channel for a build newer than [installed].
   ///
@@ -488,15 +491,15 @@ class AppUpdateService {
       data = await _invokeInternal({'action': 'check', 'platform': platform})
           .timeout(const Duration(seconds: 8));
     } on FunctionException catch (error) {
-      final code = _errorCode(error.details);
+      final details = _decodeDetails(error.details);
+      final code = _errorCode(details);
       return switch (error.status) {
         401 => const PrivateUpdateCheck(PrivateUpdateStatus.sessionExpired),
         403 => const PrivateUpdateCheck(PrivateUpdateStatus.notEntitled),
         502 when code == 'github_unavailable' => PrivateUpdateCheck(
             PrivateUpdateStatus.githubUnavailable,
-            githubStatus: error.details is Map
-                ? _asInt((error.details as Map)['github_status'])
-                : null,
+            githubStatus:
+                details is Map ? _asInt(details['github_status']) : null,
           ),
         503 when code == 'internal_updates_unconfigured' =>
           const PrivateUpdateCheck(PrivateUpdateStatus.serverUnconfigured),
