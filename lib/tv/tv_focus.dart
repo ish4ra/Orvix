@@ -642,3 +642,30 @@ class TvFocusEntry extends StatelessWidget {
     );
   }
 }
+
+/// A control drawn above the TV shell, such as the app update banner.
+///
+/// The shell's focus areas stop at their edges, so nothing above them is
+/// reachable by the remote on its own. The shell moves focus to [node] when
+/// Up is pressed at the top of the navigation or of a destination, and the
+/// target hands focus back with [leave].
+abstract final class TvTopTarget {
+  static final ValueNotifier<FocusNode?> node = ValueNotifier<FocusNode?>(null);
+
+  /// Set by the shell: puts focus back on the current destination.
+  static VoidCallback? returnFocus;
+
+  /// Whether a target is registered and can take focus now.
+  static bool get available => tvCanFocus(node.value);
+
+  /// Focuses the target. False when there is none.
+  static bool focus() {
+    final target = node.value;
+    if (!tvCanFocus(target)) return false;
+    tvRequestFocus(target!);
+    return true;
+  }
+
+  /// Returns focus to the shell below the target.
+  static void leave() => returnFocus?.call();
+}

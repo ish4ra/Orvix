@@ -82,6 +82,7 @@ class TvShellState extends State<TvShell> {
       if (!focusContent()) focusNavigation();
     });
   }
+    TvTopTarget.returnFocus = _returnFromTopTarget;
 
   @override
   void didUpdateWidget(covariant TvShell oldWidget) {
@@ -96,6 +97,9 @@ class TvShellState extends State<TvShell> {
     _navScope.dispose();
     for (final node in _navNodes) {
       node.dispose();
+    if (TvTopTarget.returnFocus == _returnFromTopTarget) {
+      TvTopTarget.returnFocus = null;
+    }
     }
     super.dispose();
   }
@@ -136,6 +140,11 @@ class TvShellState extends State<TvShell> {
       return KeyEventResult.ignored;
     }
     if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+  void _returnFromTopTarget() {
+    if (!mounted) return;
+    if (!focusContent()) focusNavigation();
+  }
+
       focusContent();
       return KeyEventResult.handled;
     }
@@ -144,6 +153,15 @@ class TvShellState extends State<TvShell> {
     }
     return KeyEventResult.ignored;
   }
+    // Up from the first destination reaches a control above the shell (the
+    // update banner) when one is shown. Held keys never jump out of the menu.
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.arrowUp &&
+        TvTopTarget.available &&
+        _navNodes.first.hasPrimaryFocus) {
+      TvTopTarget.focus();
+      return KeyEventResult.handled;
+    }
 
   KeyEventResult _handleContentKey(FocusNode node, KeyEvent event) {
     if ((event is! KeyDownEvent && event is! KeyRepeatEvent) ||
@@ -151,6 +169,11 @@ class TvShellState extends State<TvShell> {
       return KeyEventResult.ignored;
     }
     final primary = FocusManager.instance.primaryFocus;
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.arrowUp &&
+        TvTopTarget.available) {
+      return _handleContentUp();
+    }
     if (primary == null) return KeyEventResult.ignored;
     // Left inside a field being typed in moves the caret.
     final field = primary.context?.findAncestorStateOfType<TvTextFieldState>();
@@ -164,6 +187,19 @@ class TvShellState extends State<TvShell> {
     _guardScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _guardScheduled = false;
+  /// Up at the top edge of a destination moves to the control above the
+  /// shell. Only consulted while such a control is shown; otherwise Up keeps
+  /// its normal behaviour.
+  KeyEventResult _handleContentUp() {
+    final primary = FocusManager.instance.primaryFocus;
+    if (primary == null) return KeyEventResult.ignored;
+    if (primary.context?.widget is EditableText) return KeyEventResult.ignored;
+    final field = primary.context?.findAncestorStateOfType<TvTextFieldState>();
+    if (field != null && field.editing) return KeyEventResult.ignored;
+    if (!primary.focusInDirection(TraversalDirection.up)) TvTopTarget.focus();
+    return KeyEventResult.handled;
+  }
+
       _restoreLostFocus();
     });
     WidgetsBinding.instance.scheduleFrame();

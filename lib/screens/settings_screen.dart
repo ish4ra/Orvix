@@ -13,6 +13,7 @@ import '../services/skip_segment_service.dart';
 import '../tv/tv_focus.dart';
 import '../tv/tv_theme.dart';
 import '../tv/tv_widgets.dart';
+import '../widgets/update_check_section.dart';
 
 /// Preferred online subtitle languages, in picker order.
 const _subtitleLanguages = <(String, String)>[
@@ -244,6 +245,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   subtitle: 'Playback and subtitle preferences for Orvix.',
                 ),
                 const SizedBox(height: 24),
+                _tvSection('App updates', const [TvUpdateCheckSection()]),
                 _tvSection('Player engine', [
                   TvTabGroup(
                     child: Wrap(
@@ -373,6 +375,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               const SizedBox(height: 26),
+              const UpdateCheckCard(),
+              const SizedBox(height: 22),
               Container(
                 padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
