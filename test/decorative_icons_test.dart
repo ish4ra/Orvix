@@ -35,6 +35,15 @@ void main() {
     expect(settings, contains('Icons.smart_display_rounded'));
   });
 
+  test('ExoPlayer automatic audio uses a language icon', () {
+    final exo =
+        File('lib/screens/android_exo_player_screen.dart').readAsStringSync();
+    expect(
+        exo,
+        contains("icon: Icons.language_rounded,\n"
+            "        title: 'Automatic',"));
+  });
+
   test('rating stars stay', () {
     final home = File('lib/screens/home_screen.dart').readAsStringSync();
     final details = File('lib/screens/details_screen.dart').readAsStringSync();

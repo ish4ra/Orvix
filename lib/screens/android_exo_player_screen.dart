@@ -2362,7 +2362,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
     return [
       _PanelTile(
         focusNode: _panelFocus,
-        icon: Icons.auto_awesome_rounded,
+        icon: Icons.language_rounded,
         title: 'Automatic',
         subtitle: 'Your language when available',
         onPressed: () {
