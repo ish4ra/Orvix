@@ -353,10 +353,45 @@ class MainActivity : FlutterActivity() {
             "orvix/app_update"
         ).setMethodCallHandler { call, result ->
             when (call.method) {
+                "deviceAbis" -> result.success(Build.SUPPORTED_ABIS.toList())
                 "installApk" -> {
                     val path = call.argument<String>("path")
                     if (path.isNullOrBlank()) {
                         result.error("missing_apk", "APK path is missing", null)
+                        return@setMethodCallHandler
+                    }
+
+                    // Refuse an APK Android would reject before opening the
+                    // installer: another package, or a lower versionCode
+                    // than the installed Orvix (a downgrade).
+                    val archive = try {
+                        @Suppress("DEPRECATION")
+                        packageManager.getPackageArchiveInfo(path, 0)
+                    } catch (_: Throwable) {
+                        null
+                    }
+                    if (archive == null) {
+                        result.error("apk_invalid", "The APK could not be read", null)
+                        return@setMethodCallHandler
+                    }
+                    if (archive.packageName != packageName) {
+                        result.error("package_mismatch", archive.packageName, null)
+                        return@setMethodCallHandler
+                    }
+                    @Suppress("DEPRECATION")
+                    val installed = packageManager.getPackageInfo(packageName, 0)
+                    @Suppress("DEPRECATION")
+                    val archiveCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+                        archive.longVersionCode else archive.versionCode.toLong()
+                    @Suppress("DEPRECATION")
+                    val installedCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+                        installed.longVersionCode else installed.versionCode.toLong()
+                    if (archiveCode < installedCode) {
+                        result.error(
+                            "version_code_not_newer",
+                            "APK versionCode $archiveCode is below installed $installedCode",
+                            null
+                        )
                         return@setMethodCallHandler
                     }
 

@@ -13,101 +13,150 @@ class UpdateCheckSummary {
     required this.headline,
     required this.details,
     required this.canInstall,
-    this.privateBuild = false,
+    this.prerelease = false,
+    this.opensReleasePage = false,
+    this.failed = false,
   });
 
   final String headline;
   final List<String> details;
+
+  /// An update was found; the action installs it (or, on iOS, opens it).
   final bool canInstall;
 
-  /// The offered update is an owner-only private test build.
-  final bool privateBuild;
+  /// The offered update is a public beta/prerelease.
+  final bool prerelease;
+
+  /// iOS: the action opens the GitHub release page instead of installing.
+  final bool opensReleasePage;
+
+  /// The check did not reach a conclusion (network, rate limit, ...).
+  final bool failed;
+
+  /// The label of the install action.
+  String get actionLabel => opensReleasePage
+      ? 'Open release page'
+      : prerelease
+          ? 'Install beta'
+          : 'Install update';
 }
 
-/// Turns [report] into Settings text.
-///
-/// Private-channel details appear only when the server confirmed the account
-/// as an Orvix admin. Ordinary and signed-out users see the public result
-/// only, so nothing tells them a private channel exists.
-UpdateCheckSummary describeUpdateCheck(UpdateCheckReport report) {
+String _two(int value) => value.toString().padLeft(2, '0');
+
+/// Turns [report] into Settings text. Only public GitHub releases are
+/// checked, so nothing here depends on an Orvix account.
+UpdateCheckSummary describeUpdateCheck(UpdateCheckReport report, {DateTime? now}) {
   final update = report.update;
-  final private = report.private;
   final details = <String>[];
   final installed = report.installedVersion;
   if (installed != null) details.add('Installed: $installed');
+  final http = report.httpStatus == null ? '' : ' (HTTP ${report.httpStatus})';
 
-  String headline;
-  if (update != null) {
-    headline = 'Orvix ${update.version} is available';
-    details.add(report.isPrivateUpdate
-        ? 'Private test build for this device, from the owner channel.'
-        : 'Public release from GitHub.');
-  } else if (report.publicStatus == PublicUpdateStatus.unreachable) {
-    headline = 'Could not check for updates';
-    details.add('GitHub could not be reached. Check the connection and try '
-        'again.');
-  } else {
-    headline = 'Orvix is up to date';
-  }
+  UpdateCheckSummary failure(String headline, String detail) =>
+      UpdateCheckSummary(
+        headline: headline,
+        details: [...details, detail],
+        canInstall: false,
+        failed: true,
+      );
 
-  switch (private.status) {
-    case PrivateUpdateStatus.sessionExpired:
-      details.add('Your Orvix account session expired. Sign in again in '
-          'Account, then check again.');
-    case PrivateUpdateStatus.serverUnconfigured:
-      details.add('Private channel: the server has no GitHub access '
-          'configured.');
-    case PrivateUpdateStatus.githubUnavailable:
-      final code = private.githubStatus;
-      details.add('Private channel: GitHub refused the draft lookup'
-          '${code == null ? '' : ' (HTTP $code)'}.');
-    case PrivateUpdateStatus.noNewerBuild:
-      final visible = private.draftsVisible;
-      if (private.legacyServer) {
-        details.add('Private channel: no newer test build reported. The '
-            'server runs an older orvix-internal-update without '
-            'diagnostics; redeploy it to see why.');
-      } else if (visible == 0) {
-        details.add('Private channel: the server sees no draft releases. '
-            'Check that its GitHub token can read draft releases.');
-      } else if (private.skippedDrafts > 0) {
-        details.add('Private channel: no newer build for this device '
-            '(${private.skippedDrafts} draft${private.skippedDrafts == 1 ? '' : 's'} '
-            'without an installer for it).');
-      } else {
-        details.add('Private channel: no newer test build.');
+  switch (report.status) {
+    case UpdateCheckStatus.available when update != null:
+      final ios = report.target == UpdateTarget.ios;
+      details.add(update.prerelease
+          ? 'Public beta (prerelease) from GitHub. Betas are offered only '
+              'when you check here.'
+          : 'Stable release from GitHub.');
+      final newer = report.newestWithoutAsset;
+      if (newer != null) {
+        details.add('Orvix $newer is newer but has no installer for this '
+            'device yet.');
       }
-    case PrivateUpdateStatus.available:
-      if (!report.isPrivateUpdate) {
-        details.add('Private channel: the public release is newer than the '
-            'latest test build.');
+      if (update.viaReleaseFeed) {
+        details.add("GitHub's update limit was reached, so this was found "
+            'through the public release feed. Its checksum is not known; '
+            'the file size is still verified.');
       }
-    case PrivateUpdateStatus.unavailable:
-      // Signed in only: a signed-out check never reaches the endpoint. The
-      // wording names no private channel, because the account may not be an
-      // admin (the server never got to say).
-      final reason = switch (private.failure) {
-        'timeout' => 'did not answer in time',
-        'not_deployed' => 'has no update function deployed',
-        'network' => 'could not be reached',
-        'bad_response' => 'gave an unreadable answer',
-        final String code when code.startsWith('http_') =>
-          'failed (HTTP ${code.substring(5)})',
-        _ => null,
-      };
-      if (reason != null) details.add('Account update check: the server $reason.');
-    case PrivateUpdateStatus.signedOut:
-    case PrivateUpdateStatus.notEntitled:
-    case PrivateUpdateStatus.unsupportedPlatform:
-      break;
+      if (ios) {
+        details.add('iOS does not let apps install their own updates. Open '
+            'the release page, download the IPA for your device and install '
+            'it with your sideloading tool.');
+      } else if (report.target == UpdateTarget.macos) {
+        details.add('The download is shown in Finder; move the new Orvix to '
+            'Applications to finish.');
+      }
+      return UpdateCheckSummary(
+        headline: update.prerelease
+            ? 'Orvix ${update.version} (beta) is available'
+            : 'Orvix ${update.version} is available',
+        details: details,
+        canInstall: true,
+        prerelease: update.prerelease,
+        opensReleasePage: ios,
+      );
+    case UpdateCheckStatus.available:
+    case UpdateCheckStatus.upToDate:
+      return UpdateCheckSummary(
+        headline: 'Orvix is up to date',
+        details: [
+          ...details,
+          'No newer public release or beta is available for this device.',
+        ],
+        canInstall: false,
+      );
+    case UpdateCheckStatus.noCompatibleAsset:
+      final newer = report.newestWithoutAsset;
+      return UpdateCheckSummary(
+        headline: newer == null
+            ? 'No installer for this device yet'
+            : 'Orvix $newer has no installer for this device yet',
+        details: [
+          ...details,
+          'A newer release exists, but it does not include a file for this '
+              'device. Check again later.',
+        ],
+        canInstall: false,
+      );
+    case UpdateCheckStatus.rateLimited:
+      final reset = report.rateLimitResetAt?.toLocal();
+      final current = (now ?? DateTime.now());
+      final when = reset == null || reset.isBefore(current)
+          ? 'in a few minutes'
+          : 'after ${_two(reset.hour)}:${_two(reset.minute)}';
+      return failure(
+        "GitHub's update limit was reached",
+        'GitHub allows a limited number of update checks per hour from one '
+            'network. Try again $when.',
+      );
+    case UpdateCheckStatus.timeout:
+      return failure('Could not check for updates',
+          'GitHub did not answer in time. Check the connection and try again.');
+    case UpdateCheckStatus.network:
+      return failure('Could not check for updates',
+          'GitHub could not be reached. Check the connection and try again.');
+    case UpdateCheckStatus.serverError:
+      return failure('Could not check for updates',
+          'GitHub had a server problem$http. Try again later.');
+    case UpdateCheckStatus.refused:
+      return failure('Could not check for updates',
+          'GitHub refused the update request$http. Try again later.');
+    case UpdateCheckStatus.httpError:
+      return failure('Could not check for updates',
+          'GitHub answered unexpectedly$http. Try again later.');
+    case UpdateCheckStatus.invalidResponse:
+      return failure('Could not check for updates',
+          'GitHub sent an answer Orvix could not read. Try again later.');
+    case UpdateCheckStatus.incomplete:
+      return failure('Could not finish the update check',
+          'GitHub listed more releases than Orvix checks at once, so a newer '
+              'one may have been missed. Try again later.');
+    case UpdateCheckStatus.unsupportedPlatform:
+      return failure('Updates are not available here',
+          'This platform has no Orvix update path.');
+    case UpdateCheckStatus.installedVersionUnknown:
+      return failure('Could not check for updates',
+          'The installed Orvix version could not be read.');
   }
-
-  return UpdateCheckSummary(
-    headline: headline,
-    details: details,
-    canInstall: update != null,
-    privateBuild: report.isPrivateUpdate,
-  );
 }
 
 /// Stands in for the gate's notifier when no gate is above (tests).
@@ -143,6 +192,11 @@ mixin _UpdateCheckLogic<T extends StatefulWidget> on State<T> {
   void install() {
     final gate = this.gate;
     if (gate != null) unawaited(gate.installAvailableUpdate());
+  }
+
+  void showNotes() {
+    final gate = this.gate;
+    if (gate != null) unawaited(gate.showReleaseNotes());
   }
 }
 
@@ -223,13 +277,22 @@ class _UpdateCheckCardState extends State<UpdateCheckCard>
                       : const Icon(Icons.refresh_rounded),
                   label: Text(checking ? 'Checking…' : 'Check for updates'),
                 ),
-                if (summary?.canInstall == true)
+                if (summary != null && summary.canInstall) ...[
                   OutlinedButton.icon(
                     key: const ValueKey('settings-install-update'),
                     onPressed: busy ? null : install,
-                    icon: const Icon(Icons.download_rounded),
-                    label: Text(busy ? 'Updating…' : 'Install update'),
+                    icon: Icon(summary.opensReleasePage
+                        ? Icons.open_in_new_rounded
+                        : Icons.download_rounded),
+                    label: Text(busy ? 'Updating…' : summary.actionLabel),
                   ),
+                  TextButton.icon(
+                    key: const ValueKey('settings-update-notes'),
+                    onPressed: showNotes,
+                    icon: const Icon(Icons.notes_rounded),
+                    label: const Text("What's new"),
+                  ),
+                ],
               ],
             ),
           ),
@@ -278,18 +341,32 @@ class _TvUpdateCheckSectionState extends State<TvUpdateCheckSection>
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
                 child: Text(line, style: TvText.caption),
               ),
-          if (summary?.canInstall == true) ...[
+          if (summary != null && summary.canInstall) ...[
             const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TvButton(
-                key: const ValueKey('tv-settings-install-update'),
-                kind: TvButtonKind.primary,
-                icon: Icons.download_rounded,
-                label: busy ? 'Updating…' : 'Install update',
-                busy: busy,
-                onPressed: install,
-              ),
+            Row(
+              children: [
+                // Filling the row keeps Down from "Check for updates" on the
+                // install action, the one the user most likely wants.
+                Expanded(
+                  child: TvButton(
+                    key: const ValueKey('tv-settings-install-update'),
+                    kind: TvButtonKind.primary,
+                    icon: Icons.download_rounded,
+                    label: busy ? 'Updating…' : summary.actionLabel,
+                    busy: busy,
+                    expanded: true,
+                    onPressed: install,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                TvButton(
+                  key: const ValueKey('tv-settings-update-notes'),
+                  icon: Icons.notes_rounded,
+                  label: "What's new",
+                  enabled: !busy,
+                  onPressed: showNotes,
+                ),
+              ],
             ),
             const SizedBox(height: 6),
             const Text(
