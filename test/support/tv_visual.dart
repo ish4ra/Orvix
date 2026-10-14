@@ -79,9 +79,19 @@ Future<void> captureTv(WidgetTester tester, String name) async {
   final dirPath = Platform.environment['ORVIX_CAPTURE_DIR'];
   if (dirPath == null || dirPath.isEmpty) return;
   await tester.runAsync(() async {
-    final boundary = tester.renderObject<RenderRepaintBoundary>(
-        find.byKey(tvCaptureKey));
-    final image = await boundary.toImage(pixelRatio: 1);
+    final framed = find.byKey(tvCaptureKey);
+    final ui.Image image;
+    if (framed.evaluate().isNotEmpty) {
+      image = await tester
+          .renderObject<RenderRepaintBoundary>(framed)
+          .toImage(pixelRatio: 1);
+    } else {
+      // Pushed routes (the player) are not inside the frame: capture the
+      // whole view instead.
+      final view = tester.binding.renderViews.first;
+      final layer = view.debugLayer! as OffsetLayer;
+      image = await layer.toImage(Offset.zero & view.size);
+    }
     final data = await image.toByteData(format: ui.ImageByteFormat.png);
     final dir = Directory(dirPath)..createSync(recursive: true);
     File('${dir.path}/$name.png')

@@ -200,7 +200,11 @@ class AndroidExoPlayerScreen extends StatefulWidget {
 
 class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
     with WidgetsBindingObserver {
-  final FocusNode _surfaceFocus = FocusNode(debugLabel: 'exo-surface');
+  // The full-screen video surface takes focus only when asked (controls
+  // hidden). As a traversal candidate its centre could win a DPAD move on a
+  // wide screen, and focus would vanish from the controls.
+  final FocusNode _surfaceFocus =
+      FocusNode(debugLabel: 'exo-surface', skipTraversal: true);
   final FocusNode _backFocus = FocusNode(debugLabel: 'exo-back');
   final FocusNode _timelineFocus = FocusNode(debugLabel: 'exo-timeline');
   final FocusNode _rewindFocus = FocusNode(debugLabel: 'exo-rewind');
@@ -228,6 +232,10 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
   // 500 ms, so it is extrapolated between reports and repainted often.
   final Stopwatch _sinceState = Stopwatch()..start();
   final Stopwatch _bufferingFor = Stopwatch();
+
+  /// Bytes received when the current mid-playback buffering began, so the
+  /// buffering indicator can tell "data is arriving" from "nothing yet".
+  int _bufferStartBytes = 0;
   Timer? _externalSubtitleTimer;
   LocalP2pStartupMonitor? _p2pStartup;
   final ExoP2pRetryPolicy _p2pRetry = ExoP2pRetryPolicy();
@@ -477,6 +485,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
 
     if (_started && value.buffering) {
       if (!_bufferingFor.isRunning) {
+        _bufferStartBytes = value.bytesLoaded;
         _bufferingFor
           ..reset()
           ..start();
@@ -1240,6 +1249,12 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
       if (event is KeyDownEvent) unawaited(_togglePlay());
       return KeyEventResult.handled;
     }
+    // TV: Back sits alone in the top-left corner, outside the timeline's
+    // column, so directional search would land on the video surface.
+    if (_tv && key == LogicalKeyboardKey.arrowUp) {
+      if (event is KeyDownEvent) _backFocus.requestFocus();
+      return KeyEventResult.handled;
+    }
     return KeyEventResult.ignored;
   }
 
@@ -1459,7 +1474,20 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
                     message: _loadingMessage,
                     detail: _loadingDetail,
                   ),
-                if (buffering)
+                // A stall shorter than this shows nothing, so a brief
+                // rebuffer never flashes a spinner over the picture.
+                if (buffering &&
+                    _tv &&
+                    _bufferingFor.elapsed >= const Duration(milliseconds: 400))
+                  _TvBufferingIndicator(
+                    status: exoBufferingStatus(
+                      localP2p: _localP2p,
+                      bufferingFor: _bufferingFor.elapsed,
+                      bytesSinceStart: value.bytesLoaded - _bufferStartBytes,
+                    ),
+                    lifted: _controlsVisible,
+                  )
+                else if (buffering && !_tv)
                   Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -1486,14 +1514,14 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
                 if (_controlsVisible && _error == null && _started)
                   ExcludeFocus(
                     excluding: _panel != _ExoPanel.none,
-                    child: _controls(value),
+                    child: _tv ? _tvControls(value) : _controls(value),
                   ),
                 if (showLoading) _loadingBackButton(),
                 if (_activeSkipSegment != null && !_skipDismissed &&
                     _error == null && _panel == _ExoPanel.none)
                   Positioned(
                     left: _tv ? 56 : 28,
-                    bottom: _controlsVisible ? (_tv ? 190 : 150) : 40,
+                    bottom: _controlsVisible ? (_tv ? 236 : 150) : 40,
                     child: _ExoButton(
                       icon: Icons.skip_next_rounded,
                       label: _activeSkipSegment!.label,
@@ -1577,7 +1605,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
         : value.bitmapCues;
     if (lines.isEmpty && bitmaps.isEmpty) return const SizedBox.shrink();
     final lift = _controlsVisible && _started && _panel == _ExoPanel.none
-        ? (_tv ? 150.0 : 132.0)
+        ? (_tv ? 210.0 : 132.0)
         : 0.0;
     final atTop = _external == null && value.cuesAtTop;
     final alignment = switch (_style.alignment) {
@@ -1908,6 +1936,270 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
     );
   }
 
+  /// Android TV controls: a compact title, a slim timeline, one strong
+  /// Play/Pause between the skip buttons, and the tools as quiet labelled
+  /// buttons. Settings and MPV show their label when focused. Same focus
+  /// nodes, actions and semantics as the phone layout in [_controls].
+  Widget _tvControls(OrvixExoValue value) {
+    final duration = value.duration;
+    final position = _scrubTarget ?? value.position;
+    final played = duration.inMilliseconds <= 0
+        ? 0.0
+        : (position.inMilliseconds / duration.inMilliseconds)
+            .clamp(0.0, 1.0)
+            .toDouble();
+    final buffered = duration.inMilliseconds <= 0
+        ? 0.0
+        : (value.buffered.inMilliseconds / duration.inMilliseconds)
+            .clamp(0.0, 1.0)
+            .toDouble();
+    final remaining = duration > position ? duration - position : Duration.zero;
+    final step = _seekStepSeconds;
+    final playing = value.playing || value.playWhenReady;
+    const timeStyle = TextStyle(
+      color: ExoPlayerColors.text,
+      fontSize: 15,
+      fontWeight: FontWeight.w700,
+      fontFeatures: [FontFeature.tabularFigures()],
+    );
+
+    final tools = <Widget>[
+      _ExoTvButton(
+        focusNode: _subtitlesFocus,
+        kind: _ExoTvButtonKind.tool,
+        icon: _subtitlesOff
+            ? Icons.closed_caption_disabled_rounded
+            : Icons.closed_caption_rounded,
+        label: _subtitlesOff ? 'Subtitles off' : 'Subtitles',
+        semanticLabel: 'Subtitles',
+        onPressed: () =>
+            _openPanel(_ExoPanel.subtitles, opener: _subtitlesFocus),
+        onFocusChange: _onControlFocus,
+      ),
+      _ExoTvButton(
+        focusNode: _audioFocus,
+        kind: _ExoTvButtonKind.tool,
+        icon: Icons.graphic_eq_rounded,
+        label: 'Audio',
+        semanticLabel: 'Audio',
+        onPressed: () => _openPanel(_ExoPanel.audio, opener: _audioFocus),
+        onFocusChange: _onControlFocus,
+      ),
+      _ExoTvButton(
+        focusNode: _speedFocus,
+        kind: _ExoTvButtonKind.tool,
+        icon: Icons.speed_rounded,
+        label: '${_speedLabel(value.speed)}x',
+        semanticLabel: 'Playback speed',
+        onPressed: () => _openPanel(_ExoPanel.speed, opener: _speedFocus),
+        onFocusChange: _onControlFocus,
+      ),
+      _ExoTvButton(
+        focusNode: _aspectFocus,
+        kind: _ExoTvButtonKind.tool,
+        icon: Icons.aspect_ratio_rounded,
+        label: _aspect.label,
+        semanticLabel: 'Aspect ratio ${_aspect.label}',
+        onPressed: _cycleAspect,
+        onFocusChange: _onControlFocus,
+      ),
+      if (widget.nextEpisodeLabel != null)
+        _ExoTvButton(
+          kind: _ExoTvButtonKind.tool,
+          icon: Icons.skip_next_rounded,
+          label: 'Next episode',
+          semanticLabel: 'Next episode',
+          onPressed: () => unawaited(_close(playNext: true)),
+          onFocusChange: _onControlFocus,
+        ),
+    ];
+
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0xB3050806),
+            Color(0x00050806),
+            Color(0x00050806),
+            Color(0x99050806),
+            Color(0xF2050806),
+          ],
+          stops: [0, .2, .45, .7, 1],
+        ),
+      ),
+      child: SafeArea(
+        child: FocusTraversalGroup(
+          policy: ReadingOrderTraversalPolicy(),
+          child: Padding(
+            // Inside the 5% overscan-safe area of a TV picture.
+            padding: const EdgeInsets.fromLTRB(48, 28, 48, 30),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _ExoTvButton(
+                  focusNode: _backFocus,
+                  kind: _ExoTvButtonKind.transport,
+                  icon: Icons.arrow_back_rounded,
+                  semanticLabel: 'Back',
+                  onPressed: () => unawaited(_close()),
+                  onFocusChange: _onControlFocus,
+                ),
+                const Spacer(),
+                Text(
+                  widget.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: ExoPlayerColors.text,
+                    fontSize: 22,
+                    height: 1.2,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -.2,
+                  ),
+                ),
+                if (widget.nextEpisodeLabel != null) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    'Next: ${widget.nextEpisodeLabel}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: ExoPlayerColors.muted,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Text(
+                      _format(position),
+                      style: timeStyle.copyWith(
+                        color: _scrubTarget != null
+                            ? ExoPlayerColors.lime
+                            : ExoPlayerColors.text,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: _Timeline(
+                        focusNode: _timelineFocus,
+                        played: played,
+                        buffered: buffered,
+                        onKeyEvent: _onTimelineKey,
+                        onFocusChange: _onControlFocus,
+                        onSeekFraction: duration > Duration.zero
+                            ? (fraction) {
+                                unawaited(_controller?.seekTo(Duration(
+                                  milliseconds:
+                                      (duration.inMilliseconds * fraction)
+                                          .round(),
+                                )));
+                                _showControls();
+                              }
+                            : null,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Semantics(
+                      label: 'Remaining ${_format(remaining)} of '
+                          '${_format(duration)}',
+                      child: ExcludeSemantics(
+                        child: Text(
+                          '-${_format(remaining)}',
+                          style: timeStyle.copyWith(
+                            color: ExoPlayerColors.muted,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    _ExoTvButton(
+                      focusNode: _rewindFocus,
+                      kind: _ExoTvButtonKind.transport,
+                      icon: _seekIcon(step, forward: false),
+                      semanticLabel: 'Back $step seconds',
+                      onPressed: () => unawaited(_seekRelative(-_seekStep)),
+                      onFocusChange: _onControlFocus,
+                    ),
+                    const SizedBox(width: 12),
+                    _ExoTvButton(
+                      focusNode: _playFocus,
+                      autofocus: true,
+                      kind: _ExoTvButtonKind.primary,
+                      icon: playing
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
+                      semanticLabel: playing ? 'Pause' : 'Play',
+                      onPressed: () => unawaited(_togglePlay()),
+                      onFocusChange: _onControlFocus,
+                    ),
+                    const SizedBox(width: 12),
+                    _ExoTvButton(
+                      focusNode: _forwardFocus,
+                      kind: _ExoTvButtonKind.transport,
+                      icon: _seekIcon(step, forward: true),
+                      semanticLabel: 'Forward $step seconds',
+                      onPressed: () => unawaited(_seekRelative(_seekStep)),
+                      onFocusChange: _onControlFocus,
+                    ),
+                    Container(
+                      width: 1,
+                      height: 28,
+                      margin: const EdgeInsets.symmetric(horizontal: 18),
+                      color: Colors.white.withValues(alpha: .16),
+                    ),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            for (var i = 0; i < tools.length; i++) ...[
+                              if (i > 0) const SizedBox(width: 4),
+                              tools[i],
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    _ExoTvButton(
+                      focusNode: _settingsFocus,
+                      kind: _ExoTvButtonKind.icon,
+                      icon: Icons.tune_rounded,
+                      label: 'Settings',
+                      semanticLabel: 'Player settings',
+                      onPressed: () =>
+                          _openPanel(_ExoPanel.settings, opener: _settingsFocus),
+                      onFocusChange: _onControlFocus,
+                    ),
+                    const SizedBox(width: 8),
+                    _ExoTvButton(
+                      focusNode: _switchFocus,
+                      kind: _ExoTvButtonKind.icon,
+                      icon: Icons.swap_horiz_rounded,
+                      label: 'Switch to MPV',
+                      semanticLabel: 'Switch to MPV',
+                      onPressed: () => unawaited(_close(switchToMpv: true)),
+                      onFocusChange: _onControlFocus,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   static IconData _seekIcon(int seconds, {required bool forward}) =>
       switch ((seconds, forward)) {
         (5, false) => Icons.replay_5_rounded,
@@ -1969,13 +2261,28 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
               children: [
                 Padding(
                   padding: EdgeInsets.fromLTRB(22, _tv ? 28 : 18, 22, 10),
-                  child: Text(
-                    title,
-                    style: const TextStyle(
-                      color: ExoPlayerColors.text,
-                      fontSize: 19,
-                      fontWeight: FontWeight.w900,
-                    ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: const TextStyle(
+                            color: ExoPlayerColors.text,
+                            fontSize: 19,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      if (_tv)
+                        const Text(
+                          'Back to close',
+                          style: TextStyle(
+                            color: ExoPlayerColors.muted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                    ],
                   ),
                 ),
                 if (_panel == _ExoPanel.subtitleStyle) _stylePreview(),
@@ -2033,6 +2340,8 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
   List<Widget> _subtitleItems() {
     final tracks = _value.textTracks;
     final embeddedSelected = !_subtitlesOff && _external == null;
+    final imageSelected = embeddedSelected &&
+        tracks.any((track) => track.selected && track.isBitmapSubtitle);
     return [
       _PanelTile(
         focusNode: _panelFocus,
@@ -2077,6 +2386,12 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
           onPressed: () => unawaited(_loadSubtitleFile()),
         ),
       const _PanelHeader('Style and timing'),
+      if (imageSelected)
+        const _PanelNote(
+          'This track is image subtitles (PGS/VobSub): Media3 draws them as '
+          'pictures, so font, color and outline do not change them. Timing '
+          'still works.',
+        ),
       _AdjustTile(
         label: 'Size',
         value: _style.fontSize.round().toString(),
@@ -2900,6 +3215,26 @@ class _ExoButtonState extends State<_ExoButton> {
   }
 }
 
+/// A short, non-focusable explanation inside a player menu.
+class _PanelNote extends StatelessWidget {
+  const _PanelNote(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
+        child: Text(
+          text,
+          style: const TextStyle(
+            color: ExoPlayerColors.muted,
+            fontSize: 12.5,
+            height: 1.35,
+          ),
+        ),
+      );
+}
+
 class _PanelHeader extends StatelessWidget {
   const _PanelHeader(this.text);
 
@@ -2948,24 +3283,33 @@ class _PanelTileState extends State<_PanelTile> {
 
   @override
   Widget build(BuildContext context) {
-    final color = widget.enabled
-        ? (widget.selected || _focused
-            ? ExoPlayerColors.lime
-            : ExoPlayerColors.text)
-        : ExoPlayerColors.muted;
+    // TV: focus is a white row with dark text, selection a lime check, so a
+    // focused row never looks selected (the player controls do the same).
+    final tvFocus = _focused && PlatformProfile.isAndroidTv;
+    final color = tvFocus
+        ? ExoPlayerColors.background
+        : widget.enabled
+            ? (widget.selected || _focused
+                ? ExoPlayerColors.lime
+                : ExoPlayerColors.text)
+            : ExoPlayerColors.muted;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 110),
         decoration: BoxDecoration(
-          color: _focused
-              ? ExoPlayerColors.lime.withValues(alpha: .14)
-              : widget.selected
-                  ? ExoPlayerColors.card
-                  : Colors.transparent,
+          color: tvFocus
+              ? Colors.white
+              : _focused
+                  ? ExoPlayerColors.lime.withValues(alpha: .14)
+                  : widget.selected
+                      ? ExoPlayerColors.card
+                      : Colors.transparent,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: _focused ? ExoPlayerColors.lime : Colors.transparent,
+            color: _focused && !tvFocus
+                ? ExoPlayerColors.lime
+                : Colors.transparent,
             width: 1.6,
           ),
         ),
@@ -3005,8 +3349,10 @@ class _PanelTileState extends State<_PanelTile> {
                             widget.subtitle!,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: ExoPlayerColors.muted,
+                            style: TextStyle(
+                              color: tvFocus
+                                  ? const Color(0xFF465048)
+                                  : ExoPlayerColors.muted,
                               fontSize: 12,
                             ),
                           ),
@@ -3014,9 +3360,11 @@ class _PanelTileState extends State<_PanelTile> {
                     ),
                   ),
                   if (widget.selected)
-                    const Icon(
+                    Icon(
                       Icons.check_rounded,
-                      color: ExoPlayerColors.lime,
+                      color: tvFocus
+                          ? ExoPlayerColors.background
+                          : ExoPlayerColors.lime,
                       size: 20,
                     ),
                 ],
@@ -3059,6 +3407,9 @@ class _AdjustTile extends StatefulWidget {
 class _AdjustTileState extends State<_AdjustTile> {
   bool _focused = false;
 
+  /// TV focus: a white row with dark content, as in [_PanelTileState].
+  bool get _tvFocus => _focused && PlatformProfile.isAndroidTv;
+
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
@@ -3096,7 +3447,11 @@ class _AdjustTileState extends State<_AdjustTile> {
               child: Icon(
                 icon,
                 size: 20,
-                color: _focused ? ExoPlayerColors.lime : ExoPlayerColors.text,
+                color: _tvFocus
+                    ? ExoPlayerColors.background
+                    : _focused
+                        ? ExoPlayerColors.lime
+                        : ExoPlayerColors.text,
               ),
             ),
           ),
@@ -3115,12 +3470,16 @@ class _AdjustTileState extends State<_AdjustTile> {
           duration: const Duration(milliseconds: 110),
           padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
           decoration: BoxDecoration(
-            color: _focused
-                ? ExoPlayerColors.lime.withValues(alpha: .14)
-                : Colors.transparent,
+            color: _tvFocus
+                ? Colors.white
+                : _focused
+                    ? ExoPlayerColors.lime.withValues(alpha: .14)
+                    : Colors.transparent,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: _focused ? ExoPlayerColors.lime : Colors.transparent,
+              color: _focused && !_tvFocus
+                  ? ExoPlayerColors.lime
+                  : Colors.transparent,
               width: 1.6,
             ),
           ),
@@ -3135,9 +3494,11 @@ class _AdjustTileState extends State<_AdjustTile> {
                       Text(
                         widget.label,
                         style: TextStyle(
-                          color: _focused
-                              ? ExoPlayerColors.lime
-                              : ExoPlayerColors.text,
+                          color: _tvFocus
+                              ? ExoPlayerColors.background
+                              : _focused
+                                  ? ExoPlayerColors.lime
+                                  : ExoPlayerColors.text,
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
                         ),
@@ -3147,8 +3508,10 @@ class _AdjustTileState extends State<_AdjustTile> {
                           widget.hint!,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: ExoPlayerColors.muted,
+                          style: TextStyle(
+                            color: _tvFocus
+                                ? const Color(0xFF465048)
+                                : ExoPlayerColors.muted,
                             fontSize: 11.5,
                           ),
                         ),
@@ -3177,8 +3540,10 @@ class _AdjustTileState extends State<_AdjustTile> {
                     textAlign: TextAlign.center,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: ExoPlayerColors.lime,
+                    style: TextStyle(
+                      color: _tvFocus
+                          ? ExoPlayerColors.background
+                          : ExoPlayerColors.lime,
                       fontSize: 14,
                       fontWeight: FontWeight.w800,
                     ),
@@ -3187,6 +3552,344 @@ class _AdjustTileState extends State<_AdjustTile> {
                 _step(Icons.add_rounded, '${widget.label} up',
                     widget.onIncrease),
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum _ExoTvButtonKind {
+  /// Play/Pause: the one strong control.
+  primary,
+
+  /// Skip back/forward and Back: round, quiet until focused.
+  transport,
+
+  /// A labelled tool (Subtitles, Audio, speed, picture, next episode).
+  tool,
+
+  /// An icon that shows its label while focused (Settings, MPV).
+  icon,
+}
+
+/// Android TV player button. Focus is a white fill with dark content (lime
+/// for Play/Pause), so focus never looks like a selected state or a glow.
+class _ExoTvButton extends StatefulWidget {
+  const _ExoTvButton({
+    required this.icon,
+    required this.onPressed,
+    required this.onFocusChange,
+    required this.kind,
+    this.focusNode,
+    this.label,
+    this.semanticLabel,
+    this.autofocus = false,
+  });
+
+  final IconData icon;
+  final VoidCallback onPressed;
+  final ValueChanged<bool> onFocusChange;
+  final _ExoTvButtonKind kind;
+  final FocusNode? focusNode;
+  final String? label;
+  final String? semanticLabel;
+  final bool autofocus;
+
+  @override
+  State<_ExoTvButton> createState() => _ExoTvButtonState();
+}
+
+class _ExoTvButtonState extends State<_ExoTvButton> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final focused = _focused;
+    final kind = widget.kind;
+    final round = kind == _ExoTvButtonKind.primary ||
+        kind == _ExoTvButtonKind.transport;
+    final size = switch (kind) {
+      _ExoTvButtonKind.primary => 58.0,
+      _ExoTvButtonKind.transport => 46.0,
+      _ExoTvButtonKind.tool || _ExoTvButtonKind.icon => 44.0,
+    };
+    final Color fill;
+    final Color foreground;
+    switch (kind) {
+      case _ExoTvButtonKind.primary:
+        fill = focused ? ExoPlayerColors.lime : Colors.white.withValues(alpha: .92);
+        foreground = ExoPlayerColors.background;
+      case _ExoTvButtonKind.transport:
+      case _ExoTvButtonKind.icon:
+        fill = focused ? Colors.white : Colors.white.withValues(alpha: .12);
+        foreground = focused ? ExoPlayerColors.background : ExoPlayerColors.text;
+      case _ExoTvButtonKind.tool:
+        fill = focused ? Colors.white : Colors.transparent;
+        foreground = focused
+            ? ExoPlayerColors.background
+            : ExoPlayerColors.text.withValues(alpha: .9);
+    }
+    final showLabel = widget.label != null && kind == _ExoTvButtonKind.tool;
+    // Icon buttons name themselves in a small label above while focused,
+    // without changing width, so nothing next to them moves.
+    final floatingLabel =
+        widget.label != null && kind == _ExoTvButtonKind.icon && focused;
+    final radius = BorderRadius.circular(size / 2);
+    final iconSize = switch (kind) {
+      _ExoTvButtonKind.primary => 34.0,
+      _ExoTvButtonKind.transport => 26.0,
+      _ => 22.0,
+    };
+    final button = Semantics(
+      button: true,
+      label: widget.semanticLabel ?? widget.label,
+      child: AnimatedScale(
+        scale: focused && kind == _ExoTvButtonKind.primary ? 1.08 : 1.0,
+        duration: const Duration(milliseconds: 120),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          decoration: BoxDecoration(color: fill, borderRadius: radius),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              focusNode: widget.focusNode,
+              autofocus: widget.autofocus,
+              focusColor: Colors.transparent,
+              hoverColor: Colors.white.withValues(alpha: .06),
+              splashColor: Colors.white.withValues(alpha: .1),
+              borderRadius: radius,
+              onFocusChange: (value) {
+                setState(() => _focused = value);
+                widget.onFocusChange(value);
+              },
+              onTap: widget.onPressed,
+              child: SizedBox(
+                height: size,
+                width: round || kind == _ExoTvButtonKind.icon ? size : null,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: showLabel ? 16 : 0,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(widget.icon, color: foreground, size: iconSize),
+                      if (showLabel) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          widget.label!,
+                          maxLines: 1,
+                          style: TextStyle(
+                            color: foreground,
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (kind != _ExoTvButtonKind.icon || widget.label == null) return button;
+    return Stack(
+      clipBehavior: Clip.none,
+      alignment: Alignment.center,
+      children: [
+        button,
+        Positioned(
+          bottom: size + 10,
+          right: 0,
+          child: IgnorePointer(
+            child: AnimatedOpacity(
+              opacity: floatingLabel ? 1 : 0,
+              duration: const Duration(milliseconds: 120),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  widget.label!,
+                  maxLines: 1,
+                  softWrap: false,
+                  style: const TextStyle(
+                    color: ExoPlayerColors.background,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// What the TV buffering indicator says during mid-playback buffering.
+enum ExoBufferPhase {
+  /// A short stall: a small ring only.
+  brief,
+
+  /// Long buffering while data keeps arriving.
+  receiving,
+
+  /// Long buffering of a local torrent with no new data.
+  waitingForPeers,
+
+  /// Long buffering of a remote source with no new data.
+  slowSource,
+}
+
+@immutable
+class ExoBufferingStatus {
+  const ExoBufferingStatus(this.phase, {this.title, this.detail});
+
+  final ExoBufferPhase phase;
+  final String? title;
+  final String? detail;
+}
+
+/// Describes mid-playback buffering from what the player really reports:
+/// how long it has lasted and how many bytes arrived since it began. There
+/// is no deadline: a slow Free P2P torrent keeps waiting.
+ExoBufferingStatus exoBufferingStatus({
+  required bool localP2p,
+  required Duration bufferingFor,
+  required int bytesSinceStart,
+}) {
+  if (bufferingFor < AndroidExoPlayerScreen.slowBufferNoticeAfter) {
+    return const ExoBufferingStatus(ExoBufferPhase.brief);
+  }
+  if (bytesSinceStart > 0) {
+    final mb = bytesSinceStart / (1024 * 1024);
+    final amount = mb < 1
+        ? '${(bytesSinceStart / 1024).round()} KB'
+        : mb < 10
+            ? '${mb.toStringAsFixed(1)} MB'
+            : '${mb.round()} MB';
+    return ExoBufferingStatus(
+      ExoBufferPhase.receiving,
+      title: 'Buffering',
+      detail: localP2p
+          ? '$amount from peers so far'
+          : '$amount received so far',
+    );
+  }
+  return localP2p
+      ? const ExoBufferingStatus(
+          ExoBufferPhase.waitingForPeers,
+          title: 'Waiting for peers…',
+          detail: 'No new data yet. Orvix keeps waiting; Back picks another '
+              'source.',
+        )
+      : const ExoBufferingStatus(
+          ExoBufferPhase.slowSource,
+          title: 'Buffering…',
+          detail: 'The source is slow to send data.',
+        );
+}
+
+/// Mid-playback buffering on TV: a small ring for a short stall, then a
+/// compact translucent pill that says what is happening. It never takes
+/// focus and leaves the picture visible.
+class _TvBufferingIndicator extends StatelessWidget {
+  const _TvBufferingIndicator({required this.status, required this.lifted});
+
+  final ExoBufferingStatus status;
+
+  /// The controls are showing: sit above the bottom cluster.
+  final bool lifted;
+
+  @override
+  Widget build(BuildContext context) {
+    const ring = CircularProgressIndicator(
+      strokeWidth: 2.5,
+      color: ExoPlayerColors.lime,
+    );
+    final Widget content;
+    if (status.phase == ExoBufferPhase.brief) {
+      content = Container(
+        key: const ValueKey('exo-tv-buffering-ring'),
+        width: 52,
+        height: 52,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: .45),
+          shape: BoxShape.circle,
+        ),
+        child: ring,
+      );
+    } else {
+      content = Container(
+        key: const ValueKey('exo-tv-buffering-pill'),
+        constraints: const BoxConstraints(maxWidth: 460),
+        padding: const EdgeInsets.fromLTRB(16, 11, 22, 11),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: .62),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: Colors.white.withValues(alpha: .1)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(width: 20, height: 20, child: ring),
+            const SizedBox(width: 14),
+            Flexible(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    status.title ?? '',
+                    style: const TextStyle(
+                      color: ExoPlayerColors.text,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  if (status.detail != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      status.detail!,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: ExoPlayerColors.muted,
+                        fontSize: 12.5,
+                        height: 1.3,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return IgnorePointer(
+      child: ExcludeFocus(
+        child: Semantics(
+          liveRegion: true,
+          label: status.title ?? 'Buffering',
+          child: Align(
+            alignment: lifted ? const Alignment(0, -.1) : Alignment.center,
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              child: content,
             ),
           ),
         ),
