@@ -3170,7 +3170,7 @@ class DetailsScreenState extends State<DetailsScreen> {
                         ),
                         if (desktopSheet)
                           const Icon(
-                            Icons.movie_filter_rounded,
+                            Icons.playlist_play_rounded,
                             color: Color(0xFFB9FF45),
                           ),
                       ],

@@ -47,13 +47,106 @@ enum AppUpdateInstallResult {
   unsupported,
 }
 
+/// Result of asking the owner-only private update channel.
+enum PrivateUpdateStatus {
+  /// This platform has no private channel.
+  unsupportedPlatform,
+
+  /// No Orvix account session on this device.
+  signedOut,
+
+  /// Signed in, but the account is not an Orvix admin. The UI never mentions
+  /// private builds to these accounts.
+  notEntitled,
+
+  /// The account session expired and could not be refreshed.
+  sessionExpired,
+
+  /// Admin only: the server has no GitHub credential configured.
+  serverUnconfigured,
+
+  /// Admin only: GitHub refused or failed the draft lookup.
+  githubUnavailable,
+
+  /// The private endpoint could not be reached or failed unexpectedly.
+  unavailable,
+
+  /// Admin: no private build newer than the installed version.
+  noNewerBuild,
+
+  /// Admin: a newer private build exists for this platform.
+  available,
+}
+
+class PrivateUpdateCheck {
+  const PrivateUpdateCheck(
+    this.status, {
+    this.update,
+    this.draftsVisible,
+    this.skippedDrafts = 0,
+    this.githubStatus,
+  });
+
+  final PrivateUpdateStatus status;
+  final AppUpdateInfo? update;
+
+  /// Private drafts the server could see on GitHub (admin diagnostics).
+  final int? draftsVisible;
+
+  /// Drafts without a verified installer for this platform.
+  final int skippedDrafts;
+  final int? githubStatus;
+
+  /// The server confirmed this account as an Orvix admin.
+  bool get authorized => switch (status) {
+        PrivateUpdateStatus.serverUnconfigured ||
+        PrivateUpdateStatus.githubUnavailable ||
+        PrivateUpdateStatus.noNewerBuild ||
+        PrivateUpdateStatus.available =>
+          true,
+        _ => false,
+      };
+}
+
+enum PublicUpdateStatus { available, upToDate, unreachable }
+
+/// Everything a manual "Check for updates" needs to explain its result.
+class UpdateCheckReport {
+  const UpdateCheckReport({
+    required this.installedVersion,
+    required this.update,
+    required this.publicStatus,
+    required this.private,
+  });
+
+  final String? installedVersion;
+
+  /// The newest applicable update from either channel, or null.
+  final AppUpdateInfo? update;
+  final PublicUpdateStatus publicStatus;
+  final PrivateUpdateCheck private;
+
+  bool get isPrivateUpdate => update?.internalVersion != null;
+}
+
+/// Calls the private update endpoint. Throws [FunctionException] for a
+/// non-2xx answer, like supabase_flutter's `functions.invoke`.
+typedef InternalUpdateInvoker = Future<Object?> Function(
+    Map<String, Object?> body);
+
 class AppUpdateService {
   AppUpdateService({
     http.Client? client,
     Future<String> Function()? installedVersionLoader,
+    InternalUpdateInvoker? internalInvoker,
+    bool Function()? hasAccountSession,
+    String? internalPlatform,
   })  : _client = client ?? http.Client(),
         _installedVersionLoader =
-            installedVersionLoader ?? installedVersion;
+            installedVersionLoader ?? installedVersion,
+        _internalInvoker = internalInvoker,
+        _hasAccountSession = hasAccountSession,
+        _internalPlatformOverride = internalPlatform;
 
   static const _releasesBaseUrl =
       'https://api.github.com/repos/ish4ra/Orvix/releases';
@@ -63,6 +156,9 @@ class AppUpdateService {
 
   http.Client _client;
   final Future<String> Function() _installedVersionLoader;
+  final InternalUpdateInvoker? _internalInvoker;
+  final bool Function()? _hasAccountSession;
+  final String? _internalPlatformOverride;
   String? _installedVersionCache;
 
   static Future<String>? _installedVersionFuture;
@@ -126,15 +222,43 @@ class AppUpdateService {
     }
   }
 
-  Future<AppUpdateInfo?> checkForUpdate() async {
+  Future<AppUpdateInfo?> checkForUpdate() async =>
+      (await checkForUpdateReport()).update;
+
+  /// Checks both channels and explains the outcome, for a manual check.
+  Future<UpdateCheckReport> checkForUpdateReport() async {
     String currentVersion;
     try {
       currentVersion = await _currentVersion();
     } catch (_) {
-      return null;
+      return const UpdateCheckReport(
+        installedVersion: null,
+        update: null,
+        publicStatus: PublicUpdateStatus.unreachable,
+        private: PrivateUpdateCheck(PrivateUpdateStatus.unavailable),
+      );
     }
 
-    final privateUpdate = await _checkInternalForUpdate(currentVersion);
+    final privateCheck = await checkPrivateChannel(currentVersion);
+    final privateUpdate = privateCheck.update;
+    final public = await _checkPublicForUpdate(currentVersion);
+    final best = _newestUpdate(privateUpdate, public.update);
+    return UpdateCheckReport(
+      installedVersion: currentVersion,
+      update: best,
+      publicStatus: public.update != null
+          ? PublicUpdateStatus.available
+          : public.reachable
+              ? PublicUpdateStatus.upToDate
+              : PublicUpdateStatus.unreachable,
+      private: privateCheck,
+    );
+  }
+
+  Future<({AppUpdateInfo? update, bool reachable})> _checkPublicForUpdate(
+    String currentVersion,
+  ) async {
+    var reachable = false;
     // Compare private and public updates. Owner accounts must not be pinned
     // to an older draft beta when a newer public stable version exists.
     try {
@@ -162,6 +286,7 @@ class AppUpdateService {
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final decoded = jsonDecode(response.body);
         if (decoded is List) {
+          reachable = true;
           AppUpdateInfo? best;
           for (final raw in decoded) {
             if (raw is! Map<String, dynamic>) continue;
@@ -204,7 +329,7 @@ class AppUpdateService {
               best = candidate;
             }
           }
-          if (best != null) return _newestUpdate(privateUpdate, best);
+          if (best != null) return (update: best, reachable: true);
         }
       }
     } catch (_) {
@@ -215,7 +340,10 @@ class AppUpdateService {
     }
 
     final publicFallback = await _checkReleaseFeedFallback(currentVersion);
-    return _newestUpdate(privateUpdate, publicFallback);
+    return (
+      update: publicFallback.update,
+      reachable: reachable || publicFallback.reachable,
+    );
   }
 
   static AppUpdateInfo? _newestUpdate(AppUpdateInfo? internal, AppUpdateInfo? public) {
@@ -224,9 +352,10 @@ class AppUpdateService {
     return isVersionNewer(internal.version, public.version) ? internal : public;
   }
 
-  Future<AppUpdateInfo?> _checkReleaseFeedFallback(
+  Future<({AppUpdateInfo? update, bool reachable})> _checkReleaseFeedFallback(
     String currentVersion,
   ) async {
+    var reachable = false;
     const sources = <String>[
       'https://github.com/ish4ra/Orvix/releases.atom',
       'https://github.com/ish4ra/Orvix/releases',
@@ -251,6 +380,7 @@ class AppUpdateService {
         if (response.statusCode < 200 || response.statusCode >= 300) {
           continue;
         }
+        reachable = true;
 
         String? bestTag;
         for (final match in tagPattern.allMatches(response.body)) {
@@ -268,7 +398,7 @@ class AppUpdateService {
 
         final version = bestTag.replaceFirst(RegExp(r'^v'), '');
         final assetName = _expectedAssetName(version);
-        if (assetName == null) return null;
+        if (assetName == null) return (update: null, reachable: true);
 
         final releaseUrl =
             'https://github.com/ish4ra/Orvix/releases/tag/$bestTag';
@@ -276,7 +406,7 @@ class AppUpdateService {
             'https://github.com/ish4ra/Orvix/releases/download/'
             '$bestTag/$assetName';
 
-        return AppUpdateInfo(
+        final update = AppUpdateInfo(
           tag: bestTag,
           version: version,
           title: 'Orvix v$version',
@@ -286,14 +416,17 @@ class AppUpdateService {
           assetName: assetName,
           assetUrl: assetUrl,
         );
+        return (update: update, reachable: true);
       } catch (_) {
         _resetClient();
       }
     }
-    return null;
+    return (update: null, reachable: reachable);
   }
 
   String? _internalPlatform() {
+    final override = _internalPlatformOverride;
+    if (override != null) return override;
     if (Platform.isWindows) return 'windows';
     if (Platform.isAndroid) {
       return PlatformProfile.isAndroidTv ? 'android_tv' : 'android_mobile';
@@ -303,66 +436,155 @@ class AppUpdateService {
     return null;
   }
 
-  Future<AppUpdateInfo?> _checkInternalForUpdate(String installed) async {
-    final platform = _internalPlatform();
-    if (platform == null) return null;
+  bool _signedIn() {
+    final override = _hasAccountSession;
+    if (override != null) return override();
     try {
-      final client = Supabase.instance.client;
-      if (client.auth.currentSession == null) return null;
-      final response = await client.functions.invoke(
-        'orvix-internal-update',
-        body: {'action': 'check', 'platform': platform},
-      ).timeout(const Duration(seconds: 8));
-      final data = response.data;
-      if (data is! Map || data['releases'] is! List) return null;
-      AppUpdateInfo? best;
-      for (final item in data['releases'] as List) {
-        if (item is! Map) continue;
-        final version = item['version']?.toString() ?? '';
-        final name = item['asset_name']?.toString() ?? '';
-        final digest = item['sha256']?.toString() ?? '';
-        final size = item['size_bytes'];
-        if (version.isEmpty || name.isEmpty || digest.length != 64 ||
-            RegExp(r'[^0-9a-f]').hasMatch(digest) ||
-            size is! num || size <= 0 ||
-            !isVersionNewer(version, installed)) continue;
-        final candidate = AppUpdateInfo(
-          tag: 'v$version',
-          version: version,
-          title: 'Orvix Internal $version',
-          notes: item['notes']?.toString() ?? '',
-          releaseUrl: '',
-          assetName: name,
-          assetUrl: '',
-          assetDigest: 'sha256:$digest',
-          assetSize: size.toInt(),
-          internalVersion: version,
-        );
-        if (best == null || isVersionNewer(version, best.version)) {
-          best = candidate;
-        }
-      }
-      return best;
+      return Supabase.instance.client.auth.currentSession != null;
     } catch (_) {
-      // Private update failures never interrupt the public update channel.
-      return null;
+      // Supabase is not initialized (tests, or a build without accounts).
+      return false;
     }
+  }
+
+  Future<Object?> _invokeInternal(Map<String, Object?> body) async {
+    final invoker = _internalInvoker;
+    if (invoker != null) return invoker(body);
+    // supabase_flutter refreshes an expired access token before sending and
+    // throws when that refresh fails.
+    final response = await Supabase.instance.client.functions.invoke(
+      'orvix-internal-update',
+      body: body,
+    );
+    return response.data;
+  }
+
+  /// Error bodies normally arrive decoded; a non-JSON content type leaves
+  /// them as text.
+  static Object? _decodeDetails(Object? details) {
+    if (details is! String) return details;
+    try {
+      return jsonDecode(details);
+    } catch (_) {
+      return details;
+    }
+  }
+
+  static String? _errorCode(Object? details) =>
+      details is Map ? details['error']?.toString() : null;
+
+  /// Asks the owner-only private channel for a build newer than [installed].
+  ///
+  /// Authorization happens only on the server (Supabase session + admin
+  /// allowlist); this client never decides it is an admin. Every failure is
+  /// classified instead of hidden, and none interrupts the public channel.
+  Future<PrivateUpdateCheck> checkPrivateChannel(String installed) async {
+    final platform = _internalPlatform();
+    if (platform == null) {
+      return const PrivateUpdateCheck(PrivateUpdateStatus.unsupportedPlatform);
+    }
+    if (!_signedIn()) {
+      return const PrivateUpdateCheck(PrivateUpdateStatus.signedOut);
+    }
+    Object? data;
+    try {
+      data = await _invokeInternal({'action': 'check', 'platform': platform})
+          .timeout(const Duration(seconds: 8));
+    } on FunctionException catch (error) {
+      final details = _decodeDetails(error.details);
+      final code = _errorCode(details);
+      return switch (error.status) {
+        401 => const PrivateUpdateCheck(PrivateUpdateStatus.sessionExpired),
+        403 => const PrivateUpdateCheck(PrivateUpdateStatus.notEntitled),
+        502 when code == 'github_unavailable' => PrivateUpdateCheck(
+            PrivateUpdateStatus.githubUnavailable,
+            githubStatus:
+                details is Map ? _asInt(details['github_status']) : null,
+          ),
+        503 when code == 'internal_updates_unconfigured' =>
+          const PrivateUpdateCheck(PrivateUpdateStatus.serverUnconfigured),
+        _ => const PrivateUpdateCheck(PrivateUpdateStatus.unavailable),
+      };
+    } on AuthException {
+      // The stored session could not be refreshed.
+      return const PrivateUpdateCheck(PrivateUpdateStatus.sessionExpired);
+    } catch (_) {
+      return const PrivateUpdateCheck(PrivateUpdateStatus.unavailable);
+    }
+
+    if (data is String) {
+      try {
+        data = jsonDecode(data);
+      } catch (_) {}
+    }
+    if (data is! Map || data['releases'] is! List) {
+      return const PrivateUpdateCheck(PrivateUpdateStatus.unavailable);
+    }
+    AppUpdateInfo? best;
+    for (final item in data['releases'] as List) {
+      if (item is! Map) continue;
+      final version = item['version']?.toString() ?? '';
+      final name = item['asset_name']?.toString() ?? '';
+      final digest = item['sha256']?.toString() ?? '';
+      final size = item['size_bytes'];
+      if (version.isEmpty || name.isEmpty || digest.length != 64 ||
+          RegExp(r'[^0-9a-f]').hasMatch(digest) ||
+          size is! num || size <= 0 ||
+          !isVersionNewer(version, installed)) continue;
+      final candidate = AppUpdateInfo(
+        tag: 'v$version',
+        version: version,
+        title: 'Orvix Internal $version',
+        notes: item['notes']?.toString() ?? '',
+        releaseUrl: '',
+        assetName: name,
+        assetUrl: '',
+        assetDigest: 'sha256:$digest',
+        assetSize: size.toInt(),
+        internalVersion: version,
+      );
+      if (best == null || isVersionNewer(version, best.version)) {
+        best = candidate;
+      }
+    }
+    final skipped = data['skipped'];
+    return PrivateUpdateCheck(
+      best == null
+          ? PrivateUpdateStatus.noNewerBuild
+          : PrivateUpdateStatus.available,
+      update: best,
+      draftsVisible: _asInt(data['drafts_visible']),
+      skippedDrafts: skipped is List ? skipped.length : 0,
+    );
   }
 
   Future<String> _internalSignedDownloadUrl(AppUpdateInfo update) async {
     final platform = _internalPlatform();
-    if (platform == null || Supabase.instance.client.auth.currentSession == null) {
+    if (platform == null || !_signedIn()) {
       throw StateError('Sign in to your authorized Orvix account.');
     }
-    final response = await Supabase.instance.client.functions.invoke(
-      'orvix-internal-update',
-      body: {
+    Object? data;
+    try {
+      data = await _invokeInternal({
         'action': 'download',
         'platform': platform,
         'version': update.internalVersion,
-      },
-    ).timeout(const Duration(seconds: 15));
-    final data = response.data;
+      }).timeout(const Duration(seconds: 15));
+    } on FunctionException catch (error) {
+      throw StateError(switch (error.status) {
+        401 => 'Your Orvix session expired. Sign in again, then retry.',
+        403 => 'This account is not authorized for this update.',
+        404 => 'This private build is no longer available.',
+        _ => 'Private update download is not available right now.',
+      });
+    } on AuthException {
+      throw StateError('Your Orvix session expired. Sign in again, then retry.');
+    }
+    if (data is String) {
+      try {
+        data = jsonDecode(data);
+      } catch (_) {}
+    }
     if (data is! Map || data['url'] is! String) {
       throw StateError('Private update download is not available.');
     }

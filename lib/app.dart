@@ -409,53 +409,59 @@ class _OrvixShellState extends State<_OrvixShell> {
     }
   }
 
+  /// Android TV navigation. One outlined icon family at one weight; the
+  /// selected destination changes colour, not glyph, so the icons do not
+  /// jump between filled and outlined shapes.
   static const _tvDestinations = <TvDestination>[
     TvDestination(
       icon: Icons.home_outlined,
-      selectedIcon: Icons.home_rounded,
+      selectedIcon: Icons.home_outlined,
       label: 'Home',
     ),
     TvDestination(
       icon: Icons.search_rounded,
-      selectedIcon: Icons.manage_search_rounded,
+      selectedIcon: Icons.search_rounded,
       label: 'Search',
     ),
     TvDestination(
-      icon: Icons.video_library_outlined,
-      selectedIcon: Icons.video_library_rounded,
+      icon: Icons.bookmarks_outlined,
+      selectedIcon: Icons.bookmarks_outlined,
       label: 'Library',
     ),
     TvDestination(
       icon: Icons.cloud_outlined,
-      selectedIcon: Icons.cloud_rounded,
+      selectedIcon: Icons.cloud_outlined,
       label: 'Clouds',
     ),
     TvDestination(
-      icon: Icons.hub_outlined,
-      selectedIcon: Icons.hub_rounded,
+      icon: Icons.extension_outlined,
+      selectedIcon: Icons.extension_outlined,
       label: 'Sources',
     ),
     TvDestination(
       icon: Icons.settings_outlined,
-      selectedIcon: Icons.settings_rounded,
+      selectedIcon: Icons.settings_outlined,
       label: 'Settings',
     ),
     TvDestination(
-      icon: Icons.person_outline_rounded,
-      selectedIcon: Icons.person_rounded,
+      icon: Icons.account_circle_outlined,
+      selectedIcon: Icons.account_circle_outlined,
       label: 'Account',
     ),
     TvDestination(
       icon: Icons.favorite_border_rounded,
-      selectedIcon: Icons.favorite_rounded,
+      selectedIcon: Icons.favorite_border_rounded,
       label: 'Support',
     ),
     TvDestination(
       icon: Icons.info_outline_rounded,
-      selectedIcon: Icons.info_rounded,
+      selectedIcon: Icons.info_outline_rounded,
       label: 'About',
     ),
   ];
+
+  /// Settings, Account, Support and About sit below a divider.
+  static const _tvSecondaryStart = 5;
 
   /// Android TV destinations. Built only once visited (see TvShell), so the
   /// Account QR login only runs while Account is open.
@@ -518,11 +524,12 @@ class _OrvixShellState extends State<_OrvixShell> {
         destinations: _tvDestinations,
         selectedIndex: _index,
         onSelected: _selectDestination,
+        secondaryStart: _tvSecondaryStart,
         brand: (expanded) => Padding(
-          padding: const EdgeInsets.only(left: 18),
+          padding: const EdgeInsets.only(left: 20),
           child: _OrvixBrand(
-            iconSize: 44,
-            fontSize: 22,
+            iconSize: 40,
+            fontSize: 21,
             showWordmark: expanded,
           ),
         ),
@@ -872,7 +879,7 @@ class _AboutScreen extends StatelessWidget {
   const _AboutScreen();
 
   static const _features = <(IconData, String)>[
-    (Icons.movie_filter_outlined,
+    (Icons.explore_outlined,
         'Rich movie & TV discovery with AIOMetadata/Cinemeta fallback'),
     (Icons.cloud_outlined,
         'Debrid and cloud-service connections, libraries and transfer bridge'),

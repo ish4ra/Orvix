@@ -28,6 +28,7 @@ import 'package:orvix/services/playback_service.dart';
 import 'package:orvix/services/source_provider_service.dart';
 import 'package:orvix/services/torbox_service.dart';
 import 'package:orvix/tv/tv_shell.dart';
+import 'package:orvix/tv/tv_widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // ---------------------------------------------------------------- fakes ----
@@ -757,6 +758,23 @@ void main() {
         'Down enters Continue Watching');
     expect(find.byType(LinearProgressIndicator), findsWidgets,
         reason: 'Continue Watching shows progress');
+    // Same card language as Windows and phones: title, episode line, time.
+    expect(find.byType(TvContinueCard), findsNWidgets(2));
+    expect(find.text('Movie  •  2023'), findsOneWidget);
+    expect(find.text('1h left'), findsOneWidget);
+    expect(find.text('S01E02  •  Second'), findsOneWidget);
+    expect(find.text('40m left'), findsOneWidget);
+    _expectFocus(tester, find.byKey(const ValueKey('tv-continue-0')),
+        'Continue Watching starts on its first card');
+    await _key(tester, LogicalKeyboardKey.arrowRight);
+    _expectFocus(tester, find.byKey(const ValueKey('tv-continue-1')),
+        'Right moves along Continue Watching');
+    await _key(tester, LogicalKeyboardKey.arrowRight);
+    _expectFocus(tester, find.byKey(const ValueKey('tv-continue-1')),
+        'Right stops at the last card');
+    await _key(tester, LogicalKeyboardKey.arrowLeft);
+    _expectFocus(tester, find.byKey(const ValueKey('tv-continue-0')),
+        'Left moves back');
 
     await _key(tester, LogicalKeyboardKey.arrowDown);
     _expectFocus(tester, find.byKey(const ValueKey('tv-home-popularMovies')),

@@ -492,7 +492,7 @@ class IsolationTest(unittest.TestCase):
         self.assertNotIn("package:file_picker", read("lib/screens/player_screen.dart"))
 
     def test_scanner_error_builder_fits_mobile_scanner_6_and_7(self):
-        self.assertIn("MobileScannerException error, [\n    Widget? child,\n  ])", read("lib/screens/account_screen.dart"))
+        self.assertIn("MobileScannerException error, [\n    Widget? child,\n  ])", read("lib/screens/tv_qr_scanner_screen.dart"))
 
     def test_builders_are_bound_to_one_profile_each(self):
         modern = read("tools/build_ios_ipa.sh")

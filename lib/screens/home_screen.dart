@@ -1555,6 +1555,45 @@ class _HomeData {
 }
 
 
+/// The card's top-right chip: time left, or "Up next" for an episode that
+/// has not been started (same rule as the Windows card).
+@visibleForTesting
+String? tvContinueChip(ContinueWatchingEntry entry) {
+  if (entry.item.kind == MediaKind.series && entry.progress <= .001) {
+    return 'Up next';
+  }
+  final left = entry.duration - entry.position;
+  if (entry.duration <= Duration.zero || left <= Duration.zero) {
+    return 'Resume';
+  }
+  final minutes = left.inMinutes;
+  if (minutes >= 60) {
+    final rest = minutes % 60;
+    return rest == 0
+        ? '${minutes ~/ 60}h left'
+        : '${minutes ~/ 60}h ${rest}m left';
+  }
+  return minutes <= 1 ? 'Almost done' : '${minutes}m left';
+}
+
+/// "S01E01  •  Pilot" for an episode, "Movie  •  1957" for a film, as on
+/// the Windows and phone cards.
+@visibleForTesting
+String tvContinueDetail(ContinueWatchingEntry entry) {
+  final episode = entry.episode;
+  if (episode != null) {
+    return [
+      episode.label,
+      if (episode.title.trim().isNotEmpty) episode.title.trim(),
+    ].join('  •  ');
+  }
+  final item = entry.item;
+  return [
+    item.typeLabel,
+    if (item.year?.trim().isNotEmpty == true) item.year!.trim(),
+  ].join('  •  ');
+}
+
 class _TvHomeView extends StatefulWidget {
   const _TvHomeView({
     required this.data,
@@ -1607,14 +1646,6 @@ class _TvHomeViewState extends State<_TvHomeView> {
     });
   }
 
-  static String _remaining(ContinueWatchingEntry entry) {
-    final left = entry.duration - entry.position;
-    if (entry.duration <= Duration.zero || left <= Duration.zero) return '';
-    final minutes = left.inMinutes;
-    if (minutes >= 60) return '${minutes ~/ 60} h ${minutes % 60} min left';
-    return minutes <= 1 ? 'Almost done' : '$minutes min left';
-  }
-
   @override
   Widget build(BuildContext context) {
     final data = widget.data;
@@ -1635,23 +1666,20 @@ class _TvHomeViewState extends State<_TvHomeView> {
             title: 'Continue Watching',
             itemCount: data.continueWatching.length,
             itemWidth: landscapeWidth,
-            itemHeight: TvLandscapeCard.heightFor(landscapeWidth),
+            itemHeight: TvContinueCard.heightFor(landscapeWidth),
             itemBuilder: (context, index, node) {
               final entry = data.continueWatching[index];
-              final episode = entry.episode;
-              return TvLandscapeCard(
+              return TvContinueCard(
+                key: ValueKey('tv-continue-$index'),
                 focusNode: node,
                 width: landscapeWidth,
-                imageUrl: entry.item.background ?? entry.item.poster,
+                // Same artwork order as the Windows and phone cards.
+                imageUrl: entry.episode?.thumbnail ??
+                    entry.item.background ??
+                    entry.item.poster,
                 title: entry.item.title,
-                badge: episode == null
-                    ? null
-                    : 'S${episode.season} · E${episode.episode}',
-                subtitle: [
-                  if (episode != null && episode.title.trim().isNotEmpty)
-                    episode.title.trim(),
-                  _remaining(entry),
-                ].where((part) => part.isNotEmpty).join('  •  '),
+                detail: tvContinueDetail(entry),
+                chip: tvContinueChip(entry),
                 progress: entry.progress,
                 onFocusChange: (focused) {
                   if (focused) _focusTitle(entry.item);
@@ -1689,7 +1717,7 @@ class _TvHomeViewState extends State<_TvHomeView> {
 
         if (widget.hero == null && rows.isEmpty) {
           return TvMessage(
-            icon: Icons.movie_filter_outlined,
+            icon: Icons.movie_outlined,
             title: 'Nothing to show yet',
             message: 'Home rows could not be loaded. Check the connection and try again.',
             action: TvButton(
