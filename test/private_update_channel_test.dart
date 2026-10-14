@@ -215,12 +215,89 @@ void main() {
 
     test('an unreachable private endpoint never blocks the public check',
         () async {
+      final timeout = AppUpdateService.privateCheckTimeout;
+      AppUpdateService.privateCheckTimeout = const Duration(milliseconds: 50);
+      addTearDown(() => AppUpdateService.privateCheckTimeout = timeout);
       final report = await _service(
         invoker: (_) => Completer<Object?>().future,
       ).checkForUpdateReport();
       expect(report.private.status, PrivateUpdateStatus.unavailable);
+      expect(report.private.failure, 'timeout');
       expect(report.publicStatus, PublicUpdateStatus.upToDate);
-    }, timeout: const Timeout(Duration(seconds: 30)));
+      final text = describeUpdateCheck(report).details.join(' ');
+      expect(text, contains('did not answer in time'));
+      expect(text.toLowerCase(), isNot(contains('private')),
+          reason: 'The account may not be an admin');
+      expect(text.toLowerCase(), isNot(contains('draft')));
+    });
+
+    test('the private check waits long enough for a cold Edge Function', () {
+      expect(AppUpdateService.privateCheckTimeout,
+          greaterThanOrEqualTo(const Duration(seconds: 15)));
+    });
+
+    test('a missing function and other HTTP failures are named', () async {
+      final missing = await _service(
+        invoker: (_) async => throw const FunctionException(status: 404),
+      ).checkForUpdateReport();
+      expect(missing.private.failure, 'not_deployed');
+      expect(describeUpdateCheck(missing).details.join(' '),
+          contains('has no update function deployed'));
+
+      final crashed = await _service(
+        invoker: (_) async => throw const FunctionException(
+            status: 500, details: {'error': 'boom'}),
+      ).checkForUpdateReport();
+      expect(crashed.private.failure, 'http_500');
+      expect(describeUpdateCheck(crashed).details.join(' '),
+          contains('failed (HTTP 500)'));
+
+      final garbage = await _service(
+        invoker: (_) async => 'not json',
+      ).checkForUpdateReport();
+      expect(garbage.private.failure, 'bad_response');
+    });
+
+    test('an admin answer without diagnostics points at an old deployment',
+        () async {
+      final legacy = await _service(
+        invoker: (_) async => {'releases': const []},
+      ).checkForUpdateReport();
+      expect(legacy.private.status, PrivateUpdateStatus.noNewerBuild);
+      expect(legacy.private.legacyServer, isTrue);
+      expect(describeUpdateCheck(legacy).details.join(' '),
+          contains('older orvix-internal-update'));
+
+      final noDrafts = await _service(
+        invoker: (_) async => {'releases': const [], 'drafts_visible': 0},
+      ).checkForUpdateReport();
+      expect(noDrafts.private.legacyServer, isFalse);
+      expect(describeUpdateCheck(noDrafts).details.join(' '),
+          contains('the server sees no draft releases'));
+    });
+
+    test('v0.7.9 public with a beta.3 draft visible: the draft is offered',
+        () async {
+      final report = await _service(
+        installed: '0.7.9',
+        invoker: (_) async => {
+          'releases': [_row('0.7.10-beta.2'), _row('0.7.10-beta.3')],
+          'drafts_visible': 2,
+          'skipped': const [],
+        },
+      ).checkForUpdateReport();
+      expect(report.update?.version, '0.7.10-beta.3');
+      expect(report.isPrivateUpdate, isTrue);
+
+      final fromBeta2 = await _service(
+        installed: '0.7.10-beta.2',
+        invoker: (_) async => {
+          'releases': [_row('0.7.10-beta.2'), _row('0.7.10-beta.3')],
+          'drafts_visible': 2,
+        },
+      ).checkForUpdateReport();
+      expect(fromBeta2.update?.version, '0.7.10-beta.3');
+    });
 
     test('each product asks for its own platform', () async {
       for (final platform in ['android_mobile', 'android_tv', 'windows']) {
