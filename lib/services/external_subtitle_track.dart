@@ -1,4 +1,5 @@
 import 'ai_sinhala_subtitle_service.dart';
+import 'subtitle_text_cleanup.dart';
 
 /// A subtitle file loaded beside the stream (a local file or an OpenSubtitles
 /// download): SRT, WebVTT or ASS/SSA, parsed by the same production parser
@@ -21,7 +22,12 @@ class ExternalSubtitleTrack {
         label: label,
         language: language,
         source: source,
-        cues: AiSinhalaSubtitleService.parseSubtitleText(text),
+        cues: [
+          for (final cue in AiSinhalaSubtitleService.parseSubtitleText(text))
+            if (SubtitleTextCleanup.clean(cue.source) case final line
+                when line.isNotEmpty)
+              AiSubtitleCue(start: cue.start, end: cue.end, source: line),
+        ],
       );
 
   final String label;

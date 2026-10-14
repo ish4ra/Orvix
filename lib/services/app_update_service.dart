@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
@@ -85,9 +86,15 @@ class PrivateUpdateCheck {
     this.draftsVisible,
     this.skippedDrafts = 0,
     this.githubStatus,
+    this.failure,
   });
 
   final PrivateUpdateStatus status;
+
+  /// Why the endpoint gave no usable answer ([PrivateUpdateStatus.unavailable]
+  /// only): `timeout`, `not_deployed` (HTTP 404), `http_<status>`,
+  /// `network` or `bad_response`. Holds no server detail.
+  final String? failure;
   final AppUpdateInfo? update;
 
   /// Private drafts the server could see on GitHub (admin diagnostics).
@@ -96,6 +103,11 @@ class PrivateUpdateCheck {
   /// Drafts without a verified installer for this platform.
   final int skippedDrafts;
   final int? githubStatus;
+
+  /// The server answered without `drafts_visible`: it still runs the
+  /// orvix-internal-update version from before the diagnostics were added.
+  bool get legacyServer =>
+      status == PrivateUpdateStatus.noNewerBuild && draftsVisible == null;
 
   /// The server confirmed this account as an Orvix admin.
   bool get authorized => switch (status) {
@@ -473,6 +485,12 @@ class AppUpdateService {
   static String? _errorCode(Object? details) =>
       details is Map ? details['error']?.toString() : null;
 
+  /// How long the private check waits. The Edge Function may cold-start and
+  /// then lists releases on GitHub; the 8 seconds used before could expire
+  /// first, and the timeout was reported as "no update".
+  @visibleForTesting
+  static Duration privateCheckTimeout = const Duration(seconds: 20);
+
   /// Asks the owner-only private channel for a build newer than [installed].
   ///
   /// Authorization happens only on the server (Supabase session + admin
@@ -489,7 +507,10 @@ class AppUpdateService {
     Object? data;
     try {
       data = await _invokeInternal({'action': 'check', 'platform': platform})
-          .timeout(const Duration(seconds: 8));
+          .timeout(privateCheckTimeout);
+    } on TimeoutException {
+      return const PrivateUpdateCheck(PrivateUpdateStatus.unavailable,
+          failure: 'timeout');
     } on FunctionException catch (error) {
       final details = _decodeDetails(error.details);
       final code = _errorCode(details);
@@ -503,13 +524,17 @@ class AppUpdateService {
           ),
         503 when code == 'internal_updates_unconfigured' =>
           const PrivateUpdateCheck(PrivateUpdateStatus.serverUnconfigured),
-        _ => const PrivateUpdateCheck(PrivateUpdateStatus.unavailable),
+        404 => const PrivateUpdateCheck(PrivateUpdateStatus.unavailable,
+            failure: 'not_deployed'),
+        final status => PrivateUpdateCheck(PrivateUpdateStatus.unavailable,
+            failure: 'http_$status'),
       };
     } on AuthException {
       // The stored session could not be refreshed.
       return const PrivateUpdateCheck(PrivateUpdateStatus.sessionExpired);
     } catch (_) {
-      return const PrivateUpdateCheck(PrivateUpdateStatus.unavailable);
+      return const PrivateUpdateCheck(PrivateUpdateStatus.unavailable,
+          failure: 'network');
     }
 
     if (data is String) {
@@ -518,7 +543,8 @@ class AppUpdateService {
       } catch (_) {}
     }
     if (data is! Map || data['releases'] is! List) {
-      return const PrivateUpdateCheck(PrivateUpdateStatus.unavailable);
+      return const PrivateUpdateCheck(PrivateUpdateStatus.unavailable,
+          failure: 'bad_response');
     }
     AppUpdateInfo? best;
     for (final item in data['releases'] as List) {

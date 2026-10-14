@@ -461,8 +461,8 @@ const dashboardHtml = `<!doctype html>
     </div>
     <div id="cards" class="cards"></div>
     <div class="grid2">
-      <section class="panel"><h2>Live users</h2><div class="tableWrap"><table><thead><tr><th>User</th><th>Country</th><th>Platform</th><th>Device</th><th>Version</th><th>Session</th><th>OS</th></tr></thead><tbody id="liveBody"></tbody></table></div></section>
-      <section class="panel"><h2>Countries</h2><div id="countries" class="bars"></div></section>
+      <section class="panel"><h2>Live users</h2><div class="tableWrap"><table><thead><tr><th>User</th><th>Network country</th><th>Platform</th><th>Device</th><th>Version</th><th>Session</th><th>OS</th></tr></thead><tbody id="liveBody"></tbody></table></div></section>
+      <section class="panel"><h2>Network countries</h2><p class="note">Approximate network country. VPNs or proxies can make this differ from the device's physical location.</p><div id="countries" class="bars"></div></section>
     </div>
     <div class="grid3">
       <section class="panel"><h2>Platforms</h2><div id="platforms" class="bars"></div></section>
@@ -471,8 +471,8 @@ const dashboardHtml = `<!doctype html>
     </div>
     <div class="sectionTitle">Accounts & installs</div>
     <div class="grid2">
-      <section class="panel"><h2>Registered users</h2><div class="tableWrap"><table><thead><tr><th>Name</th><th>Email</th><th>Country</th><th>Installs</th><th>Device</th><th>Last active</th><th>Version</th></tr></thead><tbody id="usersBody"></tbody></table></div></section>
-      <section class="panel"><h2>Recent installations</h2><div class="tableWrap"><table><thead><tr><th>ID</th><th>Country</th><th>Platform</th><th>Device</th><th>Version</th><th>Locale</th><th>Last seen</th></tr></thead><tbody id="installsBody"></tbody></table></div></section>
+      <section class="panel"><h2>Registered users</h2><div class="tableWrap"><table><thead><tr><th>Name</th><th>Email</th><th>Network country</th><th>Installs</th><th>Device</th><th>Last active</th><th>Version</th></tr></thead><tbody id="usersBody"></tbody></table></div></section>
+      <section class="panel"><h2>Recent installations</h2><div class="tableWrap"><table><thead><tr><th>ID</th><th>Network country</th><th>Platform</th><th>Device</th><th>Version</th><th>Locale</th><th>Last seen</th></tr></thead><tbody id="installsBody"></tbody></table></div></section>
     </div>
     <div class="sectionTitle">Releases & health</div>
     <div class="grid2">
@@ -548,7 +548,7 @@ const dashboardHtml = `<!doctype html>
         const assetHtml = assets.length ? '<div class="releaseAssets">'+assets.map(asset =>
           '<div class="releaseAsset"><span class="releaseAssetName" title="'+esc(asset.name)+'">'+esc(asset.name)+'</span><strong>'+fmt.format(asset.downloads||0)+'</strong></div>'
         ).join('')+'</div>' : '';
-        return '<tr><td>'+esc(row.tag)+assetHtml+'</td><td>'+esc(row.published_at?new Date(row.published_at).toLocaleDateString():"—")+'</td><td><strong>'+fmt.format(row.total_downloads)+'</strong></td><td>'+fmt.format(p["Android Mobile"]||0)+'</td><td>'+fmt.format(p["Android TV"]||0)+'</td><td>'+fmt.format(p["Windows"]||0)+'</td><td>'+fmt.format(p["macOS"]||0)+'</td><td>'+(row.prerelease?'<span class="pill">Beta</span>':'<span class="pill">Stable</span>')+'</td></tr>';
+        return '<tr><td>'+esc(row.tag)+assetHtml+'</td><td>'+esc(row.published_at?new Date(row.published_at).toLocaleDateString():"—")+'</td><td><strong>'+fmt.format(row.total_downloads)+'</strong></td><td>'+fmt.format(p["Android Mobile"]||0)+'</td><td>'+fmt.format(p["Android TV"]||0)+'</td><td>'+fmt.format(p["Windows"]||0)+'</td><td>'+fmt.format(p["macOS"]||0)+'</td><td>'+(row.draft?'<span class="pill">Draft / Private</span>':row.prerelease?'<span class="pill">Beta</span>':'<span class="pill">Stable</span>')+'</td></tr>';
       }).join("") : '<tr><td colspan="8" class="empty">GitHub release data unavailable</td></tr>';
       el("errorsBody").innerHTML = data.recent_errors.length ? data.recent_errors.map(row => '<tr><td>'+esc(relative(row.occurred_at))+'</td><td class="'+(row.fatal?'danger':'')+'">'+esc(row.error_type)+'</td><td>'+esc(row.platform)+'</td><td>'+esc(row.app_version)+'</td><td title="'+esc(row.message)+'">'+esc(String(row.message||"").slice(0,80))+'</td></tr>').join("") : '<tr><td colspan="5" class="empty">No recorded errors</td></tr>';
     }

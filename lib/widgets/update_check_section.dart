@@ -63,7 +63,11 @@ UpdateCheckSummary describeUpdateCheck(UpdateCheckReport report) {
           '${code == null ? '' : ' (HTTP $code)'}.');
     case PrivateUpdateStatus.noNewerBuild:
       final visible = private.draftsVisible;
-      if (visible == 0) {
+      if (private.legacyServer) {
+        details.add('Private channel: no newer test build reported. The '
+            'server runs an older orvix-internal-update without '
+            'diagnostics; redeploy it to see why.');
+      } else if (visible == 0) {
         details.add('Private channel: the server sees no draft releases. '
             'Check that its GitHub token can read draft releases.');
       } else if (private.skippedDrafts > 0) {
@@ -79,6 +83,19 @@ UpdateCheckSummary describeUpdateCheck(UpdateCheckReport report) {
             'latest test build.');
       }
     case PrivateUpdateStatus.unavailable:
+      // Signed in only: a signed-out check never reaches the endpoint. The
+      // wording names no private channel, because the account may not be an
+      // admin (the server never got to say).
+      final reason = switch (private.failure) {
+        'timeout' => 'did not answer in time',
+        'not_deployed' => 'has no update function deployed',
+        'network' => 'could not be reached',
+        'bad_response' => 'gave an unreadable answer',
+        final String code when code.startsWith('http_') =>
+          'failed (HTTP ${code.substring(5)})',
+        _ => null,
+      };
+      if (reason != null) details.add('Account update check: the server $reason.');
     case PrivateUpdateStatus.signedOut:
     case PrivateUpdateStatus.notEntitled:
     case PrivateUpdateStatus.unsupportedPlatform:

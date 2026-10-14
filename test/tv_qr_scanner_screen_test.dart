@@ -31,16 +31,26 @@ class _FakePermissions extends CameraPermissionGateway {
 }
 
 class _FakeController extends MobileScannerController {
-  _FakeController({this.error}) : super(autoStart: false);
+  _FakeController({this.error, this.reportInState = false})
+      : super(autoStart: false);
 
   MobileScannerException? error;
+
+  /// mobile_scanner 6.x does not throw from start(): it stores the failure in
+  /// the controller state. When true, this fake does the same.
+  bool reportInState;
   int starts = 0;
 
   @override
   Future<void> start({CameraFacing? cameraDirection}) async {
     starts++;
     final failure = error;
-    if (failure != null) throw failure;
+    if (failure != null) {
+      if (!reportInState) throw failure;
+      value =
+          value.copyWith(isInitialized: true, isRunning: false, error: failure);
+      return;
+    }
     value = value.copyWith(isInitialized: true, isRunning: true);
   }
 
@@ -56,10 +66,11 @@ class _FakeController extends MobileScannerController {
 /// Hosts the scanner behind a button, like the Account screen does, and
 /// records what it returns.
 class _Host extends StatefulWidget {
-  const _Host(this.permissions, this.controller);
+  const _Host(this.permissions, this.controller, this.releases);
 
   final _FakePermissions permissions;
   final _FakeController controller;
+  final List<int> releases;
 
   @override
   State<_Host> createState() => _HostState();
@@ -82,6 +93,8 @@ class _HostState extends State<_Host> {
                     builder: (_) => OrvixTvQrScannerScreen(
                       permissions: widget.permissions,
                       controllerFactory: () => widget.controller,
+                      releaseCamera: () async =>
+                          widget.releases.add(widget.controller.starts),
                       previewBuilder: (context, controller, onDetect) {
                         detect = onDetect;
                         return const ColoredBox(
@@ -109,13 +122,15 @@ Future<_HostState> _open(
   _FakeController? controller,
   Size size = const Size(390, 844),
   double textScale = 1,
+  List<int>? releases,
 }) async {
   tester.view.physicalSize = size * 3;
   tester.view.devicePixelRatio = 3;
   tester.platformDispatcher.textScaleFactorTestValue = textScale;
   addTearDown(tester.view.reset);
   addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-  await tester.pumpWidget(_Host(permissions, controller ?? _FakeController()));
+  await tester.pumpWidget(
+      _Host(permissions, controller ?? _FakeController(), releases ?? []));
   await tester.tap(find.textContaining('open'));
   await tester.pumpAndSettle();
   return tester.state<_HostState>(find.byType(_Host));
@@ -146,9 +161,8 @@ void main() {
   testWidgets('permission granted: the camera starts and a QR code returns',
       (tester) async {
     final controller = _FakeController();
-    final host =
-        await _open(tester, _FakePermissions(CameraAccess.granted),
-            controller: controller);
+    final host = await _open(tester, _FakePermissions(CameraAccess.granted),
+        controller: controller);
     expect(controller.starts, 1);
     expect(find.byKey(const ValueKey('fake-preview')), findsOneWidget);
     expect(find.byKey(const ValueKey('tv-qr-scan-frame')), findsOneWidget);
@@ -175,6 +189,7 @@ void main() {
     await _open(tester, permissions, controller: controller);
 
     expect(find.text('Allow camera access'), findsOneWidget);
+    expect(find.text('Grant camera access'), findsOneWidget);
     expect(permissions.requests, 0, reason: 'No prompt without a tap');
     expect(controller.starts, 0);
     _expectNoOverlap(tester);
@@ -206,8 +221,7 @@ void main() {
 
     // Back from Android settings with Camera allowed.
     permissions.current = CameraAccess.granted;
-    tester.binding
-        .handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('tv-qr-scan-frame')), findsOneWidget);
@@ -279,6 +293,144 @@ void main() {
     await tester.pageBack();
     await tester.pumpAndSettle();
     expect(find.text('Allow camera access'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a start failure reported in the controller state is not shown as '
+      'a running camera', (tester) async {
+    // The real mobile_scanner 6.x start() returns normally on failure.
+    final controller = _FakeController(
+      reportInState: true,
+      error: const MobileScannerException(
+        errorCode: MobileScannerErrorCode.genericError,
+        errorDetails: MobileScannerErrorDetails(
+            code: 'MOBILE_SCANNER_CAMERA_ERROR',
+            message: 'An error occurred when opening the camera.'),
+      ),
+    );
+    await _open(tester, _FakePermissions(CameraAccess.granted),
+        controller: controller);
+    expect(find.byKey(const ValueKey('tv-qr-scan-frame')), findsNothing);
+    expect(find.text('The camera service did not respond'), findsOneWidget);
+    expect(find.text('Error: MOBILE_SCANNER_CAMERA_ERROR'), findsOneWidget);
+    expect(find.textContaining('grant', findRichText: true), findsNothing,
+        reason: 'A granted permission is never asked for again');
+    expect(find.byKey(const ValueKey('tv-qr-failed-settings')), findsOneWidget);
+    expect(find.byKey(const ValueKey('tv-qr-state-card')), findsOneWidget,
+        reason: 'A compact card, not an empty preview frame');
+    _expectNoOverlap(tester);
+  });
+
+  testWidgets('a camera still held by an old session is released on retry',
+      (tester) async {
+    final releases = <int>[];
+    final controller = _FakeController(
+      reportInState: true,
+      error: const MobileScannerException(
+        errorCode: MobileScannerErrorCode.controllerAlreadyInitialized,
+      ),
+    );
+    await _open(tester, _FakePermissions(CameraAccess.granted),
+        controller: controller, releases: releases);
+    expect(releases, [0], reason: 'Released once before the first start');
+    expect(find.text('The camera was still busy'), findsOneWidget);
+    expect(find.text('Error: controllerAlreadyInitialized'), findsOneWidget);
+
+    controller.error = null;
+    await tester.tap(find.byKey(const ValueKey('tv-qr-retry-camera')));
+    await tester.pumpAndSettle();
+    expect(releases, [0, 1], reason: 'Released again before the retry');
+    expect(find.byKey(const ValueKey('tv-qr-scan-frame')), findsOneWidget);
+  });
+
+  testWidgets('repeated failures add a recovery hint; the code stays usable',
+      (tester) async {
+    final controller = _FakeController(
+      error: const MobileScannerException(
+          errorCode: MobileScannerErrorCode.unsupported),
+    );
+    await _open(tester, _FakePermissions(CameraAccess.granted),
+        controller: controller);
+    expect(find.text('Android could not open the camera'), findsOneWidget);
+    expect(find.byKey(const ValueKey('tv-qr-persistent-hint')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('tv-qr-retry-camera')));
+    await tester.pumpAndSettle();
+    expect(controller.starts, 2, reason: 'Retry really starts again');
+    expect(find.byKey(const ValueKey('tv-qr-persistent-hint')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('tv-qr-enter-code')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('tv-code-field')), findsOneWidget);
+  });
+
+  testWidgets('settings from a camera failure restart the camera on return',
+      (tester) async {
+    final permissions = _FakePermissions(CameraAccess.granted);
+    final controller = _FakeController(
+      error: const MobileScannerException(
+          errorCode: MobileScannerErrorCode.genericError),
+    );
+    await _open(tester, permissions, controller: controller);
+    await tester.tap(find.byKey(const ValueKey('tv-qr-failed-settings')));
+    await tester.pumpAndSettle();
+    expect(permissions.settingsOpens, 1);
+
+    controller.error = null;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(controller.starts, 2);
+    expect(find.byKey(const ValueKey('tv-qr-scan-frame')), findsOneWidget);
+  });
+
+  testWidgets(
+      'a refusal while Android reports permission granted is a camera '
+      'failure, not a new permission prompt', (tester) async {
+    final permissions = _FakePermissions(CameraAccess.granted);
+    final controller = _FakeController(
+      error: const MobileScannerException(
+          errorCode: MobileScannerErrorCode.permissionDenied),
+    );
+    await _open(tester, permissions, controller: controller);
+    expect(find.byKey(const ValueKey('tv-qr-retry-camera')), findsOneWidget);
+    expect(find.byKey(const ValueKey('tv-qr-allow-camera')), findsNothing);
+    expect(permissions.requests, 0);
+  });
+
+  test('start failures are classified by the scanner and native codes', () {
+    MobileScannerException e(MobileScannerErrorCode code, [String? native]) =>
+        MobileScannerException(
+          errorCode: code,
+          errorDetails:
+              native == null ? null : MobileScannerErrorDetails(code: native),
+        );
+    expect(
+        classifyCameraFailure(
+            e(MobileScannerErrorCode.controllerAlreadyInitialized)),
+        CameraStartFailure.stillHeld);
+    expect(classifyCameraFailure(e(MobileScannerErrorCode.controllerDisposed)),
+        CameraStartFailure.stillHeld);
+    expect(
+        classifyCameraFailure(e(MobileScannerErrorCode.unsupported,
+            'MOBILE_SCANNER_NO_CAMERA_ERROR')),
+        CameraStartFailure.bindFailed);
+    expect(
+        classifyCameraFailure(e(MobileScannerErrorCode.genericError,
+            'MOBILE_SCANNER_CAMERA_ERROR')),
+        CameraStartFailure.cameraService);
+    expect(
+        classifyCameraFailure(e(MobileScannerErrorCode.genericError,
+            'MOBILE_SCANNER_CAMERA_PERMISSION_REQUEST_PENDING')),
+        CameraStartFailure.permissionPromptOpen);
+    expect(classifyCameraFailure(e(MobileScannerErrorCode.genericError)),
+        CameraStartFailure.unexpected);
+    expect(cameraFailureCode(e(MobileScannerErrorCode.genericError)),
+        'genericError');
+    expect(
+        cameraFailureCode(e(MobileScannerErrorCode.genericError,
+            'MOBILE_SCANNER_CAMERA_ERROR')),
+        'MOBILE_SCANNER_CAMERA_ERROR');
   });
 
   for (final state in [

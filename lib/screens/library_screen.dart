@@ -1025,6 +1025,7 @@ class _TorBoxPane extends StatefulWidget {
 class _TorBoxPaneState extends State<_TorBoxPane> {
   final _apiKeyController = TextEditingController();
   final _deviceLoginFocusNode = FocusNode(debugLabel: 'torbox-device');
+  final _accountRestoreFocusNode = FocusNode(debugLabel: 'torbox-from-account');
   final _apiKeyFocusNode = FocusNode(debugLabel: 'torbox-api-key');
   final _connectFocusNode = FocusNode(debugLabel: 'torbox-connect');
   final _refreshFocusNode = FocusNode(debugLabel: 'torbox-refresh');
@@ -1046,10 +1047,45 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
     OrvixAccountService.providerCredentialRevision.removeListener(_onCredentialsSynced);
     _apiKeyController.dispose();
     _deviceLoginFocusNode.dispose();
+    _accountRestoreFocusNode.dispose();
     _apiKeyFocusNode.dispose();
     _connectFocusNode.dispose();
     _refreshFocusNode.dispose();
     super.dispose();
+  }
+
+  /// TV: copies the TorBox connection saved in the Orvix account (by the
+  /// phone or another device) onto this TV, so the API key is never typed
+  /// with the remote. The open pane turns connected through
+  /// [_onCredentialsSynced], which also checks the key with TorBox.
+  Future<void> _restoreFromAccount() async {
+    if (_busy) return;
+    setState(() { _busy = true; _message = 'Checking your Orvix account for TorBox…'; });
+    String? message;
+    try {
+      final result = await OrvixAccountService.mergeCloudIntoLocal()
+          .timeout(const Duration(seconds: 25));
+      final providers = result.providers;
+      if (result.credentialsFailed || providers == null) {
+        message = 'Could not reach your Orvix account. Check the connection and try again.';
+      } else if (!providers.inAccount.contains(CloudProvider.torbox)) {
+        message = 'Your Orvix account has no TorBox connection yet. On your phone, '
+            'sign in to the same Orvix account, open Clouds › TorBox and connect it '
+            '(it is saved to the account automatically), then try again here.';
+      }
+    } on TimeoutException {
+      message = 'Your Orvix account did not answer in time. Try again.';
+    } catch (_) {
+      message = 'Could not reach your Orvix account. Try again.';
+    }
+    if (!mounted) return;
+    final connected = await widget.torbox.isConnected;
+    if (!mounted) return;
+    if (connected && !_connected) {
+      await _onCredentialsSynced();
+      return;
+    }
+    setState(() { _busy = false; _message = connected ? null : message; });
   }
 
   Future<void> _restore() async {
@@ -1063,8 +1099,8 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
   Future<void> _onCredentialsSynced() async {
     final connected = await widget.torbox.isConnected;
     if (!mounted || connected == _connected) return;
-    final hadFocus = [_deviceLoginFocusNode, _apiKeyFocusNode, _connectFocusNode].any((n) => n.hasFocus);
-    setState(() { _connected = connected; _checking = false; _message = null; if (!connected) { _account = null; _items = const []; } });
+    final hadFocus = [_deviceLoginFocusNode, _accountRestoreFocusNode, _apiKeyFocusNode, _connectFocusNode].any((n) => n.hasFocus);
+    setState(() { _connected = connected; _checking = false; _busy = false; _message = null; if (!connected) { _account = null; _items = const []; } });
     if (!connected) return;
     if (hadFocus) _tvFocusAfterBuild(this, _refreshFocusNode);
     await _refresh();
@@ -1185,18 +1221,35 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
     );
   }
 
-  Widget _buildTvLogin() => _tvForm(key: const PageStorageKey('torbox-login-scroll'), entry: _deviceLoginFocusNode, [
+  Widget _buildTvLogin() {
+    final signedIn = OrvixAccountService.isSignedIn;
+    return _tvForm(key: const PageStorageKey('torbox-login-scroll'), entry: signedIn ? _accountRestoreFocusNode : _deviceLoginFocusNode, [
     _tvCloudIntro(
       icon: Icons.bolt_rounded,
       title: 'Connect TorBox',
-      text: 'Use TorBox device login, or enter your API key. Orvix stores the token in secure storage.',
+      text: signedIn
+          ? 'Already connected on your phone? Get it from your Orvix account. Or use TorBox device login, or enter your API key.'
+          : 'Use TorBox device login, or enter your API key. Orvix stores the token in secure storage.',
     ),
     const SizedBox(height: 22),
+    if (signedIn) ...[
+      TvButton(
+        key: const ValueKey('tv-torbox-from-account'),
+        expanded: true,
+        focusNode: _accountRestoreFocusNode,
+        kind: TvButtonKind.primary,
+        icon: Icons.sync_rounded,
+        label: 'Get TorBox from my Orvix account',
+        busy: _busy,
+        onPressed: _restoreFromAccount,
+      ),
+      const SizedBox(height: 12),
+    ],
     TvButton(
       key: const ValueKey('tv-torbox-device'),
       expanded: true,
       focusNode: _deviceLoginFocusNode,
-      kind: TvButtonKind.primary,
+      kind: signedIn ? TvButtonKind.secondary : TvButtonKind.primary,
       icon: Icons.devices_rounded,
       label: 'Sign in with TorBox device code',
       busy: _busy,
@@ -1235,6 +1288,7 @@ class _TorBoxPaneState extends State<_TorBoxPane> {
     ),
     _tvMessage(_message),
   ]);
+  }
 
   Widget _buildTvLibrary() => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,

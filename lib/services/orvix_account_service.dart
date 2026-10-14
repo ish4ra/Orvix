@@ -463,7 +463,7 @@ class OrvixAccountService {
           await _writeCredentialSyncState(state, userId: user.id);
         }
         if (!signedIn) return ProviderCredentialSyncResult.localOnly;
-        return await _syncCredentials(user)
+        return await _syncCredentials(user) != null
             ? ProviderCredentialSyncResult.synced
             : ProviderCredentialSyncResult.localOnly;
       });
@@ -492,10 +492,17 @@ class OrvixAccountService {
     }
   }
 
-  /// Returns false when nothing was synced because the account may no
-  /// longer be written to.
-  static Future<bool> _syncCredentials(OrvixAccountUser user) async {
-    if (!_cloudWritesAllowed(user)) return false;
+  /// How long one credential request to the account may take. A request
+  /// that never answers would otherwise hold the credential sync lock, and
+  /// every later Sync now would wait behind it and time out.
+  @visibleForTesting
+  static Duration credentialRequestTimeout = const Duration(seconds: 15);
+
+  /// Returns null when nothing was synced because the account may no longer
+  /// be written to.
+  static Future<ProviderCredentialSummary?> _syncCredentials(
+      OrvixAccountUser user) async {
+    if (!_cloudWritesAllowed(user)) return null;
     final stored = await _readCredentialSyncState();
     final state = stored.userId == user.id
         ? stored
@@ -506,9 +513,10 @@ class OrvixAccountService {
       if (value != null && value.isNotEmpty) local[key] = value;
     }
 
-    final remote = Map<String, String>.from(await backend.loadCredentials())
+    final remote = Map<String, String>.from(
+        await backend.loadCredentials().timeout(credentialRequestTimeout))
       ..removeWhere((_, value) => value.isEmpty);
-    if (!_cloudWritesAllowed(user)) return false;
+    if (!_cloudWritesAllowed(user)) return null;
 
     // Credentials this version does not know about stay in the cloud as is.
     final merged = <String, String>{
@@ -539,16 +547,24 @@ class OrvixAccountService {
     }
     if (restore.isNotEmpty) _providerCredentialRevision.value++;
 
+    final uploaded = <String>{
+      for (final entry in merged.entries)
+        if (_credentialKeys.contains(entry.key) &&
+            remote[entry.key] != entry.value &&
+            !restore.containsKey(entry.key))
+          entry.key,
+    };
     if (!mapEquals(merged, remote)) {
-      if (!_cloudWritesAllowed(user)) return false;
-      await backend.saveCredentials(merged);
+      if (!_cloudWritesAllowed(user)) return null;
+      await backend.saveCredentials(merged).timeout(credentialRequestTimeout);
       // The payload sent is the complete credential set. When it drops keys
       // (a disconnect), make sure the account really lost them: a backend
       // that merged instead of replacing would bring the old credential back
       // on the next sync. The removal then stays pending and is retried.
       final dropped = remote.keys.where((key) => !merged.containsKey(key));
       if (dropped.isNotEmpty) {
-        final after = await backend.loadCredentials();
+        final after =
+            await backend.loadCredentials().timeout(credentialRequestTimeout);
         if (dropped.any((key) => after[key]?.isNotEmpty ?? false)) {
           throw StateError('The account kept removed provider credentials.');
         }
@@ -565,8 +581,19 @@ class OrvixAccountService {
       ),
       userId: user.id,
     );
-    return true;
+    return ProviderCredentialSummary(
+      restored: _providersOf(restore.keys),
+      uploaded: _providersOf(uploaded),
+      inAccount: _providersOf(merged.keys),
+      onDevice: _providersOf(now.keys),
+    );
   }
+
+  /// The providers that own any of [keys]. Key names only, never values.
+  static Set<CloudProvider> _providersOf(Iterable<String> keys) => {
+        for (final entry in _providerCredentialKeys.entries)
+          if (entry.value.any(keys.contains)) entry.key,
+      };
 
   static String _fingerprint(String value) =>
       sha256.convert(utf8.encode(value)).toString();
@@ -620,10 +647,11 @@ class OrvixAccountService {
     }
 
     OrvixSyncStatus credentials;
+    ProviderCredentialSummary? providers;
     try {
-      credentials = await _serializeCredentials(() => _syncCredentials(user))
-          ? OrvixSyncStatus.synced
-          : OrvixSyncStatus.skipped;
+      providers = await _serializeCredentials(() => _syncCredentials(user));
+      credentials =
+          providers != null ? OrvixSyncStatus.synced : OrvixSyncStatus.skipped;
     } catch (error) {
       _logSyncFailure('provider credentials', error);
       credentials = OrvixSyncStatus.failed;
@@ -638,7 +666,8 @@ class OrvixAccountService {
       _logSyncFailure('account data', error);
       state = OrvixSyncStatus.failed;
     }
-    return OrvixSyncResult(credentials: credentials, state: state);
+    return OrvixSyncResult(
+        credentials: credentials, state: state, providers: providers);
   }
 
   /// Only the error type is logged: backend messages may echo request data.
@@ -830,7 +859,11 @@ enum OrvixSyncStatus {
 /// because one can sync while the other fails. Holds no backend detail, so
 /// it is safe to show.
 class OrvixSyncResult {
-  const OrvixSyncResult({required this.credentials, required this.state});
+  const OrvixSyncResult({
+    required this.credentials,
+    required this.state,
+    this.providers,
+  });
 
   static const skipped = OrvixSyncResult(
     credentials: OrvixSyncStatus.skipped,
@@ -839,6 +872,10 @@ class OrvixSyncResult {
 
   final OrvixSyncStatus credentials;
   final OrvixSyncStatus state;
+
+  /// Which providers the credential sync restored, uploaded and found in
+  /// the account. Null when the credential sync did not complete.
+  final ProviderCredentialSummary? providers;
 
   bool get credentialsFailed => credentials == OrvixSyncStatus.failed;
   bool get stateFailed => state == OrvixSyncStatus.failed;
@@ -871,6 +908,61 @@ class OrvixSignInResult extends OrvixAuthResult {
 
   /// Null when no sync ran (no session yet).
   final OrvixSyncResult? sync;
+}
+
+/// What one credential sync did, per provider. Holds provider names only,
+/// never a credential value, so it is safe to show.
+class ProviderCredentialSummary {
+  const ProviderCredentialSummary({
+    this.restored = const {},
+    this.uploaded = const {},
+    this.inAccount = const {},
+    this.onDevice = const {},
+  });
+
+  /// Copied from the account onto this device by this sync.
+  final Set<CloudProvider> restored;
+
+  /// Sent from this device to the account by this sync.
+  final Set<CloudProvider> uploaded;
+
+  /// Saved in the account after this sync.
+  final Set<CloudProvider> inAccount;
+
+  /// Connected on this device after this sync.
+  final Set<CloudProvider> onDevice;
+
+  static String _names(Set<CloudProvider> providers) {
+    final names = [
+      for (final provider in CloudProvider.values)
+        if (providers.contains(provider)) provider.label,
+    ];
+    if (names.length <= 1) return names.join();
+    return '${names.sublist(0, names.length - 1).join(', ')} and ${names.last}';
+  }
+
+  /// One or two sentences on the provider connections, for Sync now.
+  String describe() {
+    final parts = <String>[];
+    if (restored.isNotEmpty) {
+      parts.add('${_names(restored)} connected from your Orvix account. '
+          'Clouds checks the connection with the provider when you open it.');
+    }
+    if (uploaded.isNotEmpty) {
+      parts.add('${_names(uploaded)} saved to your Orvix account.');
+    }
+    if (parts.isEmpty) {
+      if (inAccount.isEmpty) {
+        parts.add('Your Orvix account has no saved provider connections. '
+            'Connect the provider in Clouds on a device signed in to this '
+            'account; it is saved to the account automatically.');
+      } else {
+        parts.add('Provider connections are up to date: '
+            '${_names(inAccount.union(onDevice))}.');
+      }
+    }
+    return parts.join(' ');
+  }
 }
 
 /// What happened to the account copy of a provider credential change.

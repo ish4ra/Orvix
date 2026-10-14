@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'orvix_account_backend.dart';
@@ -389,10 +392,52 @@ class SupabaseOrvixAccountBackend implements OrvixAccountBackend {
   @override
   Future<Map<String, String>> loadCredentials() async {
     final raw = await _guard(() => _client.rpc('load_orvix_credentials'));
-    return raw is Map
-        ? raw.map((key, value) =>
-            MapEntry(key.toString(), value?.toString() ?? ''))
-        : <String, String>{};
+    return parseCredentialPayload(raw);
+  }
+
+  /// Reads the credential set returned by `load_orvix_credentials`.
+  ///
+  /// The production function is not in this repository, so its return shape
+  /// is accepted in every form PostgREST can produce for it: a JSON object
+  /// (`returns jsonb`), JSON text (`returns text`), a one-row set, or a row
+  /// wrapping the object in one column. Anything else is "no credentials".
+  /// Reading only a JSON object used to make a text-returning store look
+  /// empty, so another device's provider was never restored.
+  @visibleForTesting
+  static Map<String, String> parseCredentialPayload(Object? raw,
+      [int depth = 0]) {
+    if (depth > 3 || raw == null) return <String, String>{};
+    if (raw is String) {
+      final text = raw.trim();
+      if (text.isEmpty) return <String, String>{};
+      try {
+        return parseCredentialPayload(jsonDecode(text), depth + 1);
+      } on FormatException {
+        return <String, String>{};
+      }
+    }
+    if (raw is List) {
+      return raw.length == 1
+          ? parseCredentialPayload(raw.single, depth + 1)
+          : <String, String>{};
+    }
+    if (raw is! Map) return <String, String>{};
+    if (raw.length == 1) {
+      final key = raw.keys.single.toString();
+      if (key == 'payload' ||
+          key == 'credentials' ||
+          key == 'load_orvix_credentials') {
+        return parseCredentialPayload(raw.values.single, depth + 1);
+      }
+    }
+    return {
+      for (final entry in raw.entries)
+        entry.key.toString(): switch (entry.value) {
+          null => '',
+          Map() || List() => jsonEncode(entry.value),
+          final value => value.toString(),
+        },
+    };
   }
 
   @override
@@ -406,10 +451,11 @@ class SupabaseOrvixAccountBackend implements OrvixAccountBackend {
     required String deviceNonce,
     required String deviceName,
   }) async {
-    final raw = await _guard(() => _client.rpc('start_tv_login_session', params: {
-          'p_device_nonce': deviceNonce,
-          'p_device_name': deviceName,
-        }));
+    final raw =
+        await _guard(() => _client.rpc('start_tv_login_session', params: {
+              'p_device_nonce': deviceNonce,
+              'p_device_name': deviceName,
+            }));
     if (raw is! List || raw.isEmpty || raw.first is! Map) {
       throw StateError('TV login service returned an invalid start response.');
     }
@@ -420,7 +466,8 @@ class SupabaseOrvixAccountBackend implements OrvixAccountBackend {
     final interval =
         int.tryParse(row['poll_interval_seconds']?.toString() ?? '') ?? 3;
     if (deviceCode == null || userCode == null || verificationUrl == null) {
-      throw StateError('TV login service returned an incomplete start response.');
+      throw StateError(
+          'TV login service returned an incomplete start response.');
     }
     return OrvixTvLoginStart(
       deviceCode: deviceCode,
@@ -435,10 +482,11 @@ class SupabaseOrvixAccountBackend implements OrvixAccountBackend {
     required String deviceCode,
     required String deviceNonce,
   }) async {
-    final raw = await _guard(() => _client.rpc('poll_tv_login_session', params: {
-          'p_device_code': deviceCode,
-          'p_device_nonce': deviceNonce,
-        }));
+    final raw =
+        await _guard(() => _client.rpc('poll_tv_login_session', params: {
+              'p_device_code': deviceCode,
+              'p_device_nonce': deviceNonce,
+            }));
     // No row: the login does not exist for this device code and nonce.
     if (raw is! List || raw.isEmpty || raw.first is! Map) return null;
     return (raw.first as Map)['status']?.toString().toLowerCase();
