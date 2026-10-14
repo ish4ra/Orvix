@@ -3,6 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+// The method-channel implementation is the only way to force-release a camera
+// session that the Dart side no longer tracks; mobile_scanner's own widget
+// does the same after a hot restart.
+// ignore: implementation_imports
+import 'package:mobile_scanner/src/method_channel/mobile_scanner_method_channel.dart';
 
 import '../services/camera_permission_service.dart';
 import '../services/tv_device_login_service.dart';
@@ -32,18 +37,78 @@ enum _ScanState {
   failed,
 }
 
+/// Why the camera did not start although the permission allows it.
+enum CameraStartFailure {
+  /// An earlier scanner session still held the camera
+  /// (MOBILE_SCANNER_ALREADY_STARTED_ERROR or a disposed controller).
+  stillHeld,
+
+  /// CameraX could not bind the back camera (mobile_scanner reports this as
+  /// MOBILE_SCANNER_NO_CAMERA_ERROR): another app holds it, or the phone has
+  /// no usable back camera.
+  bindFailed,
+
+  /// Android's camera service did not provide a camera
+  /// (MOBILE_SCANNER_CAMERA_ERROR).
+  cameraService,
+
+  /// Another camera permission prompt was still open.
+  permissionPromptOpen,
+
+  /// Anything else the scanner reported.
+  unexpected,
+}
+
+/// Classifies a mobile_scanner start failure that is not a permission refusal.
+CameraStartFailure classifyCameraFailure(MobileScannerException error) {
+  final nativeCode = error.errorDetails?.code ?? '';
+  return switch (error.errorCode) {
+    MobileScannerErrorCode.controllerAlreadyInitialized ||
+    MobileScannerErrorCode.controllerDisposed =>
+      CameraStartFailure.stillHeld,
+    MobileScannerErrorCode.unsupported => CameraStartFailure.bindFailed,
+    _ when nativeCode == 'MOBILE_SCANNER_CAMERA_ERROR' =>
+      CameraStartFailure.cameraService,
+    _ when nativeCode == 'MOBILE_SCANNER_CAMERA_PERMISSION_REQUEST_PENDING' =>
+      CameraStartFailure.permissionPromptOpen,
+    _ => CameraStartFailure.unexpected,
+  };
+}
+
+/// A short technical code for a start failure, safe to show and report.
+String cameraFailureCode(MobileScannerException error) {
+  final nativeCode = error.errorDetails?.code;
+  if (nativeCode != null && nativeCode.isNotEmpty) return nativeCode;
+  return error.errorCode.name;
+}
+
+/// Stops any camera session mobile_scanner's Android side still holds, even
+/// one the Dart side lost track of. Without this, a session left running (for
+/// example by leaving the scanner while the camera was still opening) makes
+/// every later start fail with "already started", and retrying cannot help.
+Future<void> forceReleaseScannerCamera() async {
+  final platform = MobileScannerPlatform.instance;
+  if (platform is! MethodChannelMobileScanner) return;
+  try {
+    await platform.stop(force: true);
+  } catch (_) {
+    // Nothing was running, or the plugin is detached: nothing to release.
+  }
+}
+
 /// The phone's "Scan TV QR" screen. Pops with the normalized six-character
 /// TV code, from a scanned QR code or typed by hand.
 ///
-/// The camera preview and every message live in one framed area above a
-/// fixed action panel, so controls never overlap the preview or the text,
-/// with or without a camera.
+/// While the camera runs, the preview fills a framed area above a fixed
+/// action panel. Every other state is a compact card, so controls never
+/// overlap the preview or the text, with or without a camera.
 class OrvixTvQrScannerScreen extends StatefulWidget {
   const OrvixTvQrScannerScreen({
     super.key,
     this.permissions = const CameraPermissionGateway(),
     this.controllerFactory,
     this.previewBuilder,
+    this.releaseCamera = forceReleaseScannerCamera,
   });
 
   final CameraPermissionGateway permissions;
@@ -60,6 +125,9 @@ class OrvixTvQrScannerScreen extends StatefulWidget {
     void Function(BarcodeCapture capture) onDetect,
   )? previewBuilder;
 
+  /// Releases a stale native camera session before a (re)start.
+  final Future<void> Function() releaseCamera;
+
   @override
   State<OrvixTvQrScannerScreen> createState() => _OrvixTvQrScannerScreenState();
 }
@@ -70,11 +138,20 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
   int _scannerGeneration = 0;
   final _scanGate = TvQrScanGate();
   _ScanState _state = _ScanState.checking;
-  MobileScannerErrorCode? _failure;
+  MobileScannerException? _failure;
+  int _failedStarts = 0;
   bool _manualEntryOpen = false;
   bool _cameraStarting = false;
   bool _permissionBusy = false;
   bool _showInvalidHint = false;
+
+  /// Release any stale native session before the next start: on the first
+  /// start of this screen and after every failure.
+  bool _releaseBeforeStart = true;
+
+  /// Set when the user went to Android settings, so the return re-checks the
+  /// permission and restarts the camera.
+  bool _settingsOpened = false;
 
   MobileScannerController _newController() =>
       widget.controllerFactory?.call() ??
@@ -123,7 +200,7 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
     }
   }
 
-  /// "Allow camera": shows Android's prompt, only when the user asks.
+  /// "Grant camera access": shows Android's prompt, only when the user asks.
   Future<void> _requestAccess() async {
     if (_permissionBusy) return;
     _permissionBusy = true;
@@ -139,6 +216,7 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
 
   Future<void> _openSettings() async {
     final opened = await widget.permissions.openSettings();
+    _settingsOpened = opened;
     if (!opened && mounted) {
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
         content: Text(
@@ -154,14 +232,17 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     switch (state) {
       case AppLifecycleState.resumed:
-        if (_state == _ScanState.running ||
-            _state == _ScanState.starting) {
+        if (_state == _ScanState.running || _state == _ScanState.starting) {
           unawaited(_startCamera());
         } else if (_state == _ScanState.blocked ||
             _state == _ScanState.denied ||
             _state == _ScanState.explain) {
           // Back from Android settings (or a prompt): check again.
           unawaited(_prepare());
+        } else if (_state == _ScanState.failed && _settingsOpened) {
+          // Back from app settings after a camera failure: start fresh.
+          _settingsOpened = false;
+          unawaited(_retryCamera());
         }
         break;
       case AppLifecycleState.inactive:
@@ -175,31 +256,57 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
   }
 
   Future<void> _startCamera() async {
-    if (!mounted || _cameraStarting || _scannerController.value.isRunning) {
-      if (_scannerController.value.isRunning) _setState(_ScanState.running);
+    if (!mounted || _cameraStarting) return;
+    if (_scannerController.value.isRunning) {
+      _setState(_ScanState.running);
       return;
     }
     _cameraStarting = true;
     _setState(_ScanState.starting);
     try {
+      if (_releaseBeforeStart) {
+        _releaseBeforeStart = false;
+        await widget.releaseCamera();
+        if (!mounted) return;
+      }
       await _scannerController.start();
       if (!mounted) return;
+      // mobile_scanner 6 does not throw when the camera fails to start: it
+      // stores the failure in the controller state. Read it here instead of
+      // reporting a camera that never started as running.
+      final error = _scannerController.value.error;
+      if (error != null) {
+        await _handleCameraError(error);
+        return;
+      }
+      if (!_scannerController.value.isRunning) {
+        await _handleCameraError(const MobileScannerException(
+          errorCode: MobileScannerErrorCode.genericError,
+          errorDetails: MobileScannerErrorDetails(
+            message: 'The camera did not report that it started.',
+          ),
+        ));
+        return;
+      }
       _failure = null;
+      _failedStarts = 0;
       _setState(_ScanState.running);
     } on MobileScannerException catch (error) {
       if (!mounted) return;
-      await _handleCameraError(error.errorCode);
-    } catch (_) {
+      await _handleCameraError(error);
+    } catch (error) {
       if (!mounted) return;
-      _failure = MobileScannerErrorCode.genericError;
-      _setState(_ScanState.failed);
+      await _handleCameraError(MobileScannerException(
+        errorCode: MobileScannerErrorCode.genericError,
+        errorDetails: MobileScannerErrorDetails(message: '$error'),
+      ));
     } finally {
       _cameraStarting = false;
     }
   }
 
-  Future<void> _handleCameraError(MobileScannerErrorCode code) async {
-    if (code == MobileScannerErrorCode.permissionDenied) {
+  Future<void> _handleCameraError(MobileScannerException error) async {
+    if (error.errorCode == MobileScannerErrorCode.permissionDenied) {
       // mobile_scanner asked and was refused (or Android refused silently).
       final access = await widget.permissions.status();
       if (!mounted) return;
@@ -208,13 +315,29 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
         _setState(_ScanState.blocked);
       } else if (access == CameraAccess.noCamera) {
         _setState(_ScanState.noCamera);
-      } else {
+      } else if (access == CameraAccess.notRequested) {
+        _setState(_ScanState.explain);
+      } else if (access == CameraAccess.denied) {
         _setState(_ScanState.denied);
+      } else {
+        // Android says the permission is granted, yet the scanner was
+        // refused: a camera problem, not a permission to ask for again.
+        _recordFailure(error);
       }
       return;
     }
-    _failure = code;
-    _setState(_ScanState.failed);
+    _recordFailure(error);
+  }
+
+  void _recordFailure(MobileScannerException error) {
+    _failure = error;
+    _failedStarts++;
+    _releaseBeforeStart = true;
+    if (_state == _ScanState.failed) {
+      setState(() {});
+    } else {
+      _setState(_ScanState.failed);
+    }
   }
 
   Future<void> _stopCamera() async {
@@ -226,7 +349,10 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
     }
   }
 
+  /// Tears the failed controller down, releases the native camera session,
+  /// re-reads the permission (it may have changed) and starts again.
   Future<void> _retryCamera() async {
+    if (_cameraStarting || _permissionBusy) return;
     final previous = _scannerController;
     try {
       if (previous.value.isRunning) await previous.stop();
@@ -243,6 +369,7 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
       _scannerGeneration++;
       _scanGate.reset();
       _showInvalidHint = false;
+      _releaseBeforeStart = true;
       _state = _ScanState.checking;
     });
     await WidgetsBinding.instance.endOfFrame;
@@ -311,10 +438,10 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
     Widget? child,
   ]) {
     // A failure after the camera started (for example another app took the
-    // camera) is shown by the state panel instead of over the preview.
+    // camera) is shown by the state card instead of over the preview.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _state == _ScanState.running) {
-        unawaited(_handleCameraError(error.errorCode));
+        unawaited(_handleCameraError(error));
       }
     });
     return const ColoredBox(color: _surface);
@@ -333,9 +460,8 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
     );
   }
 
+  /// The framed camera preview, only while the camera starts or runs.
   Widget _cameraArea(BuildContext context) {
-    final cameraVisible =
-        _state == _ScanState.running || _state == _ScanState.starting;
     return LayoutBuilder(
       builder: (context, constraints) {
         final side = (constraints.biggest.shortestSide * .66)
@@ -348,7 +474,7 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
             child: Stack(
               fit: StackFit.expand,
               children: [
-                if (cameraVisible) _preview(context),
+                _preview(context),
                 if (_state == _ScanState.running)
                   Center(
                     child: IgnorePointer(
@@ -364,7 +490,7 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
                     ),
                   )
                 else
-                  _statePanel(context),
+                  Center(child: _statePanel(context)),
               ],
             ),
           ),
@@ -373,7 +499,39 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
     );
   }
 
+  static String _failureTitle(CameraStartFailure failure) => switch (failure) {
+        CameraStartFailure.stillHeld => 'The camera was still busy',
+        CameraStartFailure.bindFailed => 'Android could not open the camera',
+        CameraStartFailure.cameraService =>
+          'The camera service did not respond',
+        CameraStartFailure.permissionPromptOpen =>
+          'A camera prompt is still open',
+        CameraStartFailure.unexpected => 'Could not start the camera scanner.',
+      };
+
+  static String _failureMessage(CameraStartFailure failure) =>
+      switch (failure) {
+        CameraStartFailure.stillHeld =>
+          'An earlier scanner session was still holding the camera. Retry '
+              'releases it and starts again.',
+        CameraStartFailure.bindFailed =>
+          'Another app may be using the camera, or this phone has no usable '
+              'back camera. Close camera or video-call apps, then retry.',
+        CameraStartFailure.cameraService =>
+          "Android's camera service did not hand the camera to Orvix. Close "
+              'other camera apps, then retry.',
+        CameraStartFailure.permissionPromptOpen =>
+          'Answer or close the open permission prompt, then retry.',
+        CameraStartFailure.unexpected =>
+          'The scanner reported an unexpected error. Retry starts it again '
+              'from scratch.',
+      };
+
   Widget _statePanel(BuildContext context) {
+    final failure = _failure;
+    final failureKind = failure == null
+        ? CameraStartFailure.unexpected
+        : classifyCameraFailure(failure);
     final (IconData icon, String title, String message, Widget? action) =
         switch (_state) {
       _ScanState.checking || _ScanState.starting || _ScanState.running => (
@@ -390,7 +548,7 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
           _PrimaryAction(
             key: const ValueKey('tv-qr-allow-camera'),
             icon: Icons.photo_camera_outlined,
-            label: 'Allow camera',
+            label: 'Grant camera access',
             onPressed: _requestAccess,
           ),
         ),
@@ -402,15 +560,15 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
           _PrimaryAction(
             key: const ValueKey('tv-qr-allow-camera'),
             icon: Icons.photo_camera_outlined,
-            label: 'Allow camera',
+            label: 'Grant camera access',
             onPressed: _requestAccess,
           ),
         ),
       _ScanState.blocked => (
           Icons.no_photography_outlined,
           'Camera access is blocked',
-          'Android will not ask again. Open app settings, allow Camera under '
-              'Permissions, then come back. Orvix checks again on return.',
+          'Android will not ask again. Open app settings, then Permissions › '
+              'Camera › Allow, and come back. Orvix checks again on return.',
           _PrimaryAction(
             key: const ValueKey('tv-qr-open-settings'),
             icon: Icons.settings_outlined,
@@ -427,8 +585,8 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
         ),
       _ScanState.failed => (
           Icons.error_outline_rounded,
-          'Could not start the camera scanner.',
-          '${_failureMessage(_failure)} You can also enter the TV code.',
+          _failureTitle(failureKind),
+          _failureMessage(failureKind),
           _PrimaryAction(
             key: const ValueKey('tv-qr-retry-camera'),
             icon: Icons.refresh_rounded,
@@ -437,16 +595,16 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
           ),
         ),
     };
-    final busy = _state == _ScanState.checking ||
-        _state == _ScanState.starting;
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-        child: Column(
-          key: ValueKey('tv-qr-state-${_state.name}'),
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
+    final busy = _state == _ScanState.checking || _state == _ScanState.starting;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+      child: Column(
+        key: ValueKey('tv-qr-state-${_state.name}'),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Semantics(
+            label: busy ? 'Starting the camera' : null,
+            child: Container(
               width: 56,
               height: 56,
               decoration: BoxDecoration(
@@ -463,44 +621,75 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
                     )
                   : Icon(icon, color: _limeLight, size: 28),
             ),
-            const SizedBox(height: 16),
-            Text(
-              title,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 340),
+            child: Text(
+              message,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
+              style: const TextStyle(color: _muted, height: 1.45),
+            ),
+          ),
+          if (_state == _ScanState.failed && failure != null) ...[
+            const SizedBox(height: 10),
+            SelectableText(
+              'Error: ${cameraFailureCode(failure)}',
+              key: const ValueKey('tv-qr-failure-code'),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: .45),
+                fontSize: 12,
+                fontFamily: 'monospace',
               ),
             ),
-            const SizedBox(height: 8),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 340),
-              child: Text(
-                message,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: _muted, height: 1.45),
+            if (_failedStarts >= 2) ...[
+              const SizedBox(height: 10),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 340),
+                child: const Text(
+                  'Still failing? Close Orvix from recent apps and reopen it, '
+                  'or restart the phone. The TV code below always works.',
+                  key: ValueKey('tv-qr-persistent-hint'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: _limeLight, height: 1.4),
+                ),
               ),
-            ),
-            if (action != null) ...[
-              const SizedBox(height: 20),
-              action,
             ],
           ],
-        ),
+          if (action != null) ...[
+            const SizedBox(height: 20),
+            action,
+          ],
+          if (_state == _ScanState.failed) ...[
+            const SizedBox(height: 6),
+            TextButton.icon(
+              key: const ValueKey('tv-qr-failed-settings'),
+              onPressed: _openSettings,
+              style: TextButton.styleFrom(foregroundColor: _limeLight),
+              icon: const Icon(Icons.settings_outlined, size: 18),
+              label: const Text('Open app settings'),
+            ),
+          ],
+        ],
       ),
     );
   }
 
-  static String _failureMessage(MobileScannerErrorCode? code) {
-    if (code == MobileScannerErrorCode.unsupported) {
-      return 'This device does not support the camera scanner.';
-    }
-    return 'The camera may be in use by another app. Close it and retry.';
-  }
-
   @override
   Widget build(BuildContext context) {
+    final cameraVisible =
+        _state == _ScanState.running || _state == _ScanState.starting;
     final instruction = switch (_state) {
       _ScanState.running when _showInvalidHint =>
         'That QR code is not an Orvix TV code. Point the camera at the QR code shown by Orvix on your TV.',
@@ -524,7 +713,21 @@ class _OrvixTvQrScannerScreenState extends State<OrvixTvQrScannerScreen>
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-                child: _cameraArea(context),
+                child: cameraVisible
+                    ? _cameraArea(context)
+                    // No camera to show: a compact card sized to its content
+                    // instead of an empty preview frame.
+                    : Center(
+                        child: Container(
+                          key: const ValueKey('tv-qr-state-card'),
+                          decoration: BoxDecoration(
+                            color: _surface,
+                            borderRadius: BorderRadius.circular(24),
+                            border: Border.all(color: _border),
+                          ),
+                          child: _statePanel(context),
+                        ),
+                      ),
               ),
             ),
             Container(
