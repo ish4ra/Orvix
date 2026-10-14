@@ -9,6 +9,7 @@ import '../services/source_ranking_diagnostics.dart';
 import '../services/source_provider_service.dart';
 import '../tv/tv_focus.dart';
 import '../tv/tv_theme.dart';
+import '../tv/tv_widgets.dart';
 import '../utils/tv_keys.dart';
 
 /// Android TV source picker.
@@ -518,163 +519,208 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final title = widget.episode == null
+    final episode = widget.episode;
+    final title = episode == null
         ? widget.item.title
-        : '${widget.item.title} • ${widget.episode!.label}';
+        : '${widget.item.title} • ${episode.label}';
+    final subtitle = episode == null
+        ? [
+            if ((widget.item.year ?? '').trim().isNotEmpty) widget.item.year!,
+            if ((widget.item.runtime ?? '').trim().isNotEmpty)
+              widget.item.runtime!,
+          ].join(' • ')
+        : episode.title.trim();
+    final art = (widget.item.background ?? '').trim().isNotEmpty
+        ? widget.item.background
+        : widget.item.poster;
+    final visibleCount =
+        _loading || _error != null ? null : _visibleResults.length;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF080A09),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(28, 22, 28, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+      backgroundColor: TvColors.background,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Title artwork behind a fixed scrim: no live blur, so it costs
+          // one decoded image and two gradients on low-end TV hardware.
+          if ((art ?? '').trim().isNotEmpty)
+            Positioned.fill(
+              child: Opacity(
+                opacity: .42,
+                child: TvNetworkImage(
+                  key: const ValueKey('tv-picker-backdrop'),
+                  url: art,
+                  cacheWidth: tvCacheWidth(context, 960, max: 1280),
+                  alignment: Alignment.topRight,
+                  placeholder: const SizedBox.shrink(),
+                ),
+              ),
+            ),
+          const Positioned.fill(child: _TvSourceScrim()),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(36, 22, 36, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _TvHeaderButton(
-                    tooltip: 'Back',
-                    icon: Icons.arrow_back_rounded,
-                    onPressed: () => Navigator.of(context).maybePop(),
-                  ),
-                  const SizedBox(width: 18),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Choose source',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: -.35,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Color(0xFF9FAAA0),
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (!_loading && _error == null)
-                    Text(
-                      '${_results.length} sources',
-                      style: const TextStyle(
-                        color: Color(0xFFAEB6B0),
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      _TvHeaderButton(
+                        tooltip: 'Back',
+                        icon: Icons.arrow_back_rounded,
+                        onPressed: () => Navigator.of(context).maybePop(),
                       ),
-                    ),
-                  const SizedBox(width: 14),
-                  _TvHeaderButton(
-                    tooltip: 'Refresh',
-                    icon: Icons.refresh_rounded,
-                    onPressed: _loading ? null : () => _load(refresh: true),
+                      const SizedBox(width: 18),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              'Choose source',
+                              style: TextStyle(
+                                color: TvColors.primary,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 1.1,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: TvColors.text,
+                                fontSize: 25,
+                                height: 1.15,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: -.4,
+                              ),
+                            ),
+                            if (subtitle.isNotEmpty) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                subtitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: TvColors.textMuted,
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      if (visibleCount != null)
+                        _TvCountCapsule(
+                          shown: visibleCount,
+                          total: _results.length,
+                        ),
+                      const SizedBox(width: 12),
+                      _TvHeaderButton(
+                        tooltip: 'Refresh',
+                        icon: Icons.refresh_rounded,
+                        onPressed:
+                            _loading ? null : () => _load(refresh: true),
+                      ),
+                    ],
                   ),
+                  const SizedBox(height: 18),
+                  _sourceControls(),
+                  const SizedBox(height: 12),
+                  Expanded(child: _body()),
                 ],
               ),
-              const SizedBox(height: 18),
-              _sourceControls(),
-              const SizedBox(height: 14),
-              Expanded(child: _body()),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
 
   Widget _sourceControls() {
-    final liveSummary = _sort == _TvSourceSort.free && !_loading
-        ? _liveProbe.summary(_results).text
-        : null;
+    final free = _sort == _TvSourceSort.free;
+    final liveSummary =
+        free && !_loading ? _liveProbe.summary(_results).text : null;
+    // Rows of controls grow with the TV's text size instead of clipping it.
+    final scaler = MediaQuery.textScalerOf(context);
+    double rowHeight(double base) =>
+        scaler.scale(base).clamp(base, base * 1.6).toDouble();
+    int countFor(String? provider) => provider == null
+        ? _results.length
+        : _results.where((source) => source.provider == provider).length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // How the list is ordered, and what it shows.
         SizedBox(
-          height: 46,
+          height: rowHeight(42),
           child: ListView(
             scrollDirection: Axis.horizontal,
+            clipBehavior: Clip.none,
             children: [
-              _TvFilterChip(
-                selected: _providerFilter == null,
-                label: 'All',
-                icon: Icons.apps_rounded,
-                onPressed: () => setState(() => _providerFilter = null),
+              _TvModeGroup(
+                children: [
+                  _TvFilterChip(
+                    selected: _sort == _TvSourceSort.free,
+                    segment: true,
+                    label: 'Free P2P',
+                    icon: Icons.bolt_rounded,
+                    onPressed: () =>
+                        setState(() => _sort = _TvSourceSort.free),
+                  ),
+                  _TvFilterChip(
+                    selected: _sort == _TvSourceSort.smooth,
+                    segment: true,
+                    label: 'Smooth',
+                    icon: Icons.speed_rounded,
+                    onPressed: () =>
+                        setState(() => _sort = _TvSourceSort.smooth),
+                  ),
+                  _TvFilterChip(
+                    selected: _sort == _TvSourceSort.best,
+                    segment: true,
+                    label: 'Default',
+                    icon: Icons.tune_rounded,
+                    onPressed: () =>
+                        setState(() => _sort = _TvSourceSort.best),
+                  ),
+                ],
               ),
-              for (final provider in _providers) ...[
-                const SizedBox(width: 8),
-                _TvFilterChip(
-                  selected: _providerFilter == provider,
-                  label: provider,
-                  icon: Icons.extension_rounded,
-                  onPressed: () => setState(() => _providerFilter = provider),
-                ),
-              ],
-            ],
-          ),
-        ),
-        const SizedBox(height: 8),
-        SizedBox(
-          height: 46,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            children: [
-              _TvFilterChip(
-                selected: _sort == _TvSourceSort.free,
-                label: 'Free P2P',
-                icon: Icons.bolt_rounded,
-                onPressed: () => setState(() => _sort = _TvSourceSort.free),
-              ),
-              const SizedBox(width: 8),
-              _TvFilterChip(
-                selected: _sort == _TvSourceSort.smooth,
-                label: 'Smooth',
-                icon: Icons.speed_rounded,
-                onPressed: () => setState(() => _sort = _TvSourceSort.smooth),
-              ),
-              const SizedBox(width: 8),
-              _TvFilterChip(
-                selected: _sort == _TvSourceSort.best,
-                label: 'Default',
-                icon: Icons.tune_rounded,
-                onPressed: () => setState(() => _sort = _TvSourceSort.best),
-              ),
-              const SizedBox(width: 8),
-              _TvFilterChip(
-                selected: false,
-                label: 'Order',
-                icon: Icons.swap_vert_rounded,
-                onPressed: () => unawaited(_showPriorityEditor()),
-              ),
-              const SizedBox(width: 12),
+              const _TvControlDivider(),
               _TvFilterChip(
                 selected: _compatibilityOnly,
+                toggle: true,
                 label: 'Compatible only',
                 icon: Icons.tv_rounded,
                 onPressed: () => setState(
                   () => _compatibilityOnly = !_compatibilityOnly,
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
+              _TvFilterChip(
+                selected: false,
+                label: 'Order',
+                icon: Icons.swap_vert_rounded,
+                onPressed: () => unawaited(_showPriorityEditor()),
+              ),
+              const SizedBox(width: 6),
               _TvFilterChip(
                 selected: false,
                 label: 'What are these?',
-                icon: Icons.info_outline_rounded,
+                icon: Icons.help_outline_rounded,
                 onPressed: () => unawaited(_showSourceModeHelp()),
               ),
-              if (_sort == _TvSourceSort.free) ...[
-                const SizedBox(width: 8),
+              if (free) ...[
+                const SizedBox(width: 6),
                 _TvFilterChip(
                   selected: false,
+                  busy: _liveProbe.isRunning,
                   label: 'Re-check live',
                   icon: Icons.radar_rounded,
                   onPressed: _recheckLive,
@@ -683,17 +729,58 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
             ],
           ),
         ),
-        if (_sort == _TvSourceSort.free && liveSummary != null) ...[
+        const SizedBox(height: 10),
+        // Which provider's results are listed.
+        SizedBox(
+          height: rowHeight(34),
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            clipBehavior: Clip.none,
+            children: [
+              _TvProviderTab(
+                selected: _providerFilter == null,
+                label: 'All',
+                count: _loading ? null : countFor(null),
+                onPressed: () => setState(() => _providerFilter = null),
+              ),
+              for (final provider in _providers) ...[
+                const SizedBox(width: 4),
+                _TvProviderTab(
+                  selected: _providerFilter == provider,
+                  label: provider,
+                  count: countFor(provider),
+                  onPressed: () =>
+                      setState(() => _providerFilter = provider),
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (free && liveSummary != null) ...[
           const SizedBox(height: 8),
-          Text(
-            _liveProbe.noLiveConfirmed
-                ? '$liveSummary — no source delivered live data; choose one or re-check'
-                : liveSummary,
-            style: const TextStyle(
-              color: Color(0xFFAEB6B0),
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-            ),
+          Row(
+            children: [
+              Icon(
+                _liveProbe.isRunning
+                    ? Icons.radar_rounded
+                    : Icons.sensors_rounded,
+                size: 15,
+                color: _liveProbe.noLiveConfirmed
+                    ? TvColors.textDim
+                    : TvColors.primary,
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  _liveProbe.noLiveConfirmed
+                      ? '$liveSummary — no source delivered live data; choose one or re-check'
+                      : liveSummary,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TvText.caption,
+                ),
+              ),
+            ],
           ),
         ],
       ],
@@ -730,40 +817,28 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
 
   Widget _body() {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: _TvPickerMessage(
+          key: ValueKey('tv-sources-loading'),
+          busy: true,
+          title: 'Finding sources…',
+          message: 'Asking your source providers. This can take a few seconds.',
+        ),
+      );
     }
 
     final error = _error;
     if (error != null) {
       return Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.cloud_off_rounded, size: 48),
-              const SizedBox(height: 14),
-              const Text(
-                'Could not load sources',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                error,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Color(0xFFAAB2AC),
-                  height: 1.4,
-                ),
-              ),
-              const SizedBox(height: 18),
-              FilledButton.icon(
-                autofocus: true,
-                onPressed: () => _load(refresh: true),
-                icon: const Icon(Icons.refresh_rounded),
-                label: const Text('Retry'),
-              ),
-            ],
+        child: _TvPickerMessage(
+          icon: Icons.cloud_off_rounded,
+          title: 'Could not load sources',
+          message: error,
+          action: FilledButton.icon(
+            autofocus: true,
+            onPressed: () => _load(refresh: true),
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Retry'),
           ),
         ),
       );
@@ -772,13 +847,27 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
     final visible = _visibleResults;
 
     if (visible.isEmpty) {
-      return const Center(
-        child: Text(
-          'No sources match the current filters.',
-          style: TextStyle(
-            color: Color(0xFFB7BDB8),
-            fontWeight: FontWeight.w700,
-          ),
+      final filtered = _providerFilter != null || _compatibilityOnly;
+      return Center(
+        child: _TvPickerMessage(
+          icon: Icons.filter_alt_off_rounded,
+          title: 'No sources match the current filters.',
+          message: _results.isEmpty
+              ? 'Your providers returned nothing for this title. Refresh, or '
+                  'check your source providers in Settings.'
+              : '${_results.length} sources are hidden by the filters.',
+          action: filtered
+              ? FilledButton.icon(
+                  key: const ValueKey('tv-sources-clear-filters'),
+                  autofocus: true,
+                  onPressed: () => setState(() {
+                    _providerFilter = null;
+                    _compatibilityOnly = false;
+                  }),
+                  icon: const Icon(Icons.filter_alt_off_rounded),
+                  label: const Text('Show all sources'),
+                )
+              : null,
         ),
       );
     }
@@ -794,7 +883,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
     // checkpoint reorders the list. Focus follows the source instead of
     // jumping to whichever row now occupies the old index.
     return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(2, 2, 2, 30),
+      padding: const EdgeInsets.fromLTRB(0, 4, 0, 36),
       itemCount: visible.length,
       findChildIndexCallback: (key) =>
           key is ValueKey<String> ? indexByKey[key.value] : null,
@@ -809,7 +898,7 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
         return Padding(
           key: ValueKey(rowKey(source)),
           padding: EdgeInsets.only(
-            bottom: index == visible.length - 1 ? 0 : 10,
+            bottom: index == visible.length - 1 ? 0 : 8,
           ),
           child: _TvSourceRow(
             source: source,
@@ -823,6 +912,166 @@ class _TvSourceBrowserScreenState extends State<TvSourceBrowserScreen> {
           ),
         );
       },
+    );
+  }
+}
+
+/// The release line of a source title. Orvix puts a summary line in front
+/// of the release name ("🎞 BluRay • 📺 1080P • 👥 72 seeders • 💾 4 GB");
+/// on TV that summary is shown as structured facts instead, so it is not
+/// repeated above the name.
+@visibleForTesting
+String tvSourceReleaseName(String title) {
+  final lines = title
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .toList();
+  if (lines.length > 1 &&
+      lines.first.contains('👥') &&
+      lines.first.contains('💾')) {
+    return lines.skip(1).join(' • ');
+  }
+  return lines.join(' • ');
+}
+
+/// The short resolution label of the quality tile: 4K, 1080p, 720p…
+@visibleForTesting
+String tvSourceQualityLabel(SourceResult source) {
+  final raw = (source.quality ?? source.releaseQuality ?? '').trim();
+  if (raw.isEmpty) return '—';
+  final upper = raw.toUpperCase();
+  if (upper.contains('2160') || upper.contains('4K')) return '4K';
+  final p = RegExp(r'^(\d{3,4})P$').firstMatch(upper);
+  if (p != null) return '${p.group(1)}p';
+  return upper;
+}
+
+/// Dims the artwork towards the list side and the bottom so every line of
+/// text stays readable on any picture.
+class _TvSourceScrim extends StatelessWidget {
+  const _TvSourceScrim();
+
+  @override
+  Widget build(BuildContext context) {
+    return const DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [Color(0xF7050806), Color(0xE0050806), Color(0x9E050806)],
+          stops: [0, .55, 1],
+        ),
+      ),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0x00050806), Color(0xFF050806)],
+            stops: [.35, .92],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TvCountCapsule extends StatelessWidget {
+  const _TvCountCapsule({required this.shown, required this.total});
+
+  final int shown;
+  final int total;
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = shown != total;
+    return Container(
+      key: const ValueKey('tv-sources-count'),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0x14FFFFFF),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0x1AFFFFFF)),
+      ),
+      child: Text.rich(
+        TextSpan(children: [
+          TextSpan(
+            text: filtered ? '$shown' : '$total',
+            style: const TextStyle(
+              color: TvColors.text,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          TextSpan(text: filtered ? ' of $total sources' : ' sources'),
+        ]),
+        style: const TextStyle(
+          color: TvColors.textMuted,
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+/// Loading, error and empty states of the list area.
+class _TvPickerMessage extends StatelessWidget {
+  const _TvPickerMessage({
+    super.key,
+    this.icon,
+    this.busy = false,
+    required this.title,
+    required this.message,
+    this.action,
+  });
+
+  final IconData? icon;
+  final bool busy;
+  final String title;
+  final String message;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 560),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 48,
+            height: 48,
+            child: busy
+                ? const Padding(
+                    padding: EdgeInsets.all(10),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 3,
+                      color: TvColors.primary,
+                    ),
+                  )
+                : Icon(icon, size: 40, color: TvColors.textMuted),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: TvText.section,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+            style: TvText.body,
+          ),
+          if (action != null) ...[
+            const SizedBox(height: 18),
+            action!,
+          ],
+        ],
+      ),
     );
   }
 }
@@ -886,11 +1135,9 @@ class _TvSourceRowState extends State<_TvSourceRow> {
   @override
   Widget build(BuildContext context) {
     final source = widget.source;
-    final quality = (source.quality ?? source.releaseQuality ?? '—').toUpperCase();
-    final top = quality.contains('2160') || quality.contains('4K');
-    final hd = top || quality.contains('1080');
     final focused = _focused;
     final reported = widget.freeP2p ? ' reported' : '';
+    final assessment = widget.assessment;
     final facts = <(IconData, String)>[
       (Icons.extension_rounded, source.provider),
       if (source.sizeLabel != null) (Icons.sd_storage_rounded, source.sizeLabel!),
@@ -903,6 +1150,8 @@ class _TvSourceRowState extends State<_TvSourceRow> {
           source.isMagnet ? 'P2P' : 'Direct'),
       if (source.preferredGroup) (Icons.star_rounded, 'Preferred group'),
     ];
+    final recommended = assessment?.recommended ?? false;
+    final warning = assessment?.warning ?? false;
 
     return Focus(
       autofocus: widget.autofocus,
@@ -918,219 +1167,342 @@ class _TvSourceRowState extends State<_TvSourceRow> {
         }
       },
       onKeyEvent: _handleKey,
-      child: AnimatedScale(
-      scale: focused ? 1.01 : 1,
-      duration: TvMetrics.focusDuration,
       child: AnimatedContainer(
-      duration: TvMetrics.focusDuration,
-      decoration: BoxDecoration(
-        color: focused ? TvColors.cardFocused : TvColors.card,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: focused ? TvColors.primary : TvColors.border,
-          width: focused ? TvMetrics.focusBorder : 1,
+        duration: TvMetrics.focusDuration,
+        decoration: BoxDecoration(
+          color: focused ? const Color(0xF2162017) : const Color(0x8C0D120E),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: focused ? TvColors.primary : const Color(0x14FFFFFF),
+            width: focused ? 2 : 1,
+          ),
         ),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          canRequestFocus: false,
-          focusColor: Colors.transparent,
-          hoverColor: Colors.transparent,
-          splashColor: Colors.transparent,
-          onTap: widget.busy ? null : widget.onPressed,
-          onLongPress: widget.busy ? null : widget.onPinRequest,
-          borderRadius: BorderRadius.circular(16),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-            child: Row(
-              children: [
-                Container(
-                  width: 82,
-                  height: 50,
-                  alignment: Alignment.center,
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  decoration: BoxDecoration(
-                    color: top ? TvColors.primary : TvColors.surface,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: hd ? TvColors.primary : TvColors.borderStrong,
-                      width: hd ? 1.6 : 1,
-                    ),
-                  ),
-                  child: Text(
-                    quality,
-                    maxLines: 1,
-                    overflow: TextOverflow.fade,
-                    softWrap: false,
-                    style: TextStyle(
-                      color: top
-                          ? TvColors.onPrimary
-                          : hd
-                              ? TvColors.lime
-                              : TvColors.text,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        source.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: focused ? TvColors.text : const Color(0xFFDCE3DB),
-                          fontSize: 14.5,
-                          height: 1.35,
-                          fontWeight: FontWeight.w700,
-                        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            canRequestFocus: false,
+            focusColor: Colors.transparent,
+            hoverColor: Colors.transparent,
+            splashColor: Colors.transparent,
+            onTap: widget.busy ? null : widget.onPressed,
+            onLongPress: widget.busy ? null : widget.onPinRequest,
+            borderRadius: BorderRadius.circular(14),
+            child: IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Recommended (live or reliable) sources carry a lime edge.
+                  AnimatedContainer(
+                    duration: TvMetrics.focusDuration,
+                    width: 4,
+                    margin: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: recommended
+                          ? TvColors.primary
+                          : warning
+                              ? const Color(0xFF9B5A5A)
+                              : Colors.transparent,
+                      borderRadius: const BorderRadius.horizontal(
+                        right: Radius.circular(4),
                       ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 14,
-                        runSpacing: 4,
+                    ),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 12, 16, 12),
+                      child: Row(
                         children: [
-                          for (final (icon, label) in facts)
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
+                          _TvQualityTile(source: source, focused: focused),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(icon,
-                                    size: 14,
-                                    color: focused
-                                        ? TvColors.primary
-                                        : TvColors.textDim),
-                                const SizedBox(width: 5),
                                 Text(
-                                  label,
-                                  style: TvText.caption.copyWith(
+                                  tvSourceReleaseName(source.title),
+                                  // The full name when focused, one tidy
+                                  // line otherwise.
+                                  maxLines: focused ? 2 : 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
                                     color: focused
-                                        ? const Color(0xFFD3DBD2)
-                                        : TvColors.textMuted,
+                                        ? TvColors.text
+                                        : const Color(0xFFD9E0D7),
+                                    fontSize: 15,
+                                    height: 1.3,
+                                    fontWeight: FontWeight.w800,
                                   ),
                                 ),
+                                const SizedBox(height: 7),
+                                Wrap(
+                                  spacing: 14,
+                                  runSpacing: 4,
+                                  children: [
+                                    for (final (icon, label) in facts)
+                                      _TvSourceFact(
+                                        icon: icon,
+                                        label: label,
+                                        focused: focused,
+                                      ),
+                                  ],
+                                ),
+                                if (assessment != null) ...[
+                                  const SizedBox(height: 8),
+                                  _TvAssessmentLine(assessment: assessment),
+                                ],
                               ],
                             ),
-                        ],
-                      ),
-                      if (widget.assessment != null) ...[
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 3,
-                              ),
-                              decoration: BoxDecoration(
-                                color: widget.assessment!.warning
-                                    ? const Color(0x332D1111)
-                                    : widget.assessment!.recommended
-                                        ? const Color(0x33223815)
-                                        : const Color(0x33191E1A),
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: widget.assessment!.warning
-                                      ? const Color(0xFF9B5A5A)
-                                      : widget.assessment!.recommended
-                                          ? const Color(0xFF86B84B)
-                                          : const Color(0xFF4C554E),
-                                ),
-                              ),
-                              child: Text(
-                                widget.assessment!.label,
-                                style: TextStyle(
-                                  color: widget.assessment!.warning
-                                      ? const Color(0xFFE3AAAA)
-                                      : widget.assessment!.recommended
-                                          ? const Color(0xFFC9EAA5)
-                                          : const Color(0xFFB2BBB4),
-                                  fontSize: 10.5,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: .45,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                widget.assessment!.detail,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TvText.caption.copyWith(
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 14),
-                if (widget.busy)
-                  const SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: CircularProgressIndicator(strokeWidth: 3),
-                  )
-                else
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      AnimatedContainer(
-                        duration: TvMetrics.focusDuration,
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          color: focused ? TvColors.primary : Colors.transparent,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          Icons.play_arrow_rounded,
-                          size: 28,
-                          color: focused ? TvColors.onPrimary : TvColors.textMuted,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            widget.pinned
-                                ? Icons.push_pin_rounded
-                                : Icons.push_pin_outlined,
-                            size: 12,
-                            color: widget.pinned
-                                ? TvColors.primary
-                                : TvColors.textDim,
                           ),
-                          const SizedBox(width: 3),
-                          Text(
-                            widget.pinned ? 'Pinned' : 'Hold OK',
-                            style: TextStyle(
-                              color: widget.pinned
-                                  ? TvColors.primary
-                                  : TvColors.textDim,
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w800,
-                            ),
+                          const SizedBox(width: 14),
+                          _TvPlayAffordance(
+                            focused: focused,
+                            busy: widget.busy,
+                            pinned: widget.pinned,
                           ),
                         ],
                       ),
-                    ],
+                    ),
                   ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Resolution, large, with the release type under it. 4K is filled, 1080p
+/// outlined in lime, everything else neutral.
+class _TvQualityTile extends StatelessWidget {
+  const _TvQualityTile({required this.source, required this.focused});
+
+  final SourceResult source;
+  final bool focused;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = tvSourceQualityLabel(source);
+    final top = label == '4K';
+    final hd = top || label == '1080p';
+    final kind = source.quality != null ? source.releaseQuality : null;
+    return Container(
+      width: 72,
+      constraints: const BoxConstraints(minHeight: 52),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+      decoration: BoxDecoration(
+        color: top
+            ? TvColors.primary
+            : hd
+                ? const Color(0x1AB9FF45)
+                : const Color(0x14FFFFFF),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: top
+              ? TvColors.primary
+              : hd
+                  ? TvColors.primary.withValues(alpha: .7)
+                  : const Color(0x26FFFFFF),
+          width: hd ? 1.4 : 1,
+        ),
       ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.fade,
+            softWrap: false,
+            style: TextStyle(
+              color: top
+                  ? TvColors.onPrimary
+                  : hd
+                      ? TvColors.lime
+                      : TvColors.text,
+              fontSize: 17,
+              height: 1.1,
+              fontWeight: FontWeight.w900,
+              letterSpacing: -.2,
+            ),
+          ),
+          if (kind != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              kind,
+              maxLines: 1,
+              overflow: TextOverflow.fade,
+              softWrap: false,
+              style: TextStyle(
+                color: top
+                    ? TvColors.onPrimary.withValues(alpha: .75)
+                    : TvColors.textMuted,
+                fontSize: 9.5,
+                fontWeight: FontWeight.w800,
+                letterSpacing: .3,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TvSourceFact extends StatelessWidget {
+  const _TvSourceFact({
+    required this.icon,
+    required this.label,
+    required this.focused,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool focused;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon,
+            size: 14, color: focused ? TvColors.primary : TvColors.textDim),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          style: TvText.caption.copyWith(
+            color: focused ? const Color(0xFFD3DBD2) : TvColors.textMuted,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// The Free P2P status: a small label (RECOMMENDED, LIVE, STALLED…) and the
+/// reason in one line.
+class _TvAssessmentLine extends StatelessWidget {
+  const _TvAssessmentLine({required this.assessment});
+
+  final FreeSourceAssessment assessment;
+
+  @override
+  Widget build(BuildContext context) {
+    final (Color fill, Color edge, Color text) = assessment.warning
+        ? (const Color(0x332D1111), const Color(0xFF9B5A5A),
+            const Color(0xFFE3AAAA))
+        : assessment.recommended
+            ? (const Color(0x33223815), const Color(0xFF86B84B),
+                const Color(0xFFC9EAA5))
+            : (const Color(0x33191E1A), const Color(0xFF4C554E),
+                const Color(0xFFB2BBB4));
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: fill,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: edge),
+          ),
+          child: Text(
+            assessment.label,
+            style: TextStyle(
+              color: text,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w900,
+              letterSpacing: .45,
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            assessment.detail,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TvText.caption.copyWith(fontWeight: FontWeight.w500),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Play on OK; the hint under it tells that holding OK pins the source.
+class _TvPlayAffordance extends StatelessWidget {
+  const _TvPlayAffordance({
+    required this.focused,
+    required this.busy,
+    required this.pinned,
+  });
+
+  final bool focused;
+  final bool busy;
+  final bool pinned;
+
+  @override
+  Widget build(BuildContext context) {
+    if (busy) {
+      return const SizedBox(
+        width: 40,
+        height: 40,
+        child: Padding(
+          padding: EdgeInsets.all(6),
+          child: CircularProgressIndicator(
+            strokeWidth: 3,
+            color: TvColors.primary,
+          ),
+        ),
+      );
+    }
+    final hintColor = pinned
+        ? TvColors.primary
+        : focused
+            ? TvColors.textMuted
+            : TvColors.textDim;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 64),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AnimatedContainer(
+            duration: TvMetrics.focusDuration,
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: focused ? TvColors.primary : const Color(0x14FFFFFF),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.play_arrow_rounded,
+              size: 26,
+              color: focused ? TvColors.onPrimary : TvColors.textMuted,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                pinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
+                size: 11,
+                color: hintColor,
+              ),
+              const SizedBox(width: 3),
+              Text(
+                pinned ? 'Pinned' : 'Hold OK',
+                style: TextStyle(
+                  color: hintColor,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -1138,18 +1510,66 @@ class _TvSourceRowState extends State<_TvSourceRow> {
 
 enum _TvSourceSort { free, smooth, best }
 
+/// The three ordering modes as one segmented capsule.
+class _TvModeGroup extends StatelessWidget {
+  const _TvModeGroup({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: const Color(0x14FFFFFF),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0x14FFFFFF)),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: children),
+    );
+  }
+}
+
+class _TvControlDivider extends StatelessWidget {
+  const _TvControlDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: VerticalDivider(width: 1, thickness: 1, color: Color(0x26FFFFFF)),
+    );
+  }
+}
+
+/// A picker control: a mode segment, a toggle, or a quiet action.
+///
+/// Focus is a light fill (white with dark text), selection is lime, so the
+/// two never look alike.
 class _TvFilterChip extends StatefulWidget {
   const _TvFilterChip({
     required this.selected,
     required this.label,
     required this.icon,
     required this.onPressed,
+    this.segment = false,
+    this.toggle = false,
+    this.busy = false,
   });
 
   final bool selected;
   final String label;
   final IconData icon;
   final VoidCallback onPressed;
+
+  /// One of the mode segments: selected is a lime fill.
+  final bool segment;
+
+  /// An on/off option: on shows a check and a lime tint.
+  final bool toggle;
+
+  /// A running action (Re-check live): the icon turns into a spinner.
+  final bool busy;
 
   @override
   State<_TvFilterChip> createState() => _TvFilterChipState();
@@ -1161,57 +1581,79 @@ class _TvFilterChipState extends State<_TvFilterChip> {
   @override
   Widget build(BuildContext context) {
     final selected = widget.selected;
-    return AnimatedContainer(
-      duration: TvMetrics.focusDuration,
-      decoration: BoxDecoration(
-        color: _focused
-            ? TvColors.cardFocused
-            : selected
-                ? const Color(0xFF16220F)
-                : TvColors.card,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: _focused
-              ? TvColors.primary
-              : selected
-                  ? TvColors.primary.withValues(alpha: .55)
-                  : TvColors.border,
-          width: _focused ? TvMetrics.focusBorder : 1,
+    final focused = _focused;
+    final Color fill;
+    final Color foreground;
+    if (focused) {
+      fill = selected && widget.segment ? TvColors.primary : TvColors.text;
+      foreground = TvColors.onPrimary;
+    } else if (selected && widget.segment) {
+      fill = TvColors.primary;
+      foreground = TvColors.onPrimary;
+    } else if (selected) {
+      fill = const Color(0x24B9FF45);
+      foreground = TvColors.lime;
+    } else {
+      fill = widget.segment ? Colors.transparent : const Color(0x0FFFFFFF);
+      foreground = const Color(0xFFDCE2DC);
+    }
+    final icon = selected && widget.toggle ? Icons.check_rounded : widget.icon;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: widget.label,
+      excludeSemantics: true,
+      child: AnimatedContainer(
+        duration: TvMetrics.focusDuration,
+        decoration: BoxDecoration(
+          color: fill,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: focused && selected && widget.segment
+                ? TvColors.text
+                : Colors.transparent,
+            width: 2,
+          ),
         ),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          focusColor: Colors.transparent,
-          hoverColor: Colors.transparent,
-          splashColor: Colors.transparent,
-          onFocusChange: (value) => setState(() => _focused = value),
-          onTap: widget.onPressed,
-          borderRadius: BorderRadius.circular(11),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  selected ? Icons.check_rounded : widget.icon,
-                  size: 18,
-                  color: selected
-                      ? const Color(0xFFB9FF45)
-                      : const Color(0xFFCFD6D0),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  widget.label,
-                  style: TextStyle(
-                    color: selected
-                        ? TvColors.lime
-                        : const Color(0xFFE0E5E1),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            focusColor: Colors.transparent,
+            hoverColor: Colors.transparent,
+            splashColor: Colors.transparent,
+            onFocusChange: (value) {
+              setState(() => _focused = value);
+              if (value) tvReveal(context, margin: 24);
+            },
+            onTap: widget.onPressed,
+            borderRadius: BorderRadius.circular(999),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (widget.busy)
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: foreground,
+                      ),
+                    )
+                  else
+                    Icon(icon, size: 17, color: foreground),
+                  const SizedBox(width: 7),
+                  Text(
+                    widget.label,
+                    style: TextStyle(
+                      color: foreground,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -1220,6 +1662,115 @@ class _TvFilterChipState extends State<_TvFilterChip> {
   }
 }
 
+/// A provider filter: text with a count; the selected one is lime and
+/// underlined, the focused one gets a light pill.
+class _TvProviderTab extends StatefulWidget {
+  const _TvProviderTab({
+    required this.selected,
+    required this.label,
+    required this.count,
+    required this.onPressed,
+  });
+
+  final bool selected;
+  final String label;
+  final int? count;
+  final VoidCallback onPressed;
+
+  @override
+  State<_TvProviderTab> createState() => _TvProviderTabState();
+}
+
+class _TvProviderTabState extends State<_TvProviderTab> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = widget.selected;
+    final focused = _focused;
+    final color = focused
+        ? TvColors.onPrimary
+        : selected
+            ? TvColors.lime
+            : TvColors.textMuted;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: widget.label,
+      excludeSemantics: true,
+      child: AnimatedContainer(
+        duration: TvMetrics.focusDuration,
+        decoration: BoxDecoration(
+          color: focused ? TvColors.text : Colors.transparent,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            focusColor: Colors.transparent,
+            hoverColor: Colors.transparent,
+            splashColor: Colors.transparent,
+            onFocusChange: (value) {
+              setState(() => _focused = value);
+              if (value) tvReveal(context, margin: 24);
+            },
+            onTap: widget.onPressed,
+            borderRadius: BorderRadius.circular(999),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 5, 12, 3),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (widget.label != 'All') ...[
+                        Icon(Icons.extension_rounded, size: 14, color: color),
+                        const SizedBox(width: 6),
+                      ],
+                      Text(
+                        widget.label,
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 13.5,
+                          fontWeight:
+                              selected ? FontWeight.w900 : FontWeight.w700,
+                        ),
+                      ),
+                      if (widget.count != null) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          '${widget.count}',
+                          style: TextStyle(
+                            color: color.withValues(alpha: .7),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  AnimatedContainer(
+                    duration: TvMetrics.focusDuration,
+                    height: 2.5,
+                    width: selected && !focused ? 22 : 0,
+                    decoration: BoxDecoration(
+                      color: TvColors.primary,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Back and Refresh: round, quiet until focused.
 class _TvHeaderButton extends StatefulWidget {
   const _TvHeaderButton({
     required this.tooltip,
@@ -1242,30 +1793,47 @@ class _TvHeaderButtonState extends State<_TvHeaderButton> {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: _focused ? const Color(0xFF292E2A) : const Color(0xFF171B18),
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        autofocus: widget.autofocus,
-        canRequestFocus: widget.onPressed != null,
-        focusColor: Colors.transparent,
-        hoverColor: Colors.transparent,
-        splashColor: Colors.transparent,
-        onFocusChange: (value) => setState(() => _focused = value),
-        onTap: widget.onPressed,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          width: 46,
-          height: 46,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: _focused ? TvColors.primary : const Color(0xFF303731),
-              width: _focused ? TvMetrics.focusBorder : 1,
+    final enabled = widget.onPressed != null;
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: widget.tooltip,
+      excludeSemantics: true,
+      child: AnimatedContainer(
+        duration: TvMetrics.focusDuration,
+        width: 46,
+        height: 46,
+        decoration: BoxDecoration(
+          color: _focused ? TvColors.text : const Color(0x1AFFFFFF),
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: _focused ? TvColors.text : const Color(0x1FFFFFFF),
+          ),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          shape: const CircleBorder(),
+          child: InkWell(
+            autofocus: widget.autofocus,
+            canRequestFocus: enabled,
+            customBorder: const CircleBorder(),
+            focusColor: Colors.transparent,
+            hoverColor: Colors.transparent,
+            splashColor: Colors.transparent,
+            onFocusChange: (value) => setState(() => _focused = value),
+            onTap: widget.onPressed,
+            child: Center(
+              child: Icon(
+                widget.icon,
+                size: 24,
+                color: _focused
+                    ? TvColors.onPrimary
+                    : enabled
+                        ? TvColors.text
+                        : TvColors.textDim,
+              ),
             ),
           ),
-          alignment: Alignment.center,
-          child: Icon(widget.icon, size: 24),
         ),
       ),
     );
