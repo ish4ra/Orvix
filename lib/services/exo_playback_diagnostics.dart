@@ -308,7 +308,9 @@ class ExoDiagnosticsLog {
           'decoder=${_safe(value.audioDecoder)}')
       ..writeln('tracks: video=${value.videoTracks.length} '
           'audio=${value.audioTracks.length} '
-          'text=${value.textTracks.length}');
+          'text=${value.textTracks.length}')
+      ..writeln('subtitles: ${exoSubtitleTrackSummary(value)} '
+          'cueEvents=${value.cueEvents}');
     final error = value.error;
     if (error != null) {
       buffer.writeln('error: ${error.code} (${error.codeNumber ?? '-'}) '
@@ -324,4 +326,33 @@ class ExoDiagnosticsLog {
     }
     return buffer.toString();
   }
+}
+
+
+/// Every subtitle track in the stream with its real format and whether the
+/// device can show it, e.g. "2: English SRT ✓ selected, Italian PGS (image)".
+/// Language and format only: nothing identifying the stream.
+String exoSubtitleTrackSummary(OrvixExoValue value) {
+  final tracks = value.textTracks;
+  if (tracks.isEmpty) return 'None in this video';
+  final parts = [
+    for (final track in tracks)
+      [
+        track.languageName,
+        track.codecName ?? track.formatMime ?? 'unknown format',
+        if (track.isBitmapSubtitle) '(image)',
+        if (!track.supported) '(not supported: ${track.support ?? '-'})',
+        if (track.selected) '✓ selected',
+      ].join(' '),
+  ];
+  return '${tracks.length}: ${parts.join(', ')}';
+}
+
+/// Whether Media3 delivered cues for the selected embedded track.
+String exoSubtitleCueSummary(OrvixExoValue value, OrvixExoTrack selected) {
+  if (value.cueEvents > 0) {
+    return '${value.cueEvents} received'
+        '${selected.isBitmapSubtitle ? ' (image subtitles)' : ''}';
+  }
+  return 'None received yet. Lines appear when the film reaches dialogue.';
 }

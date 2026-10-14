@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -10,6 +9,7 @@ import '../models/media_item.dart';
 import '../services/exo_playback_diagnostics.dart';
 import '../services/exo_player_preferences_service.dart';
 import '../services/external_subtitle_track.dart';
+import '../services/subtitle_text_cleanup.dart';
 import '../services/local_p2p_startup_policy.dart';
 import '../services/local_torrent_service.dart';
 import '../services/media_state_service.dart';
@@ -161,15 +161,11 @@ class AndroidExoPlayerScreen extends StatefulWidget {
     return decodeSubtitleBytes(await file.readAsBytes());
   }
 
-  /// Subtitle files are often Windows-1252/Latin-1 rather than UTF-8.
+  /// Subtitle files are often Windows-1252 rather than UTF-8, and some are
+  /// UTF-16. See [SubtitleTextCleanup.decode].
   @visibleForTesting
-  static String decodeSubtitleBytes(List<int> bytes) {
-    try {
-      return utf8.decode(bytes);
-    } on FormatException {
-      return latin1.decode(bytes);
-    }
-  }
+  static String decodeSubtitleBytes(List<int> bytes) =>
+      SubtitleTextCleanup.decode(bytes);
 
   /// No timer ends a stream that Media3 is still loading. These only change
   /// the wording of the loading screen.
@@ -2051,7 +2047,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
           subtitle: [
             if (track.codecName != null) track.codecName!,
             if (track.isBitmapSubtitle) 'Image subtitles',
-            if (track.mimeType == 'text/x-ssa') 'Shown as plain text',
+            if (track.isAssSubtitle) 'Shown as plain text',
           ].join(' • ').let((text) => text.isEmpty ? null : text),
           selected: embeddedSelected && track.selected,
           enabled: track.supported,
@@ -2485,6 +2481,9 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
       ('Subtitles', _subtitlesOff
           ? 'Off'
           : _external?.label ?? text?.displayName ?? 'None'),
+      ('Subtitle tracks', exoSubtitleTrackSummary(value)),
+      if (text != null && _external == null && !_subtitlesOff)
+        ('Subtitle cues', exoSubtitleCueSummary(value, text)),
       ('Received', mb(value.bytesLoaded)),
       if (value.httpStatus != null) ('HTTP', '${value.httpStatus}'),
       if (value.firstFrame != null)

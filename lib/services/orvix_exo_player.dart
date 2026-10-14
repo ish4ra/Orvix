@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'subtitle_text_cleanup.dart';
+
 /// Media3 playback states, as reported by the native player.
 enum OrvixExoState { idle, buffering, ready, ended }
 
@@ -75,9 +77,25 @@ class OrvixExoTrack {
   bool get isAudio => type == 'audio';
   bool get isVideo => type == 'video';
 
+  /// Media3's MIME type for subtitles it parsed while reading the file. The
+  /// format the file really carries is then in [codecs].
+  static const parsedCuesMime = 'application/x-media3-cues';
+
+  /// The subtitle format as stored in the file (SRT, ASS, PGS…). Media3 1.4+
+  /// parses embedded subtitles during extraction and reports them as
+  /// [parsedCuesMime], with the original MIME type in [codecs].
+  String? get formatMime {
+    final mime = mimeType?.toLowerCase();
+    if (mime == parsedCuesMime) return codecs?.toLowerCase();
+    return mime;
+  }
+
+  /// ASS/SSA: drawn as plain text, without its own fonts and positions.
+  bool get isAssSubtitle => formatMime == 'text/x-ssa';
+
   /// Subtitle formats Media3 renders as images (PGS, DVB, VobSub).
   bool get isBitmapSubtitle {
-    final mime = mimeType?.toLowerCase() ?? '';
+    final mime = formatMime ?? '';
     return mime.contains('pgs') ||
         mime.contains('dvbsubs') ||
         mime.contains('vobsub');
@@ -100,7 +118,7 @@ class OrvixExoTrack {
 
   /// Short codec name for menus: "AC-3", "E-AC-3", "AAC", "DTS", "HEVC"…
   String? get codecName {
-    final mime = mimeType?.toLowerCase() ?? '';
+    final mime = formatMime ?? '';
     const names = <String, String>{
       'audio/eac3-joc': 'Dolby Atmos (E-AC-3)',
       'audio/eac3': 'E-AC-3',
@@ -231,6 +249,7 @@ class OrvixExoValue {
     this.tracks = const <OrvixExoTrack>[],
     this.cueText = const <String>[],
     this.bitmapCues = const <OrvixExoBitmapCue>[],
+    this.cueEvents = 0,
     this.errorCode,
     this.errorMessage,
     this.error,
@@ -264,6 +283,11 @@ class OrvixExoValue {
   final List<OrvixExoTrack> tracks;
   final List<String> cueText;
   final List<OrvixExoBitmapCue> bitmapCues;
+
+  /// How many non-empty subtitle cue updates Media3 delivered. Playback info
+  /// uses it to tell "no track", "track selected but silent" and "rendering"
+  /// apart on a real device.
+  final int cueEvents;
   final String? errorCode;
   final String? errorMessage;
 
@@ -322,6 +346,7 @@ class OrvixExoValue {
     List<OrvixExoTrack>? tracks,
     List<String>? cueText,
     List<OrvixExoBitmapCue>? bitmapCues,
+    int? cueEvents,
     String? errorCode,
     String? errorMessage,
     OrvixExoError? error,
@@ -357,6 +382,7 @@ class OrvixExoValue {
         tracks: tracks ?? this.tracks,
         cueText: cueText ?? this.cueText,
         bitmapCues: bitmapCues ?? this.bitmapCues,
+        cueEvents: cueEvents ?? this.cueEvents,
         errorCode: clearError ? null : errorCode ?? this.errorCode,
         errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
         error: clearError ? null : error ?? this.error,
@@ -628,8 +654,17 @@ class OrvixExoController extends ValueNotifier<OrvixExoValue> {
         final bitmaps = event['bitmaps'];
         value = value.copyWith(
           cueText: text is List
-              ? text.map((line) => line.toString()).toList(growable: false)
+              ? [
+                  for (final line in text)
+                    if (SubtitleTextCleanup.clean(line.toString())
+                        case final clean when clean.isNotEmpty)
+                      clean,
+                ]
               : const <String>[],
+          cueEvents: value.cueEvents + (text is List && text.isNotEmpty ||
+                  bitmaps is List && bitmaps.isNotEmpty
+              ? 1
+              : 0),
           bitmapCues: bitmaps is List
               ? [
                   for (final raw in bitmaps.whereType<Map<Object?, Object?>>())
