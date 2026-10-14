@@ -166,8 +166,13 @@ Deno.serve(async (req: Request) => {
     .eq("installation_id", installationId)
     .maybeSingle();
 
+  const shouldRefreshCountry =
+    type === "session_start" || !existing.data?.country_code;
+  const resolvedCountryCode = shouldRefreshCountry
+    ? await resolveCountry(req)
+    : null;
   const countryCode =
-    existing.data?.country_code ?? (await resolveCountry(req));
+    resolvedCountryCode ?? existing.data?.country_code ?? null;
 
   const installation = {
     installation_id: installationId,
