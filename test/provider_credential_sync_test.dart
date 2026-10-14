@@ -363,6 +363,51 @@ void main() {
       expect(find.byKey(const ValueKey('tv-torbox-refresh')), findsOneWidget);
     });
 
+    testWidgets(
+        'Android TV TorBox pane gets the phone connection from the account '
+        'with the remote, without typing the key', (tester) async {
+      PlatformProfile.debugAndroidTvOverride = true;
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      backend.user = _me;
+      await tester
+          .pumpWidget(MaterialApp(home: Scaffold(body: _clouds(_torbox()))));
+      await _settle(tester);
+
+      final button = find.byKey(const ValueKey('tv-torbox-from-account'));
+      expect(button, findsOneWidget);
+
+      // Nothing saved in the account yet: the TV says what to do.
+      await tester.tap(button);
+      await _settle(tester);
+      expect(find.textContaining('no TorBox connection yet'), findsOneWidget);
+      expect(find.byKey(const ValueKey('tv-torbox-api-key')), findsOneWidget);
+
+      // The phone connected TorBox; the TV picks it up with one press.
+      backend.cloud = {_torboxKey: _torboxToken};
+      await tester.tap(button);
+      await _settle(tester);
+      expect(await tester.runAsync(() => _local(_torboxKey)), _torboxToken);
+      expect(find.byKey(const ValueKey('tv-torbox-api-key')), findsNothing);
+      expect(find.text('torbox-user@example.com'), findsOneWidget,
+          reason: 'The restored key was checked with TorBox');
+    });
+
+    testWidgets('signed out, the TV pane offers no account option',
+        (tester) async {
+      PlatformProfile.debugAndroidTvOverride = true;
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester
+          .pumpWidget(MaterialApp(home: Scaffold(body: _clouds(_torbox()))));
+      await _settle(tester);
+      expect(
+          find.byKey(const ValueKey('tv-torbox-from-account')), findsNothing);
+      expect(find.byKey(const ValueKey('tv-torbox-device')), findsOneWidget);
+    });
+
     testWidgets('account Sync now updates an open TorBox pane',
         (tester) async {
       tester.view.physicalSize = const Size(1600, 1000);
@@ -392,6 +437,68 @@ void main() {
       expect(accountChanges, 1);
       expect(find.text('Connect TorBox'), findsNothing);
       expect(find.text('torbox-user@example.com'), findsOneWidget);
+      // Sync now says what happened to the provider, without the key.
+      expect(find.textContaining('TorBox connected from your Orvix account'),
+          findsOneWidget);
+      expect(find.textContaining(_torboxToken), findsNothing);
+    });
+
+    test('the sync result names restored, uploaded and saved providers',
+        () async {
+      backend.user = _me;
+      backend.cloud = {_torboxKey: _torboxToken};
+      FlutterSecureStorage.setMockInitialValues(
+          {_realDebridKey: _realDebridToken});
+
+      final result = await OrvixAccountService.mergeCloudIntoLocal();
+      final providers = result.providers!;
+      expect(providers.restored, {CloudProvider.torbox});
+      expect(providers.uploaded, {CloudProvider.realDebrid});
+      expect(providers.inAccount,
+          {CloudProvider.torbox, CloudProvider.realDebrid});
+      final text = providers.describe();
+      expect(text, contains('TorBox connected from your Orvix account.'));
+      expect(text, contains('Real-Debrid saved to your Orvix account.'));
+      for (final secret in _allSecrets) {
+        expect(text, isNot(contains(secret)));
+      }
+
+      // Nothing new on the next sync: it reports the state instead.
+      final again = await OrvixAccountService.mergeCloudIntoLocal();
+      expect(again.providers!.restored, isEmpty);
+      expect(again.providers!.uploaded, isEmpty);
+      expect(again.providers!.describe(),
+          'Provider connections are up to date: TorBox and Real-Debrid.');
+    });
+
+    test('an empty account says where to connect the provider', () async {
+      backend.user = _me;
+      final result = await OrvixAccountService.mergeCloudIntoLocal();
+      expect(result.providers!.describe(),
+          contains('Your Orvix account has no saved provider connections.'));
+    });
+
+    test('a credential request that never answers does not block Sync now',
+        () async {
+      backend.user = _me;
+      backend.cloud = {_torboxKey: _torboxToken};
+      backend.saveGate = Completer<void>();
+      FlutterSecureStorage.setMockInitialValues(
+          {_realDebridKey: _realDebridToken});
+
+      final timeout = OrvixAccountService.credentialRequestTimeout;
+      OrvixAccountService.credentialRequestTimeout =
+          const Duration(milliseconds: 50);
+      addTearDown(() => OrvixAccountService.credentialRequestTimeout = timeout);
+      final result = await OrvixAccountService.mergeCloudIntoLocal();
+      expect(result.credentialsFailed, isTrue,
+          reason: 'A hanging save times out instead of holding the lock');
+
+      // The lock was released: the next sync runs and succeeds.
+      backend.saveGate = null;
+      final next = await OrvixAccountService.mergeCloudIntoLocal();
+      expect(next.credentials, OrvixSyncStatus.synced);
+      expect(backend.cloud[_realDebridKey], _realDebridToken);
     });
   });
 

@@ -873,8 +873,10 @@ class _AccountScreenState extends State<AccountScreen> {
         final now = DateTime.now();
         final minute = now.minute.toString().padLeft(2, '0');
         final problem = result.problem;
+        final providers = result.providers?.describe();
         setState(() => _message = problem == null
             ? 'Sync complete • ${now.hour}:$minute'
+                '${providers == null ? '' : '\n$providers'}'
             : '$problem Your data on this device is safe; try again later.');
         // Whatever did sync (a restored provider, merged library) shows now.
         widget.onAuthChanged();
@@ -2059,7 +2061,7 @@ class _TvAccountViewState extends State<_TvAccountView> {
           message,
           key: const ValueKey('tv-account-message'),
           textAlign: TextAlign.center,
-          maxLines: 4,
+          maxLines: 6,
           overflow: TextOverflow.ellipsis,
           style: TvText.caption.copyWith(fontSize: 13.5),
         ),
