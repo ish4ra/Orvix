@@ -460,6 +460,11 @@ class OrvixUpdateGateState extends State<OrvixUpdateGate> {
     final hint = _installing
         ? 'You can keep using Orvix while the update downloads.'
         : 'Press Up on the remote to reach these buttons.';
+    final bannerWidth = MediaQuery.sizeOf(context).width -
+        TvMetrics.navCollapsedWidth -
+        12 -
+        TvMetrics.pageHorizontal;
+    final buttonsMaxWidth = (bannerWidth * .62).clamp(0.0, double.infinity);
     return Material(
       key: const ValueKey('tv-update-banner'),
       color: TvColors.surface,
@@ -534,36 +539,50 @@ class OrvixUpdateGateState extends State<OrvixUpdateGate> {
                       ),
                     ),
                     const SizedBox(width: 14),
-                    TvButton(
-                      key: const ValueKey('tv-update-install'),
-                      focusNode: _tvUpdateNode,
-                      kind: TvButtonKind.primary,
-                      icon: Icons.system_update_alt_rounded,
-                      label: 'Update',
-                      busy: _installing,
-                      onPressed: _install,
-                    ),
-                    const SizedBox(width: 10),
-                    TvButton(
-                      key: const ValueKey('tv-update-notes'),
-                      icon: Icons.notes_rounded,
-                      label: 'What\'s new',
-                      enabled: !_installing,
-                      onPressed: _showNotes,
-                    ),
-                    const SizedBox(width: 10),
-                    TvButton(
-                      key: const ValueKey('tv-update-later'),
-                      kind: TvButtonKind.quiet,
-                      label: _installing && !_applying ? 'Cancel' : 'Later',
-                      enabled: !_applying,
-                      onPressed: () {
-                        if (_installing) {
-                          setState(() => _cancelDownloadRequested = true);
-                        } else {
-                          _later();
-                        }
-                      },
+                    // With large accessibility text the three buttons can be
+                    // wider than the banner. Cap them and scale them down
+                    // instead of overflowing; at normal sizes they fit as is.
+                    ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: buttonsMaxWidth),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            TvButton(
+                              key: const ValueKey('tv-update-install'),
+                              focusNode: _tvUpdateNode,
+                              kind: TvButtonKind.primary,
+                              icon: Icons.system_update_alt_rounded,
+                              label: 'Update',
+                              busy: _installing,
+                              onPressed: _install,
+                            ),
+                            const SizedBox(width: 10),
+                            TvButton(
+                              key: const ValueKey('tv-update-notes'),
+                              icon: Icons.notes_rounded,
+                              label: 'What\'s new',
+                              enabled: !_installing,
+                              onPressed: _showNotes,
+                            ),
+                            const SizedBox(width: 10),
+                            TvButton(
+                              key: const ValueKey('tv-update-later'),
+                              kind: TvButtonKind.quiet,
+                              label: _installing && !_applying ? 'Cancel' : 'Later',
+                              enabled: !_applying,
+                              onPressed: () {
+                                if (_installing) {
+                                  setState(() => _cancelDownloadRequested = true);
+                                } else {
+                                  _later();
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ],
                 ),

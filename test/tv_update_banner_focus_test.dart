@@ -269,6 +269,47 @@ void main() {
     });
   });
 
+  group('large accessibility text', () {
+    for (final (size, ratio) in <(Size, double)>[
+      (const Size(1280, 720), 1),
+      (const Size(1920, 1080), 2),
+    ]) {
+      testWidgets(
+          'every update action stays reachable at 2x text, '
+          '${size.width.toInt()}x${size.height.toInt()}', (tester) async {
+        tester.platformDispatcher.textScaleFactorTestValue = 2;
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        final updates = _TvUpdates(_github([
+          release('v0.7.10', notes: List.filled(40, 'A long line').join('\n')),
+        ]));
+        await _start(tester, updates, size: size, ratio: ratio);
+        expect(_banner, findsOneWidget);
+
+        await _press(tester, LogicalKeyboardKey.arrowUp);
+        expect(_focused(tester, 'tv-update-install'), isTrue);
+        await _press(tester, LogicalKeyboardKey.arrowRight);
+        expect(_focused(tester, 'tv-update-notes'), isTrue);
+        await _press(tester, LogicalKeyboardKey.select);
+        expect(_focused(tester, 'tv-update-notes-install'), isTrue);
+        await _press(tester, LogicalKeyboardKey.arrowRight);
+        expect(_focused(tester, 'tv-update-notes-close'), isTrue);
+        await _press(tester, LogicalKeyboardKey.escape);
+        expect(_focused(tester, 'tv-update-notes'), isTrue);
+        await _press(tester, LogicalKeyboardKey.arrowRight);
+        expect(_focused(tester, 'tv-update-later'), isTrue);
+        await _press(tester, LogicalKeyboardKey.arrowDown);
+        expect(_focused(tester, 'Home-a'), isTrue);
+
+        await _openSettings(tester);
+        await _press(tester, LogicalKeyboardKey.select);
+        await _press(tester, LogicalKeyboardKey.arrowDown);
+        expect(_focused(tester, 'tv-settings-install-update'), isTrue);
+        await _press(tester, LogicalKeyboardKey.arrowRight);
+        expect(_focused(tester, 'tv-settings-update-notes'), isTrue);
+      });
+    }
+  });
+
   group('download from the banner', () {
     testWidgets('OK on Update starts the download; a failure is shown and '
         'Update can be retried', (tester) async {
