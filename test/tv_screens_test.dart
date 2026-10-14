@@ -453,6 +453,35 @@ void main() {
           'Down enters the TorBox form');
     });
 
+    testWidgets('TorBox: "Get TorBox from my Orvix account" is reachable '
+        'and keeps focus after a failed restore', (tester) async {
+      account.user =
+          const OrvixAccountUser(id: 'u', email: 'viewer@example.com');
+      _setSize(tester, wide);
+      await _pump(tester, _clouds());
+      await _key(tester, LogicalKeyboardKey.arrowRight);
+      await _key(tester, LogicalKeyboardKey.select);
+      await _key(tester, LogicalKeyboardKey.arrowDown);
+      _expectFocus(tester, find.byKey(const ValueKey('tv-torbox-from-account')),
+          'signed in: the account restore comes first');
+      _expectFocusVisible(tester);
+
+      await _key(tester, LogicalKeyboardKey.arrowDown);
+      _expectFocus(tester, find.byKey(const ValueKey('tv-torbox-device')),
+          'then device login');
+      await _key(tester, LogicalKeyboardKey.arrowUp);
+      _expectFocus(tester, find.byKey(const ValueKey('tv-torbox-from-account')),
+          'Up returns to the account restore');
+
+      // The fake account has no cloud data: the restore fails and says so,
+      // without dropping focus.
+      await _key(tester, LogicalKeyboardKey.select);
+      await _settle(tester);
+      expect(find.textContaining('Orvix account'), findsWidgets);
+      _expectFocus(tester, find.byKey(const ValueKey('tv-torbox-from-account')),
+          'focus stays on the action after it finishes');
+    });
+
     testWidgets('TorBox: API key field to Connect with the DPAD',
         (tester) async {
       _setSize(tester, wide);

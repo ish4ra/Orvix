@@ -7,6 +7,8 @@ void main() {
     final app = File('lib/app.dart').readAsStringSync();
     final update =
         File('lib/services/app_update_service.dart').readAsStringSync();
+    final discovery =
+        File('lib/services/public_release_discovery.dart').readAsStringSync();
     final gate =
         File('lib/widgets/orvix_update_gate.dart').readAsStringSync();
     final torrent =
@@ -44,12 +46,12 @@ void main() {
     expect(update, contains('PackageInfo.fromPlatform()'));
     expect(update, contains('final currentVersion = await _currentVersion();'));
     expect(update, isNot(contains('static const currentVersion')));
-    expect(update, contains("name.contains('Windows-x64')"));
-    expect(update, contains('Android-TV.apk'));
-    expect(update, contains('Android-Mobile.apk'));
+    expect(discovery, contains(r"'Orvix-Setup-v$version-Windows-x64.exe'"));
+    expect(discovery, contains(r"'Orvix-v$version-Android-TV.apk'"));
+    expect(discovery, contains(r"'Orvix-v$version-Android-Mobile.apk'"));
     expect(update, contains('sha256.bind(file.openRead())'));
     expect(update, isNot(contains('orvix_updater_helper.exe')));
-    expect(update, contains('Process.start(\n        file.path'));
+    expect(update, contains('Process.start(\n      file.path'));
     expect(update, contains('ProcessStartMode.detached'));
     expect(update, contains('Duration(milliseconds: 700)'));
     expect(update, contains('await windowManager.close();'));
@@ -85,10 +87,10 @@ void main() {
     expect(windowsMain, contains('SetForegroundWindow(existing)'));
     expect(gate, contains('View what changed'));
     expect(gate, contains("label: const Text('Update')"));
-    expect(update, contains("raw['assets_url']"));
-    expect(update, contains('_fetchReleaseAssets('));
+    expect(discovery, contains("raw['assets_url']"));
+    expect(discovery, contains('_withFetchedAssets('));
     expect(
-      update,
+      discovery,
       contains("'Cache-Control': 'no-cache, no-store, max-age=0'"),
     );
     // Update discovery is intentionally cold-start-only. Do not interrupt a
@@ -98,10 +100,13 @@ void main() {
     expect(gate, isNot(contains('Timer.periodic(')));
     expect(gate, isNot(contains('Duration(minutes: 5)')));
     expect(gate, isNot(contains('Duration(seconds: 20)')));
-    expect(update, contains('_releaseAssetFetchAttempts = 5'));
-    expect(update, contains("'_orvix_check'"));
-    expect(update, contains("'_orvix_asset_check'"));
-    expect(update, contains("'per_page': '30'"));
+    // Every release page is read (bounded), and a release without this
+    // platform's installer no longer triggers repeated asset lookups.
+    expect(discovery, contains("'_orvix_check'"));
+    expect(discovery, contains('static const perPage = 100;'));
+    expect(discovery, contains('static const maxPages = 5;'));
+    expect(discovery, contains('static const maxAssetLookups = 2;'));
+    expect(discovery, isNot(contains("'per_page': '30'")));
     expect(
       gate,
       contains('Orvix will close; finish setup in the Windows installer'),
