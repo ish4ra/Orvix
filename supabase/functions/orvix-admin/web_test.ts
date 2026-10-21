@@ -5,9 +5,10 @@ import { assert, assertEquals } from "./test_assert.ts";
 
 const web = new URL("./web/", import.meta.url);
 const read = (path: string) => Deno.readTextFile(new URL(path, web));
-const bytes = (path: string) => Deno.readFile(new URL(path, web));
+const bytes = async (path: string): Promise<BufferSource> =>
+  new Uint8Array(await Deno.readFile(new URL(path, web))).buffer;
 
-async function digest(algorithm: "SHA-256" | "SHA-384", data: Uint8Array) {
+async function digest(algorithm: "SHA-256" | "SHA-384", data: BufferSource) {
   return new Uint8Array(await crypto.subtle.digest(algorithm, data));
 }
 const hex = (data: Uint8Array) => [...data].map((b) => b.toString(16).padStart(2, "0")).join("");
