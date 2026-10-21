@@ -215,7 +215,9 @@ async function dashboardData() {
         db.from("orvix_analytics_events")
           .select("event_name")
           .gte("occurred_at", day30)
-          .order("id", { ascending: false })
+          // Ascending: events inserted during the read land after the rows
+          // already read, so offset pages never shift.
+          .order("id", { ascending: true })
           .range(from, to)
       )
     ),

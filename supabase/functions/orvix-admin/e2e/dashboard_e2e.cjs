@@ -122,10 +122,11 @@ async function open(browser, state, context) {
 
 const visible = (page, id) => page.locator(`#${id}`).isVisible();
 
-async function signIn(page) {
+async function signIn(page, { withEnter = false } = {}) {
   await page.fill("#email", "owner@example.com");
   await page.fill("#password", "secret");
-  await page.click("#loginBtn");
+  if (withEnter) await page.press("#password", "Enter");
+  else await page.click("#loginBtn");
 }
 
 const tests = {
@@ -164,8 +165,9 @@ const tests = {
   async "sign-in renders the dashboard, reload restores the session, sign-out clears it"(browser) {
     const state = backend();
     const { page, context, problems } = await open(browser, state);
-    await signIn(page);
+    await signIn(page, { withEnter: true });
     await page.waitForSelector("#activityTiles .tile");
+    assert.equal(new URL(page.url()).pathname, "/orvix/console/", "the form never navigates");
     assert.equal(await visible(page, "login"), false);
     assert.equal(await page.locator("#activityTiles .tile").count(), 8);
     assert.match(await page.textContent("#generated"), /Updated/);

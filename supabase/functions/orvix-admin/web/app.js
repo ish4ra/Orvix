@@ -275,7 +275,9 @@ async function refresh() {
 }
 function showApp(){el("login").classList.add("hidden");el("app").classList.remove("hidden");refresh();}
 function showLogin(message=""){el("app").classList.add("hidden");el("login").classList.remove("hidden");el("loginError").textContent=message;}
-el("loginBtn").onclick = async () => {
+// A form so Enter submits; preventDefault keeps it from navigating.
+el("loginForm").onsubmit = async (event) => {
+  event.preventDefault();
   el("loginError").textContent="";el("loginBtn").disabled=true;
   let error = null;
   try {

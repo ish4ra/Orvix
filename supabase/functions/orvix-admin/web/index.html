@@ -51,9 +51,11 @@
   <div id="login" class="login">
     <div class="brand"><span class="dot"></span>Orvix Control Center</div>
     <p class="sub">Private owner analytics. Sign in with an authorized Orvix account.</p>
-    <input id="email" type="email" placeholder="Email" autocomplete="username">
-    <input id="password" type="password" placeholder="Password" autocomplete="current-password">
-    <button id="loginBtn" class="btn">Sign in</button>
+    <form id="loginForm">
+      <input id="email" type="email" placeholder="Email" aria-label="Email" autocomplete="username">
+      <input id="password" type="password" placeholder="Password" aria-label="Password" autocomplete="current-password">
+      <button id="loginBtn" type="submit" class="btn">Sign in</button>
+    </form>
     <div id="loginError" class="err"></div>
   </div>
 
