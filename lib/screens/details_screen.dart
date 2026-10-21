@@ -4715,8 +4715,13 @@ class DetailsScreenState extends State<DetailsScreen> {
         aiSinhalaEnabled: aiEnabled && !useLocalMediaBridge,
       );
 
+      // MPV may hand a stream it cannot start to ExoPlayer only when Auto
+      // picked MPV in the first place (Android Mobile). When ExoPlayer was
+      // tried first (Android TV Auto) and the user chose MPV from its error
+      // screen, MPV never bounces back to ExoPlayer.
       final androidAutoFallbackToExo = _androidPlayback &&
           preference == PlayerEnginePreference.auto &&
+          engine == PlayerEngineKind.mpv &&
           !aiSettingEnabled &&
           !useLocalMediaBridge &&
           source?.isMagnet != true;
@@ -4728,16 +4733,16 @@ class DetailsScreenState extends State<DetailsScreen> {
           item,
           episode,
           source: source,
-          autoFallbackToMpv: preference == PlayerEnginePreference.auto,
+          // A failure shows ExoPlayer's error screen with MPV as an explicit
+          // choice; the engine is never switched behind the user's back.
+          autoFallbackToMpv: false,
           next: next,
           releaseHint: releaseHint,
           expectedSizeBytes: expectedSizeBytes,
           expectedVideoHash: expectedVideoHash,
         );
 
-        final shouldFallback = result?.switchToMpv == true ||
-            (preference == PlayerEnginePreference.auto &&
-                result?.failed == true);
+        final shouldFallback = result?.switchToMpv == true;
         // The torrent is released even when this screen is already gone.
         if (!shouldFallback || !mounted) {
           // ExoPlayer has closed for good: detach its local torrent so it
@@ -4755,7 +4760,7 @@ class DetailsScreenState extends State<DetailsScreen> {
         if (result?.failed == true) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('ExoPlayer failed — trying MPV…'),
+              content: Text('Opening this source in MPV…'),
               duration: Duration(seconds: 2),
             ),
           );

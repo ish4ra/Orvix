@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/media_item.dart';
+import '../services/exo_playback_diagnostics.dart';
+import '../services/exo_player_preferences_service.dart';
 import '../services/external_subtitle_track.dart';
 import '../services/local_p2p_startup_policy.dart';
 import '../services/local_torrent_service.dart';
@@ -14,10 +16,14 @@ import '../services/media_state_service.dart';
 import '../services/online_subtitle_service.dart';
 import '../services/orvix_exo_player.dart';
 import '../services/platform_profile.dart';
+import '../services/player_orientation_controller.dart';
 import '../services/skip_segment_service.dart';
 import '../services/subtitle_file_picker.dart';
 import '../services/subtitle_preferences_service.dart';
+import '../widgets/exo_subtitle_view.dart';
 import '../widgets/player_loading_overlay.dart';
+
+export '../services/exo_player_preferences_service.dart' show ExoAspectMode;
 
 class AndroidExoPlayerResult {
   const AndroidExoPlayerResult({
@@ -51,8 +57,6 @@ class ExoPlayerColors {
   static const muted = Color(0xFF9AA39C);
 }
 
-enum ExoAspectMode { fit, fill, zoom }
-
 extension ExoAspectModeLabel on ExoAspectMode {
   String get label => switch (this) {
         ExoAspectMode.fit => 'Fit',
@@ -60,14 +64,54 @@ extension ExoAspectModeLabel on ExoAspectMode {
         ExoAspectMode.zoom => 'Zoom',
       };
 
+  /// Fit shows the whole picture; Fill covers the screen and crops the
+  /// overflow; Zoom enlarges the fitted picture. None of them stretch.
   BoxFit get fit => switch (this) {
         ExoAspectMode.fit => BoxFit.contain,
-        ExoAspectMode.fill => BoxFit.fill,
-        ExoAspectMode.zoom => BoxFit.cover,
+        ExoAspectMode.fill => BoxFit.cover,
+        ExoAspectMode.zoom => BoxFit.contain,
       };
 }
 
-enum _ExoPanel { none, subtitles, onlineSubtitles, audio, speed }
+/// Where the picture lands in [box] for a video of [videoAspect] in [mode].
+/// Shared by the video layer and the image-subtitle layer so both agree.
+@visibleForTesting
+Rect exoVideoRect(
+  Size box,
+  double videoAspect,
+  ExoAspectMode mode, {
+  double zoom = 1.0,
+}) {
+  if (box.isEmpty || videoAspect <= 0 || !videoAspect.isFinite) {
+    return Offset.zero & box;
+  }
+  final boxAspect = box.width / box.height;
+  final cover = mode == ExoAspectMode.fill;
+  final widthBound = cover ? videoAspect < boxAspect : videoAspect >= boxAspect;
+  var width = widthBound ? box.width : box.height * videoAspect;
+  var height = widthBound ? box.width / videoAspect : box.height;
+  if (mode == ExoAspectMode.zoom) {
+    width *= zoom;
+    height *= zoom;
+  }
+  return Rect.fromLTWH(
+    (box.width - width) / 2,
+    (box.height - height) / 2,
+    width,
+    height,
+  );
+}
+
+enum _ExoPanel {
+  none,
+  subtitles,
+  onlineSubtitles,
+  subtitleStyle,
+  audio,
+  speed,
+  settings,
+  info,
+}
 
 class AndroidExoPlayerScreen extends StatefulWidget {
   const AndroidExoPlayerScreen({
@@ -107,6 +151,11 @@ class AndroidExoPlayerScreen extends StatefulWidget {
   static Future<String> Function(OnlineSubtitleResult result)
       debugDownloadSubtitle = _downloadSubtitle;
 
+  /// Replaces SystemChrome orientation/system-UI calls in tests.
+  @visibleForTesting
+  static PlayerOrientationController Function(bool isTv)?
+      debugOrientationController;
+
   static Future<String> _downloadSubtitle(OnlineSubtitleResult result) async {
     final file = await OnlineSubtitleService.materialize(result);
     return decodeSubtitleBytes(await file.readAsBytes());
@@ -122,12 +171,21 @@ class AndroidExoPlayerScreen extends StatefulWidget {
     }
   }
 
+  /// No timer ends a stream that Media3 is still loading. These only change
+  /// the wording of the loading screen.
+  static const slowRemoteNoticeAfter = Duration(seconds: 20);
+  static const slowBufferNoticeAfter = Duration(seconds: 8);
+
   final String url;
   final String title;
   final MediaStateService? mediaState;
   final MediaItem? item;
   final EpisodeItem? episode;
   final Map<String, String>? httpHeaders;
+
+  /// Close with [AndroidExoPlayerResult.switchToMpv] on a failure before the
+  /// first frame. Orvix's own routes no longer use it (the error screen
+  /// offers MPV as an explicit choice); kept for callers that ask for it.
   final bool autoFallbackToMpv;
 
   /// Privacy-safe startup stages for the Free P2P playback trace.
@@ -144,37 +202,55 @@ class AndroidExoPlayerScreen extends StatefulWidget {
   State<AndroidExoPlayerScreen> createState() => _AndroidExoPlayerScreenState();
 }
 
-class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
+class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
+    with WidgetsBindingObserver {
   final FocusNode _surfaceFocus = FocusNode(debugLabel: 'exo-surface');
   final FocusNode _backFocus = FocusNode(debugLabel: 'exo-back');
   final FocusNode _timelineFocus = FocusNode(debugLabel: 'exo-timeline');
+  final FocusNode _rewindFocus = FocusNode(debugLabel: 'exo-rewind');
   final FocusNode _playFocus = FocusNode(debugLabel: 'exo-play');
+  final FocusNode _forwardFocus = FocusNode(debugLabel: 'exo-forward');
+  final FocusNode _subtitlesFocus = FocusNode(debugLabel: 'exo-subtitles');
+  final FocusNode _audioFocus = FocusNode(debugLabel: 'exo-audio');
+  final FocusNode _speedFocus = FocusNode(debugLabel: 'exo-speed');
+  final FocusNode _aspectFocus = FocusNode(debugLabel: 'exo-aspect');
+  final FocusNode _settingsFocus = FocusNode(debugLabel: 'exo-settings');
   final FocusNode _switchFocus = FocusNode(debugLabel: 'exo-switch');
   final FocusNode _panelFocus = FocusNode(debugLabel: 'exo-panel-first');
+  final FocusNode _errorFocus = FocusNode(debugLabel: 'exo-error-primary');
+  final FocusScopeNode _panelScope = FocusScopeNode(debugLabel: 'exo-panel');
 
   OrvixExoController? _controller;
   OrvixExoValue _value = const OrvixExoValue();
   Timer? _hideTimer;
   Timer? _saveTimer;
-  Timer? _startupTimer;
+  Timer? _slowTimer;
   Timer? _autoSubtitleTimer;
   Timer? _noticeTimer;
+  Timer? _scrubTimer;
   // External subtitles are timed in Dart: the native position arrives every
   // 500 ms, so it is extrapolated between reports and repainted often.
   final Stopwatch _sinceState = Stopwatch()..start();
+  final Stopwatch _bufferingFor = Stopwatch();
   Timer? _externalSubtitleTimer;
   LocalP2pStartupMonitor? _p2pStartup;
   final ExoP2pRetryPolicy _p2pRetry = ExoP2pRetryPolicy();
+  late final ExoDiagnosticsLog _log;
+  late final PlayerOrientationController _orientation;
   bool _controlsVisible = true;
   bool _closing = false;
   bool _started = false;
   bool _reopening = false;
   bool _slowStartNotice = false;
   String? _error;
+  ExoErrorDiagnosis? _errorDiagnosis;
   String? _notice;
   Duration _lastPosition = Duration.zero;
   Timer? _attemptTimer;
   bool _attemptWasLong = false;
+  int _attempts = 0;
+  ExoStartupStage? _loggedStage;
+  Duration? _scrubTarget;
 
   // Android local Free P2P: a torrent that has not delivered video yet is
   // still connecting. The native player retries reads for as long as it is
@@ -183,17 +259,18 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       LocalP2pStartupPolicy.appliesTo(isAndroid: true, url: widget.url);
 
   _ExoPanel _panel = _ExoPanel.none;
+  FocusNode? _panelOpener;
   ExoAspectMode _aspect = ExoAspectMode.fit;
+  double _zoom = ExoPlayerPreferencesService.defaultZoom;
+  int _seekStepSeconds = ExoPlayerPreferencesService.defaultSeekStep;
   ExternalSubtitleTrack? _external;
   bool _subtitlesOff = false;
   bool _userChoseSubtitle = false;
   Duration _subtitleOffset = Duration.zero;
-  double _subtitleFontSize = SubtitlePreferencesService.defaultFontSize;
-  bool _subtitleBackground = SubtitlePreferencesService.defaultBackground;
-  double _subtitleBackgroundOpacity =
-      SubtitlePreferencesService.defaultBackgroundOpacity;
-  double _subtitleBottomOffset = SubtitlePreferencesService.defaultBottomOffset;
+  ExoSubtitleStyle _style = const ExoSubtitleStyle();
   String _preferredLanguage = SubtitlePreferencesService.defaultPreferredLanguage;
+  String? _savedSubtitleLanguage;
+  String? _savedAudioLanguage;
   Future<List<OnlineSubtitleResult>>? _onlineSearch;
   bool _loadingSubtitle = false;
 
@@ -202,58 +279,82 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
   bool _skipDismissed = false;
 
   bool get _tv => PlatformProfile.isAndroidTv;
-  bool _mobileOrientationLocked = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // MPV already requests landscape on Android phones. Apply the same route
-    // policy to an explicitly selected ExoPlayer so it cannot open portrait.
-    if (!_tv && !_mobileOrientationLocked &&
-        MediaQuery.sizeOf(context).shortestSide < 600) {
-      _mobileOrientationLocked = true;
-      unawaited(SystemChrome.setEnabledSystemUIMode(
-        SystemUiMode.immersiveSticky,
-      ));
-      unawaited(SystemChrome.setPreferredOrientations(const [
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ]));
-    }
-  }
+  Duration get _seekStep => Duration(seconds: _seekStepSeconds);
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _log = ExoDiagnosticsLog(
+      platform: _tv ? 'Android TV' : 'Android Mobile',
+      mediaKind: exoMediaKind(widget.url),
+    );
+    _orientation = AndroidExoPlayerScreen.debugOrientationController?.call(_tv) ??
+        PlayerOrientationController(isTv: _tv);
     unawaited(_start());
     unawaited(_loadSkipSegments());
   }
 
+  bool _fullscreenRequested = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Phones play in landscape fullscreen (MPV does the same); tablets keep
+    // their orientation; TV is landscape already.
+    if (!_fullscreenRequested) {
+      _fullscreenRequested = true;
+      unawaited(_orientation.enter(MediaQuery.sizeOf(context).shortestSide));
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_closing) return;
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_orientation.resume());
+      _log.add('app', {'state': 'resumed'});
+    } else if (state == AppLifecycleState.paused) {
+      _log.add('app', {'state': 'paused'});
+      // A film that is already playing pauses with the app (Home on a TV
+      // remote, switching apps on a phone). A stream that is still starting
+      // keeps loading so it is ready when the user returns.
+      if (_started && (_value.playing || _value.playWhenReady)) {
+        unawaited(_controller?.pause());
+      }
+    }
+  }
+
   Future<void> _start() async {
-    await _loadSubtitlePreferences();
+    await _loadPreferences();
     if (!mounted || _closing) return;
     await _open();
   }
 
-  Future<void> _loadSubtitlePreferences() async {
+  Future<void> _loadPreferences() async {
     try {
-      final values = await Future.wait<Object>([
-        SubtitlePreferencesService.fontSize(),
-        SubtitlePreferencesService.backgroundEnabled(),
-        SubtitlePreferencesService.backgroundOpacity(),
-        SubtitlePreferencesService.bottomOffset(),
-        SubtitlePreferencesService.preferredLanguage(),
-      ]);
+      final style = await ExoPlayerPreferencesService.subtitleStyle();
+      final language = await SubtitlePreferencesService.preferredLanguage();
+      final aspect = await ExoPlayerPreferencesService.aspectMode();
+      final zoom = await ExoPlayerPreferencesService.zoom();
+      final seekStep = await ExoPlayerPreferencesService.seekStepSeconds();
+      final enabled = await ExoPlayerPreferencesService.subtitlesEnabled();
+      final subtitleLanguage =
+          await ExoPlayerPreferencesService.subtitleLanguage();
+      final audioLanguage = await ExoPlayerPreferencesService.audioLanguage();
       if (!mounted) return;
       setState(() {
-        _subtitleFontSize = values[0] as double;
-        _subtitleBackground = values[1] as bool;
-        _subtitleBackgroundOpacity = values[2] as double;
-        _subtitleBottomOffset = values[3] as double;
-        _preferredLanguage = values[4] as String;
+        _style = style;
+        _preferredLanguage = language;
+        _aspect = aspect;
+        _zoom = zoom;
+        _seekStepSeconds = seekStep;
+        _subtitlesOff = !enabled;
+        _savedSubtitleLanguage = subtitleLanguage;
+        _savedAudioLanguage = audioLanguage;
       });
     } catch (_) {
-      // Defaults stay in place; subtitles still render.
+      // Defaults stay in place; playback and subtitles still work.
     }
   }
 
@@ -272,16 +373,26 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
   Future<void> _open({Duration? resumeAt}) async {
     final start = resumeAt ?? await _resumePosition();
     if (!mounted || _closing) return;
+    _attempts++;
     final controller = OrvixExoController(
       url: widget.url,
       headers: widget.httpHeaders ?? const <String, String>{},
       patientStartup: _localP2p,
-      preferredTextLanguage: _preferredLanguage,
-      preferredAudioLanguage: 'en',
+      preferredTextLanguage: _savedSubtitleLanguage ?? _preferredLanguage,
+      preferredAudioLanguage: _savedAudioLanguage ?? 'en',
+      textDisabled: _subtitlesOff,
       startPosition: start,
     );
+    controller.onDiagnostic = (event) {
+      _log.add(event['kind']?.toString() ?? 'diag', event);
+    };
     _controller = controller;
     controller.addListener(_onValue);
+    _log.add('open', {
+      'attempt': _attempts,
+      'patient': _localP2p,
+      'resumeS': start.inSeconds,
+    });
     _attemptWasLong = false;
     _attemptTimer?.cancel();
     _attemptTimer = Timer(_p2pRetry.rapidFailure, () => _attemptWasLong = true);
@@ -289,7 +400,17 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       await controller.open();
     } catch (error) {
       if (!mounted || _closing || !identical(_controller, controller)) return;
-      await _fail('ExoPlayer could not open this stream: $error');
+      _log.add('openFailed', {'error': error.runtimeType});
+      await _fail(
+        'The Android player could not be created on this device.',
+        diagnosis: const ExoErrorDiagnosis(
+          category: ExoErrorCategory.lifecycle,
+          title: 'Player could not start',
+          message: 'The Android player could not be created on this device.',
+          suggestMpv: true,
+          transientOnLocalP2p: false,
+        ),
+      );
       return;
     }
     if (!mounted || _closing || !identical(_controller, controller)) return;
@@ -312,11 +433,12 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
         onStage: widget.onStartupStage,
       )..begin();
     } else {
-      _startupTimer ??= Timer(const Duration(seconds: 35), () {
-        if (_started || _closing) return;
-        unawaited(_fail(
-          'ExoPlayer could not initialize this stream within 35 seconds.',
-        ));
+      // Not a deadline: Media3's own connect/read timeouts and retry policy
+      // decide when a remote stream has failed. This only changes the text.
+      _slowTimer ??= Timer(AndroidExoPlayerScreen.slowRemoteNoticeAfter, () {
+        if (_started || _closing || !mounted) return;
+        _log.add('slowStart', {'stage': _value.startupStage.name});
+        setState(() => _slowStartNotice = true);
       });
     }
   }
@@ -327,12 +449,26 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     final value = controller.value;
     if (value.position > Duration.zero) _lastPosition = value.position;
 
+    final stage = value.startupStage;
+    if (!_started && stage != _loggedStage) {
+      _loggedStage = stage;
+      _log.add('stage', {
+        'stage': stage.name,
+        'bytes': value.bytesLoaded,
+        'http': value.httpStatus,
+      });
+    }
+
     if (!_started && value.started) {
       _started = true;
-      _startupTimer?.cancel();
+      _slowTimer?.cancel();
       _p2pStartup?.stop();
       _attemptTimer?.cancel();
       _slowStartNotice = false;
+      _log.add('playing', {
+        'firstFrameMs': value.firstFrame?.inMilliseconds,
+        'firstByteMs': value.firstByte?.inMilliseconds,
+      });
       _saveTimer?.cancel();
       _saveTimer = Timer.periodic(
         const Duration(seconds: 10),
@@ -341,6 +477,20 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       _scheduleAutoSubtitle();
       // On TV the remote lands on Play/Pause; touch keeps the surface.
       _showControls(focusPlay: _tv);
+    }
+
+    if (_started && value.buffering) {
+      if (!_bufferingFor.isRunning) {
+        _bufferingFor
+          ..reset()
+          ..start();
+        _log.add('buffering', {'atS': value.position.inSeconds});
+      }
+    } else if (_bufferingFor.isRunning) {
+      _log.add('bufferingEnded', {'ms': _bufferingFor.elapsedMilliseconds});
+      _bufferingFor
+        ..stop()
+        ..reset();
     }
 
     if (value.hasError && !_reopening && _error == null) {
@@ -357,11 +507,26 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     OrvixExoController controller,
     OrvixExoValue value,
   ) async {
+    final error = value.error ??
+        OrvixExoError(
+          code: value.errorCode ?? 'ERROR_CODE_UNSPECIFIED',
+          message: value.errorMessage ?? '',
+        );
+    final diagnosis = ExoErrorClassifier.classify(error);
+    _log.add('error', {
+      'code': error.code,
+      'category': diagnosis.category.name,
+      'http': error.httpStatus,
+      'type': error.errorType,
+      'causes': error.causes,
+      'renderer': error.rendererMime,
+      'support': error.rendererSupport,
+    });
     final message = value.errorMessage?.trim().isNotEmpty == true
         ? value.errorMessage!
         : 'ExoPlayer reported a playback error.';
     if (!_localP2p) {
-      await _fail('ExoPlayer could not play this stream: $message');
+      await _fail(diagnosis.message, diagnosis: diagnosis);
       return;
     }
     // Local torrent: errors a slow swarm causes reopen the same stream at the
@@ -385,7 +550,12 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
           'code': value.errorCode,
           'engineAnswering': engineUp,
         });
-        await _fail('ExoPlayer could not play this stream: $message');
+        await _fail(
+          engineUp
+              ? diagnosis.message
+              : 'The local torrent engine stopped answering.',
+          diagnosis: diagnosis,
+        );
         return;
       }
       if (_p2pRetry.attempts <= 3) {
@@ -394,6 +564,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
           'count': _p2pRetry.attempts,
         });
       }
+      _log.add('reopen', {'reason': value.errorCode, 'count': _p2pRetry.attempts});
       controller.removeListener(_onValue);
       _controller = null;
       controller.dispose();
@@ -406,13 +577,18 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     }
   }
 
-  Future<void> _fail(String message) async {
+  Future<void> _fail(String message, {ExoErrorDiagnosis? diagnosis}) async {
     if (!mounted || _closing) return;
-    _startupTimer?.cancel();
+    _slowTimer?.cancel();
     _p2pStartup?.stop();
     _hideTimer?.cancel();
+    _log.add('failed', {
+      'category': diagnosis?.category.name ?? 'startup',
+      'started': _started,
+    });
     setState(() {
       _error = message;
+      _errorDiagnosis = diagnosis;
       _slowStartNotice = false;
       _panel = _ExoPanel.none;
     });
@@ -425,8 +601,30 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _switchFocus.requestFocus();
+      if (mounted) _errorFocus.requestFocus();
     });
+  }
+
+  /// Opens the same source again in ExoPlayer, at the last position.
+  Future<void> _retry() async {
+    final old = _controller;
+    _controller = null;
+    if (old != null) {
+      old.removeListener(_onValue);
+      await old.close();
+    }
+    if (!mounted || _closing) return;
+    _log.add('retry', {'byUser': true});
+    _p2pStartup = null;
+    _slowTimer = null;
+    setState(() {
+      _error = null;
+      _errorDiagnosis = null;
+      _value = const OrvixExoValue();
+      _slowStartNotice = false;
+    });
+    _surfaceFocus.requestFocus();
+    await _open(resumeAt: _started ? _lastPosition : null);
   }
 
   Future<void> _loadSkipSegments() async {
@@ -487,17 +685,21 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
 
   /// Never leaves the user silently without subtitles: when the stream has
   /// no selected subtitle track, the best OpenSubtitles match in the
-  /// preferred language is loaded, as the MPV player does.
+  /// preferred language is loaded, as the MPV player does. A user who turned
+  /// subtitles off keeps them off.
   Future<void> _autoSelectSubtitle() async {
     if (!mounted || _closing || _userChoseSubtitle || _subtitlesOff) return;
     if (_external != null) return;
     final text = _value.textTracks;
     if (text.any((track) => track.selected)) return;
+    final wanted = OnlineSubtitleService.normalizeLanguage(
+      _savedSubtitleLanguage ?? _preferredLanguage,
+    );
     final preferred = text.where(
       (track) =>
           track.supported &&
           OnlineSubtitleService.normalizeLanguage(track.language ?? '') ==
-              OnlineSubtitleService.normalizeLanguage(_preferredLanguage),
+              wanted,
     );
     if (preferred.isNotEmpty) {
       await _selectEmbedded(preferred.first, userChoice: false);
@@ -510,10 +712,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       if (!mounted || _closing || _userChoseSubtitle || _external != null) {
         return;
       }
-      final language = OnlineSubtitleService.normalizeLanguage(
-        _preferredLanguage,
-      );
-      final match = results.where((r) => r.language == language).toList();
+      final match = results.where((r) => r.language == wanted).toList();
       if (match.isEmpty) return;
       await _loadOnline(match.first, userChoice: false);
     } catch (_) {
@@ -534,17 +733,31 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     );
   }
 
+  void _rememberSubtitleChoice({required bool enabled, String? language}) {
+    unawaited(ExoPlayerPreferencesService.setSubtitlesEnabled(enabled)
+        .catchError((Object _) {}));
+    if (enabled && language != null && language.trim().isNotEmpty) {
+      _savedSubtitleLanguage = language;
+      unawaited(ExoPlayerPreferencesService.setSubtitleLanguage(language)
+          .catchError((Object _) {}));
+    }
+  }
+
   Future<void> _selectEmbedded(
     OrvixExoTrack track, {
     bool userChoice = true,
   }) async {
-    if (userChoice) _userChoseSubtitle = true;
+    if (userChoice) {
+      _userChoseSubtitle = true;
+      _rememberSubtitleChoice(enabled: true, language: track.language);
+    }
     setState(() {
       _external = null;
       _subtitlesOff = false;
     });
     _syncExternalSubtitleTimer();
     await _controller?.selectTextTrack(track);
+    _log.add('subtitle', {'kind': 'embedded', 'mime': track.mimeType});
     if (userChoice) {
       _showNotice('Subtitles: ${track.displayName}');
       _closePanel();
@@ -553,6 +766,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
 
   Future<void> _subtitlesOffNow() async {
     _userChoseSubtitle = true;
+    _rememberSubtitleChoice(enabled: false);
     setState(() {
       _external = null;
       _subtitlesOff = true;
@@ -571,13 +785,17 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       _showNotice('That subtitle file has no readable lines.');
       return;
     }
-    if (userChoice) _userChoseSubtitle = true;
+    if (userChoice) {
+      _userChoseSubtitle = true;
+      _rememberSubtitleChoice(enabled: true, language: track.language);
+    }
     setState(() {
       _external = track;
       _subtitlesOff = false;
     });
     _syncExternalSubtitleTimer();
     await _controller?.selectTextTrack(null);
+    _log.add('subtitle', {'kind': 'external', 'source': track.source});
     _showNotice('Subtitles: ${track.label}');
   }
 
@@ -624,18 +842,36 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     }
   }
 
+  /// Positive delays show subtitles later, negative earlier. The delay is
+  /// kept across seeks and reopened streams; [Duration.zero] resets it.
   Future<void> _changeSubtitleOffset(Duration delta) async {
     final next = delta == Duration.zero ? Duration.zero : _subtitleOffset + delta;
-    setState(() => _subtitleOffset = next);
-    await _controller?.setSubtitleOffset(next);
+    const limit = Duration(minutes: 10);
+    final clamped = next > limit
+        ? limit
+        : next < -limit
+            ? -limit
+            : next;
+    setState(() => _subtitleOffset = clamped);
+    await _controller?.setSubtitleOffset(clamped);
   }
 
-  Future<void> _changeFontSize(double delta) async {
-    final next = (_subtitleFontSize + delta).clamp(18.0, 72.0).toDouble();
-    setState(() => _subtitleFontSize = next);
+  Future<void> _updateStyle(ExoSubtitleStyle next) async {
+    setState(() => _style = next);
     try {
-      await SubtitlePreferencesService.setFontSize(next);
+      await ExoPlayerPreferencesService.setSubtitleStyle(next);
     } catch (_) {}
+  }
+
+  Future<void> _resetStyle() async {
+    try {
+      final style = await ExoPlayerPreferencesService.resetSubtitleStyle();
+      if (!mounted) return;
+      setState(() => _style = style);
+    } catch (_) {
+      if (mounted) setState(() => _style = const ExoSubtitleStyle());
+    }
+    _showNotice('Subtitle style reset');
   }
 
   Duration get _estimatedPosition {
@@ -720,19 +956,57 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     _showControls();
   }
 
+  Duration _clampToMedia(Duration target) {
+    if (target < Duration.zero) return Duration.zero;
+    final duration = _value.duration;
+    if (duration > Duration.zero && target > duration) return duration;
+    return target;
+  }
+
   Future<void> _seekRelative(Duration offset) async {
     final controller = _controller;
     if (controller == null || !_started) return;
-    var target = _value.position + offset;
-    if (target < Duration.zero) target = Duration.zero;
-    final duration = _value.duration;
-    if (duration > Duration.zero && target > duration) target = duration;
-    await controller.seekTo(target);
+    _scrubTimer?.cancel();
+    _scrubTarget = null;
+    await controller.seekTo(_clampToMedia(_value.position + offset));
     _showControls();
   }
 
-  void _openPanel(_ExoPanel panel) {
+  /// A held DPAD key scrubs: the target moves on every repeat and the seek
+  /// is sent once, when the key is released or the remote goes quiet.
+  void _scrub(Duration offset) {
+    if (_controller == null || !_started) return;
+    final base = _scrubTarget ?? _value.position;
+    setState(() => _scrubTarget = _clampToMedia(base + offset));
+    _showControls();
+    _scrubTimer?.cancel();
+    _scrubTimer = Timer(const Duration(milliseconds: 450), _commitScrub);
+  }
+
+  void _commitScrub() {
+    _scrubTimer?.cancel();
+    final target = _scrubTarget;
+    if (target == null) return;
+    _scrubTarget = null;
+    unawaited(_controller?.seekTo(target));
+    if (mounted) setState(() {});
+  }
+
+  KeyEventResult _seekKey(KeyEvent event, {required bool forward}) {
+    final offset = forward ? _seekStep : -_seekStep;
+    if (event is KeyRepeatEvent) {
+      _scrub(offset);
+    } else if (event is KeyDownEvent) {
+      unawaited(_seekRelative(offset));
+    }
+    return KeyEventResult.handled;
+  }
+
+  void _openPanel(_ExoPanel panel, {FocusNode? opener}) {
     _hideTimer?.cancel();
+    if (_panel == _ExoPanel.none) {
+      _panelOpener = opener ?? FocusManager.instance.primaryFocus;
+    }
     setState(() {
       _panel = panel;
       _controlsVisible = true;
@@ -742,30 +1016,127 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     });
   }
 
+  /// Closes the panel and returns the remote to the control that opened it.
   void _closePanel() {
     if (_panel == _ExoPanel.none) return;
+    final opener = _panelOpener;
+    _panelOpener = null;
     setState(() => _panel = _ExoPanel.none);
-    _showControls(focusPlay: true);
+    _showControls();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (opener != null && opener.context != null && opener.canRequestFocus) {
+        opener.requestFocus();
+      } else {
+        _playFocus.requestFocus();
+      }
+    });
+  }
+
+  /// Puts the remote on the panel's first row when nothing inside the panel
+  /// has focus (for example after results finished loading).
+  void _ensurePanelFocus() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _panel == _ExoPanel.none) return;
+      final primary = FocusManager.instance.primaryFocus;
+      if (primary == null || !primary.ancestors.contains(_panelScope)) {
+        _panelFocus.requestFocus();
+      }
+    });
+  }
+
+  void _switchPanel(_ExoPanel panel) {
+    setState(() => _panel = panel);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _panelFocus.requestFocus();
+    });
+  }
+
+  Future<void> _setAspect(ExoAspectMode mode) async {
+    setState(() => _aspect = mode);
+    _showNotice('Picture: ${mode.label}'
+        '${mode == ExoAspectMode.zoom ? ' ${(_zoom * 100).round()}%' : ''}');
+    _log.add('aspect', {'mode': mode.name});
+    try {
+      await ExoPlayerPreferencesService.setAspectMode(mode);
+    } catch (_) {}
   }
 
   void _cycleAspect() {
-    setState(() {
-      _aspect = ExoAspectMode.values[
-          (_aspect.index + 1) % ExoAspectMode.values.length];
-    });
-    _showNotice('Aspect: ${_aspect.label}');
+    unawaited(_setAspect(ExoAspectMode
+        .values[(_aspect.index + 1) % ExoAspectMode.values.length]));
     _showControls();
   }
 
+  Future<void> _changeZoom(double delta) async {
+    final next = (_zoom + delta)
+        .clamp(ExoPlayerPreferencesService.minZoom,
+            ExoPlayerPreferencesService.maxZoom)
+        .toDouble();
+    setState(() {
+      _zoom = double.parse(next.toStringAsFixed(2));
+      _aspect = ExoAspectMode.zoom;
+    });
+    try {
+      await ExoPlayerPreferencesService.setZoom(_zoom);
+      await ExoPlayerPreferencesService.setAspectMode(ExoAspectMode.zoom);
+    } catch (_) {}
+  }
+
+  Future<void> _cycleSeekStep(int direction) async {
+    const steps = ExoPlayerPreferencesService.seekSteps;
+    final index = steps.indexOf(_seekStepSeconds);
+    final next = steps[(index + direction).clamp(0, steps.length - 1)];
+    setState(() => _seekStepSeconds = next);
+    try {
+      await ExoPlayerPreferencesService.setSeekStepSeconds(next);
+    } catch (_) {}
+  }
+
+  Future<void> _selectAudio(OrvixExoTrack? track) async {
+    await _controller?.selectAudioTrack(track);
+    _savedAudioLanguage = track?.language;
+    try {
+      await ExoPlayerPreferencesService.setAudioLanguage(track?.language);
+    } catch (_) {}
+    _log.add('audio', {'mime': track?.mimeType ?? 'auto'});
+    if (mounted) {
+      _showNotice(track == null ? 'Audio: Automatic' : 'Audio: ${track.displayName}');
+    }
+  }
+
+  Future<void> _copyReport() async {
+    final diagnosis = _errorDiagnosis;
+    final report = _log.report(
+      _value,
+      classified: diagnosis == null
+          ? null
+          : '${diagnosis.category.name}: ${diagnosis.title}',
+    );
+    try {
+      await Clipboard.setData(ClipboardData(text: report));
+      if (mounted) _showNotice('Playback report copied');
+    } catch (_) {
+      if (mounted) _showNotice('Could not copy the report');
+    }
+  }
+
   void _onBack() {
-    if (_panel == _ExoPanel.onlineSubtitles) {
-      setState(() => _panel = _ExoPanel.subtitles);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _panelFocus.requestFocus();
-      });
+    if (_panel == _ExoPanel.onlineSubtitles ||
+        _panel == _ExoPanel.subtitleStyle) {
+      _switchPanel(_ExoPanel.subtitles);
+      return;
+    }
+    if (_panel == _ExoPanel.info && _error == null) {
+      _switchPanel(_ExoPanel.settings);
       return;
     }
     if (_panel != _ExoPanel.none) {
+      if (_error != null) {
+        setState(() => _panel = _ExoPanel.none);
+        _errorFocus.requestFocus();
+        return;
+      }
       _closePanel();
       return;
     }
@@ -776,18 +1147,62 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     unawaited(_close(failed: _error != null, error: _error));
   }
 
+  /// Media keys work wherever focus is; DPAD keys only act on the video when
+  /// no control has focus.
   KeyEventResult _onSurfaceKey(FocusNode node, KeyEvent event) {
+    if (event is KeyUpEvent) {
+      final key = event.logicalKey;
+      if (_scrubTarget != null &&
+          (key == LogicalKeyboardKey.arrowLeft ||
+              key == LogicalKeyboardKey.arrowRight ||
+              key == LogicalKeyboardKey.mediaRewind ||
+              key == LogicalKeyboardKey.mediaFastForward)) {
+        _commitScrub();
+      }
+      return KeyEventResult.ignored;
+    }
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    if (_error == null && _panel == _ExoPanel.none) {
+      if (key == LogicalKeyboardKey.mediaPlayPause) {
+        if (event is KeyDownEvent) unawaited(_togglePlay());
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.mediaPlay) {
+        if (event is KeyDownEvent) {
+          unawaited(_controller?.play());
+          _showControls();
+        }
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.mediaPause) {
+        if (event is KeyDownEvent) {
+          unawaited(_controller?.pause());
+          _showControls();
+        }
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.mediaRewind) {
+        return _seekKey(event, forward: false);
+      }
+      if (key == LogicalKeyboardKey.mediaFastForward) {
+        return _seekKey(event, forward: true);
+      }
+      if (key == LogicalKeyboardKey.contextMenu && _started) {
+        if (event is KeyDownEvent) {
+          _openPanel(_ExoPanel.settings, opener: _settingsFocus);
+        }
+        return KeyEventResult.handled;
+      }
     }
     // A real control owns focus: let Flutter's focus traversal and
     // ActivateAction handle DPAD and OK.
     if (!_surfaceFocus.hasPrimaryFocus) return KeyEventResult.ignored;
-    final key = event.logicalKey;
     if (key == LogicalKeyboardKey.select ||
         key == LogicalKeyboardKey.enter ||
-        key == LogicalKeyboardKey.space ||
-        key == LogicalKeyboardKey.mediaPlayPause) {
+        key == LogicalKeyboardKey.space) {
       if (event is KeyRepeatEvent) return KeyEventResult.handled;
       if (_controlsVisible) {
         unawaited(_togglePlay());
@@ -796,15 +1211,11 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       }
       return KeyEventResult.handled;
     }
-    if (key == LogicalKeyboardKey.arrowLeft ||
-        key == LogicalKeyboardKey.mediaRewind) {
-      unawaited(_seekRelative(const Duration(seconds: -10)));
-      return KeyEventResult.handled;
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      return _seekKey(event, forward: false);
     }
-    if (key == LogicalKeyboardKey.arrowRight ||
-        key == LogicalKeyboardKey.mediaFastForward) {
-      unawaited(_seekRelative(const Duration(seconds: 10)));
-      return KeyEventResult.handled;
+    if (key == LogicalKeyboardKey.arrowRight) {
+      return _seekKey(event, forward: true);
     }
     if (key == LogicalKeyboardKey.arrowUp ||
         key == LogicalKeyboardKey.arrowDown) {
@@ -815,20 +1226,22 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
   }
 
   KeyEventResult _onTimelineKey(FocusNode node, KeyEvent event) {
+    if (event is KeyUpEvent) {
+      if (_scrubTarget != null) _commitScrub();
+      return KeyEventResult.ignored;
+    }
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.arrowLeft) {
-      unawaited(_seekRelative(const Duration(seconds: -10)));
-      return KeyEventResult.handled;
+      return _seekKey(event, forward: false);
     }
     if (key == LogicalKeyboardKey.arrowRight) {
-      unawaited(_seekRelative(const Duration(seconds: 10)));
-      return KeyEventResult.handled;
+      return _seekKey(event, forward: true);
     }
     if (key == LogicalKeyboardKey.select || key == LogicalKeyboardKey.enter) {
-      unawaited(_togglePlay());
+      if (event is KeyDownEvent) unawaited(_togglePlay());
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -860,11 +1273,17 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     _closing = true;
     _hideTimer?.cancel();
     _saveTimer?.cancel();
-    _startupTimer?.cancel();
+    _slowTimer?.cancel();
     _autoSubtitleTimer?.cancel();
     _externalSubtitleTimer?.cancel();
     _attemptTimer?.cancel();
+    _scrubTimer?.cancel();
     _p2pStartup?.stop();
+    _log.add('close', {
+      'started': _started,
+      'failed': failed,
+      'switchToMpv': switchToMpv,
+    });
 
     final started = _started;
     await _persistProgress();
@@ -877,6 +1296,9 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       } catch (_) {}
       await controller.close();
     }
+    // Restore the app's orientation and system bars before the next screen
+    // (MPV or the title page) builds.
+    await _orientation.exit();
 
     if (!mounted) return;
     Navigator.of(context).pop(
@@ -903,22 +1325,17 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
 
   @override
   void dispose() {
-    if (_mobileOrientationLocked) {
-      unawaited(SystemChrome.setPreferredOrientations(
-        const [DeviceOrientation.portraitUp],
-      ));
-      unawaited(SystemChrome.setEnabledSystemUIMode(
-        SystemUiMode.edgeToEdge,
-      ));
-    }
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(_orientation.exit());
     _closing = true;
     _hideTimer?.cancel();
     _saveTimer?.cancel();
-    _startupTimer?.cancel();
+    _slowTimer?.cancel();
     _autoSubtitleTimer?.cancel();
     _noticeTimer?.cancel();
     _externalSubtitleTimer?.cancel();
     _attemptTimer?.cancel();
+    _scrubTimer?.cancel();
     _p2pStartup?.stop();
     final controller = _controller;
     _controller = null;
@@ -926,21 +1343,84 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       controller.removeListener(_onValue);
       controller.dispose();
     }
-    _surfaceFocus.dispose();
-    _backFocus.dispose();
-    _timelineFocus.dispose();
-    _playFocus.dispose();
-    _switchFocus.dispose();
-    _panelFocus.dispose();
+    for (final node in [
+      _surfaceFocus,
+      _backFocus,
+      _timelineFocus,
+      _rewindFocus,
+      _playFocus,
+      _forwardFocus,
+      _subtitlesFocus,
+      _audioFocus,
+      _speedFocus,
+      _aspectFocus,
+      _settingsFocus,
+      _switchFocus,
+      _panelFocus,
+      _errorFocus,
+      _panelScope,
+    ]) {
+      node.dispose();
+    }
     super.dispose();
   }
 
   // ----------------------------------------------------------------------- UI
 
+  String get _loadingMessage {
+    final stage = _value.startupStage;
+    if (_localP2p) {
+      if (_slowStartNotice) return 'Still connecting to peers…';
+      return switch (stage) {
+        ExoStartupStage.opening ||
+        ExoStartupStage.connecting =>
+          'Connecting to peers…',
+        ExoStartupStage.receiving => 'Loading video…',
+        ExoStartupStage.decoding ||
+        ExoStartupStage.playing =>
+          'Starting playback…',
+      };
+    }
+    if (_slowStartNotice) {
+      return stage == ExoStartupStage.connecting ||
+              stage == ExoStartupStage.opening
+          ? 'Still waiting for the source…'
+          : 'Still loading…';
+    }
+    return switch (stage) {
+      ExoStartupStage.opening ||
+      ExoStartupStage.connecting =>
+        'Connecting to the source…',
+      ExoStartupStage.receiving => 'Loading video…',
+      ExoStartupStage.decoding ||
+      ExoStartupStage.playing =>
+        'Starting playback…',
+    };
+  }
+
+  String? get _loadingDetail {
+    if (_slowStartNotice) {
+      return _localP2p
+          ? 'This torrent is starting slowly. Keep waiting, '
+              'or go Back to choose another source.'
+          : 'This source is slow to respond. Keep waiting, '
+              'or go Back to choose another source.';
+    }
+    final bytes = _value.bytesLoaded;
+    if (bytes > 0) {
+      final mb = bytes / (1024 * 1024);
+      return 'Received ${mb < 10 ? mb.toStringAsFixed(1) : mb.round()} MB';
+    }
+    return widget.episode == null ? null : widget.title;
+  }
+
   @override
   Widget build(BuildContext context) {
     final value = _value;
     final showLoading = !_started && _error == null;
+    final buffering = _started && value.buffering && _error == null;
+    final slowBuffer = buffering &&
+        _bufferingFor.elapsed >= AndroidExoPlayerScreen.slowBufferNoticeAfter;
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
@@ -964,12 +1444,10 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
               }
             },
             onDoubleTapDown: (details) {
-              if (!_started) return;
+              if (!_started || _error != null) return;
               final width = MediaQuery.sizeOf(context).width;
               unawaited(_seekRelative(
-                details.localPosition.dx < width / 2
-                    ? const Duration(seconds: -10)
-                    : const Duration(seconds: 10),
+                details.localPosition.dx < width / 2 ? -_seekStep : _seekStep,
               ));
             },
             child: Stack(
@@ -982,35 +1460,44 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                   PlayerLoadingOverlay(
                     item: widget.item,
                     title: widget.title,
-                    message: _slowStartNotice
-                        ? 'Still connecting to peers…'
-                        : 'Starting playback…',
-                    detail: _slowStartNotice
-                        ? 'This torrent is starting slowly. Keep waiting, '
-                            'or go Back to choose another source.'
-                        : widget.episode == null
-                            ? null
-                            : widget.title,
+                    message: _loadingMessage,
+                    detail: _loadingDetail,
                   ),
-                if (_started && value.buffering && _error == null)
-                  const Center(
-                    child: SizedBox(
-                      width: 44,
-                      height: 44,
-                      child: CircularProgressIndicator(
-                        color: ExoPlayerColors.lime,
-                        strokeWidth: 3,
-                      ),
+                if (buffering)
+                  Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(
+                          width: 44,
+                          height: 44,
+                          child: CircularProgressIndicator(
+                            color: ExoPlayerColors.lime,
+                            strokeWidth: 3,
+                          ),
+                        ),
+                        if (slowBuffer) ...[
+                          const SizedBox(height: 12),
+                          _NoticeChip(
+                            text: _localP2p
+                                ? 'Waiting for peers…'
+                                : 'Buffering…',
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 if (_controlsVisible && _error == null && _started)
-                  _controls(value),
+                  ExcludeFocus(
+                    excluding: _panel != _ExoPanel.none,
+                    child: _controls(value),
+                  ),
                 if (showLoading) _loadingBackButton(),
                 if (_activeSkipSegment != null && !_skipDismissed &&
-                    _error == null)
+                    _error == null && _panel == _ExoPanel.none)
                   Positioned(
-                    left: 28,
-                    bottom: _controlsVisible ? 150 : 40,
+                    left: _tv ? 56 : 28,
+                    bottom: _controlsVisible ? (_tv ? 190 : 150) : 40,
                     child: _ExoButton(
                       icon: Icons.skip_next_rounded,
                       label: _activeSkipSegment!.label,
@@ -1023,10 +1510,16 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                     top: 28,
                     left: 0,
                     right: 0,
-                    child: Center(child: _NoticeChip(text: _notice!)),
+                    child: IgnorePointer(
+                      child: Center(child: _NoticeChip(text: _notice!)),
+                    ),
                   ),
-                if (_panel != _ExoPanel.none && _error == null) _panelView(),
-                if (_error != null) _errorView(),
+                if (_error != null)
+                  ExcludeFocus(
+                    excluding: _panel != _ExoPanel.none,
+                    child: _errorView(),
+                  ),
+                if (_panel != _ExoPanel.none) _panelView(),
               ],
             ),
           ),
@@ -1052,6 +1545,9 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     if (quarterTurns != 0) {
       texture = RotatedBox(quarterTurns: quarterTurns, child: texture);
     }
+    // Decoded size with the pixel aspect ratio already applied natively, so
+    // anamorphic video keeps its real shape. Before the first frame the
+    // picture is black anyway.
     var width = value.hasVideoSize ? value.videoWidth.toDouble() : 1920.0;
     var height = value.hasVideoSize ? value.videoHeight.toDouble() : 1080.0;
     if (quarterTurns.isOdd) {
@@ -1059,27 +1555,51 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       width = height;
       height = swap;
     }
-    return ClipRect(
-      child: SizedBox.expand(
-        child: FittedBox(
-          fit: _aspect.fit,
-          child: SizedBox(width: width, height: height, child: texture),
-        ),
-      ),
+    Widget picture = FittedBox(
+      fit: _aspect.fit,
+      child: SizedBox(width: width, height: height, child: texture),
     );
+    if (_aspect == ExoAspectMode.zoom) {
+      picture = Transform.scale(scale: _zoom, child: picture);
+    }
+    return ClipRect(child: SizedBox.expand(child: picture));
+  }
+
+  double get _videoAspect {
+    final value = _value;
+    if (!value.hasVideoSize) return 16 / 9;
+    final quarterTurns = (value.rotation ~/ 90) % 4;
+    return quarterTurns.isOdd
+        ? value.videoHeight / value.videoWidth
+        : value.videoWidth / value.videoHeight;
   }
 
   Widget _subtitleLayer(OrvixExoValue value) {
     final lines = _subtitleLines;
-    final bitmaps =
-        _subtitlesOff || _external != null ? const <OrvixExoBitmapCue>[] : value.bitmapCues;
+    final bitmaps = _subtitlesOff || _external != null
+        ? const <OrvixExoBitmapCue>[]
+        : value.bitmapCues;
     if (lines.isEmpty && bitmaps.isEmpty) return const SizedBox.shrink();
-    final lift = _controlsVisible && _started ? 132.0 : 0.0;
+    final lift = _controlsVisible && _started && _panel == _ExoPanel.none
+        ? (_tv ? 150.0 : 132.0)
+        : 0.0;
+    final atTop = _external == null && value.cuesAtTop;
+    final alignment = switch (_style.alignment) {
+      SubtitleAlignment.left => Alignment.centerLeft,
+      SubtitleAlignment.center => Alignment.center,
+      SubtitleAlignment.right => Alignment.centerRight,
+    };
+    final side = _tv ? 64.0 : 24.0;
     return Positioned.fill(
       child: IgnorePointer(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final videoRect = _videoRect(constraints.biggest, value);
+            final videoRect = exoVideoRect(
+              constraints.biggest,
+              _videoAspect,
+              _aspect,
+              zoom: _zoom,
+            );
             return Stack(
               children: [
                 for (final cue in bitmaps)
@@ -1098,15 +1618,16 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                     ),
                 if (lines.isNotEmpty)
                   Positioned(
-                    left: 24,
-                    right: 24,
-                    bottom: _subtitleBottomOffset + lift,
-                    child: Center(
-                      child: _SubtitleText(
+                    left: side,
+                    right: side,
+                    top: atTop ? _style.bottomOffset + (_tv ? 24 : 12) : null,
+                    bottom: atTop ? null : _style.bottomOffset + lift,
+                    child: Align(
+                      alignment: alignment,
+                      child: ExoSubtitleText(
                         text: lines.join('\n'),
-                        fontSize: _subtitleFontSize * (_tv ? 1.0 : .82),
-                        background: _subtitleBackground,
-                        backgroundOpacity: _subtitleBackgroundOpacity,
+                        style: _style,
+                        scale: _tv ? 1.0 : .82,
                       ),
                     ),
                   ),
@@ -1118,28 +1639,12 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     );
   }
 
-  Rect _videoRect(Size box, OrvixExoValue value) {
-    final ratio = value.aspectRatio;
-    if (_aspect == ExoAspectMode.fill || box.isEmpty) return Offset.zero & box;
-    final boxRatio = box.width / box.height;
-    final contain = _aspect == ExoAspectMode.fit;
-    final widthBound = contain ? ratio >= boxRatio : ratio < boxRatio;
-    final width = widthBound ? box.width : box.height * ratio;
-    final height = widthBound ? box.width / ratio : box.height;
-    return Rect.fromLTWH(
-      (box.width - width) / 2,
-      (box.height - height) / 2,
-      width,
-      height,
-    );
-  }
-
   Widget _loadingBackButton() => Positioned(
         top: 0,
         left: 0,
         child: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(18),
+            padding: EdgeInsets.all(_tv ? 32 : 18),
             child: _ExoButton(
               focusNode: _backFocus,
               icon: Icons.arrow_back_rounded,
@@ -1153,7 +1658,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
 
   Widget _controls(OrvixExoValue value) {
     final duration = value.duration;
-    final position = value.position;
+    final position = _scrubTarget ?? value.position;
     final played = duration.inMilliseconds <= 0
         ? 0.0
         : (position.inMilliseconds / duration.inMilliseconds)
@@ -1165,20 +1670,17 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
             .clamp(0.0, 1.0)
             .toDouble();
     final compact = MediaQuery.sizeOf(context).width < 640;
-    final hasEmbeddedText = value.textTracks.isNotEmpty;
-    final subtitleLabel = _subtitlesOff
-        ? 'Subtitles off'
-        : _external != null
-            ? 'Subtitles'
-            : hasEmbeddedText
-                ? 'Subtitles'
-                : 'Subtitles';
+    final remaining = duration > position ? duration - position : Duration.zero;
+    final subtitleLabel = _subtitlesOff ? 'Subtitles off' : 'Subtitles';
+    final step = _seekStepSeconds;
+    final horizontal = _tv ? 56.0 : (compact ? 14.0 : 36.0);
 
     final buttons = <Widget>[
       _ExoButton(
-        icon: Icons.replay_10_rounded,
-        semanticLabel: 'Back 10 seconds',
-        onPressed: () => unawaited(_seekRelative(const Duration(seconds: -10))),
+        focusNode: _rewindFocus,
+        icon: _seekIcon(step, forward: false),
+        semanticLabel: 'Back $step seconds',
+        onPressed: () => unawaited(_seekRelative(-_seekStep)),
         onFocusChange: _onControlFocus,
       ),
       _ExoButton(
@@ -1193,33 +1695,41 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
         onFocusChange: _onControlFocus,
       ),
       _ExoButton(
-        icon: Icons.forward_10_rounded,
-        semanticLabel: 'Forward 10 seconds',
-        onPressed: () => unawaited(_seekRelative(const Duration(seconds: 10))),
+        focusNode: _forwardFocus,
+        icon: _seekIcon(step, forward: true),
+        semanticLabel: 'Forward $step seconds',
+        onPressed: () => unawaited(_seekRelative(_seekStep)),
         onFocusChange: _onControlFocus,
       ),
       _ExoButton(
-        icon: Icons.closed_caption_rounded,
+        focusNode: _subtitlesFocus,
+        icon: _subtitlesOff
+            ? Icons.closed_caption_disabled_rounded
+            : Icons.closed_caption_rounded,
         label: compact ? null : subtitleLabel,
         semanticLabel: 'Subtitles',
-        onPressed: () => _openPanel(_ExoPanel.subtitles),
+        onPressed: () =>
+            _openPanel(_ExoPanel.subtitles, opener: _subtitlesFocus),
         onFocusChange: _onControlFocus,
       ),
       _ExoButton(
+        focusNode: _audioFocus,
         icon: Icons.audiotrack_rounded,
         label: compact ? null : 'Audio',
         semanticLabel: 'Audio',
-        onPressed: () => _openPanel(_ExoPanel.audio),
+        onPressed: () => _openPanel(_ExoPanel.audio, opener: _audioFocus),
         onFocusChange: _onControlFocus,
       ),
       _ExoButton(
+        focusNode: _speedFocus,
         icon: Icons.speed_rounded,
         label: compact ? null : '${_speedLabel(value.speed)}x',
         semanticLabel: 'Playback speed',
-        onPressed: () => _openPanel(_ExoPanel.speed),
+        onPressed: () => _openPanel(_ExoPanel.speed, opener: _speedFocus),
         onFocusChange: _onControlFocus,
       ),
       _ExoButton(
+        focusNode: _aspectFocus,
         icon: Icons.aspect_ratio_rounded,
         label: _aspect.label,
         semanticLabel: 'Aspect ratio ${_aspect.label}',
@@ -1234,6 +1744,15 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
           onPressed: () => unawaited(_close(playNext: true)),
           onFocusChange: _onControlFocus,
         ),
+      _ExoButton(
+        focusNode: _settingsFocus,
+        icon: Icons.tune_rounded,
+        label: compact ? null : 'Settings',
+        semanticLabel: 'Player settings',
+        onPressed: () =>
+            _openPanel(_ExoPanel.settings, opener: _settingsFocus),
+        onFocusChange: _onControlFocus,
+      ),
       _ExoButton(
         focusNode: _switchFocus,
         icon: Icons.swap_horiz_rounded,
@@ -1264,8 +1783,12 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
           child: Column(
             children: [
               Padding(
-                padding: EdgeInsets.fromLTRB(compact ? 12 : 28, 14,
-                    compact ? 12 : 28, 0),
+                padding: EdgeInsets.fromLTRB(
+                  horizontal,
+                  _tv ? 28 : 14,
+                  horizontal,
+                  0,
+                ),
                 child: Row(
                   children: [
                     _ExoButton(
@@ -1284,9 +1807,9 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                             widget.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               color: ExoPlayerColors.text,
-                              fontSize: 17,
+                              fontSize: _tv ? 20 : 17,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
@@ -1309,17 +1832,23 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
               ),
               const Spacer(),
               Padding(
-                padding: EdgeInsets.fromLTRB(compact ? 14 : 36, 0,
-                    compact ? 14 : 36, compact ? 14 : 26),
+                padding: EdgeInsets.fromLTRB(
+                  horizontal,
+                  0,
+                  horizontal,
+                  _tv ? 36 : (compact ? 14 : 26),
+                ),
                 child: Column(
                   children: [
                     Row(
                       children: [
                         Text(
                           _format(position),
-                          style: const TextStyle(
-                            color: ExoPlayerColors.text,
-                            fontSize: 12,
+                          style: TextStyle(
+                            color: _scrubTarget != null
+                                ? ExoPlayerColors.lime
+                                : ExoPlayerColors.text,
+                            fontSize: _tv ? 14 : 12,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -1344,12 +1873,18 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
                           ),
                         ),
                         const SizedBox(width: 12),
-                        Text(
-                          _format(duration),
-                          style: const TextStyle(
-                            color: ExoPlayerColors.muted,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
+                        Semantics(
+                          label: 'Remaining ${_format(remaining)} of '
+                              '${_format(duration)}',
+                          child: ExcludeSemantics(
+                            child: Text(
+                              '-${_format(remaining)}',
+                              style: TextStyle(
+                                color: ExoPlayerColors.muted,
+                                fontSize: _tv ? 14 : 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
                           ),
                         ),
                       ],
@@ -1377,6 +1912,18 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     );
   }
 
+  static IconData _seekIcon(int seconds, {required bool forward}) =>
+      switch ((seconds, forward)) {
+        (5, false) => Icons.replay_5_rounded,
+        (5, true) => Icons.forward_5_rounded,
+        (10, false) => Icons.replay_10_rounded,
+        (10, true) => Icons.forward_10_rounded,
+        (30, false) => Icons.replay_30_rounded,
+        (30, true) => Icons.forward_30_rounded,
+        (_, false) => Icons.fast_rewind_rounded,
+        (_, true) => Icons.fast_forward_rounded,
+      };
+
   static String _speedLabel(double speed) {
     final fixed = speed.toStringAsFixed(2);
     return fixed.replaceFirst(RegExp(r'\.?0+$'), '');
@@ -1385,17 +1932,22 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
   Widget _panelView() {
     final size = MediaQuery.sizeOf(context);
     final narrow = size.width < 640;
-    final width = narrow ? size.width : math.min(440.0, size.width * .42);
+    final width = narrow
+        ? size.width
+        : math.min(_tv ? 500.0 : 440.0, size.width * (_tv ? .4 : .42));
     final (title, items) = switch (_panel) {
       _ExoPanel.subtitles => ('Subtitles', _subtitleItems()),
       _ExoPanel.onlineSubtitles => ('OpenSubtitles', _onlineItems()),
+      _ExoPanel.subtitleStyle => ('Subtitle style', _styleItems()),
       _ExoPanel.audio => ('Audio', _audioItems()),
       _ExoPanel.speed => ('Playback speed', _speedItems()),
+      _ExoPanel.settings => ('Player settings', _settingsItems()),
+      _ExoPanel.info => ('Playback info', _infoItems()),
       _ExoPanel.none => ('', const <Widget>[]),
     };
     final panel = Container(
       width: width,
-      height: narrow ? size.height * .72 : size.height,
+      height: narrow ? size.height * .78 : size.height,
       decoration: BoxDecoration(
         color: ExoPlayerColors.surface.withValues(alpha: .97),
         border: Border(
@@ -1412,28 +1964,33 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       ),
       child: SafeArea(
         left: false,
-        child: FocusTraversalGroup(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(22, 18, 22, 10),
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    color: ExoPlayerColors.text,
-                    fontSize: 19,
-                    fontWeight: FontWeight.w900,
+        child: FocusScope(
+          node: _panelScope,
+          child: FocusTraversalGroup(
+            policy: ReadingOrderTraversalPolicy(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: EdgeInsets.fromLTRB(22, _tv ? 28 : 18, 22, 10),
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      color: ExoPlayerColors.text,
+                      fontSize: 19,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                 ),
-              ),
-              Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 18),
-                  children: items,
+                if (_panel == _ExoPanel.subtitleStyle) _stylePreview(),
+                Expanded(
+                  child: ListView(
+                    padding: EdgeInsets.fromLTRB(12, 0, _tv ? 28 : 12, 18),
+                    children: items,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -1441,7 +1998,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     return Positioned.fill(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: _closePanel,
+        onTap: _onBack,
         child: ColoredBox(
           color: Colors.black.withValues(alpha: .35),
           child: Align(
@@ -1454,19 +2011,35 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     );
   }
 
+  Widget _stylePreview() => Container(
+        margin: const EdgeInsets.fromLTRB(22, 0, 22, 10),
+        height: 92,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          gradient: const LinearGradient(
+            colors: [Color(0xFF2A3A4A), Color(0xFF6B7F5A), Color(0xFFD9C9A3)],
+          ),
+        ),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: ExcludeSemantics(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: ExoSubtitleText(
+              text: 'Subtitles look like this\nඋපසිරැසි මෙලෙස පෙනේ',
+              style: _style,
+              scale: .8,
+            ),
+          ),
+        ),
+      );
+
   List<Widget> _subtitleItems() {
     final tracks = _value.textTracks;
     final embeddedSelected = !_subtitlesOff && _external == null;
-    var first = true;
-    FocusNode? firstFocus() {
-      if (!first) return null;
-      first = false;
-      return _panelFocus;
-    }
-
     return [
       _PanelTile(
-        focusNode: firstFocus(),
+        focusNode: _panelFocus,
         title: 'Off',
         selected: _subtitlesOff,
         onPressed: () => unawaited(_subtitlesOffNow()),
@@ -1475,7 +2048,11 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       for (final track in tracks)
         _PanelTile(
           title: track.displayName,
-          subtitle: track.isBitmapSubtitle ? 'Image subtitles' : null,
+          subtitle: [
+            if (track.codecName != null) track.codecName!,
+            if (track.isBitmapSubtitle) 'Image subtitles',
+            if (track.mimeType == 'text/x-ssa') 'Shown as plain text',
+          ].join(' • ').let((text) => text.isEmpty ? null : text),
           selected: embeddedSelected && track.selected,
           enabled: track.supported,
           onPressed: () => unawaited(_selectEmbedded(track)),
@@ -1494,12 +2071,7 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
         title: 'Search OpenSubtitles',
         subtitle: widget.item == null ? 'Needs title metadata' : null,
         enabled: widget.item != null,
-        onPressed: () => setState(() {
-          _panel = _ExoPanel.onlineSubtitles;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _panelFocus.requestFocus();
-          });
-        }),
+        onPressed: () => _switchPanel(_ExoPanel.onlineSubtitles),
       ),
       if (!_tv)
         _PanelTile(
@@ -1509,19 +2081,24 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
           onPressed: () => unawaited(_loadSubtitleFile()),
         ),
       const _PanelHeader('Style and timing'),
-      _StepperTile(
+      _AdjustTile(
         label: 'Size',
-        value: _subtitleFontSize.round().toString(),
-        onMinus: () => unawaited(_changeFontSize(-2)),
-        onPlus: () => unawaited(_changeFontSize(2)),
+        value: _style.fontSize.round().toString(),
+        onDecrease: () => unawaited(
+          _updateStyle(_style.copyWith(fontSize: _style.fontSize - 2)),
+        ),
+        onIncrease: () => unawaited(
+          _updateStyle(_style.copyWith(fontSize: _style.fontSize + 2)),
+        ),
       ),
-      _StepperTile(
+      _AdjustTile(
         label: 'Timing',
         value: _offsetLabel(_subtitleOffset),
-        onMinus: () => unawaited(
+        hint: 'Later is +, earlier is −',
+        onDecrease: () => unawaited(
           _changeSubtitleOffset(const Duration(milliseconds: -250)),
         ),
-        onPlus: () => unawaited(
+        onIncrease: () => unawaited(
           _changeSubtitleOffset(const Duration(milliseconds: 250)),
         ),
       ),
@@ -1531,6 +2108,12 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
           title: 'Reset timing',
           onPressed: () => unawaited(_changeSubtitleOffset(Duration.zero)),
         ),
+      _PanelTile(
+        icon: Icons.format_color_text_rounded,
+        title: 'Subtitle style',
+        subtitle: 'Font, color, outline, background, position',
+        onPressed: () => _switchPanel(_ExoPanel.subtitleStyle),
+      ),
     ];
   }
 
@@ -1538,6 +2121,182 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     final seconds = offset.inMilliseconds / 1000;
     final text = seconds.toStringAsFixed(2).replaceFirst(RegExp(r'0$'), '');
     return seconds > 0 ? '+${text}s' : '${text}s';
+  }
+
+  static String _percent(double value) => '${(value * 100).round()}%';
+
+  static T _cycle<T>(List<T> values, T current, int direction) {
+    final index = values.indexOf(current);
+    return values[(index + direction) % values.length];
+  }
+
+  int _cycleColor(int current, int direction) {
+    final colors = [for (final (_, value) in subtitleColorChoices) value];
+    final index = colors.indexWhere((c) => c & 0xFFFFFF == current & 0xFFFFFF);
+    return colors[((index < 0 ? 0 : index) + direction) % colors.length];
+  }
+
+  List<Widget> _styleItems() {
+    final s = _style;
+    void update(ExoSubtitleStyle next) => unawaited(_updateStyle(next));
+    final shadowEdge = s.edge == SubtitleEdgeStyle.dropShadow ||
+        s.edge == SubtitleEdgeStyle.raised ||
+        s.edge == SubtitleEdgeStyle.depressed;
+    return [
+      const _PanelHeader('Text'),
+      _AdjustTile(
+        focusNode: _panelFocus,
+        label: 'Size',
+        value: s.fontSize.round().toString(),
+        onDecrease: () => update(s.copyWith(fontSize: s.fontSize - 2)),
+        onIncrease: () => update(s.copyWith(fontSize: s.fontSize + 2)),
+      ),
+      _AdjustTile(
+        label: 'Font',
+        value: s.typeface.label,
+        onDecrease: () => update(s.copyWith(
+            typeface: _cycle(SubtitleTypeface.values, s.typeface, -1))),
+        onIncrease: () => update(s.copyWith(
+            typeface: _cycle(SubtitleTypeface.values, s.typeface, 1))),
+      ),
+      _AdjustTile(
+        label: 'Weight',
+        value: s.weight.label,
+        onDecrease: () => update(
+            s.copyWith(weight: _cycle(SubtitleWeight.values, s.weight, -1))),
+        onIncrease: () => update(
+            s.copyWith(weight: _cycle(SubtitleWeight.values, s.weight, 1))),
+      ),
+      _AdjustTile(
+        label: 'Text color',
+        value: subtitleColorName(s.textColor),
+        swatch: Color(s.textColor),
+        onDecrease: () =>
+            update(s.copyWith(textColor: _cycleColor(s.textColor, -1))),
+        onIncrease: () =>
+            update(s.copyWith(textColor: _cycleColor(s.textColor, 1))),
+      ),
+      _AdjustTile(
+        label: 'Text opacity',
+        value: _percent(s.textOpacity),
+        onDecrease: () =>
+            update(s.copyWith(textOpacity: s.textOpacity - .1)),
+        onIncrease: () =>
+            update(s.copyWith(textOpacity: s.textOpacity + .1)),
+      ),
+      const _PanelHeader('Edge'),
+      _AdjustTile(
+        label: 'Edge style',
+        value: s.edge.label,
+        onDecrease: () => update(
+            s.copyWith(edge: _cycle(SubtitleEdgeStyle.values, s.edge, -1))),
+        onIncrease: () => update(
+            s.copyWith(edge: _cycle(SubtitleEdgeStyle.values, s.edge, 1))),
+      ),
+      if (s.edge != SubtitleEdgeStyle.none)
+        _AdjustTile(
+          label: 'Edge color',
+          value: subtitleColorName(s.edgeColor),
+          swatch: Color(s.edgeColor),
+          onDecrease: () =>
+              update(s.copyWith(edgeColor: _cycleColor(s.edgeColor, -1))),
+          onIncrease: () =>
+              update(s.copyWith(edgeColor: _cycleColor(s.edgeColor, 1))),
+        ),
+      if (s.edge == SubtitleEdgeStyle.outline)
+        _AdjustTile(
+          label: 'Outline thickness',
+          value: s.outlineWidth.toStringAsFixed(1),
+          onDecrease: () =>
+              update(s.copyWith(outlineWidth: s.outlineWidth - .5)),
+          onIncrease: () =>
+              update(s.copyWith(outlineWidth: s.outlineWidth + .5)),
+        ),
+      if (shadowEdge)
+        _AdjustTile(
+          label: 'Shadow intensity',
+          value: _percent(s.shadowStrength),
+          onDecrease: () =>
+              update(s.copyWith(shadowStrength: s.shadowStrength - .1)),
+          onIncrease: () =>
+              update(s.copyWith(shadowStrength: s.shadowStrength + .1)),
+        ),
+      const _PanelHeader('Background'),
+      _AdjustTile(
+        label: 'Line background',
+        value: s.background ? 'On' : 'Off',
+        onDecrease: () => update(s.copyWith(background: !s.background)),
+        onIncrease: () => update(s.copyWith(background: !s.background)),
+      ),
+      if (s.background) ...[
+        _AdjustTile(
+          label: 'Background color',
+          value: subtitleColorName(s.backgroundColor),
+          swatch: Color(s.backgroundColor),
+          onDecrease: () => update(s.copyWith(
+              backgroundColor: _cycleColor(s.backgroundColor, -1))),
+          onIncrease: () => update(s.copyWith(
+              backgroundColor: _cycleColor(s.backgroundColor, 1))),
+        ),
+        _AdjustTile(
+          label: 'Background opacity',
+          value: _percent(s.backgroundOpacity),
+          onDecrease: () => update(
+              s.copyWith(backgroundOpacity: s.backgroundOpacity - .1)),
+          onIncrease: () => update(
+              s.copyWith(backgroundOpacity: s.backgroundOpacity + .1)),
+        ),
+      ],
+      _AdjustTile(
+        label: 'Window opacity',
+        value: _percent(s.windowOpacity),
+        onDecrease: () =>
+            update(s.copyWith(windowOpacity: s.windowOpacity - .1)),
+        onIncrease: () =>
+            update(s.copyWith(windowOpacity: s.windowOpacity + .1)),
+      ),
+      if (s.windowOpacity > 0)
+        _AdjustTile(
+          label: 'Window color',
+          value: subtitleColorName(s.windowColor),
+          swatch: Color(s.windowColor),
+          onDecrease: () =>
+              update(s.copyWith(windowColor: _cycleColor(s.windowColor, -1))),
+          onIncrease: () =>
+              update(s.copyWith(windowColor: _cycleColor(s.windowColor, 1))),
+        ),
+      const _PanelHeader('Layout'),
+      _AdjustTile(
+        label: 'Position',
+        value: '${s.bottomOffset.round()}',
+        hint: 'Distance from the bottom',
+        onDecrease: () =>
+            update(s.copyWith(bottomOffset: s.bottomOffset - 8)),
+        onIncrease: () =>
+            update(s.copyWith(bottomOffset: s.bottomOffset + 8)),
+      ),
+      _AdjustTile(
+        label: 'Alignment',
+        value: s.alignment.label,
+        onDecrease: () => update(s.copyWith(
+            alignment: _cycle(SubtitleAlignment.values, s.alignment, -1))),
+        onIncrease: () => update(s.copyWith(
+            alignment: _cycle(SubtitleAlignment.values, s.alignment, 1))),
+      ),
+      _AdjustTile(
+        label: 'Line spacing',
+        value: s.lineHeight.toStringAsFixed(1),
+        onDecrease: () => update(s.copyWith(lineHeight: s.lineHeight - .1)),
+        onIncrease: () => update(s.copyWith(lineHeight: s.lineHeight + .1)),
+      ),
+      const SizedBox(height: 6),
+      _PanelTile(
+        icon: Icons.restart_alt_rounded,
+        title: 'Reset subtitle style',
+        subtitle: 'Size, background and position reset for MPV too',
+        onPressed: () => unawaited(_resetStyle()),
+      ),
+    ];
   }
 
   List<Widget> _onlineItems() {
@@ -1562,12 +2321,13 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
             if (pa != pb) return pa.compareTo(pb);
             return b.score.compareTo(a.score);
           });
+          _ensurePanelFocus();
           if (results.isEmpty) {
             return _PanelTile(
               focusNode: _panelFocus,
               title: 'No online subtitles found',
               subtitle: 'Try another source or load a file.',
-              onPressed: () => setState(() => _panel = _ExoPanel.subtitles),
+              onPressed: () => _switchPanel(_ExoPanel.subtitles),
             );
           }
           return Column(
@@ -1600,15 +2360,28 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
       ];
     }
     return [
+      _PanelTile(
+        focusNode: _panelFocus,
+        icon: Icons.auto_awesome_rounded,
+        title: 'Automatic',
+        subtitle: 'Your language when available',
+        onPressed: () {
+          unawaited(_selectAudio(null));
+          _closePanel();
+        },
+      ),
       for (var i = 0; i < tracks.length; i++)
         _PanelTile(
-          focusNode: i == 0 ? _panelFocus : null,
           title: tracks[i].displayName,
-          subtitle: tracks[i].codecs,
+          subtitle: [
+            if (tracks[i].codecName != null) tracks[i].codecName!,
+            if (tracks[i].sampleRate != null)
+              '${(tracks[i].sampleRate! / 1000).toStringAsFixed(1)} kHz',
+          ].join(' • ').let((text) => text.isEmpty ? tracks[i].codecs : text),
           selected: tracks[i].selected,
           enabled: tracks[i].supported,
           onPressed: () {
-            unawaited(_controller?.selectAudioTrack(tracks[i]));
+            unawaited(_selectAudio(tracks[i]));
             _closePanel();
           },
         ),
@@ -1616,13 +2389,15 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
   }
 
   List<Widget> _speedItems() {
-    const speeds = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+    const speeds = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+    final current =
+        speeds.indexWhere((speed) => (_value.speed - speed).abs() < .01);
     return [
       for (var i = 0; i < speeds.length; i++)
         _PanelTile(
-          focusNode: i == 0 ? _panelFocus : null,
+          focusNode: i == (current < 0 ? 2 : current) ? _panelFocus : null,
           title: speeds[i] == 1.0 ? 'Normal' : '${_speedLabel(speeds[i])}x',
-          selected: (_value.speed - speeds[i]).abs() < .01,
+          selected: i == current,
           onPressed: () {
             unawaited(_controller?.setSpeed(speeds[i]));
             _closePanel();
@@ -1631,70 +2406,202 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
     ];
   }
 
+  List<Widget> _settingsItems() {
+    return [
+      _AdjustTile(
+        focusNode: _panelFocus,
+        label: 'Picture',
+        value: _aspect.label,
+        hint: 'Fit shows everything, Fill crops to the screen',
+        onDecrease: () => unawaited(
+          _setAspect(_cycle(ExoAspectMode.values, _aspect, -1)),
+        ),
+        onIncrease: () => unawaited(
+          _setAspect(_cycle(ExoAspectMode.values, _aspect, 1)),
+        ),
+      ),
+      _AdjustTile(
+        label: 'Zoom level',
+        value: _percent(_zoom),
+        hint: 'Used by Zoom',
+        onDecrease: () => unawaited(_changeZoom(-.05)),
+        onIncrease: () => unawaited(_changeZoom(.05)),
+      ),
+      _AdjustTile(
+        label: 'Skip step',
+        value: '${_seekStepSeconds}s',
+        hint: 'Rewind, Forward and the remote\'s left/right',
+        onDecrease: () => unawaited(_cycleSeekStep(-1)),
+        onIncrease: () => unawaited(_cycleSeekStep(1)),
+      ),
+      const _PanelHeader('More'),
+      _PanelTile(
+        icon: Icons.format_color_text_rounded,
+        title: 'Subtitle style',
+        onPressed: () => _switchPanel(_ExoPanel.subtitleStyle),
+      ),
+      _PanelTile(
+        icon: Icons.info_outline_rounded,
+        title: 'Playback info',
+        subtitle: 'Codecs, decoder, network and a copyable report',
+        onPressed: () => _switchPanel(_ExoPanel.info),
+      ),
+      _PanelTile(
+        icon: Icons.swap_horiz_rounded,
+        title: 'Play with MPV',
+        subtitle: 'Opens this source in the MPV player',
+        onPressed: () => unawaited(_close(switchToMpv: true)),
+      ),
+    ];
+  }
+
+  List<Widget> _infoItems() {
+    final value = _value;
+    final video = value.videoTracks.where((t) => t.selected).firstOrNull;
+    final audio = value.audioTracks.where((t) => t.selected).firstOrNull;
+    final text = value.textTracks.where((t) => t.selected).firstOrNull;
+    String mb(int bytes) => '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    final rows = <(String, String)>[
+      ('Engine', 'ExoPlayer (Media3)'),
+      ('Source', exoMediaKind(widget.url)),
+      ('Status', value.started ? value.state.name : value.startupStage.name),
+      if (value.hasVideoSize)
+        ('Picture', '${value.videoWidth}×${value.videoHeight} • ${_aspect.label}'),
+      if (video != null)
+        (
+          'Video',
+          [
+            video.codecName ?? video.mimeType ?? '-',
+            if (video.frameRate != null)
+              '${video.frameRate!.toStringAsFixed(3).replaceFirst(RegExp(r'\.?0+$'), '')} fps',
+            if (video.support != null && video.support != 'handled')
+              video.support!,
+          ].join(' • ')
+        ),
+      if (value.videoDecoder != null) ('Video decoder', value.videoDecoder!),
+      if (audio != null)
+        ('Audio', audio.displayName + (audio.codecName == null ? '' : ' • ${audio.codecName}')),
+      if (value.audioDecoder != null) ('Audio decoder', value.audioDecoder!),
+      ('Subtitles', _subtitlesOff
+          ? 'Off'
+          : _external?.label ?? text?.displayName ?? 'None'),
+      ('Received', mb(value.bytesLoaded)),
+      if (value.httpStatus != null) ('HTTP', '${value.httpStatus}'),
+      if (value.firstFrame != null)
+        ('First frame', '${(value.firstFrame!.inMilliseconds / 1000).toStringAsFixed(1)} s'),
+      if (value.droppedFrames > 0) ('Dropped frames', '${value.droppedFrames}'),
+      if (value.loadErrors > 0) ('Retried loads', '${value.loadErrors}'),
+      if (value.error != null) ('Error', value.error!.code),
+    ];
+    return [
+      _PanelTile(
+        focusNode: _panelFocus,
+        icon: Icons.copy_rounded,
+        title: 'Copy playback report',
+        subtitle: 'No links, hashes or account details',
+        onPressed: () => unawaited(_copyReport()),
+      ),
+      const SizedBox(height: 8),
+      for (final (label, text) in rows) _InfoRow(label: label, value: text),
+    ];
+  }
+
   Widget _errorView() {
+    final diagnosis = _errorDiagnosis;
+    final suggestMpv = diagnosis?.suggestMpv ?? true;
+    final buttons = <Widget>[
+      _ExoButton(
+        focusNode: suggestMpv ? _errorFocus : null,
+        icon: Icons.swap_horiz_rounded,
+        label: 'Try MPV',
+        semanticLabel: 'Try MPV',
+        onPressed: () => unawaited(
+          _close(failed: true, switchToMpv: true, error: _error),
+        ),
+        onFocusChange: _onControlFocus,
+      ),
+      _ExoButton(
+        focusNode: suggestMpv ? null : _errorFocus,
+        icon: Icons.refresh_rounded,
+        label: 'Retry',
+        semanticLabel: 'Retry in ExoPlayer',
+        onPressed: () => unawaited(_retry()),
+        onFocusChange: _onControlFocus,
+      ),
+      _ExoButton(
+        icon: Icons.info_outline_rounded,
+        label: 'Details',
+        semanticLabel: 'Playback details',
+        onPressed: () => _openPanel(_ExoPanel.info),
+        onFocusChange: _onControlFocus,
+      ),
+      _ExoButton(
+        icon: Icons.arrow_back_rounded,
+        label: 'Back',
+        semanticLabel: 'Back',
+        onPressed: () => unawaited(_close(failed: true, error: _error)),
+        onFocusChange: _onControlFocus,
+      ),
+    ];
     return ColoredBox(
       color: ExoPlayerColors.background,
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 640),
+          constraints: const BoxConstraints(maxWidth: 680),
           child: Padding(
             padding: const EdgeInsets.all(28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(
-                  Icons.error_outline_rounded,
-                  color: ExoPlayerColors.lime,
-                  size: 42,
-                ),
-                const SizedBox(height: 14),
-                const Text(
-                  'Could not play this stream',
-                  style: TextStyle(
-                    color: ExoPlayerColors.text,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
+            child: FocusTraversalGroup(
+              policy: ReadingOrderTraversalPolicy(),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.error_outline_rounded,
+                    color: ExoPlayerColors.lime,
+                    size: 42,
                   ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  _error!,
-                  textAlign: TextAlign.center,
-                  maxLines: 6,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: ExoPlayerColors.muted,
-                    fontSize: 14,
-                    height: 1.45,
-                  ),
-                ),
-                const SizedBox(height: 22),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  alignment: WrapAlignment.center,
-                  children: [
-                    _ExoButton(
-                      focusNode: _switchFocus,
-                      icon: Icons.swap_horiz_rounded,
-                      label: 'Try MPV',
-                      semanticLabel: 'Try MPV',
-                      onPressed: () => unawaited(
-                        _close(failed: true, switchToMpv: true, error: _error),
-                      ),
-                      onFocusChange: _onControlFocus,
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Could not play this stream',
+                    style: TextStyle(
+                      color: ExoPlayerColors.text,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
                     ),
-                    _ExoButton(
-                      icon: Icons.arrow_back_rounded,
-                      label: 'Back',
-                      semanticLabel: 'Back',
-                      onPressed: () =>
-                          unawaited(_close(failed: true, error: _error)),
-                      onFocusChange: _onControlFocus,
+                  ),
+                  if (diagnosis != null &&
+                      diagnosis.title != 'Could not play this stream') ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      diagnosis.title,
+                      style: const TextStyle(
+                        color: ExoPlayerColors.lime,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ],
-                ),
-              ],
+                  const SizedBox(height: 10),
+                  Text(
+                    _error!,
+                    textAlign: TextAlign.center,
+                    maxLines: 6,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: ExoPlayerColors.muted,
+                      fontSize: 14,
+                      height: 1.45,
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    alignment: WrapAlignment.center,
+                    children: buttons,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -1703,46 +2610,46 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen> {
   }
 }
 
-class _SubtitleText extends StatelessWidget {
-  const _SubtitleText({
-    required this.text,
-    required this.fontSize,
-    required this.background,
-    required this.backgroundOpacity,
-  });
+extension _Let<T> on T {
+  R let<R>(R Function(T value) transform) => transform(this);
+}
 
-  final String text;
-  final double fontSize;
-  final bool background;
-  final double backgroundOpacity;
+class _InfoRow extends StatelessWidget {
+  const _InfoRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
 
   @override
-  Widget build(BuildContext context) {
-    final style = TextStyle(
-      color: Colors.white,
-      fontSize: fontSize,
-      height: 1.25,
-      fontWeight: FontWeight.w600,
-      shadows: background
-          ? null
-          : const [
-              Shadow(blurRadius: 3, color: Colors.black),
-              Shadow(offset: Offset(1, 1), blurRadius: 2, color: Colors.black),
-            ],
-    );
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: background
-            ? Colors.black.withValues(alpha: backgroundOpacity)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        child: Text(text, textAlign: TextAlign.center, style: style),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 128,
+              child: Text(
+                label,
+                style: const TextStyle(
+                  color: ExoPlayerColors.muted,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                value,
+                style: const TextStyle(
+                  color: ExoPlayerColors.text,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
 }
 
 class _NoticeChip extends StatelessWidget {
@@ -1804,72 +2711,76 @@ class _TimelineState extends State<_Timeline> {
 
   @override
   Widget build(BuildContext context) {
-    return Focus(
-      focusNode: widget.focusNode,
-      onKeyEvent: widget.onKeyEvent,
-      onFocusChange: (value) {
-        setState(() => _focused = value);
-        widget.onFocusChange(value);
-      },
-      child: LayoutBuilder(
-        builder: (context, constraints) => GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapDown: (details) =>
-              _seekAt(details.localPosition, constraints.maxWidth),
-          onHorizontalDragUpdate: (details) =>
-              _seekAt(details.localPosition, constraints.maxWidth),
-          child: SizedBox(
-            height: 28,
-            child: Center(
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Container(
-                    height: _focused ? 7 : 5,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: .16),
-                      borderRadius: BorderRadius.circular(99),
-                    ),
-                  ),
-                  FractionallySizedBox(
-                    widthFactor: widget.buffered,
-                    child: Container(
+    return Semantics(
+      slider: true,
+      label: 'Timeline',
+      child: Focus(
+        focusNode: widget.focusNode,
+        onKeyEvent: widget.onKeyEvent,
+        onFocusChange: (value) {
+          setState(() => _focused = value);
+          widget.onFocusChange(value);
+        },
+        child: LayoutBuilder(
+          builder: (context, constraints) => GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (details) =>
+                _seekAt(details.localPosition, constraints.maxWidth),
+            onHorizontalDragUpdate: (details) =>
+                _seekAt(details.localPosition, constraints.maxWidth),
+            child: SizedBox(
+              height: 28,
+              child: Center(
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Container(
                       height: _focused ? 7 : 5,
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: .30),
+                        color: Colors.white.withValues(alpha: .16),
                         borderRadius: BorderRadius.circular(99),
                       ),
                     ),
-                  ),
-                  FractionallySizedBox(
-                    widthFactor: widget.played,
-                    child: Container(
-                      height: _focused ? 7 : 5,
-                      decoration: BoxDecoration(
-                        color: ExoPlayerColors.lime,
-                        borderRadius: BorderRadius.circular(99),
-                      ),
-                    ),
-                  ),
-                  Positioned.fill(
-                    child: Align(
-                      alignment: Alignment(widget.played * 2 - 1, 0),
+                    FractionallySizedBox(
+                      widthFactor: widget.buffered,
                       child: Container(
-                        width: _focused ? 18 : 12,
-                        height: _focused ? 18 : 12,
+                        height: _focused ? 7 : 5,
                         decoration: BoxDecoration(
-                          color: _focused
-                              ? ExoPlayerColors.lightLime
-                              : ExoPlayerColors.lime,
-                          shape: BoxShape.circle,
-                          border: _focused
-                              ? Border.all(color: Colors.white, width: 2)
-                              : null,
+                          color: Colors.white.withValues(alpha: .30),
+                          borderRadius: BorderRadius.circular(99),
                         ),
                       ),
                     ),
-                  ),
-                ],
+                    FractionallySizedBox(
+                      widthFactor: widget.played,
+                      child: Container(
+                        height: _focused ? 7 : 5,
+                        decoration: BoxDecoration(
+                          color: ExoPlayerColors.lime,
+                          borderRadius: BorderRadius.circular(99),
+                        ),
+                      ),
+                    ),
+                    Positioned.fill(
+                      child: Align(
+                        alignment: Alignment(widget.played * 2 - 1, 0),
+                        child: Container(
+                          width: _focused ? 18 : 12,
+                          height: _focused ? 18 : 12,
+                          decoration: BoxDecoration(
+                            color: _focused
+                                ? ExoPlayerColors.lightLime
+                                : ExoPlayerColors.lime,
+                            shape: BoxShape.circle,
+                            border: _focused
+                                ? Border.all(color: Colors.white, width: 2)
+                                : null,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1909,72 +2820,77 @@ class _ExoButtonState extends State<_ExoButton> {
 
   @override
   Widget build(BuildContext context) {
-    final size = widget.prominent ? 60.0 : 46.0;
-    final radius = BorderRadius.circular(widget.prominent ? 30 : 14);
-    final foreground = _focused ? ExoPlayerColors.lime : ExoPlayerColors.text;
+    final tv = PlatformProfile.isAndroidTv;
+    final size = widget.prominent ? (tv ? 64.0 : 60.0) : (tv ? 50.0 : 46.0);
+    final radius = BorderRadius.circular(widget.prominent ? size / 2 : 14);
+    final foreground = _focused ? ExoPlayerColors.background : ExoPlayerColors.text;
     return Semantics(
       button: true,
       label: widget.semanticLabel ?? widget.label,
-      child: AnimatedContainer(
+      child: AnimatedScale(
+        scale: _focused && tv ? 1.06 : 1.0,
         duration: const Duration(milliseconds: 120),
-        decoration: BoxDecoration(
-          color: _focused
-              ? ExoPlayerColors.lime.withValues(alpha: .16)
-              : widget.prominent
-                  ? ExoPlayerColors.card.withValues(alpha: .92)
-                  : ExoPlayerColors.card.withValues(alpha: .80),
-          borderRadius: radius,
-          border: Border.all(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          decoration: BoxDecoration(
             color: _focused
                 ? ExoPlayerColors.lime
-                : Colors.white.withValues(alpha: .10),
-            width: _focused ? 2 : 1,
-          ),
-        ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            focusNode: widget.focusNode,
-            autofocus: widget.autofocus,
-            focusColor: Colors.transparent,
-            hoverColor: ExoPlayerColors.lime.withValues(alpha: .06),
-            splashColor: ExoPlayerColors.lime.withValues(alpha: .12),
+                : widget.prominent
+                    ? ExoPlayerColors.card.withValues(alpha: .92)
+                    : ExoPlayerColors.card.withValues(alpha: .80),
             borderRadius: radius,
-            onFocusChange: (value) {
-              setState(() => _focused = value);
-              widget.onFocusChange(value);
-            },
-            onTap: widget.onPressed,
-            child: SizedBox(
-              height: size,
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: widget.label == null ? 0 : 14,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    SizedBox(
-                      width: widget.label == null ? size - 2 : 24,
-                      child: Icon(
-                        widget.icon,
-                        color: foreground,
-                        size: widget.prominent ? 32 : 24,
-                      ),
-                    ),
-                    if (widget.label != null) ...[
-                      const SizedBox(width: 8),
-                      Text(
-                        widget.label!,
-                        style: TextStyle(
+            border: Border.all(
+              color: _focused
+                  ? ExoPlayerColors.lightLime
+                  : Colors.white.withValues(alpha: .10),
+              width: _focused ? 2 : 1,
+            ),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              focusNode: widget.focusNode,
+              autofocus: widget.autofocus,
+              focusColor: Colors.transparent,
+              hoverColor: ExoPlayerColors.lime.withValues(alpha: .06),
+              splashColor: ExoPlayerColors.lime.withValues(alpha: .12),
+              borderRadius: radius,
+              onFocusChange: (value) {
+                setState(() => _focused = value);
+                widget.onFocusChange(value);
+              },
+              onTap: widget.onPressed,
+              child: SizedBox(
+                height: size,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: widget.label == null ? 0 : 14,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: widget.label == null ? size - 2 : 24,
+                        child: Icon(
+                          widget.icon,
                           color: foreground,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w800,
+                          size: widget.prominent ? 32 : 24,
                         ),
                       ),
+                      if (widget.label != null) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          widget.label!,
+                          style: TextStyle(
+                            color: foreground,
+                            fontSize: tv ? 14 : 13,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -2114,59 +3030,168 @@ class _PanelTileState extends State<_PanelTile> {
   }
 }
 
-class _StepperTile extends StatelessWidget {
-  const _StepperTile({
+/// One adjustable setting: a single focusable row. On a remote, Left and
+/// Right change the value and OK steps it forward; on touch, the − and +
+/// buttons do the same. Up/Down move between rows, so the row never traps
+/// focus.
+class _AdjustTile extends StatefulWidget {
+  const _AdjustTile({
     required this.label,
     required this.value,
-    required this.onMinus,
-    required this.onPlus,
+    required this.onDecrease,
+    required this.onIncrease,
+    this.hint,
+    this.swatch,
+    this.focusNode,
   });
 
   final String label;
   final String value;
-  final VoidCallback onMinus;
-  final VoidCallback onPlus;
+  final String? hint;
+  final Color? swatch;
+  final VoidCallback onDecrease;
+  final VoidCallback onIncrease;
+  final FocusNode? focusNode;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                label,
-                style: const TextStyle(
-                  color: ExoPlayerColors.text,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                ),
+  State<_AdjustTile> createState() => _AdjustTileState();
+}
+
+class _AdjustTileState extends State<_AdjustTile> {
+  bool _focused = false;
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      widget.onDecrease();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowRight) {
+      widget.onIncrease();
+      return KeyEventResult.handled;
+    }
+    if (event is KeyDownEvent &&
+        (key == LogicalKeyboardKey.select ||
+            key == LogicalKeyboardKey.enter ||
+            key == LogicalKeyboardKey.space)) {
+      widget.onIncrease();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  Widget _step(IconData icon, String semantic, VoidCallback onPressed) =>
+      Semantics(
+        button: true,
+        label: semantic,
+        child: ExcludeFocus(
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: onPressed,
+            child: SizedBox(
+              width: 40,
+              height: 40,
+              child: Icon(
+                icon,
+                size: 20,
+                color: _focused ? ExoPlayerColors.lime : ExoPlayerColors.text,
               ),
             ),
-            _ExoButton(
-              icon: Icons.remove_rounded,
-              semanticLabel: '$label down',
-              onPressed: onMinus,
-              onFocusChange: (_) {},
-            ),
-            SizedBox(
-              width: 76,
-              child: Text(
-                value,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: ExoPlayerColors.lime,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-            _ExoButton(
-              icon: Icons.add_rounded,
-              semanticLabel: '$label up',
-              onPressed: onPlus,
-              onFocusChange: (_) {},
-            ),
-          ],
+          ),
         ),
       );
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Focus(
+        focusNode: widget.focusNode,
+        onKeyEvent: _onKey,
+        onFocusChange: (value) => setState(() => _focused = value),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 110),
+          padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+          decoration: BoxDecoration(
+            color: _focused
+                ? ExoPlayerColors.lime.withValues(alpha: .14)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: _focused ? ExoPlayerColors.lime : Colors.transparent,
+              width: 1.6,
+            ),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.label,
+                        style: TextStyle(
+                          color: _focused
+                              ? ExoPlayerColors.lime
+                              : ExoPlayerColors.text,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      if (widget.hint != null)
+                        Text(
+                          widget.hint!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: ExoPlayerColors.muted,
+                            fontSize: 11.5,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                _step(Icons.remove_rounded, '${widget.label} down',
+                    widget.onDecrease),
+                if (widget.swatch != null)
+                  Container(
+                    width: 14,
+                    height: 14,
+                    margin: const EdgeInsets.only(left: 4),
+                    decoration: BoxDecoration(
+                      color: widget.swatch,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: .5),
+                      ),
+                    ),
+                  ),
+                SizedBox(
+                  width: 92,
+                  child: Text(
+                    widget.value,
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: ExoPlayerColors.lime,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                _step(Icons.add_rounded, '${widget.label} up',
+                    widget.onIncrease),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

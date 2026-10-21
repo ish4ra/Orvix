@@ -283,7 +283,8 @@ class MainActivity : FlutterActivity() {
         exoPlayer = OrvixExoPlayerChannel(
             applicationContext,
             flutterEngine.dartExecutor.binaryMessenger,
-            flutterEngine.renderer
+            flutterEngine.renderer,
+            this
         )
 
         MethodChannel(
