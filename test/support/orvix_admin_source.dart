@@ -1,16 +1,15 @@
 import 'dart:io';
 
-/// The orvix-admin Edge Function's source (modules and dashboard page,
-/// without its Deno tests), for tests that check what it exposes.
+/// The orvix-admin Edge Function's source (modules, the Control Center page
+/// and its script in web/, without Deno tests or vendored libraries), for
+/// tests that check what it exposes.
 String orvixAdminSource() {
   final dir = Directory('supabase/functions/orvix-admin');
-  final files = dir
-      .listSync()
-      .whereType<File>()
-      .where((f) =>
-          (f.path.endsWith('.ts') && !f.path.endsWith('_test.ts')) ||
-          f.path.endsWith('.html'))
-      .toList()
-    ..sort((a, b) => a.path.compareTo(b.path));
+  final files = <File>[
+    ...dir.listSync().whereType<File>().where(
+        (f) => f.path.endsWith('.ts') && !f.path.endsWith('_test.ts')),
+    File('${dir.path}/web/index.html'),
+    File('${dir.path}/web/app.js'),
+  ]..sort((a, b) => a.path.compareTo(b.path));
   return files.map((f) => f.readAsStringSync()).join('\n');
 }
