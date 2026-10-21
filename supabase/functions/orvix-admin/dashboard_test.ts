@@ -171,3 +171,17 @@ Deno.test("payload exposes no IP addresses or raw secrets", () => {
   assert(!/\b\d{1,3}(\.\d{1,3}){3}\b/.test(text.replace(/\d+\.\d+\.\d+(-[a-z]+\.\d+)?/g, "")), "no IPv4-looking values");
   assert(!text.includes("service_role"), "no service role");
 });
+
+Deno.test("sessions returned twice by paging are counted once", () => {
+  const session = { session_id: "s9", installation_id: id(1), started_at: ago(900), last_heartbeat_at: ago(30) };
+  const d = buildDashboard(inputs({ sessions30d: { ok: true, value: [session, { ...session }] } }));
+  assertEquals(d.health.session_quality.sessions_30d_considered, 1);
+  const today = d.activity.daily[d.activity.daily.length - 1];
+  assertEquals(today.sessions_started, 1);
+});
+
+Deno.test("accounts list each user's installations, newest first", () => {
+  const d = buildDashboard(inputs());
+  assertEquals(d.users[0].installations, 2);
+  assertEquals(d.users[0].platform, "Android TV");
+});

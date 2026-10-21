@@ -174,12 +174,13 @@ Deno.test("data quality counts unknown platforms, countries and build mismatches
     { platform: "Android Mobile", device_type: "TV", country_code: "LK", app_version: "0.7.9" },
     { platform: "Android TV", device_type: "TV", country_code: null, app_version: "0.7.9" },
     { platform: "fuchsia", country_code: "US", app_version: "" },
+    { platform: "Windows", country_code: "XX", app_version: "0.7.9" },
   ]);
   assertEquals(quality, {
-    installations_considered: 3,
+    installations_considered: 4,
     unknown_platform: 1,
     unknown_platform_labels: ["fuchsia"],
-    unknown_country: 1,
+    unknown_country: 2,
     form_factor_mismatch: 1,
     missing_version: 1,
   });

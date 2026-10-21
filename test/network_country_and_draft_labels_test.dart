@@ -12,7 +12,7 @@ void main() {
     expect(source, contains('resolvedCountryCode'));
     expect(
       source,
-      contains('resolvedCountryCode ?? existing.data?.country_code ?? null'),
+      contains('chooseCountry(resolvedCountryCode, existing.data?.country_code)'),
     );
   });
 

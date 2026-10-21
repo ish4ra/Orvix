@@ -14,6 +14,7 @@ import {
   sessionStats,
   telemetryFreshness,
   uniqueInstallations,
+  uniqueSessions,
   versionBreakdown,
 } from "./activity.ts";
 import {
@@ -201,7 +202,8 @@ export function buildDashboard(input: DashboardInputs) {
     };
   });
 
-  const sessions30d = rows(input.sessions30d);
+  // Offset paging over a list that grows at the top can return a row twice.
+  const sessions30d = uniqueSessions(rows(input.sessions30d));
   const stats = sessionStats(sessions30d, now);
 
   const github = input.github;
@@ -238,9 +240,16 @@ export function buildDashboard(input: DashboardInputs) {
     eventCounts.set(name, (eventCounts.get(name) ?? 0) + 1);
   }
 
-  const installationsForUsers = recentInstallations;
+  // Grouped once; rows keep their newest-first order, so [0] is the latest.
+  const installationsByUser = new Map<string, AnyRow[]>();
+  for (const row of recentInstallations) {
+    if (!row.user_id) continue;
+    const list = installationsByUser.get(row.user_id);
+    if (list) list.push(row);
+    else installationsByUser.set(row.user_id, [row]);
+  }
   const userRows = users.map((user) => {
-    const owned = installationsForUsers.filter((row) => row.user_id === user.id);
+    const owned = installationsByUser.get(user.id) ?? [];
     const latest = owned[0];
     return {
       id: user.id,

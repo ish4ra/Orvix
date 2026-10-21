@@ -180,7 +180,8 @@ async function dashboardData() {
         db.from("orvix_analytics_installations")
           .select("*")
           .gte("last_seen_at", day30)
-          .order("last_seen_at", { ascending: false })
+          // Stable key only: every heartbeat moves last_seen_at, which would
+          // shift rows between pages. Consumers aggregate, so order is moot.
           .order("installation_id", { ascending: true })
           .range(from, to)
       )
@@ -188,7 +189,7 @@ async function dashboardData() {
     settle(() =>
       paginate((from, to) =>
         db.from("orvix_analytics_sessions")
-          .select("installation_id,started_at,last_heartbeat_at,ended_at")
+          .select("session_id,installation_id,started_at,last_heartbeat_at,ended_at")
           .gte("started_at", day30)
           .order("started_at", { ascending: false })
           .order("session_id", { ascending: true })
@@ -203,6 +204,9 @@ async function dashboardData() {
             .order("last_seen_at", { ascending: false })
             .order("installation_id", { ascending: true })
             .range(from, to),
+        // Newest first for the table and each account's latest install; a
+        // heartbeat during paging can still shift a row, which only affects
+        // this display list.
         5000,
       )
     ),

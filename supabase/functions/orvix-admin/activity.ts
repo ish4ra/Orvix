@@ -136,14 +136,27 @@ export function uniqueInstallations(rows: AnyRow[]): AnyRow[] {
   return [...byId.values()];
 }
 
+/// Two-letter code that names a country; "XX" is the CDN's "unknown".
+export function isKnownCountry(code: unknown): code is string {
+  return typeof code === "string" && /^[A-Z]{2}$/.test(code) && code !== "XX";
+}
+
+/// Sessions keyed once by session_id; rows without one are kept as they are.
+export function uniqueSessions(rows: AnyRow[]): AnyRow[] {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    const id = typeof row.session_id === "string" ? row.session_id : "";
+    if (!id) return true;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
 export function countryBreakdown(installations: AnyRow[]): Breakdown[] {
   const counts = new Map<string, number>();
   for (const row of installations) {
-    const code = typeof row.country_code === "string" &&
-        /^[A-Z]{2}$/.test(row.country_code) && row.country_code !== "XX"
-      ? row.country_code
-      : "Unknown";
-    bump(counts, code);
+    bump(counts, isKnownCountry(row.country_code) ? row.country_code : "Unknown");
   }
   return sortedBreakdown(counts);
 }
@@ -356,9 +369,7 @@ export function dataQuality(installations: AnyRow[]): DataQuality {
       unknownPlatform++;
       if (labels.size < 5) labels.add(String(row.platform ?? "(empty)").slice(0, 40));
     }
-    if (!(typeof row.country_code === "string" && /^[A-Z]{2}$/.test(row.country_code))) {
-      unknownCountry++;
-    }
+    if (!isKnownCountry(row.country_code)) unknownCountry++;
     if (isFormFactorMismatch(row.platform, row.device_type)) mismatch++;
     if (!versionKey(row.app_version)) missingVersion++;
   }

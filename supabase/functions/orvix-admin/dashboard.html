@@ -376,12 +376,21 @@
     function showLogin(message=""){el("app").classList.add("hidden");el("login").classList.remove("hidden");el("loginError").textContent=message;}
     el("loginBtn").onclick = async () => {
       el("loginError").textContent="";el("loginBtn").disabled=true;
-      const { error } = await supabase.auth.signInWithPassword({email:el("email").value.trim(),password:el("password").value});
-      el("loginBtn").disabled=false;if(error)return showLogin(error.message);showApp();
+      let error = null;
+      try {
+        ({ error } = await supabase.auth.signInWithPassword({email:el("email").value.trim(),password:el("password").value}));
+      } catch (e) {
+        error = { message: "Sign-in failed: " + (e?.message || "network error") };
+      } finally {
+        el("loginBtn").disabled=false;
+      }
+      if(error)return showLogin(error.message);showApp();
     };
     el("refreshBtn").onclick=refresh;
     el("logoutBtn").onclick=async()=>{await supabase.auth.signOut();showLogin();};
-    const { data:{session} }=await supabase.auth.getSession();if(session)showApp();else showLogin();
+    let initialSession = null;
+    try { ({ data: { session: initialSession } } = await supabase.auth.getSession()); } catch { initialSession = null; }
+    if (initialSession) showApp(); else showLogin();
     // Every 2 minutes while the tab is visible; GitHub data is cached for 10.
     setInterval(()=>{if(!document.hidden && !el("app").classList.contains("hidden"))refresh();},120000);
   </script>
