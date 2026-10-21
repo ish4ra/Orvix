@@ -106,7 +106,7 @@ leases the login with a one-time exchange token and marks it consumed.
 | `tv-login-exchange` | signed-out TV | off | device code + nonce, two-phase lease |
 | `tv-login-link` | browser | off | static page; approval goes through `approve_tv_login_session` |
 | `orvix-telemetry` | app (any) | off | optional JWT links `user_id` (verified with `auth.getUser`); redacts error text |
-| `orvix-admin` | owner dashboard | off | `auth.getUser` and a fixed owner id |
+| `orvix-admin` | owner dashboard | off | `auth.getUser` and a fixed owner id, checked before any read; responses `no-store`; returns aggregates plus the owner's existing account/installation tables, never IP addresses |
 | `supporters-github-webhook` | GitHub | off | HMAC-SHA256 signature |
 | `supporters-bmc-webhook` | Buy Me a Coffee | off | HMAC-SHA256 signature |
 | `supporters-kofi-webhook` | Ko-fi | off | verification token |
@@ -121,7 +121,7 @@ its comments expect, not a reading of the production project.
 |---|---|
 | `orvix_user_credentials`, `load_orvix_credentials`, `save_orvix_credentials` and their encryption key | Created in production; not in migrations. Contract and read-only inspection: `supabase/tests/credentials_contract/`. Capture the real definitions (without the key) before recreating them anywhere. |
 | Auth settings (email confirmation, secure password change, secure email change, OTP length, email templates) | Dashboard-managed. The app depends on: email confirmation with a six-digit code, recovery codes, "secure password change" (reauthentication nonce), password sign-in for the account-deletion proof. |
-| Edge Function secrets (`GEMINI_API_KEY`, `OPENSUBTITLES_API_KEY`, `SUBDL_API_KEY`, webhook secrets) | Function environment only. |
+| Edge Function secrets (`GEMINI_API_KEY`, `OPENSUBTITLES_API_KEY`, `SUBDL_API_KEY`, webhook secrets, optional `ORVIX_GITHUB_TOKEN` for `orvix-admin`) | Function environment only. |
 
 ## Running the database checks
 
@@ -134,3 +134,6 @@ supabase/tests/tv_login/run.sh         "postgresql://localhost:5432/scratch"
 supabase/tests/account_deletion/run.sh "postgresql://localhost:5432/scratch"
 deno test --allow-read supabase/functions/
 ```
+
+CI runs the analytics function tests (`orvix-admin`, `orvix-telemetry`) with
+`deno test --allow-read --no-remote`.

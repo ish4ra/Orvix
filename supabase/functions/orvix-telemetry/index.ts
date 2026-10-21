@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { chooseCountry, shouldRefreshCountry } from "./country.ts";
 import { redactProperties, redactText } from "./redact.ts";
 
 const corsHeaders = {
@@ -153,6 +154,8 @@ Deno.serve(async (req: Request) => {
     !platform ||
     !appVersion
   ) {
+    // Fixed reason only: the payload may come from anyone.
+    console.warn("telemetry rejected: missing or invalid identity");
     return new Response("Missing or invalid telemetry identity", {
       status: 400,
       headers: corsHeaders,
@@ -166,13 +169,12 @@ Deno.serve(async (req: Request) => {
     .eq("installation_id", installationId)
     .maybeSingle();
 
-  const shouldRefreshCountry =
-    type === "session_start" || !existing.data?.country_code;
-  const resolvedCountryCode = shouldRefreshCountry
-    ? await resolveCountry(req)
-    : null;
+  const resolvedCountryCode =
+    shouldRefreshCountry(type, existing.data?.country_code)
+      ? await resolveCountry(req)
+      : null;
   const countryCode =
-    resolvedCountryCode ?? existing.data?.country_code ?? null;
+    chooseCountry(resolvedCountryCode, existing.data?.country_code);
 
   const installation = {
     installation_id: installationId,

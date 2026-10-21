@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/orvix_admin_source.dart';
+
 void main() {
   test('telemetry refreshes network country instead of pinning the first value', () {
     final source =
@@ -10,13 +12,12 @@ void main() {
     expect(source, contains('resolvedCountryCode'));
     expect(
       source,
-      contains('resolvedCountryCode ?? existing.data?.country_code ?? null'),
+      contains('chooseCountry(resolvedCountryCode, existing.data?.country_code)'),
     );
   });
 
   test('owner console labels country as network country and draft releases clearly', () {
-    final source =
-        File('supabase/functions/orvix-admin/index.ts').readAsStringSync();
+    final source = orvixAdminSource();
 
     expect(source, contains('Network country'));
     expect(source, contains('Network countries'));

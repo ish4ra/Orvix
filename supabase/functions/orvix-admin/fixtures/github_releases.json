@@ -1,0 +1,413 @@
+[
+ {
+  "id": 412634980,
+  "tag_name": "v0.7.10-beta.3",
+  "name": "Orvix v0.7.10-beta.3 Android Mobile + TV",
+  "draft": true,
+  "prerelease": false,
+  "created_at": "2026-10-14T11:22:20Z",
+  "published_at": null,
+  "assets": [
+   {
+    "id": 640159376,
+    "name": "Orvix-v0.7.10-beta.3-Android-Mobile-arm64-v8a.apk",
+    "size": 44118876,
+    "download_count": 0
+   },
+   {
+    "id": 640159375,
+    "name": "Orvix-v0.7.10-beta.3-Android-Mobile-armeabi-v7a.apk",
+    "size": 50084646,
+    "download_count": 0
+   },
+   {
+    "id": 640159380,
+    "name": "Orvix-v0.7.10-beta.3-Android-Mobile-x86_64.apk",
+    "size": 45530666,
+    "download_count": 0
+   },
+   {
+    "id": 640159377,
+    "name": "Orvix-v0.7.10-beta.3-Android-Mobile.apk",
+    "size": 132598816,
+    "download_count": 0
+   },
+   {
+    "id": 640159381,
+    "name": "Orvix-v0.7.10-beta.3-Android-TV.apk",
+    "size": 125908958,
+    "download_count": 0
+   }
+  ]
+ },
+ {
+  "id": 413042392,
+  "tag_name": "v0.7.10-beta.4",
+  "name": "Orvix v0.7.10-beta.4",
+  "draft": false,
+  "prerelease": true,
+  "created_at": "2026-10-14T17:45:25Z",
+  "published_at": "2026-10-14T18:21:18Z",
+  "assets": [
+   {
+    "id": 641245184,
+    "name": "Orvix-Setup-v0.7.10-beta.4-Windows-x64.exe",
+    "size": 133994304,
+    "download_count": 3
+   },
+   {
+    "id": 641245185,
+    "name": "Orvix-v0.7.10-beta.4-Android-Mobile-arm64-v8a.apk",
+    "size": 44134459,
+    "download_count": 2
+   },
+   {
+    "id": 641245181,
+    "name": "Orvix-v0.7.10-beta.4-Android-Mobile-armeabi-v7a.apk",
+    "size": 50099663,
+    "download_count": 1
+   },
+   {
+    "id": 641245289,
+    "name": "Orvix-v0.7.10-beta.4-Android-Mobile-x86_64.apk",
+    "size": 45544062,
+    "download_count": 2
+   },
+   {
+    "id": 641245183,
+    "name": "Orvix-v0.7.10-beta.4-Android-Mobile.apk",
+    "size": 132642473,
+    "download_count": 21
+   },
+   {
+    "id": 641245306,
+    "name": "Orvix-v0.7.10-beta.4-Android-TV.apk",
+    "size": 125959616,
+    "download_count": 5
+   },
+   {
+    "id": 641245376,
+    "name": "Orvix-v0.7.10-beta.4-iOS-12-Legacy.ipa",
+    "size": 33825042,
+    "download_count": 1
+   },
+   {
+    "id": 641245374,
+    "name": "Orvix-v0.7.10-beta.4-iOS-15.5-Plus.ipa",
+    "size": 32304130,
+    "download_count": 1
+   },
+   {
+    "id": 641245366,
+    "name": "Orvix-v0.7.10-beta.4-macOS.zip",
+    "size": 58136466,
+    "download_count": 1
+   },
+   {
+    "id": 641245182,
+    "name": "Orvix-v0.7.10-beta.4-Windows-x64.zip",
+    "size": 185162369,
+    "download_count": 2
+   }
+  ]
+ },
+ {
+  "id": 409522105,
+  "tag_name": "v0.7.9",
+  "name": "Orvix v0.7.9",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-10-11T07:47:21Z",
+  "published_at": "2026-10-11T08:03:06Z",
+  "assets": [
+   {
+    "id": 630162278,
+    "name": "Orvix-Setup-v0.7.9-Windows-x64.exe",
+    "size": 133944697,
+    "download_count": 4
+   },
+   {
+    "id": 630162277,
+    "name": "Orvix-v0.7.9-Android-Mobile-arm64-v8a.apk",
+    "size": 44039522,
+    "download_count": 7
+   },
+   {
+    "id": 630162281,
+    "name": "Orvix-v0.7.9-Android-Mobile-armeabi-v7a.apk",
+    "size": 49993570,
+    "download_count": 4
+   },
+   {
+    "id": 630162413,
+    "name": "Orvix-v0.7.9-Android-Mobile-x86_64.apk",
+    "size": 45448439,
+    "download_count": 1
+   },
+   {
+    "id": 630162272,
+    "name": "Orvix-v0.7.9-Android-Mobile.apk",
+    "size": 132360875,
+    "download_count": 20
+   },
+   {
+    "id": 630162432,
+    "name": "Orvix-v0.7.9-Android-TV.apk",
+    "size": 125663187,
+    "download_count": 13
+   },
+   {
+    "id": 630162673,
+    "name": "Orvix-v0.7.9-iOS-12-Legacy.ipa",
+    "size": 33791835,
+    "download_count": 0
+   },
+   {
+    "id": 630162669,
+    "name": "Orvix-v0.7.9-iOS-15.5-Plus.ipa",
+    "size": 32261938,
+    "download_count": 0
+   },
+   {
+    "id": 630162641,
+    "name": "Orvix-v0.7.9-macOS.zip",
+    "size": 58076446,
+    "download_count": 3
+   },
+   {
+    "id": 630162279,
+    "name": "Orvix-v0.7.9-Windows-x64.zip",
+    "size": 185109292,
+    "download_count": 1
+   }
+  ]
+ },
+ {
+  "id": 409080775,
+  "tag_name": "v0.7.9-beta.69",
+  "name": "Orvix v0.7.9-beta.69",
+  "draft": false,
+  "prerelease": true,
+  "created_at": "2026-10-10T16:45:49Z",
+  "published_at": "2026-10-10T16:59:57Z",
+  "assets": [
+   {
+    "id": 628497450,
+    "name": "Orvix-v0.7.9-beta.69-Android-Mobile-arm64-v8a.apk",
+    "size": 44022180,
+    "download_count": 1
+   },
+   {
+    "id": 628497453,
+    "name": "Orvix-v0.7.9-beta.69-Android-Mobile-armeabi-v7a.apk",
+    "size": 49975058,
+    "download_count": 0
+   },
+   {
+    "id": 628497452,
+    "name": "Orvix-v0.7.9-beta.69-Android-Mobile-x86_64.apk",
+    "size": 45430981,
+    "download_count": 0
+   },
+   {
+    "id": 628497454,
+    "name": "Orvix-v0.7.9-beta.69-Android-Mobile.apk",
+    "size": 132324258,
+    "download_count": 6
+   },
+   {
+    "id": 628497449,
+    "name": "Orvix-v0.7.9-beta.69-Android-TV.apk",
+    "size": 125664046,
+    "download_count": 3
+   }
+  ]
+ },
+ {
+  "id": 409041002,
+  "tag_name": "v0.7.9-beta.68",
+  "name": "Orvix v0.7.9-beta.68",
+  "draft": false,
+  "prerelease": true,
+  "created_at": "2026-10-10T15:27:56Z",
+  "published_at": "2026-10-10T15:44:51Z",
+  "assets": [
+   {
+    "id": 628336239,
+    "name": "Orvix-Setup-v0.7.9-beta.68-Windows-x64.exe",
+    "size": 133918304,
+    "download_count": 1
+   },
+   {
+    "id": 628336238,
+    "name": "Orvix-v0.7.9-beta.68-Android-Mobile-arm64-v8a.apk",
+    "size": 44022136,
+    "download_count": 0
+   },
+   {
+    "id": 628336237,
+    "name": "Orvix-v0.7.9-beta.68-Android-Mobile-armeabi-v7a.apk",
+    "size": 49974872,
+    "download_count": 0
+   },
+   {
+    "id": 628336438,
+    "name": "Orvix-v0.7.9-beta.68-Android-Mobile-x86_64.apk",
+    "size": 45430795,
+    "download_count": 0
+   },
+   {
+    "id": 628336241,
+    "name": "Orvix-v0.7.9-beta.68-Android-Mobile.apk",
+    "size": 132323840,
+    "download_count": 2
+   },
+   {
+    "id": 628336458,
+    "name": "Orvix-v0.7.9-beta.68-Android-TV.apk",
+    "size": 125663604,
+    "download_count": 0
+   },
+   {
+    "id": 628336735,
+    "name": "Orvix-v0.7.9-beta.68-iOS.ipa",
+    "size": 32225834,
+    "download_count": 0
+   },
+   {
+    "id": 628336599,
+    "name": "Orvix-v0.7.9-beta.68-macOS.zip",
+    "size": 58026285,
+    "download_count": 0
+   },
+   {
+    "id": 628336242,
+    "name": "Orvix-v0.7.9-beta.68-Windows-x64.zip",
+    "size": 185082132,
+    "download_count": 0
+   }
+  ]
+ },
+ {
+  "id": 396194299,
+  "tag_name": "stream-server-orvix-v0.1.8.3",
+  "name": "Orvix Stream Server v0.1.8.3 \u2014 unified AI media engine",
+  "draft": false,
+  "prerelease": true,
+  "created_at": "2026-09-25T00:36:45Z",
+  "published_at": "2026-09-25T00:58:54Z",
+  "assets": [
+   {
+    "id": 587204404,
+    "name": "orvix-stream-server-windows-amd64.exe",
+    "size": 28065792,
+    "download_count": 84
+   },
+   {
+    "id": 587204405,
+    "name": "orvix-stream-server-windows-amd64.sha256",
+    "size": 64,
+    "download_count": 0
+   }
+  ]
+ },
+ {
+  "id": 391643425,
+  "tag_name": "v0.7.4-alpha.01",
+  "name": "Orvix v0.7.4-alpha.01 \u2014 Android Mobile Install Compatibility",
+  "draft": false,
+  "prerelease": true,
+  "created_at": "2026-09-18T16:56:21Z",
+  "published_at": "2026-09-18T17:04:03Z",
+  "assets": [
+   {
+    "id": 573064144,
+    "name": "Orvix-v0.7.4-alpha.01-Android-Mobile-Compat.apk",
+    "size": 75420697,
+    "download_count": 9
+   }
+  ]
+ },
+ {
+  "id": 391270331,
+  "tag_name": "v0.7.3-alpha.9",
+  "name": "Orvix v0.7.3-alpha.9 \u2014 Platform Fixes",
+  "draft": false,
+  "prerelease": true,
+  "created_at": "2026-09-18T06:21:36Z",
+  "published_at": "2026-09-18T06:56:11Z",
+  "assets": [
+   {
+    "id": 572024001,
+    "name": "Orvix-Setup-v0.7.3-alpha.9-Windows-x64.exe",
+    "size": 77711939,
+    "download_count": 1
+   },
+   {
+    "id": 572024002,
+    "name": "Orvix-v0.7.3-alpha.9-Android-Mobile-arm64-v8a.apk",
+    "size": 60576889,
+    "download_count": 1
+   },
+   {
+    "id": 572024000,
+    "name": "Orvix-v0.7.3-alpha.9-Android-Mobile-armeabi-v7a.apk",
+    "size": 47242593,
+    "download_count": 1
+   },
+   {
+    "id": 572023997,
+    "name": "Orvix-v0.7.3-alpha.9-Android-Mobile-x86_64.apk",
+    "size": 69577413,
+    "download_count": 1
+   },
+   {
+    "id": 572024124,
+    "name": "Orvix-v0.7.3-alpha.9-Android-Mobile.apk",
+    "size": 175158516,
+    "download_count": 8
+   },
+   {
+    "id": 572024179,
+    "name": "Orvix-v0.7.3-alpha.9-Android-TV.apk",
+    "size": 175172106,
+    "download_count": 1
+   },
+   {
+    "id": 572024232,
+    "name": "Orvix-v0.7.3-alpha.9-macOS.dmg",
+    "size": 57769526,
+    "download_count": 1
+   },
+   {
+    "id": 572024003,
+    "name": "Orvix-v0.7.3-alpha.9-Windows-x64.zip",
+    "size": 111045593,
+    "download_count": 1
+   }
+  ]
+ },
+ {
+  "id": 390028411,
+  "tag_name": "v0.3.2",
+  "name": "Pikora v0.3.2",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-09-16T14:56:40Z",
+  "published_at": "2026-09-16T15:02:14Z",
+  "assets": [
+   {
+    "id": 568227436,
+    "name": "Pikora-Setup-v0.3.2-Windows-x64.exe",
+    "size": 25210711,
+    "download_count": 2
+   },
+   {
+    "id": 568227435,
+    "name": "Pikora-v0.3.2-Windows-x64.zip",
+    "size": 33546527,
+    "download_count": 3
+   }
+  ]
+ }
+]

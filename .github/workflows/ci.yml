@@ -55,6 +55,11 @@ jobs:
           set -euo pipefail
           cd tools/orvix-media-engine
           go test ./...
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Test analytics Edge Functions
+        run: deno test --allow-read --no-remote supabase/functions/orvix-admin/ supabase/functions/orvix-telemetry/
       - name: Validate build helper syntax
         shell: bash
         run: |
@@ -68,6 +73,7 @@ jobs:
           bash -n tools/verify_ios_ipa.sh
           bash -n tools/verify_ios_legacy_ipa.sh
           bash -n tools/android_install_smoke_test.sh
+          bash -n tools/vendor_supabase_js.sh
       - name: Test Android APK installability gate
         run: python3 -m unittest discover -s tools/tests -v
       - name: Guard canonical maintenance rules
