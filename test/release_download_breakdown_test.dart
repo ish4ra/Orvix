@@ -1,12 +1,10 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/orvix_admin_source.dart';
 
 void main() {
   test('release analytics expose platform and asset download breakdowns', () {
-    final admin = File(
-      'supabase/functions/orvix-admin/index.ts',
-    ).readAsStringSync();
+    final admin = orvixAdminSource();
 
     expect(admin, contains('classifyReleaseAsset'));
     expect(admin, contains('downloads_by_platform'));

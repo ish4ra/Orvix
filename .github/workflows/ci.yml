@@ -55,6 +55,11 @@ jobs:
           set -euo pipefail
           cd tools/orvix-media-engine
           go test ./...
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Test analytics Edge Functions
+        run: deno test --allow-read --no-remote supabase/functions/orvix-admin/ supabase/functions/orvix-telemetry/
       - name: Validate build helper syntax
         shell: bash
         run: |

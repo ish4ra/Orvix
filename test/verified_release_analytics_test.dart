@@ -1,13 +1,12 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/orvix_admin_source.dart';
 
 void main() {
   test('owner analytics exposes verified device counts by version', () {
-    final admin =
-        File('supabase/functions/orvix-admin/index.ts').readAsStringSync();
+    final admin = orvixAdminSource();
 
-    expect(admin, contains('loadAllVersionSessions'));
+    expect(admin, contains('loadVersionSessions'));
     expect(admin, contains('buildVerifiedVersionStats'));
     expect(admin, contains('verified_versions'));
     expect(admin, contains('unique_devices'));

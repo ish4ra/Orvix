@@ -153,6 +153,8 @@ Deno.serve(async (req: Request) => {
     !platform ||
     !appVersion
   ) {
+    // Fixed reason only: the payload may come from anyone.
+    console.warn("telemetry rejected: missing or invalid identity");
     return new Response("Missing or invalid telemetry identity", {
       status: 400,
       headers: corsHeaders,
@@ -166,8 +168,13 @@ Deno.serve(async (req: Request) => {
     .eq("installation_id", installationId)
     .maybeSingle();
 
+  // A new session refreshes the network country (it can change between
+  // sessions). A missing country is retried on any message except
+  // heartbeats, so an unresolvable network does not trigger a third-party
+  // lookup every 60 seconds.
   const shouldRefreshCountry =
-    type === "session_start" || !existing.data?.country_code;
+    type === "session_start" ||
+    (!existing.data?.country_code && type !== "heartbeat");
   const resolvedCountryCode = shouldRefreshCountry
     ? await resolveCountry(req)
     : null;

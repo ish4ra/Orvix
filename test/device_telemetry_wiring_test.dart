@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/orvix_admin_source.dart';
+
 void main() {
   group('Orvix device telemetry wiring', () {
     test('client reads Android make/model through the existing native layer', () {
@@ -38,8 +40,7 @@ void main() {
       ).readAsStringSync();
       final telemetry =
           File('supabase/functions/orvix-telemetry/index.ts').readAsStringSync();
-      final admin =
-          File('supabase/functions/orvix-admin/index.ts').readAsStringSync();
+      final admin = orvixAdminSource();
 
       expect(migration, contains('device_manufacturer'));
       expect(migration, contains('device_model'));
@@ -52,8 +53,7 @@ void main() {
     });
 
     test('friendly mappings cover the requested examples', () {
-      final admin =
-          File('supabase/functions/orvix-admin/index.ts').readAsStringSync();
+      final admin = orvixAdminSource();
 
       expect(admin, contains('SM-S928B'));
       expect(admin, contains('Galaxy S24 Ultra'));

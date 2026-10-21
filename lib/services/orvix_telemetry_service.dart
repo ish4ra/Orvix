@@ -11,6 +11,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'platform_profile.dart';
 import 'telemetry_redaction.dart';
+import 'telemetry_session_policy.dart';
 
 /// Lightweight, privacy-conscious product telemetry for the private Orvix
 /// Control Center.
@@ -20,7 +21,9 @@ import 'telemetry_redaction.dart';
 /// two-letter country code is persisted. Raw IP addresses are not stored.
 ///
 /// Telemetry is deliberately isolated from playback/source logic. Failures are
-/// swallowed so analytics can never block startup, playback or navigation.
+/// swallowed so analytics can never block startup, playback or navigation:
+/// [initialize] never throws and bounds every await, and each request has a
+/// timeout. Nothing is retried; the next heartbeat simply reports again.
 ///
 /// Error text, stack traces and event property strings pass through
 /// [redactTelemetryText] first, so URLs, tokens, provider keys and email
@@ -33,6 +36,8 @@ class OrvixTelemetryService with WidgetsBindingObserver {
   static const _installationKey = 'orvix_analytics_installation_id_v1';
   static const _functionName = 'orvix-telemetry';
   static const _heartbeatInterval = Duration(seconds: 60);
+  static const _initStepTimeout = Duration(seconds: 3);
+  static const _requestTimeout = Duration(seconds: 10);
   static const _deviceInfoChannel = MethodChannel('orvix/device_info');
 
   final Random _random = Random.secure();
@@ -47,31 +52,49 @@ class OrvixTelemetryService with WidgetsBindingObserver {
   String? _deviceModel;
   String? _deviceType;
   bool _initialized = false;
-  bool _foreground = true;
-  bool _ended = false;
+  TelemetrySessionPolicy _policy = TelemetrySessionPolicy(foreground: true);
+
+  bool get _foreground => _policy.isForeground;
+  bool get _ended => _policy.isEnded;
 
   bool get isInitialized => _initialized;
 
+  /// Called once from main() before runApp. Never throws: if any step fails
+  /// or takes too long, telemetry stays off for this run.
   Future<void> initialize() async {
     if (_initialized) return;
+    try {
+      await _initialize();
+    } catch (_) {
+      // Telemetry must never affect startup.
+    }
+  }
 
-    final preferences = await SharedPreferences.getInstance();
+  Future<void> _initialize() async {
+    final preferences =
+        await SharedPreferences.getInstance().timeout(_initStepTimeout);
     var installationId = preferences.getString(_installationKey);
     if (installationId == null || installationId.isEmpty) {
       installationId = _uuidV4();
-      await preferences.setString(_installationKey, installationId);
+      await preferences
+          .setString(_installationKey, installationId)
+          .timeout(_initStepTimeout);
     }
 
-    final package = await PackageInfo.fromPlatform();
+    final package = await PackageInfo.fromPlatform().timeout(_initStepTimeout);
     await _loadDeviceInfo();
 
     _installationId = installationId;
     _sessionId = _uuidV4();
     _appVersion = package.version;
     _buildNumber = package.buildNumber;
-    _foreground =
-        WidgetsBinding.instance.lifecycleState == null ||
-        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    // `inactive` still means on screen; see TelemetrySessionPolicy.
+    _policy = TelemetrySessionPolicy(
+      foreground: lifecycle == null ||
+          lifecycle == AppLifecycleState.resumed ||
+          lifecycle == AppLifecycleState.inactive,
+    );
     _initialized = true;
 
     WidgetsBinding.instance.addObserver(this);
@@ -137,33 +160,34 @@ class OrvixTelemetryService with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!_initialized || _ended) return;
 
-    switch (state) {
-      case AppLifecycleState.resumed:
-        _foreground = true;
-        _startHeartbeat();
-        unawaited(track('app_resumed'));
-        break;
-      case AppLifecycleState.inactive:
-      case AppLifecycleState.hidden:
-      case AppLifecycleState.paused:
-        _foreground = false;
-        _heartbeatTimer?.cancel();
-        _heartbeatTimer = null;
-        unawaited(_send(
-          type: 'event',
-          extra: {
-            'event_name': 'app_backgrounded',
-            'event_category': 'app',
-          },
-        ));
-        break;
-      case AppLifecycleState.detached:
-        _foreground = false;
-        _heartbeatTimer?.cancel();
-        _heartbeatTimer = null;
-        _ended = true;
-        unawaited(_send(type: 'session_end', allowEnded: true));
-        break;
+    for (final action in _policy.onLifecycle(state, DateTime.now())) {
+      switch (action) {
+        case TelemetryLifecycleAction.resumed:
+          _startHeartbeat();
+          unawaited(track('app_resumed'));
+          break;
+        case TelemetryLifecycleAction.startNewSession:
+          _sessionId = _uuidV4();
+          _startHeartbeat();
+          unawaited(_send(type: 'session_start'));
+          break;
+        case TelemetryLifecycleAction.backgrounded:
+          _heartbeatTimer?.cancel();
+          _heartbeatTimer = null;
+          unawaited(_send(
+            type: 'event',
+            extra: {
+              'event_name': 'app_backgrounded',
+              'event_category': 'app',
+            },
+          ));
+          break;
+        case TelemetryLifecycleAction.endSession:
+          _heartbeatTimer?.cancel();
+          _heartbeatTimer = null;
+          unawaited(_send(type: 'session_end', allowEnded: true));
+          break;
+      }
     }
   }
 
@@ -210,10 +234,9 @@ class OrvixTelemetryService with WidgetsBindingObserver {
     };
 
     try {
-      await Supabase.instance.client.functions.invoke(
-        _functionName,
-        body: body,
-      );
+      await Supabase.instance.client.functions
+          .invoke(_functionName, body: body)
+          .timeout(_requestTimeout);
     } catch (_) {
       // Telemetry must never affect the app's primary behavior.
     }
@@ -231,10 +254,9 @@ class OrvixTelemetryService with WidgetsBindingObserver {
     if (!Platform.isAndroid) return;
 
     try {
-      final info =
-          await _deviceInfoChannel.invokeMapMethod<String, dynamic>(
-        'getDeviceInfo',
-      );
+      final info = await _deviceInfoChannel
+          .invokeMapMethod<String, dynamic>('getDeviceInfo')
+          .timeout(_initStepTimeout);
       _deviceManufacturer = _cleanDeviceValue(info?['manufacturer']);
       _deviceModel = _cleanDeviceValue(info?['model']);
       _deviceType = _cleanDeviceValue(info?['type']) ?? _deviceType;
@@ -250,15 +272,10 @@ class OrvixTelemetryService with WidgetsBindingObserver {
     return cleaned.length > 120 ? cleaned.substring(0, 120) : cleaned;
   }
 
-  String _platformName() {
-    if (PlatformProfile.isAndroidTv) return 'Android TV';
-    if (Platform.isAndroid) return 'Android Mobile';
-    if (Platform.isWindows) return 'Windows';
-    if (Platform.isMacOS) return 'macOS';
-    if (Platform.isIOS) return 'iOS';
-    if (Platform.isLinux) return 'Linux';
-    return Platform.operatingSystem;
-  }
+  String _platformName() => telemetryPlatformName(
+        isAndroidTvBuild: PlatformProfile.isAndroidTv,
+        operatingSystem: Platform.operatingSystem,
+      );
 
   String _uuidV4() {
     final bytes = List<int>.generate(16, (_) => _random.nextInt(256));
