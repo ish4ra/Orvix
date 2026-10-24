@@ -27,7 +27,7 @@ abstract final class TvMetrics {
   /// Focus animations: quick enough to keep up with a held DPAD key.
   static const focusDuration = Duration(milliseconds: 130);
   static const navCollapsedWidth = 80.0;
-  static const navExpandedWidth = 236.0;
+  static const navExpandedWidth = 224.0;
 
   /// Content padding. Together with the navigation width this keeps every
   /// control inside the 5% overscan-safe area.

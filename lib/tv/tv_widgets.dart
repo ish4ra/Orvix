@@ -738,6 +738,191 @@ class TvLandscapeCard extends StatelessWidget {
   }
 }
 
+/// A Continue Watching card for the remote, in the same visual language as
+/// the Windows and phone cards: the episode still (or backdrop) full-bleed,
+/// remaining time at the top right, title and episode line over a soft
+/// shade, and a lime progress bar.
+class TvContinueCard extends StatelessWidget {
+  const TvContinueCard({
+    super.key,
+    required this.imageUrl,
+    required this.title,
+    required this.detail,
+    required this.progress,
+    required this.width,
+    required this.onPressed,
+    this.chip,
+    this.focusNode,
+    this.onFocusChange,
+  });
+
+  final String? imageUrl;
+  final String title;
+
+  /// "S01E01  •  Pilot" for episodes, "Movie  •  1957" for films.
+  final String detail;
+
+  /// Remaining time ("57m left") or "Up next"; hidden when null.
+  final String? chip;
+
+  /// 0..1 watched.
+  final double progress;
+  final double width;
+  final VoidCallback onPressed;
+  final FocusNode? focusNode;
+  final ValueChanged<bool>? onFocusChange;
+
+  static double heightFor(double width) => width * 9 / 16;
+
+  @override
+  Widget build(BuildContext context) {
+    final height = heightFor(width);
+    return TvFocusable(
+      focusNode: focusNode,
+      onPressed: onPressed,
+      onFocusChange: onFocusChange,
+      semanticLabel: '$title, $detail',
+      builder: (context, focused) => AnimatedScale(
+        scale: focused ? 1.04 : 1,
+        duration: TvMetrics.focusDuration,
+        curve: Curves.easeOutCubic,
+        child: AnimatedContainer(
+          duration: TvMetrics.focusDuration,
+          width: width,
+          height: height,
+          decoration: BoxDecoration(
+            color: const Color(0xFF101411),
+            borderRadius: BorderRadius.circular(13),
+            boxShadow: focused
+                ? const [
+                    BoxShadow(
+                      color: Color(0x8C000000),
+                      blurRadius: 16,
+                      offset: Offset(0, 7),
+                    ),
+                  ]
+                : const [],
+          ),
+          foregroundDecoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(
+              color: focused ? TvColors.primary : const Color(0xFF2D342F),
+              width: focused ? TvMetrics.focusBorder : 1,
+            ),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(13),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                TvNetworkImage(
+                  url: imageUrl,
+                  cacheWidth: tvCacheWidth(context, width, max: 900),
+                  placeholder: const ColoredBox(
+                    color: Color(0xFF151A16),
+                    child: Align(
+                      alignment: Alignment(0, -.3),
+                      child: Icon(Icons.movie_outlined,
+                          color: TvColors.textDim, size: 30),
+                    ),
+                  ),
+                ),
+                const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Color(0x25000000),
+                        Color(0x08000000),
+                        Color(0xE8000000),
+                      ],
+                      stops: [0, .42, 1],
+                    ),
+                  ),
+                ),
+                if (chip != null)
+                  Positioned(
+                    top: 10,
+                    right: 10,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 9, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xD9161917),
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                      child: Text(
+                        chip!,
+                        maxLines: 1,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  left: 14,
+                  right: 14,
+                  bottom: 13,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          height: 1.15,
+                          fontWeight: FontWeight.w900,
+                          shadows: [
+                            Shadow(color: Colors.black87, blurRadius: 7),
+                          ],
+                        ),
+                      ),
+                      if (detail.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          detail,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFFD0D6D1),
+                            fontSize: 12,
+                            height: 1.2,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 9),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(99),
+                        child: LinearProgressIndicator(
+                          minHeight: 4,
+                          value: progress.clamp(0, 1).toDouble(),
+                          backgroundColor:
+                              Colors.white.withValues(alpha: .22),
+                          valueColor: const AlwaysStoppedAnimation<Color>(
+                              TvColors.primary),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// A titled horizontal row that remembers its last focused item: moving up
 /// or down into the row lands where the user left it.
 class TvRow extends StatefulWidget {
