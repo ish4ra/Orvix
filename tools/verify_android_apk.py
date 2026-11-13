@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import argparse
 import collections
+import datetime
+import os
 import re
 import struct
 import subprocess
@@ -469,6 +471,69 @@ def check_zipalign(apk: str, zipalign: Path, failures: Failures) -> None:
 # --------------------------------------------------------------------------
 
 
+def describe_debug_keystores(apks: list[str]) -> list[str]:
+    """Explains a signer mismatch between APK variants of one build.
+
+    A build without the release keystore (CI) is signed with the Android
+    build's debug key. Two certificates then mean that two keystores were
+    used, or that one was recreated between two build commands. This lists
+    when each APK was written and every keystore it can find, with the time
+    it was written and the certificate it holds. It never fails the check
+    itself; anything it cannot read is skipped.
+    """
+    lines: list[str] = []
+
+    def stamp(path: Path) -> str:
+        written = datetime.datetime.fromtimestamp(path.stat().st_mtime, datetime.timezone.utc)
+        return written.strftime("%H:%M:%S")
+
+    for apk in apks:
+        try:
+            lines.append(f"  written {stamp(Path(apk))}Z  {apk}")
+        except OSError:
+            continue
+
+    roots = [Path.home() / ".android", Path("android"), Path("build")]
+    for variable in ("ANDROID_USER_HOME", "ANDROID_PREFS_ROOT"):
+        if os.environ.get(variable):
+            roots.append(Path(os.environ[variable]))
+    if os.environ.get("ANDROID_SDK_HOME"):
+        roots.append(Path(os.environ["ANDROID_SDK_HOME"]) / ".android")
+
+    seen: set[Path] = set()
+    for root in roots:
+        try:
+            found = sorted(
+                path
+                for pattern in ("*.keystore", "*.jks")
+                for path in root.rglob(pattern)
+                if path.is_file()
+            )
+        except OSError:
+            continue
+        for path in found:
+            try:
+                resolved = path.resolve()
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                listing = subprocess.run(
+                    ["keytool", "-list", "-v", "-keystore", str(path), "-storepass", "android"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    check=False,
+                )
+                digest = re.search(r"SHA-?256:\s*([0-9A-Fa-f:]{95})", listing.stdout)
+                cert = digest.group(1).replace(":", "").lower() if digest else "unreadable"
+                lines.append(f"  written {stamp(path)}Z  {path} cert={cert}")
+            except (OSError, ValueError):
+                continue
+    if not seen:
+        lines.append("  no debug keystore found under " + ", ".join(str(root) for root in roots))
+    return lines
+
+
 def find_tool(build_tools: Path, name: str) -> Path:
     path = build_tools / name
     if not path.exists():
@@ -581,6 +646,11 @@ def verify(args: argparse.Namespace) -> int:
         failures.append(
             "APK variants differ in package, versionCode, versionName or signer:\n" + detail
         )
+        if len({ident[3] for ident in identities.values()}) > 1:
+            failures.append(
+                "Signer mismatch details (APKs and keystores, by time written):\n"
+                + "\n".join(describe_debug_keystores(list(identities)))
+            )
     if args.expected_cert_sha256:
         expected = args.expected_cert_sha256.lower()
         for apk, (_p, _vc, _vn, cert) in identities.items():
