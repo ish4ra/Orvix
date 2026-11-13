@@ -78,7 +78,8 @@ class WatchPartyEntry extends StatelessWidget {
                 const SizedBox(height: 6),
                 Text(
                   subtitle,
-                  style: const TextStyle(color: Color(0xFF9CA99E), height: 1.45),
+                  style:
+                      const TextStyle(color: Color(0xFF9CA99E), height: 1.45),
                 ),
               ],
             ),

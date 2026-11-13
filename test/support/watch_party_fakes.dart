@@ -116,6 +116,9 @@ class FakeRoomBackend implements WatchPartyBackend {
   bool selfBuffering = false;
   int? selfDurationMs;
   bool otherInRoom = true;
+
+  /// More people in the room, after "self" and "other".
+  final extras = <WatchPartyParticipant>[];
   final chat = <WatchPartyMessage>[];
   final clientIds = <String, WatchPartyMessage>{};
 
@@ -157,6 +160,7 @@ class FakeRoomBackend implements WatchPartyBackend {
               ready: true,
               durationMs: otherDurationMs,
             ),
+          ...extras,
         ],
       );
 
@@ -255,7 +259,8 @@ class FakeRoomBackend implements WatchPartyBackend {
     if (inviteCode != code) {
       throw const WatchPartyException(WatchPartyError.notFound);
     }
-    return snapshot();
+    // Joining returns the latest chat history.
+    return snapshot(afterChatSeq: chat.length > 50 ? chat.length - 50 : 0);
   }
 
   @override
@@ -425,7 +430,8 @@ class FakePlayer extends WatchPartyPlayerAdapter {
 
   void _advance() {
     final now = time.nowMs;
-    final from = _advancedAtMs > _stalledUntilMs ? _advancedAtMs : _stalledUntilMs;
+    final from =
+        _advancedAtMs > _stalledUntilMs ? _advancedAtMs : _stalledUntilMs;
     if (playing && !stalled && now > from) {
       _positionMs += (now - from) * rate;
     }

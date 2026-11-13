@@ -177,8 +177,7 @@ class WatchPartyRoster {
   final String? hostId;
   final List<WatchPartyParticipant> participants;
 
-  static const empty =
-      WatchPartyRoster(seq: 0, hostId: null, participants: []);
+  static const empty = WatchPartyRoster(seq: 0, hostId: null, participants: []);
 
   static WatchPartyRoster? fromJson(Object? raw) {
     if (raw is! Map) return null;
@@ -264,9 +263,8 @@ class WatchPartyRoom {
   /// "ABCD-EFGH".
   String get formattedCode => formatCode(code);
 
-  static String formatCode(String code) => code.length == 8
-      ? '${code.substring(0, 4)}-${code.substring(4)}'
-      : code;
+  static String formatCode(String code) =>
+      code.length == 8 ? '${code.substring(0, 4)}-${code.substring(4)}' : code;
 
   /// Upper-case letters and digits only, as the backend compares them.
   static String normalizeCode(String input) =>

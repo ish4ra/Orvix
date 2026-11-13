@@ -10,12 +10,23 @@ import '../tv/tv_widgets.dart';
 /// A room's chat: messages in the room's order, newest at the bottom, and
 /// the box to write one. Used in the lobby and in the player's chat panel.
 class WatchPartyChat extends StatefulWidget {
-  const WatchPartyChat({super.key, required this.session, this.tv = false});
+  const WatchPartyChat({
+    super.key,
+    required this.session,
+    this.tv = false,
+    this.tvInputKey,
+    this.tvInputFocusNode,
+  });
 
   final WatchPartySession session;
 
   /// Remote-friendly controls for Android TV.
   final bool tv;
+
+  /// Lets the TV lobby see whether the message box is being typed in, and
+  /// move focus to it.
+  final GlobalKey<TvTextFieldState>? tvInputKey;
+  final FocusNode? tvInputFocusNode;
 
   @override
   State<WatchPartyChat> createState() => _WatchPartyChatState();
@@ -130,14 +141,18 @@ class _WatchPartyChatState extends State<WatchPartyChat> {
           Row(
             children: [
               Expanded(
-                child: TvTextField(
+                child: KeyedSubtree(
                   key: const ValueKey('watch-party-chat-input'),
-                  controller: _controller,
-                  enabled: !_sending,
-                  hint: 'Message the room',
-                  icon: Icons.chat_bubble_outline_rounded,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (_) => _send(),
+                  child: TvTextField(
+                    key: widget.tvInputKey,
+                    focusNode: widget.tvInputFocusNode,
+                    controller: _controller,
+                    enabled: !_sending,
+                    hint: 'Message the room',
+                    icon: Icons.chat_bubble_outline_rounded,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (_) => _send(),
+                  ),
                 ),
               ),
               const SizedBox(width: 10),

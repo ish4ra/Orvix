@@ -270,9 +270,8 @@ class WatchPartySession extends ChangeNotifier {
     final difference = (mine - hosts).abs();
     if (difference <= math.max(3000, hosts ~/ 200)) return null;
     final seconds = (difference / 1000).round();
-    final length = seconds >= 60
-        ? '${seconds ~/ 60} min ${seconds % 60} s'
-        : '$seconds s';
+    final length =
+        seconds >= 60 ? '${seconds ~/ 60} min ${seconds % 60} s' : '$seconds s';
     final direction = mine > hosts ? 'longer' : 'shorter';
     return "Your source is $length $direction than the host's. "
         'Scenes may not line up. Try another source.';
@@ -479,7 +478,8 @@ class WatchPartySession extends ChangeNotifier {
       );
       if (isEnded) return;
       _failures = 0;
-      if (_connection == WatchPartyConnection.connecting && !_channelConnected) {
+      if (_connection == WatchPartyConnection.connecting &&
+          !_channelConnected) {
         _connection = WatchPartyConnection.polling;
       }
       _applySnapshot(snapshot, sentAtLocalMs: sentAt);
@@ -898,9 +898,10 @@ class WatchPartySession extends ChangeNotifier {
         }
       }
       final off = reading.positionMs - playback.positionMs;
+      // A new room state is applied at once, even right after another seek.
       if (off.abs() > WatchPartyTuning.pausedToleranceMs &&
-          !seekSettling &&
-          (_freshState || localNow - _lastSeekAtMs >= _seekCooldownMs)) {
+          (_freshState ||
+              (!seekSettling && localNow - _lastSeekAtMs >= _seekCooldownMs))) {
         _commandSeek(playback.positionMs, localNow);
       }
       _setSyncStatus(playback.isFresh
@@ -960,9 +961,9 @@ class WatchPartySession extends ChangeNotifier {
             ? WatchPartyTuning.hardSeekMs
             : WatchPartyTuning.seekOnlyMs);
     if (gap >= seekThreshold) {
-      final cooledDown =
-          _freshState || localNow - _lastSeekAtMs >= _seekCooldownMs;
-      if (cooledDown && !seekSettling) {
+      final cooledDown = localNow - _lastSeekAtMs >= _seekCooldownMs;
+      // A new room state is applied at once, even right after another seek.
+      if (_freshState || (cooledDown && !seekSettling)) {
         _restoreRate();
         _commandSeek(expected + _seekLeadMs, localNow, measure: true);
         if (jumped && !_freshState && !isHost) {
@@ -1109,8 +1110,8 @@ class WatchPartySession extends ChangeNotifier {
   }
 
   /// Host only. Returns null on success, otherwise the reason.
-  Future<String?> removeParticipant(String participantId) => _hostAction(
-      () => _backend.removeParticipant(_room.id, participantId));
+  Future<String?> removeParticipant(String participantId) =>
+      _hostAction(() => _backend.removeParticipant(_room.id, participantId));
 
   /// Host only. Returns null on success, otherwise the reason.
   Future<String?> transferHost(String participantId) =>

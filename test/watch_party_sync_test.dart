@@ -57,8 +57,7 @@ class _Room {
 
 void main() {
   group('following the room', () {
-    test('a participant who opens the title joins the room position',
-        () async {
+    test('a participant who opens the title joins the room position', () async {
       final room = _Room();
       room.backend.remoteState(playing: true, positionMs: 600000);
       final player = FakePlayer(room.time, positionMs: 15000);
@@ -97,6 +96,27 @@ void main() {
       await room.run(6000);
       expect(room.drift(player).abs(), lessThan(350));
       expect(player.seeks, 1);
+    });
+
+    test('host actions in quick succession are each applied at once', () async {
+      final room = _Room();
+      room.backend.remoteState(playing: true, positionMs: 60000);
+      final player = FakePlayer(room.time, positionMs: 0);
+      room.session.attachPlayer(player, inception);
+      await room.settle();
+      expect(player.commands, ['seek:60000']);
+
+      // The host scrubs again half a second later, then pauses.
+      await room.run(500);
+      room.backend.remoteState(playing: true, positionMs: 900000);
+      await room.settle();
+      expect(player.commands.last, 'seek:900000');
+
+      await room.run(500);
+      room.backend.remoteState(playing: false, positionMs: 1200000);
+      await room.settle();
+      expect(player.commands.sublist(2), ['pause', 'seek:1200000']);
+      expect(player.seeks, 3);
     });
 
     test('duplicate and delayed events change nothing', () async {
@@ -147,8 +167,7 @@ void main() {
       expect(room.session.room.playback.seq, resumed.seq);
     });
 
-    test('a snapshot older than a received event does not roll back',
-        () async {
+    test('a snapshot older than a received event does not roll back', () async {
       final room = _Room();
       room.backend.remoteState(playing: true, positionMs: 60000);
       final player = FakePlayer(room.time, positionMs: 60000);
@@ -797,8 +816,8 @@ void main() {
       expect(room.session.isEnded, isFalse);
 
       // The room carries on; none of it reaches this device.
-      room.backend.remoteState(
-          playing: true, positionMs: 1500000, announce: false);
+      room.backend
+          .remoteState(playing: true, positionMs: 1500000, announce: false);
       room.backend.remoteChat('one', announce: false);
       room.backend.remoteChat('two', announce: false);
       await room.run(4000);
@@ -823,8 +842,8 @@ void main() {
       final player = FakePlayer(room.time, positionMs: 0);
       room.session.attachPlayer(player, inception);
       await room.settle();
-      room.backend.remoteState(
-          playing: true, positionMs: 420000, announce: false);
+      room.backend
+          .remoteState(playing: true, positionMs: 420000, announce: false);
       await room.sync();
       await room.run(5000);
       expect(room.drift(player).abs(), lessThan(350));
@@ -953,8 +972,8 @@ void main() {
       await pass(5000);
       backend.calls.clear();
       await pass(120000);
-      expect(backend.calls.where((c) => c == 'sync').length,
-          lessThanOrEqualTo(6));
+      expect(
+          backend.calls.where((c) => c == 'sync').length, lessThanOrEqualTo(6));
 
       await session.leave();
       await tester.pump(const Duration(seconds: 40));

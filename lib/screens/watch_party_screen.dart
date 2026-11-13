@@ -41,6 +41,14 @@ class _WatchPartyScreenState extends State<WatchPartyScreen> {
   final _codeController = TextEditingController();
   final _regionKey = GlobalKey<TvFocusRegionState>();
 
+  // Android TV lobby: the room column and the chat column are two focus
+  // areas. Right from the room goes to chat and Left comes back, wherever
+  // the controls happen to sit on screen.
+  final _tvRoomScope = FocusScopeNode(debugLabel: 'WatchPartyRoom');
+  final _tvChatScope = FocusScopeNode(debugLabel: 'WatchPartyChat');
+  final _tvChatInput = FocusNode(debugLabel: 'WatchPartyChatInput');
+  final _tvChatInputKey = GlobalKey<TvTextFieldState>();
+
   WatchPartySession? _session;
   bool _busy = false;
   String? _error;
@@ -74,7 +82,12 @@ class _WatchPartyScreenState extends State<WatchPartyScreen> {
 
   void _bind(WatchPartySession? next) {
     if (identical(next, _session)) return;
-    _session?.removeListener(_onSessionUpdate);
+    final previous = _session;
+    if (previous != null) {
+      previous.removeListener(_onSessionUpdate);
+      // The room ended under us: say why on the way back to the start.
+      if (previous.isEnded) _endNotice = WatchPartyText.ended(previous.ended);
+    }
     _session = next;
     next?.addListener(_onSessionUpdate);
     if (mounted) {
@@ -86,7 +99,6 @@ class _WatchPartyScreenState extends State<WatchPartyScreen> {
   void _onSessionUpdate() {
     final session = _session;
     if (session != null && session.isEnded) {
-      // The room ended under us: say why on the way back to the start.
       _endNotice = WatchPartyText.ended(session.ended);
     }
     if (mounted) setState(() {});
@@ -98,7 +110,38 @@ class _WatchPartyScreenState extends State<WatchPartyScreen> {
     _session?.removeListener(_onSessionUpdate);
     _nameController.dispose();
     _codeController.dispose();
+    _tvRoomScope.dispose();
+    _tvChatScope.dispose();
+    _tvChatInput.dispose();
     super.dispose();
+  }
+
+  KeyEventResult _crossTvColumns(KeyEvent event, {required bool fromChat}) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final wanted =
+        fromChat ? LogicalKeyboardKey.arrowLeft : LogicalKeyboardKey.arrowRight;
+    if (event.logicalKey != wanted) return KeyEventResult.ignored;
+    // While typing, Left and Right move the caret.
+    if (fromChat && (_tvChatInputKey.currentState?.editing ?? false)) {
+      return KeyEventResult.ignored;
+    }
+    // A neighbour on the same line in this column comes first.
+    final focused = FocusManager.instance.primaryFocus;
+    if (focused != null &&
+        focused.focusInDirection(
+            fromChat ? TraversalDirection.left : TraversalDirection.right)) {
+      return KeyEventResult.handled;
+    }
+    final target = fromChat ? _tvRoomScope : _tvChatScope;
+    final remembered = target.focusedChild;
+    if (tvCanFocus(remembered)) {
+      tvRequestFocus(remembered!);
+    } else if (!fromChat && tvCanFocus(_tvChatInput)) {
+      tvRequestFocus(_tvChatInput);
+    } else {
+      return KeyEventResult.ignored;
+    }
+    return KeyEventResult.handled;
   }
 
   Future<void> _open(Future<WatchPartySession> Function() action) async {
@@ -119,8 +162,7 @@ class _WatchPartyScreenState extends State<WatchPartyScreen> {
     }
   }
 
-  Future<void> _create() =>
-      _open(() => _service.create(_nameController.text));
+  Future<void> _create() => _open(() => _service.create(_nameController.text));
 
   Future<void> _join() =>
       _open(() => _service.join(_codeController.text, _nameController.text));
@@ -756,118 +798,135 @@ class _WatchPartyScreenState extends State<WatchPartyScreen> {
       children: [
         Expanded(
           flex: 6,
-          child: ListView(
-            children: [
-              TvPageHeader(
-                title: 'Watch Party',
-                subtitle: '${WatchPartyText.connection(session.connection)} · '
-                    '${session.roster.participants.length} of '
-                    '${session.room.maxParticipants} people',
-              ),
-              const SizedBox(height: 16),
-              Text('INVITE CODE', style: TvText.caption),
-              const SizedBox(height: 4),
-              Text(
-                session.room.formattedCode,
-                key: const ValueKey('watch-party-room-code'),
-                style: TvText.display.copyWith(
-                  color: TvColors.primary,
-                  letterSpacing: 6,
+          child: FocusScope(
+            node: _tvRoomScope,
+            onKeyEvent: (_, event) => _crossTvColumns(event, fromChat: false),
+            child: ListView(
+              children: [
+                TvPageHeader(
+                  title: 'Watch Party',
+                  subtitle:
+                      '${WatchPartyText.connection(session.connection)} · '
+                      '${session.roster.participants.length} of '
+                      '${session.room.maxParticipants} people',
                 ),
-              ),
-              const SizedBox(height: 18),
-              Text('NOW WATCHING', style: TvText.caption),
-              const SizedBox(height: 4),
-              Text(
-                media?.label ?? 'Nothing yet',
-                key: const ValueKey('watch-party-title'),
-                style: TvText.section,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _titleHint(session),
-                key: const ValueKey('watch-party-status'),
-                style: TvText.body,
-              ),
-              if (warning != null) ...[
-                const SizedBox(height: 8),
-                Text(warning,
-                    style: TvText.body.copyWith(color: TvColors.danger)),
-              ],
-              const SizedBox(height: 14),
-              if (hasMedia && widget.onOpenMedia != null) ...[
-                TvButton(
-                  key: const ValueKey('watch-party-open-title'),
-                  kind: TvButtonKind.primary,
-                  icon: Icons.play_circle_outline_rounded,
-                  label: 'Open title',
-                  expanded: true,
-                  preferred: true,
-                  onPressed: () => _openTitle(session),
+                const SizedBox(height: 16),
+                Text('INVITE CODE', style: TvText.caption),
+                const SizedBox(height: 4),
+                Text(
+                  session.room.formattedCode,
+                  key: const ValueKey('watch-party-room-code'),
+                  style: TvText.display.copyWith(
+                    color: TvColors.primary,
+                    letterSpacing: 6,
+                  ),
                 ),
                 const SizedBox(height: 18),
-              ],
-              const TvSectionHeader('In the room'),
-              const SizedBox(height: 10),
-              for (final participant in session.roster.participants) ...[
-                TvListRow(
-                  key: ValueKey('watch-party-person-${participant.id}'),
-                  icon: participant.id == session.roster.hostId
-                      ? Icons.workspace_premium_outlined
-                      : Icons.person_outline_rounded,
-                  title: participant.id == session.selfId
-                      ? '${participant.name} (you)'
-                      : participant.name,
-                  subtitle: [
-                    if (participant.id == session.roster.hostId) 'Host',
-                    WatchPartyText.participantStatus(participant,
-                        hasMedia: hasMedia),
-                  ].join(' · '),
-                  trailingIcon:
-                      session.isHost && participant.id != session.selfId
-                          ? Icons.more_horiz_rounded
-                          : null,
-                  onPressed: session.isHost && participant.id != session.selfId
-                      ? () => _manage(session, participant)
-                      : null,
+                Text('NOW WATCHING', style: TvText.caption),
+                const SizedBox(height: 4),
+                Text(
+                  media?.label ?? 'Nothing yet',
+                  key: const ValueKey('watch-party-title'),
+                  style: TvText.section,
                 ),
-                const SizedBox(height: 8),
-              ],
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  TvButton(
-                    key: const ValueKey('watch-party-leave'),
-                    icon: Icons.logout_rounded,
-                    label: 'Leave room',
-                    preferred: !hasMedia || widget.onOpenMedia == null,
-                    onPressed: () => _leave(session),
-                  ),
-                  if (session.isHost)
-                    TvButton(
-                      key: const ValueKey('watch-party-end'),
-                      icon: Icons.cancel_outlined,
-                      label: 'End room for everyone',
-                      onPressed: () => _close(session),
-                    ),
+                const SizedBox(height: 6),
+                Text(
+                  _titleHint(session),
+                  key: const ValueKey('watch-party-status'),
+                  style: TvText.body,
+                ),
+                if (warning != null) ...[
+                  const SizedBox(height: 8),
+                  Text(warning,
+                      style: TvText.body.copyWith(color: TvColors.danger)),
                 ],
-              ),
-              const SizedBox(height: 16),
-            ],
+                const SizedBox(height: 14),
+                if (hasMedia && widget.onOpenMedia != null) ...[
+                  TvButton(
+                    key: const ValueKey('watch-party-open-title'),
+                    kind: TvButtonKind.primary,
+                    icon: Icons.play_circle_outline_rounded,
+                    label: 'Open title',
+                    expanded: true,
+                    preferred: true,
+                    onPressed: () => _openTitle(session),
+                  ),
+                  const SizedBox(height: 18),
+                ],
+                const TvSectionHeader('In the room'),
+                const SizedBox(height: 10),
+                for (final participant in session.roster.participants) ...[
+                  TvListRow(
+                    key: ValueKey('watch-party-person-${participant.id}'),
+                    icon: participant.id == session.roster.hostId
+                        ? Icons.workspace_premium_outlined
+                        : Icons.person_outline_rounded,
+                    title: participant.id == session.selfId
+                        ? '${participant.name} (you)'
+                        : participant.name,
+                    subtitle: [
+                      if (participant.id == session.roster.hostId) 'Host',
+                      WatchPartyText.participantStatus(participant,
+                          hasMedia: hasMedia),
+                    ].join(' · '),
+                    trailingIcon:
+                        session.isHost && participant.id != session.selfId
+                            ? Icons.more_horiz_rounded
+                            : null,
+                    onPressed:
+                        session.isHost && participant.id != session.selfId
+                            ? () => _manage(session, participant)
+                            : null,
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    TvButton(
+                      key: const ValueKey('watch-party-leave'),
+                      icon: Icons.logout_rounded,
+                      label: 'Leave room',
+                      preferred: !hasMedia || widget.onOpenMedia == null,
+                      onPressed: () => _leave(session),
+                    ),
+                    if (session.isHost)
+                      TvButton(
+                        key: const ValueKey('watch-party-end'),
+                        icon: Icons.cancel_outlined,
+                        label: 'End room for everyone',
+                        onPressed: () => _close(session),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+              ],
+            ),
           ),
         ),
         const SizedBox(width: 28),
         Expanded(
           flex: 5,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const TvSectionHeader('Chat'),
-              const SizedBox(height: 10),
-              Expanded(child: WatchPartyChat(session: session, tv: true)),
-            ],
+          child: FocusScope(
+            node: _tvChatScope,
+            onKeyEvent: (_, event) => _crossTvColumns(event, fromChat: true),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const TvSectionHeader('Chat'),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: WatchPartyChat(
+                    session: session,
+                    tv: true,
+                    tvInputKey: _tvChatInputKey,
+                    tvInputFocusNode: _tvChatInput,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ],
@@ -1019,7 +1078,8 @@ class _PersonRow extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 2),
-                Text(status, style: TextStyle(color: statusColor, fontSize: 13)),
+                Text(status,
+                    style: TextStyle(color: statusColor, fontSize: 13)),
               ],
             ),
           ),
