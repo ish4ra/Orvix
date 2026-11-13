@@ -159,7 +159,17 @@ jobs:
       # Same APK set as prerelease.yml, signed with the debug key because
       # pull requests do not get the release keystore.
       - name: Build Android mobile release APKs
+        env:
+          # Both commands must sign with the same debug key. The Android
+          # build keeps that key in its user directory, and on this runner
+          # (which sets XDG_CONFIG_HOME) the first command created it in
+          # ~/.android and the second in ~/.config/.android: two keys, so
+          # the APKs could not replace each other. Naming the directory
+          # keeps one key for both. Release builds use the release keystore
+          # and are not affected.
+          ANDROID_USER_HOME: ${{ runner.temp }}/android-user-home
         run: |
+          mkdir -p "$ANDROID_USER_HOME"
           flutter build apk --release
           flutter build apk --release --split-per-abi \
             --android-project-arg=force-version-code-ignoring-abi=true

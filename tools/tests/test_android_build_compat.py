@@ -1,4 +1,4 @@
-"""The Android Gradle Plugin patch-release fix for the release lint crash.
+"""Android build compatibility: the Gradle plugin lint fix and CI debug signing.
 
 Android Gradle Plugin 9.3.0 and 9.3.1 crash in lintVitalAnalyzeRelease on
 JDK 17 (Google issue 522845800). tools/configure_android_mobile_compat.py
@@ -134,6 +134,33 @@ class WorkflowCoverageTest(unittest.TestCase):
             text = (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
             with self.subTest(workflow=name):
                 self.assertEqual(re.findall(r"java-version: '(\d+)'", text), ["17", "17"])
+
+
+class CiDebugSigningTest(unittest.TestCase):
+    """CI has no release keystore, so its Android Mobile APKs are signed with
+    the Android build's debug key. The universal APK and the per-ABI APKs
+    come from two commands and must share that key, or the installability
+    check (rightly) fails. On a runner that sets XDG_CONFIG_HOME the two
+    commands created the key in two different directories."""
+
+    def test_both_ci_build_commands_use_one_android_user_directory(self):
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        step = text.split("- name: Build Android mobile release APKs\n", 1)[1]
+        step = step.split("\n      - name:", 1)[0]
+        self.assertRegex(step, r"(?m)^          ANDROID_USER_HOME: \S+")
+        commands = step.split("        run: |\n", 1)[1]
+        self.assertEqual(len(re.findall(r"flutter build apk --release", commands)), 2)
+        self.assertLess(commands.index('mkdir -p "$ANDROID_USER_HOME"'), commands.index("flutter build apk"))
+
+    def test_release_builds_sign_with_the_release_keystore_not_the_debug_key(self):
+        signing = (ROOT / "tools" / "configure_android_signing.py").read_text(encoding="utf-8")
+        self.assertIn('signingConfig = signingConfigs.getByName("release")', signing)
+        text = (ROOT / ".github" / "workflows" / "prerelease.yml").read_text(encoding="utf-8")
+        for build in re.finditer(r"flutter build apk --release", text):
+            with self.subTest(position=build.start()):
+                before = text[: build.start()]
+                last_generated = before.rindex("flutter create --platforms=android")
+                self.assertIn("python3 tools/configure_android_signing.py", before[last_generated:])
 
 
 if __name__ == "__main__":
