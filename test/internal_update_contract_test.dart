@@ -4,7 +4,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:orvix/services/app_update_service.dart';
 
 void main() {
-  final client = File('lib/services/app_update_service.dart').readAsStringSync();
+  // The private channel is dormant (see private_update_channel.dart); its
+  // contract with the Edge Function is kept intact for a deliberate return.
+  final client =
+      File('lib/services/private_update_channel.dart').readAsStringSync();
+  final discovery =
+      File('lib/services/public_release_discovery.dart').readAsStringSync();
   final api = File('supabase/functions/orvix-internal-update/index.ts')
       .readAsStringSync();
   final workflow = File('.github/workflows/prerelease.yml')
@@ -43,14 +48,16 @@ void main() {
     expect(client, contains("assetDigest: 'sha256:\$digest'"));
     expect(client, contains("update.assetDigest?.replaceFirst('sha256:', '')"));
     expect(client, contains("uri.scheme != 'https'"));
-    expect(client, contains("_internalSignedDownloadUrl(update)"));
-    expect(client, contains("final actual = await sha256.bind(file.openRead()).first"));
+    expect(client, contains('Future<String> signedDownloadUrl(AppUpdateInfo update)'));
+    expect(File('lib/services/app_update_service.dart').readAsStringSync(),
+        contains('final actual = await sha256.bind(file.openRead()).first'));
     expect(api, contains('Accept: "application/octet-stream"'));
   });
 
   test('ordinary updates are still available and private drafts stay private', () {
-    expect(client, contains('_checkReleaseFeedFallback(currentVersion)'));
-    expect(client, contains('https://api.github.com/repos/ish4ra/Orvix/releases'));
+    expect(discovery, contains('_discoverFromFeed('));
+    expect(discovery, contains(r"'https://api.github.com/repos/$repository/releases'"));
+    expect(discovery, contains("if (raw['draft'] != false) return null;"));
     expect(workflow, contains('distribution:'));
     expect(workflow, contains('default: internal'));
     expect(workflow, contains("inputs.distribution != 'public'"));

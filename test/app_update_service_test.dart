@@ -37,12 +37,13 @@ void main() {
 
   test('updater has a non-API fallback for GitHub rate limits', () {
     final source =
-        File('lib/services/app_update_service.dart').readAsStringSync();
+        File('lib/services/public_release_discovery.dart').readAsStringSync();
 
-    expect(source, contains('https://github.com/ish4ra/Orvix/releases.atom'));
-    expect(source, contains('https://github.com/ish4ra/Orvix/releases'));
-    expect(source, contains('_checkReleaseFeedFallback'));
-    expect(source, contains('_expectedAssetName'));
+    expect(source, contains(r"'https://github.com/$repository/releases.atom'"));
+    expect(source, contains('_discoverFromFeed'));
+    // The feed never invents a download: each candidate is probed first.
+    expect(source, contains('_probeAsset(url)'));
+    expect(source, isNot(contains('_expectedAssetName')));
   });
 
   test('beta decade boundaries never break update ordering', () {

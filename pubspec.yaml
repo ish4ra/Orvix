@@ -51,6 +51,14 @@ dependency_overrides:
       url: https://github.com/varunsalian/debrify.git
       ref: 709eca3a0828f2b5bfdaf153ab6a0c00a89c5f2d
       path: packages/media_kit_video_patched
+  # video_player_avfoundation 2.12.2 and later call an AVFoundation API that
+  # only exists in the Xcode 26 SDK, so they do not compile with the Xcode
+  # 16.4 that the macOS and Modern iOS builds use. 2.12.1 is the last release
+  # that does, and the one those builds used until 2.12.2 came out. Remove
+  # this pin when those builds move to Xcode 26 or later.
+  # The Legacy iOS build replaces this whole section with its own pins
+  # (docs/ios-legacy-build.md), so this one never reaches it.
+  video_player_avfoundation: 2.12.1
 
 flutter:
   uses-material-design: true

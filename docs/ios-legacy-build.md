@@ -52,7 +52,7 @@ exact so the native stack is reproducible.
 | flutter_secure_storage_darwin | 0.4.x | 0.3.2 | last release with iOS 12.0 |
 | package_info_plus | ^10.1.0 | 9.0.1 | 10.x needs Dart 3.10 / Flutter 3.38 |
 | video_player | ^2.14.0 | 2.10.1 | 2.14 needs Dart 3.12; 2.10.1 is the newest for Dart 3.8 |
-| video_player_avfoundation | latest | 2.8.4 | newer releases need iOS 13 / Dart 3.10+ |
+| video_player_avfoundation | 2.12.1 (pinned in `pubspec.yaml`: 2.12.2+ needs the Xcode 26 SDK) | 2.8.4 | newer releases need iOS 13 / Dart 3.10+ |
 | url_launcher_ios | latest | 6.3.4 | 6.4 needs iOS 13 |
 | shared_preferences_foundation | latest | 2.5.4 | newer releases need iOS 13 |
 | path_provider_foundation | latest | 2.4.2 | newest for Dart 3.8; iOS 12.0 |

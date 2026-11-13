@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:orvix/services/public_release_discovery.dart';
 
 // The prerelease workflow can publish either every platform or only the
 // Android Mobile and Android TV APKs. These tests keep both paths, the release
@@ -9,7 +10,7 @@ void main() {
   final prerelease = File('.github/workflows/prerelease.yml').readAsStringSync();
   final pubspec = File('pubspec.yaml').readAsStringSync();
   final updater =
-      File('lib/services/app_update_service.dart').readAsStringSync();
+      File('lib/services/public_release_discovery.dart').readAsStringSync();
 
   String job(String name) {
     final start = prerelease.indexOf('\n  $name:\n');
@@ -145,7 +146,36 @@ void main() {
     expect(android, isNot(contains('Windows')));
     expect(android, isNot(contains('macOS')));
     expect(android, isNot(contains('iOS')));
-    expect(updater, contains("name.endsWith('Android-Mobile.apk')"));
-    expect(updater, contains("name.endsWith('Android-TV.apk')"));
+    expect(updater, contains(r"'Orvix-v$version-Android-Mobile.apk'"));
+    expect(updater, contains(r"'Orvix-v$version-Android-Mobile-$abi.apk'"));
+    expect(updater, contains(r"'Orvix-v$version-Android-TV.apk'"));
+  });
+
+  test('every product finds its installer among the published asset names',
+      () {
+    final release = job('release');
+    final all = release.substring(
+      release.indexOf('            all)\n'),
+      release.indexOf('            *)\n'),
+    );
+    const v = '0.7.10-beta.999';
+    final published = RegExp(r'"dist/[^"]*/(Orvix-[^"/]+)"')
+        .allMatches(all)
+        .map((m) => m.group(1)!.replaceAll(r'$V', v))
+        .toSet();
+    expect(published, hasLength(10));
+    for (final (target, abis) in <(UpdateTarget, List<String>)>[
+      (UpdateTarget.androidTv, const []),
+      (UpdateTarget.androidMobile, const []),
+      (UpdateTarget.androidMobile, const ['arm64-v8a']),
+      (UpdateTarget.androidMobile, const ['armeabi-v7a']),
+      (UpdateTarget.androidMobile, const ['x86_64']),
+      (UpdateTarget.windows, const []),
+      (UpdateTarget.macos, const []),
+      (UpdateTarget.ios, const []),
+    ]) {
+      final first = expectedAssetNames(target, v, androidAbis: abis).first;
+      expect(published, contains(first), reason: '$target $abis');
+    }
   });
 }

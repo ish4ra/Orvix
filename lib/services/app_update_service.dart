@@ -1,19 +1,20 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'local_torrent_service.dart';
 import 'platform_profile.dart';
+import 'public_release_discovery.dart';
+import 'release_version.dart';
+
+export 'public_release_discovery.dart' show UpdateChannel, UpdatePlatform, UpdateTarget;
 
 class AppUpdateInfo {
   const AppUpdateInfo({
@@ -26,6 +27,8 @@ class AppUpdateInfo {
     required this.assetUrl,
     this.assetDigest,
     this.assetSize,
+    this.prerelease = false,
+    this.viaReleaseFeed = false,
     this.internalVersion,
   });
 
@@ -38,6 +41,16 @@ class AppUpdateInfo {
   final String assetUrl;
   final String? assetDigest;
   final int? assetSize;
+
+  /// A public beta/prerelease. Never offered by the automatic check.
+  final bool prerelease;
+
+  /// Found through the release feed while the GitHub API was unavailable:
+  /// no GitHub checksum is known, only the file size.
+  final bool viaReleaseFeed;
+
+  /// Set only by the dormant private channel (private_update_channel.dart).
+  /// Public discovery never produces such an update.
   final String? internalVersion;
 }
 
@@ -45,133 +58,130 @@ enum AppUpdateInstallResult {
   installerOpened,
   permissionRequired,
   openedReleasePage,
+
+  /// macOS: the downloaded archive was shown in Finder for the user to
+  /// install by hand.
+  revealedDownload,
   unsupported,
 }
 
-/// Result of asking the owner-only private update channel.
-enum PrivateUpdateStatus {
-  /// This platform has no private channel.
-  unsupportedPlatform,
+/// An update step failed; [message] is written for the user.
+class UpdateFailure implements Exception {
+  const UpdateFailure(this.message, {this.retryable = true});
 
-  /// No Orvix account session on this device.
-  signedOut,
+  final String message;
 
-  /// Signed in, but the account is not an Orvix admin. The UI never mentions
-  /// private builds to these accounts.
-  notEntitled,
+  /// Retrying the same download can help (false for a rejected APK).
+  final bool retryable;
 
-  /// The account session expired and could not be refreshed.
-  sessionExpired,
-
-  /// Admin only: the server has no GitHub credential configured.
-  serverUnconfigured,
-
-  /// Admin only: GitHub refused or failed the draft lookup.
-  githubUnavailable,
-
-  /// The private endpoint could not be reached or failed unexpectedly.
-  unavailable,
-
-  /// Admin: no private build newer than the installed version.
-  noNewerBuild,
-
-  /// Admin: a newer private build exists for this platform.
-  available,
+  @override
+  String toString() => message;
 }
 
-class PrivateUpdateCheck {
-  const PrivateUpdateCheck(
-    this.status, {
+enum UpdateCheckStatus {
+  available,
+  upToDate,
+  noCompatibleAsset,
+  rateLimited,
+  timeout,
+  network,
+  serverError,
+  refused,
+  httpError,
+  invalidResponse,
+  incomplete,
+  unsupportedPlatform,
+  installedVersionUnknown,
+}
+
+/// Everything an update check needs to explain its result.
+class UpdateCheckReport {
+  const UpdateCheckReport({
+    required this.status,
+    required this.installedVersion,
     this.update,
-    this.draftsVisible,
-    this.skippedDrafts = 0,
-    this.githubStatus,
-    this.failure,
+    this.channel = UpdateChannel.stableAndPrerelease,
+    this.target,
+    this.newestWithoutAsset,
+    this.httpStatus,
+    this.rateLimitResetAt,
+    this.releasesInspected = 0,
   });
 
-  final PrivateUpdateStatus status;
+  final UpdateCheckStatus status;
+  final String? installedVersion;
 
-  /// Why the endpoint gave no usable answer ([PrivateUpdateStatus.unavailable]
-  /// only): `timeout`, `not_deployed` (HTTP 404), `http_<status>`,
-  /// `network` or `bad_response`. Holds no server detail.
-  final String? failure;
+  /// The newest eligible update with an installer for this device.
   final AppUpdateInfo? update;
+  final UpdateChannel channel;
+  final UpdateTarget? target;
 
-  /// Private drafts the server could see on GitHub (admin diagnostics).
-  final int? draftsVisible;
+  /// The version of a newer eligible release without an installer for this
+  /// device (it may be newer than [update]).
+  final String? newestWithoutAsset;
+  final int? httpStatus;
+  final DateTime? rateLimitResetAt;
+  final int releasesInspected;
 
-  /// Drafts without a verified installer for this platform.
-  final int skippedDrafts;
-  final int? githubStatus;
-
-  /// The server answered without `drafts_visible`: it still runs the
-  /// orvix-internal-update version from before the diagnostics were added.
-  bool get legacyServer =>
-      status == PrivateUpdateStatus.noNewerBuild && draftsVisible == null;
-
-  /// The server confirmed this account as an Orvix admin.
-  bool get authorized => switch (status) {
-        PrivateUpdateStatus.serverUnconfigured ||
-        PrivateUpdateStatus.githubUnavailable ||
-        PrivateUpdateStatus.noNewerBuild ||
-        PrivateUpdateStatus.available =>
-          true,
-        _ => false,
+  /// The check could not reach a conclusion. Never shown as "up to date".
+  bool get failed => switch (status) {
+        UpdateCheckStatus.available ||
+        UpdateCheckStatus.upToDate ||
+        UpdateCheckStatus.noCompatibleAsset =>
+          false,
+        _ => true,
       };
 }
 
-enum PublicUpdateStatus { available, upToDate, unreachable }
+/// Runs the Android package installer for an APK and returns
+/// `installer_opened` or `permission_required`. Throws [PlatformException]
+/// with `apk_invalid`, `package_mismatch` or `version_code_not_newer` when
+/// the APK cannot update this installation.
+typedef AndroidApkInstaller = Future<String?> Function(String apkPath);
 
-/// Everything a manual "Check for updates" needs to explain its result.
-class UpdateCheckReport {
-  const UpdateCheckReport({
-    required this.installedVersion,
-    required this.update,
-    required this.publicStatus,
-    required this.private,
-  });
-
-  final String? installedVersion;
-
-  /// The newest applicable update from either channel, or null.
-  final AppUpdateInfo? update;
-  final PublicUpdateStatus publicStatus;
-  final PrivateUpdateCheck private;
-
-  bool get isPrivateUpdate => update?.internalVersion != null;
-}
-
-/// Calls the private update endpoint. Throws [FunctionException] for a
-/// non-2xx answer, like supabase_flutter's `functions.invoke`.
-typedef InternalUpdateInvoker = Future<Object?> Function(
-    Map<String, Object?> body);
-
+/// Public update checks, download, verification and installer handoff.
+///
+/// Discovery uses public GitHub releases only. It needs no Orvix account and
+/// never asks the private update channel.
 class AppUpdateService {
   AppUpdateService({
     http.Client? client,
     Future<String> Function()? installedVersionLoader,
-    InternalUpdateInvoker? internalInvoker,
-    bool Function()? hasAccountSession,
-    String? internalPlatform,
+    Future<UpdatePlatform?> Function()? platformLoader,
+    Future<Directory> Function()? downloadDirectory,
+    AndroidApkInstaller? androidInstaller,
+    Future<void> Function(File installer)? windowsInstallerLauncher,
+    Future<void> Function(File archive)? macosRevealer,
+    Future<bool> Function(Uri uri)? urlOpener,
+    Future<void> Function(Duration delay)? sleep,
   })  : _client = client ?? http.Client(),
-        _installedVersionLoader =
-            installedVersionLoader ?? installedVersion,
-        _internalInvoker = internalInvoker,
-        _hasAccountSession = hasAccountSession,
-        _internalPlatformOverride = internalPlatform;
+        _installedVersionLoader = installedVersionLoader ?? installedVersion,
+        _platformLoader = platformLoader ?? detectPlatform,
+        _downloadDirectory = downloadDirectory ?? _defaultDownloadDirectory,
+        _androidInstaller = androidInstaller ?? _installApkThroughChannel,
+        _windowsInstallerLauncher =
+            windowsInstallerLauncher ?? _launchWindowsInstaller,
+        _macosRevealer = macosRevealer ?? _revealInFinder,
+        _urlOpener = urlOpener ?? _openExternal,
+        _sleep = sleep ?? Future<void>.delayed {
+    _discovery = PublicReleaseDiscovery(client: () => _client);
+  }
 
-  static const _releasesBaseUrl =
-      'https://api.github.com/repos/ish4ra/Orvix/releases';
-  static const _releaseAssetFetchAttempts = 5;
   static const MethodChannel _androidUpdateChannel =
       MethodChannel('orvix/app_update');
 
   http.Client _client;
+  late final PublicReleaseDiscovery _discovery;
   final Future<String> Function() _installedVersionLoader;
-  final InternalUpdateInvoker? _internalInvoker;
-  final bool Function()? _hasAccountSession;
-  final String? _internalPlatformOverride;
+  final Future<UpdatePlatform?> Function() _platformLoader;
+  final Future<Directory> Function() _downloadDirectory;
+  final AndroidApkInstaller _androidInstaller;
+  final Future<void> Function(File installer) _windowsInstallerLauncher;
+  final Future<void> Function(File archive) _macosRevealer;
+  final Future<bool> Function(Uri uri) _urlOpener;
+  final Future<void> Function(Duration delay) _sleep;
   String? _installedVersionCache;
+  Future<UpdatePlatform?>? _platform;
 
   static Future<String>? _installedVersionFuture;
 
@@ -187,6 +197,34 @@ class AppUpdateService {
     }
     return version;
   }
+
+  /// The product this build updates as, or null where Orvix has no update
+  /// path (Linux, web).
+  static Future<UpdatePlatform?> detectPlatform() async {
+    if (Platform.isAndroid) {
+      if (PlatformProfile.isAndroidTv) {
+        return const UpdatePlatform(UpdateTarget.androidTv);
+      }
+      var abis = const <String>[];
+      try {
+        abis = await _androidUpdateChannel
+                .invokeListMethod<String>('deviceAbis') ??
+            const [];
+      } catch (_) {
+        // Unknown ABIs: only the universal phone APK is offered.
+      }
+      return UpdatePlatform(UpdateTarget.androidMobile, androidAbis: abis);
+    }
+    if (Platform.isWindows) return const UpdatePlatform(UpdateTarget.windows);
+    if (Platform.isMacOS) return const UpdatePlatform(UpdateTarget.macos);
+    if (Platform.isIOS) return const UpdatePlatform(UpdateTarget.ios);
+    return null;
+  }
+
+  Future<UpdatePlatform?> platform() => _platform ??= _platformLoader();
+
+  /// The installed version this service compares against.
+  Future<String> currentVersion() => _currentVersion();
 
   Future<String> _currentVersion() async {
     final cached = _installedVersionCache;
@@ -234,531 +272,113 @@ class AppUpdateService {
     }
   }
 
-  Future<AppUpdateInfo?> checkForUpdate() async =>
-      (await checkForUpdateReport()).update;
+  /// The automatic (startup) check: a newer public stable release with an
+  /// installer for this device, or null. Betas, drafts and failed checks
+  /// never produce a prompt. iOS keeps its previous behaviour of no
+  /// automatic prompt, because the app cannot install the update itself.
+  Future<AppUpdateInfo?> checkAutomatic() async {
+    final target = await platform();
+    if (target == null || !target.installsInApp) return null;
+    final report = await check(UpdateChannel.stable);
+    final update = report.update;
+    if (update == null || update.prerelease) return null;
+    return update;
+  }
 
-  /// Checks both channels and explains the outcome, for a manual check.
-  Future<UpdateCheckReport> checkForUpdateReport() async {
-    String currentVersion;
+  /// The manual Settings check: public stable releases and public betas.
+  Future<UpdateCheckReport> checkForUpdateReport() =>
+      check(UpdateChannel.stableAndPrerelease);
+
+  Future<UpdateCheckReport> check(UpdateChannel channel) async {
+    final String installedText;
+    final ReleaseVersion? installed;
     try {
-      currentVersion = await _currentVersion();
+      installedText = await _currentVersion();
+      installed = ReleaseVersion.tryParse(installedText);
     } catch (_) {
-      return const UpdateCheckReport(
+      return UpdateCheckReport(
+        status: UpdateCheckStatus.installedVersionUnknown,
         installedVersion: null,
-        update: null,
-        publicStatus: PublicUpdateStatus.unreachable,
-        private: PrivateUpdateCheck(PrivateUpdateStatus.unavailable),
+        channel: channel,
+      );
+    }
+    if (installed == null) {
+      return UpdateCheckReport(
+        status: UpdateCheckStatus.installedVersionUnknown,
+        installedVersion: installedText,
+        channel: channel,
+      );
+    }
+    final target = await platform();
+    if (target == null) {
+      return UpdateCheckReport(
+        status: UpdateCheckStatus.unsupportedPlatform,
+        installedVersion: installedText,
+        channel: channel,
       );
     }
 
-    final privateCheck = await checkPrivateChannel(currentVersion);
-    final privateUpdate = privateCheck.update;
-    final public = await _checkPublicForUpdate(currentVersion);
-    final best = _newestUpdate(privateUpdate, public.update);
-    return UpdateCheckReport(
-      installedVersion: currentVersion,
-      update: best,
-      publicStatus: public.update != null
-          ? PublicUpdateStatus.available
-          : public.reachable
-              ? PublicUpdateStatus.upToDate
-              : PublicUpdateStatus.unreachable,
-      private: privateCheck,
+    final result = await _discovery.discover(
+      installed: installed,
+      platform: target,
+      channel: channel,
+      allowFeedFallback: channel == UpdateChannel.stableAndPrerelease,
     );
-  }
-
-  Future<({AppUpdateInfo? update, bool reachable})> _checkPublicForUpdate(
-    String currentVersion,
-  ) async {
-    var reachable = false;
-    // Compare private and public updates. Owner accounts must not be pinned
-    // to an older draft beta when a newer public stable version exists.
-    try {
-      final releasesUri = Uri.parse(_releasesBaseUrl).replace(
-        queryParameters: <String, String>{
-          'per_page': '30',
-          // Prevent an intermediary/CDN from replaying a just-before-release
-          // collection response during rapid release publication.
-          '_orvix_check': DateTime.now().millisecondsSinceEpoch.toString(),
-        },
-      );
-      final response = await _client
-          .get(
-            releasesUri,
-            headers: const {
-              'Accept': 'application/vnd.github+json',
-              'User-Agent': 'Orvix-Updater',
-              'X-GitHub-Api-Version': '2022-11-28',
-              'Cache-Control': 'no-cache, no-store, max-age=0',
-              'Pragma': 'no-cache',
-            },
-          )
-          .timeout(const Duration(seconds: 12));
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final decoded = jsonDecode(response.body);
-        if (decoded is List) {
-          reachable = true;
-          AppUpdateInfo? best;
-          for (final raw in decoded) {
-            if (raw is! Map<String, dynamic>) continue;
-            if (raw['draft'] == true) continue;
-            final tag = raw['tag_name']?.toString().trim() ?? '';
-            if (tag.isEmpty || !isVersionNewer(tag, currentVersion)) continue;
-
-            var asset = _selectAsset(raw['assets']);
-            // GitHub can briefly publish a new release in the collection
-            // response with an empty inline assets array even though the
-            // dedicated /releases/{id}/assets endpoint already has the files.
-            if (asset == null) {
-              final assetsUrl = raw['assets_url']?.toString().trim() ?? '';
-              if (assetsUrl.isNotEmpty) {
-                final assets = await _fetchReleaseAssets(
-                  assetsUrl,
-                  attempts: _releaseAssetFetchAttempts,
-                );
-                asset = _selectAsset(assets);
-              }
-            }
-            if (asset == null) continue;
-
-            final candidate = AppUpdateInfo(
-              tag: tag,
-              version: tag.replaceFirst(RegExp(r'^v'), ''),
-              title: raw['name']?.toString().trim().isNotEmpty == true
-                  ? raw['name'].toString().trim()
-                  : tag,
-              notes: raw['body']?.toString() ?? '',
-              releaseUrl: raw['html_url']?.toString() ?? '',
-              assetName: asset['name']?.toString() ?? '',
-              assetUrl: asset['browser_download_url']?.toString() ?? '',
-              assetDigest: asset['digest']?.toString(),
-              assetSize: _asInt(asset['size']),
-            );
-            if (candidate.assetUrl.isEmpty) continue;
-            if (best == null ||
-                isVersionNewer(candidate.version, best.version)) {
-              best = candidate;
-            }
-          }
-          if (best != null) return (update: best, reachable: true);
-        }
-      }
-    } catch (_) {
-      // Fall through to the non-API release feed below. GitHub's unauthenticated
-      // REST API is rate-limited per public IP, which can be hit during rapid
-      // beta testing or on shared/CGNAT connections.
+    if (result.status == DiscoveryStatus.network ||
+        result.status == DiscoveryStatus.timeout) {
+      // A dead socket can stay pooled in package:http's client.
       _resetClient();
     }
 
-    final publicFallback = await _checkReleaseFeedFallback(currentVersion);
-    return (
-      update: publicFallback.update,
-      reachable: reachable || publicFallback.reachable,
+    final release = result.release;
+    final asset = result.asset;
+    final update = release == null || asset == null
+        ? null
+        : AppUpdateInfo(
+            tag: release.tag,
+            version: release.version.toString(),
+            title: release.title,
+            notes: release.notes,
+            releaseUrl: release.htmlUrl,
+            assetName: asset.name,
+            assetUrl: asset.url,
+            assetDigest: asset.digest,
+            assetSize: asset.size,
+            prerelease: release.isPrerelease,
+            viaReleaseFeed: result.viaReleaseFeed,
+          );
+    return UpdateCheckReport(
+      status: _statusOf(result.status),
+      installedVersion: installedText,
+      update: update,
+      channel: channel,
+      target: target.target,
+      newestWithoutAsset: result.newestWithoutAsset?.version.toString(),
+      httpStatus: result.httpStatus,
+      rateLimitResetAt: result.rateLimitResetAt,
+      releasesInspected: result.releasesInspected,
     );
   }
 
-  static AppUpdateInfo? _newestUpdate(AppUpdateInfo? internal, AppUpdateInfo? public) {
-    if (internal == null) return public;
-    if (public == null) return internal;
-    return isVersionNewer(internal.version, public.version) ? internal : public;
-  }
-
-  Future<({AppUpdateInfo? update, bool reachable})> _checkReleaseFeedFallback(
-    String currentVersion,
-  ) async {
-    var reachable = false;
-    const sources = <String>[
-      'https://github.com/ish4ra/Orvix/releases.atom',
-      'https://github.com/ish4ra/Orvix/releases',
-    ];
-    final tagPattern = RegExp(
-      r'/ish4ra/Orvix/releases/tag/(v?\d+\.\d+\.\d+(?:-[A-Za-z]+(?:[.-]?\d+)?)?)',
-      caseSensitive: false,
-    );
-
-    for (final source in sources) {
-      try {
-        final response = await _client
-            .get(
-              Uri.parse(source),
-              headers: const {
-                'User-Agent': 'Orvix-Updater',
-                'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache',
-              },
-            )
-            .timeout(const Duration(seconds: 12));
-        if (response.statusCode < 200 || response.statusCode >= 300) {
-          continue;
-        }
-        reachable = true;
-
-        String? bestTag;
-        for (final match in tagPattern.allMatches(response.body)) {
-          final tag = match.group(1)?.trim();
-          if (tag == null ||
-              tag.isEmpty ||
-              !isVersionNewer(tag, currentVersion)) {
-            continue;
-          }
-          if (bestTag == null || isVersionNewer(tag, bestTag)) {
-            bestTag = tag;
-          }
-        }
-        if (bestTag == null) continue;
-
-        final version = bestTag.replaceFirst(RegExp(r'^v'), '');
-        final assetName = _expectedAssetName(version);
-        if (assetName == null) return (update: null, reachable: true);
-
-        final releaseUrl =
-            'https://github.com/ish4ra/Orvix/releases/tag/$bestTag';
-        final assetUrl =
-            'https://github.com/ish4ra/Orvix/releases/download/'
-            '$bestTag/$assetName';
-
-        final update = AppUpdateInfo(
-          tag: bestTag,
-          version: version,
-          title: 'Orvix v$version',
-          notes:
-              'Update details are available on the Orvix GitHub release page.',
-          releaseUrl: releaseUrl,
-          assetName: assetName,
-          assetUrl: assetUrl,
-        );
-        return (update: update, reachable: true);
-      } catch (_) {
-        _resetClient();
-      }
-    }
-    return (update: null, reachable: reachable);
-  }
-
-  String? _internalPlatform() {
-    final override = _internalPlatformOverride;
-    if (override != null) return override;
-    if (Platform.isWindows) return 'windows';
-    if (Platform.isAndroid) {
-      return PlatformProfile.isAndroidTv ? 'android_tv' : 'android_mobile';
-    }
-    if (Platform.isMacOS) return 'macos';
-    if (Platform.isIOS) return 'ios_modern';
-    return null;
-  }
-
-  bool _signedIn() {
-    final override = _hasAccountSession;
-    if (override != null) return override();
-    try {
-      return Supabase.instance.client.auth.currentSession != null;
-    } catch (_) {
-      // Supabase is not initialized (tests, or a build without accounts).
-      return false;
-    }
-  }
-
-  Future<Object?> _invokeInternal(Map<String, Object?> body) async {
-    final invoker = _internalInvoker;
-    if (invoker != null) return invoker(body);
-    // supabase_flutter refreshes an expired access token before sending and
-    // throws when that refresh fails.
-    final response = await Supabase.instance.client.functions.invoke(
-      'orvix-internal-update',
-      body: body,
-    );
-    return response.data;
-  }
-
-  /// Error bodies normally arrive decoded; a non-JSON content type leaves
-  /// them as text.
-  static Object? _decodeDetails(Object? details) {
-    if (details is! String) return details;
-    try {
-      return jsonDecode(details);
-    } catch (_) {
-      return details;
-    }
-  }
-
-  static String? _errorCode(Object? details) =>
-      details is Map ? details['error']?.toString() : null;
-
-  /// How long the private check waits. The Edge Function may cold-start and
-  /// then lists releases on GitHub; the 8 seconds used before could expire
-  /// first, and the timeout was reported as "no update".
-  @visibleForTesting
-  static Duration privateCheckTimeout = const Duration(seconds: 20);
-
-  /// Asks the owner-only private channel for a build newer than [installed].
-  ///
-  /// Authorization happens only on the server (Supabase session + admin
-  /// allowlist); this client never decides it is an admin. Every failure is
-  /// classified instead of hidden, and none interrupts the public channel.
-  Future<PrivateUpdateCheck> checkPrivateChannel(String installed) async {
-    final platform = _internalPlatform();
-    if (platform == null) {
-      return const PrivateUpdateCheck(PrivateUpdateStatus.unsupportedPlatform);
-    }
-    if (!_signedIn()) {
-      return const PrivateUpdateCheck(PrivateUpdateStatus.signedOut);
-    }
-    Object? data;
-    try {
-      data = await _invokeInternal({'action': 'check', 'platform': platform})
-          .timeout(privateCheckTimeout);
-    } on TimeoutException {
-      return const PrivateUpdateCheck(PrivateUpdateStatus.unavailable,
-          failure: 'timeout');
-    } on FunctionException catch (error) {
-      final details = _decodeDetails(error.details);
-      final code = _errorCode(details);
-      return switch (error.status) {
-        401 => const PrivateUpdateCheck(PrivateUpdateStatus.sessionExpired),
-        403 => const PrivateUpdateCheck(PrivateUpdateStatus.notEntitled),
-        502 when code == 'github_unavailable' => PrivateUpdateCheck(
-            PrivateUpdateStatus.githubUnavailable,
-            githubStatus:
-                details is Map ? _asInt(details['github_status']) : null,
-          ),
-        503 when code == 'internal_updates_unconfigured' =>
-          const PrivateUpdateCheck(PrivateUpdateStatus.serverUnconfigured),
-        404 => const PrivateUpdateCheck(PrivateUpdateStatus.unavailable,
-            failure: 'not_deployed'),
-        final status => PrivateUpdateCheck(PrivateUpdateStatus.unavailable,
-            failure: 'http_$status'),
+  static UpdateCheckStatus _statusOf(DiscoveryStatus status) =>
+      switch (status) {
+        DiscoveryStatus.available => UpdateCheckStatus.available,
+        DiscoveryStatus.upToDate => UpdateCheckStatus.upToDate,
+        DiscoveryStatus.noCompatibleAsset =>
+          UpdateCheckStatus.noCompatibleAsset,
+        DiscoveryStatus.rateLimited => UpdateCheckStatus.rateLimited,
+        DiscoveryStatus.timeout => UpdateCheckStatus.timeout,
+        DiscoveryStatus.network => UpdateCheckStatus.network,
+        DiscoveryStatus.serverError => UpdateCheckStatus.serverError,
+        DiscoveryStatus.refused => UpdateCheckStatus.refused,
+        DiscoveryStatus.httpError => UpdateCheckStatus.httpError,
+        DiscoveryStatus.invalidResponse => UpdateCheckStatus.invalidResponse,
+        DiscoveryStatus.incomplete => UpdateCheckStatus.incomplete,
       };
-    } on AuthException {
-      // The stored session could not be refreshed.
-      return const PrivateUpdateCheck(PrivateUpdateStatus.sessionExpired);
-    } catch (_) {
-      return const PrivateUpdateCheck(PrivateUpdateStatus.unavailable,
-          failure: 'network');
-    }
 
-    if (data is String) {
-      try {
-        data = jsonDecode(data);
-      } catch (_) {}
-    }
-    if (data is! Map || data['releases'] is! List) {
-      return const PrivateUpdateCheck(PrivateUpdateStatus.unavailable,
-          failure: 'bad_response');
-    }
-    AppUpdateInfo? best;
-    for (final item in data['releases'] as List) {
-      if (item is! Map) continue;
-      final version = item['version']?.toString() ?? '';
-      final name = item['asset_name']?.toString() ?? '';
-      final digest = item['sha256']?.toString() ?? '';
-      final size = item['size_bytes'];
-      if (version.isEmpty || name.isEmpty || digest.length != 64 ||
-          RegExp(r'[^0-9a-f]').hasMatch(digest) ||
-          size is! num || size <= 0 ||
-          !isVersionNewer(version, installed)) continue;
-      final candidate = AppUpdateInfo(
-        tag: 'v$version',
-        version: version,
-        title: 'Orvix Internal $version',
-        notes: item['notes']?.toString() ?? '',
-        releaseUrl: '',
-        assetName: name,
-        assetUrl: '',
-        assetDigest: 'sha256:$digest',
-        assetSize: size.toInt(),
-        internalVersion: version,
-      );
-      if (best == null || isVersionNewer(version, best.version)) {
-        best = candidate;
-      }
-    }
-    final skipped = data['skipped'];
-    return PrivateUpdateCheck(
-      best == null
-          ? PrivateUpdateStatus.noNewerBuild
-          : PrivateUpdateStatus.available,
-      update: best,
-      draftsVisible: _asInt(data['drafts_visible']),
-      skippedDrafts: skipped is List ? skipped.length : 0,
-    );
-  }
-
-  Future<String> _internalSignedDownloadUrl(AppUpdateInfo update) async {
-    final platform = _internalPlatform();
-    if (platform == null || !_signedIn()) {
-      throw StateError('Sign in to your authorized Orvix account.');
-    }
-    Object? data;
-    try {
-      data = await _invokeInternal({
-        'action': 'download',
-        'platform': platform,
-        'version': update.internalVersion,
-      }).timeout(const Duration(seconds: 15));
-    } on FunctionException catch (error) {
-      throw StateError(switch (error.status) {
-        401 => 'Your Orvix session expired. Sign in again, then retry.',
-        403 => 'This account is not authorized for this update.',
-        404 => 'This private build is no longer available.',
-        _ => 'Private update download is not available right now.',
-      });
-    } on AuthException {
-      throw StateError('Your Orvix session expired. Sign in again, then retry.');
-    }
-    if (data is String) {
-      try {
-        data = jsonDecode(data);
-      } catch (_) {}
-    }
-    if (data is! Map || data['url'] is! String) {
-      throw StateError('Private update download is not available.');
-    }
-    if (data['sha256']?.toString() !=
-        update.assetDigest?.replaceFirst('sha256:', '')) {
-      throw StateError('Private update checksum metadata changed.');
-    }
-    final uri = Uri.tryParse(data['url'] as String);
-    if (uri == null || uri.scheme != 'https') {
-      throw StateError('Private update URL is invalid.');
-    }
-    return uri.toString();
-  }
-
-  String? _expectedAssetName(String version) {
-    if (Platform.isWindows) {
-      return 'Orvix-Setup-v$version-Windows-x64.exe';
-    }
-    if (Platform.isAndroid) {
-      return PlatformProfile.isAndroidTv
-          ? 'Orvix-v$version-Android-TV.apk'
-          : 'Orvix-v$version-Android-Mobile.apk';
-    }
-    if (Platform.isMacOS) {
-      return 'Orvix-v$version-macOS.zip';
-    }
-    return null;
-  }
-
-  Future<List<Map<String, dynamic>>> _fetchReleaseAssets(
-    String assetsUrl, {
-    int attempts = 1,
-  }) async {
-    final totalAttempts = attempts.clamp(1, 8);
-    for (var attempt = 0; attempt < totalAttempts; attempt++) {
-      try {
-        final base = Uri.parse(assetsUrl);
-        final uri = base.replace(
-          queryParameters: <String, String>{
-            ...base.queryParameters,
-            'per_page': '100',
-            '_orvix_asset_check':
-                DateTime.now().millisecondsSinceEpoch.toString(),
-          },
-        );
-        final response = await _client
-            .get(
-              uri,
-              headers: const {
-                'Accept': 'application/vnd.github+json',
-                'User-Agent': 'Orvix-Updater',
-                'X-GitHub-Api-Version': '2022-11-28',
-                'Cache-Control': 'no-cache, no-store, max-age=0',
-                'Pragma': 'no-cache',
-              },
-            )
-            .timeout(const Duration(seconds: 12));
-        if (response.statusCode >= 200 && response.statusCode < 300) {
-          final decoded = jsonDecode(response.body);
-          if (decoded is List) {
-            final assets =
-                decoded.whereType<Map<String, dynamic>>().toList();
-            if (_selectAsset(assets) != null || attempt + 1 >= totalAttempts) {
-              return assets;
-            }
-          }
-        }
-      } catch (_) {
-        if (attempt + 1 >= totalAttempts) return const [];
-      }
-
-      // A GitHub release is created before gh finishes uploading every asset.
-      // Retry the dedicated asset endpoint while that publication window is
-      // still open instead of permanently missing this version.
-      if (attempt + 1 < totalAttempts) {
-        final seconds = attempt < 2 ? 2 : 4;
-        await Future<void>.delayed(Duration(seconds: seconds));
-      }
-    }
-    return const [];
-  }
-
-  Map<String, dynamic>? _selectAsset(Object? rawAssets) {
-    if (rawAssets is! List) return null;
-    final assets = rawAssets.whereType<Map<String, dynamic>>().toList();
-
-    bool matches(Map<String, dynamic> asset, bool Function(String name) test) {
-      final name = asset['name']?.toString() ?? '';
-      return test(name);
-    }
-
-    if (Platform.isWindows) {
-      return assets.cast<Map<String, dynamic>?>().firstWhere(
-            (asset) =>
-                asset != null &&
-                matches(
-                  asset,
-                  (name) =>
-                      name.contains('Windows-x64') &&
-                      name.toLowerCase().endsWith('.exe'),
-                ),
-            orElse: () => null,
-          );
-    }
-
-    if (Platform.isAndroid) {
-      if (PlatformProfile.isAndroidTv) {
-        return assets.cast<Map<String, dynamic>?>().firstWhere(
-              (asset) =>
-                  asset != null &&
-                  matches(
-                    asset,
-                    (name) => name.endsWith('Android-TV.apk'),
-                  ),
-              orElse: () => null,
-            );
-      }
-      return assets.cast<Map<String, dynamic>?>().firstWhere(
-            (asset) =>
-                asset != null &&
-                matches(
-                  asset,
-                  (name) => name.endsWith('Android-Mobile.apk'),
-                ),
-            orElse: () => null,
-          );
-    }
-
-    if (Platform.isMacOS) {
-      return assets.cast<Map<String, dynamic>?>().firstWhere(
-            (asset) =>
-                asset != null &&
-                matches(
-                  asset,
-                  (name) {
-                    final lower = name.toLowerCase();
-                    return (lower.contains('macos') ||
-                            lower.contains('mac-')) &&
-                        (lower.endsWith('.dmg') ||
-                            lower.endsWith('.pkg') ||
-                            lower.endsWith('.zip'));
-                  },
-                ),
-            orElse: () => null,
-          );
-    }
-
-    return null;
+  static Future<Directory> _defaultDownloadDirectory() async {
+    final temp = await getTemporaryDirectory();
+    return Directory('${temp.path}${Platform.pathSeparator}orvix-updates');
   }
 
   Future<File> download(
@@ -766,10 +386,20 @@ class AppUpdateService {
     void Function(double progress)? onProgress,
     bool Function()? isCancelled,
   }) async {
-    final temp = await getTemporaryDirectory();
-    final updateDir = Directory(
-      '${temp.path}${Platform.pathSeparator}orvix-updates',
-    );
+    if (update.internalVersion != null) {
+      throw const UpdateFailure(
+        'Private builds are not offered by this version of Orvix.',
+        retryable: false,
+      );
+    }
+    final source = Uri.tryParse(update.assetUrl);
+    if (source == null || source.scheme != 'https' || source.host.isEmpty) {
+      throw const UpdateFailure(
+        'This release has no valid download link.',
+        retryable: false,
+      );
+    }
+    final updateDir = await _downloadDirectory();
     await updateDir.create(recursive: true);
     final file = File(
       '${updateDir.path}${Platform.pathSeparator}${update.assetName}',
@@ -793,10 +423,7 @@ class AppUpdateService {
 
       IOSink? sink;
       try {
-        final assetUrl = update.internalVersion != null
-            ? await _internalSignedDownloadUrl(update)
-            : update.assetUrl;
-        final request = http.Request('GET', Uri.parse(assetUrl));
+        final request = http.Request('GET', source);
         request.headers['User-Agent'] = 'Orvix-Updater';
         if (received > 0) request.headers['Range'] = 'bytes=$received-';
 
@@ -804,8 +431,12 @@ class AppUpdateService {
               const Duration(seconds: 30),
             );
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          throw StateError(
-            'Update download returned HTTP ${response.statusCode}.',
+          unawaited(response.stream.drain<void>().catchError((_) {}));
+          final code = response.statusCode;
+          throw UpdateFailure(
+            'GitHub returned HTTP $code for the download.',
+            // A missing or forbidden file does not appear by retrying now.
+            retryable: code < 400 || code >= 500 || code == 408 || code == 429,
           );
         }
 
@@ -843,8 +474,8 @@ class AppUpdateService {
           lastError = null;
           break;
         }
-        lastError = StateError(
-          'Update download ended early ($received/$expectedTotal bytes).',
+        lastError = UpdateFailure(
+          'The download ended early ($received of $expectedTotal bytes).',
         );
       } on _UpdateDownloadCancelled {
         await sink?.close();
@@ -853,6 +484,7 @@ class AppUpdateService {
       } catch (error) {
         lastError = error;
         await sink?.close();
+        if (error is UpdateFailure && !error.retryable) break;
         // A dropped Android/background socket can leave package:http's
         // persistent client tied to the dead connection. Recreate it before
         // retrying so the next Range request gets a genuinely fresh socket.
@@ -860,16 +492,27 @@ class AppUpdateService {
       }
 
       if (attempt < 4) {
-        await Future<void>.delayed(Duration(seconds: attempt < 2 ? 1 : 2));
+        await _sleep(Duration(seconds: attempt < 2 ? 1 : 2));
       }
     }
 
-    if (lastError != null) throw lastError;
+    if (lastError != null) {
+      if (await file.exists()) await file.delete();
+      if (lastError is UpdateFailure) throw lastError;
+      if (lastError is TimeoutException) {
+        throw const UpdateFailure('The download timed out. Check the '
+            'connection and try again.');
+      }
+      throw const UpdateFailure('The download failed. Check the connection '
+          'and try again.');
+    }
     if (!await file.exists() || await file.length() <= 0) {
-      throw StateError('Downloaded update file is empty.');
+      throw const UpdateFailure('The downloaded file is empty.');
     }
     if (expectedTotal > 0 && await file.length() != expectedTotal) {
-      throw StateError('Downloaded update file size did not match GitHub.');
+      await file.delete();
+      throw const UpdateFailure(
+          'The downloaded file size did not match GitHub.');
     }
 
     final digest = update.assetDigest?.trim();
@@ -878,7 +521,10 @@ class AppUpdateService {
       final actual = await sha256.bind(file.openRead()).first;
       if (actual.toString().toLowerCase() != expectedHash) {
         await file.delete().catchError((_) => file);
-        throw StateError('Downloaded update checksum did not match GitHub.');
+        throw const UpdateFailure(
+          "The download did not match GitHub's checksum and was deleted. "
+          'Try again.',
+        );
       }
     }
 
@@ -886,125 +532,129 @@ class AppUpdateService {
     return file;
   }
 
+  /// Hands a downloaded and verified update to the platform installer.
   Future<AppUpdateInstallResult> install(
     AppUpdateInfo update,
     File file,
   ) async {
-    if (Platform.isWindows) {
-      // Keep Windows updates deliberately simple and observable. The old
-      // helper -> silent installer -> helper restart chain could fail on a
-      // locked file and then reopen the previous build, creating duplicate
-      // windows if the user relaunched Orvix at the same time.
-      //
-      // Instead, hand the verified installer directly to Windows, then close
-      // Orvix. The interactive installer owns file replacement and can show a
-      // real error/retry UI if Windows has a lock. The installer itself offers
-      // to launch the updated Orvix when setup completes.
-      await LocalTorrentService.instance.dispose();
-
-      final process = await Process.start(
-        file.path,
-        const [],
-        mode: ProcessStartMode.detached,
-      );
-      if (process.pid <= 0) {
-        throw StateError('Windows installer could not be started.');
-      }
-
-      // Match the proven desktop-updater pattern: give Setup enough time to
-      // create its UI/process before releasing the running app's file locks.
-      await Future<void>.delayed(const Duration(milliseconds: 700));
-      try {
-        // Close through the native window first so WM_DESTROY cleanup runs.
-        // Keep exit(0) only as a last-resort fallback if a plugin/window hook
-        // refuses to close for some unexpected reason.
-        await windowManager.close();
-        await Future<void>.delayed(const Duration(milliseconds: 350));
-      } catch (_) {}
-      exit(0);
-    }
-
-    if (Platform.isAndroid) {
-      try {
-        final result = await _androidUpdateChannel.invokeMethod<String>(
-          'installApk',
-          {'path': file.path},
-        );
-        if (result == 'permission_required') {
-          return AppUpdateInstallResult.permissionRequired;
-        }
+    final target = (await platform())?.target;
+    switch (target) {
+      case UpdateTarget.windows:
+        await _windowsInstallerLauncher(file);
         return AppUpdateInstallResult.installerOpened;
-      } on PlatformException {
-        return _openReleasePage(update);
-      } on MissingPluginException {
-        return _openReleasePage(update);
-      }
+      case UpdateTarget.androidMobile:
+      case UpdateTarget.androidTv:
+        return _installAndroid(update, file);
+      case UpdateTarget.macos:
+        await _macosRevealer(file);
+        return AppUpdateInstallResult.revealedDownload;
+      case UpdateTarget.ios:
+      case null:
+        return openReleasePage(update);
     }
-
-    if (Platform.isMacOS) {
-      await Process.start(
-        'open',
-        [file.path],
-        mode: ProcessStartMode.detached,
-      );
-      return AppUpdateInstallResult.installerOpened;
-    }
-
-    return _openReleasePage(update);
   }
 
-  Future<AppUpdateInstallResult> _openReleasePage(AppUpdateInfo update) async {
+  Future<AppUpdateInstallResult> _installAndroid(
+    AppUpdateInfo update,
+    File file,
+  ) async {
+    final String? result;
+    try {
+      result = await _androidInstaller(file.path);
+    } on PlatformException catch (error) {
+      final rejected = switch (error.code) {
+        'version_code_not_newer' =>
+          'Android would reject this APK: its version code is lower than '
+              'the installed Orvix. It was not installed.',
+        'package_mismatch' =>
+          'This APK is not an Orvix update for this app. It was not '
+              'installed.',
+        'apk_invalid' => 'The downloaded APK could not be read. Try again.',
+        _ => null,
+      };
+      if (rejected != null) {
+        await file.delete().catchError((_) => file);
+        throw UpdateFailure(
+          rejected,
+          retryable: error.code == 'apk_invalid',
+        );
+      }
+      return openReleasePage(update);
+    } on MissingPluginException {
+      return openReleasePage(update);
+    }
+    if (result == 'permission_required') {
+      return AppUpdateInstallResult.permissionRequired;
+    }
+    return AppUpdateInstallResult.installerOpened;
+  }
+
+  /// Opens the GitHub release page (iOS, and a fallback elsewhere).
+  Future<AppUpdateInstallResult> openReleasePage(AppUpdateInfo update) async {
     final uri = Uri.tryParse(update.releaseUrl);
-    if (uri != null && await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+    if (uri != null &&
+        uri.scheme == 'https' &&
+        uri.host == 'github.com' &&
+        await _urlOpener(uri)) {
       return AppUpdateInstallResult.openedReleasePage;
     }
     return AppUpdateInstallResult.unsupported;
   }
 
-  static bool isVersionNewer(String candidate, String current) {
-    final a = _parseVersion(candidate);
-    final b = _parseVersion(current);
-    if (a == null || b == null) return false;
+  static Future<String?> _installApkThroughChannel(String path) =>
+      _androidUpdateChannel.invokeMethod<String>('installApk', {'path': path});
 
-    // Orvix beta releases are sequential update builds. A prerelease of the
-    // next base version (for example 0.7.8-beta.1) must update an installed
-    // 0.7.7 stable build. Within the same base version, normal SemVer ordering
-    // still applies: stable > rc > beta > alpha, and beta.2 > beta.1.
-    for (var i = 0; i < 3; i++) {
-      if (a.$1[i] != b.$1[i]) return a.$1[i] > b.$1[i];
+  static Future<void> _launchWindowsInstaller(File file) async {
+    // Keep Windows updates deliberately simple and observable. The old
+    // helper -> silent installer -> helper restart chain could fail on a
+    // locked file and then reopen the previous build, creating duplicate
+    // windows if the user relaunched Orvix at the same time.
+    //
+    // Instead, hand the verified installer directly to Windows, then close
+    // Orvix. The interactive installer owns file replacement and can show a
+    // real error/retry UI if Windows has a lock. The installer itself offers
+    // to launch the updated Orvix when setup completes.
+    await LocalTorrentService.instance.dispose();
+
+    final process = await Process.start(
+      file.path,
+      const [],
+      mode: ProcessStartMode.detached,
+    );
+    if (process.pid <= 0) {
+      throw const UpdateFailure('The Windows installer could not be started.');
     }
 
-    if (a.$2 != b.$2) return a.$2 > b.$2;
-    return a.$3 > b.$3;
+    // Match the proven desktop-updater pattern: give Setup enough time to
+    // create its UI/process before releasing the running app's file locks.
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    try {
+      // Close through the native window first so WM_DESTROY cleanup runs.
+      // Keep exit(0) only as a last-resort fallback if a plugin/window hook
+      // refuses to close for some unexpected reason.
+      await windowManager.close();
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+    } catch (_) {}
+    exit(0);
   }
 
-  static (List<int>, int, int)? _parseVersion(String raw) {
-    final match = RegExp(
-      r'^v?(\d+)\.(\d+)\.(\d+)(?:-([A-Za-z]+)[.-]?(\d+)?)?',
-    ).firstMatch(raw.trim());
-    if (match == null) return null;
-    final base = <int>[
-      int.parse(match.group(1)!),
-      int.parse(match.group(2)!),
-      int.parse(match.group(3)!),
-    ];
-    final label = match.group(4)?.toLowerCase();
-    final stage = switch (label) {
-      null => 4,
-      'rc' => 3,
-      'beta' => 2,
-      'alpha' => 1,
-      _ => 0,
-    };
-    final number = int.tryParse(match.group(5) ?? '') ?? 0;
-    return (base, stage, number);
+  /// The macOS build is a ZIP of Orvix.app that is not notarized, so it
+  /// cannot be installed silently. Show it in Finder; the UI explains the
+  /// remaining steps.
+  static Future<void> _revealInFinder(File file) async {
+    await Process.start(
+      'open',
+      ['-R', file.path],
+      mode: ProcessStartMode.detached,
+    );
   }
 
-  int? _asInt(Object? value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    return int.tryParse(value?.toString() ?? '');
-  }
+  static Future<bool> _openExternal(Uri uri) =>
+      launchUrl(uri, mode: LaunchMode.externalApplication);
+
+  /// SemVer precedence; see [ReleaseVersion]. False for invalid versions.
+  static bool isVersionNewer(String candidate, String current) =>
+      ReleaseVersion.isNewer(candidate, current);
 
   void dispose() => _client.close();
 }
