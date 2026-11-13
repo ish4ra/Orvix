@@ -205,6 +205,9 @@ class WatchPartySession extends ChangeNotifier {
   WatchPartyMedia? _adapterMedia;
   bool _matching = false;
   bool _settingMedia = false;
+
+  // The title this host started and the room has not accepted yet.
+  WatchPartyMedia? _pendingHostMedia;
   // The most recent reading, and the one position jumps are measured from
   // (cleared whenever this session itself seeks).
   WatchPartyPlayerReading? _latest;
@@ -484,6 +487,11 @@ class WatchPartySession extends ChangeNotifier {
       }
       _applySnapshot(snapshot, sentAtLocalMs: sentAt);
       _refreshConnection();
+      // A title this host started while offline is set once back online.
+      final pending = _pendingHostMedia;
+      if (pending != null && _adapter != null && isHost && !_matching) {
+        unawaited(_hostSetMedia(pending));
+      }
     } on WatchPartyException catch (failure) {
       if (isEnded) return;
       await _handleRoomFailure(failure.error);
@@ -593,6 +601,7 @@ class WatchPartySession extends ChangeNotifier {
     _restoreRate();
     _adapter = null;
     _adapterMedia = null;
+    _pendingHostMedia = null;
     _matching = false;
     _resetObservation();
     if (isEnded) return;
@@ -668,6 +677,7 @@ class WatchPartySession extends ChangeNotifier {
     }
     _restoreRate();
     if (isHost && mine != null && hostMaySetMedia) {
+      _pendingHostMedia = mine;
       unawaited(_hostSetMedia(mine));
     } else {
       _setSyncStatus(rooms == null
@@ -682,9 +692,16 @@ class WatchPartySession extends ChangeNotifier {
     final sentAt = _clock.localNowMs;
     try {
       final snapshot = await _backend.setMedia(_room.id, media);
+      _pendingHostMedia = null;
       _applySnapshot(snapshot, sentAtLocalMs: sentAt);
     } on WatchPartyException catch (failure) {
       if (isEnded) return;
+      // Anything but a lost connection or a rate limit will not get better
+      // by trying again.
+      if (failure.error != WatchPartyError.network &&
+          failure.error != WatchPartyError.rateLimited) {
+        _pendingHostMedia = null;
+      }
       if (failure.error == WatchPartyError.invalidMedia) {
         _setSyncStatus(WatchPartySyncStatus.wrongTitle);
         _setNotice(failure.error.message);

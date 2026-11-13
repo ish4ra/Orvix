@@ -487,6 +487,26 @@ void main() {
           reason: 'the host\'s own player is never moved');
     });
 
+    test('a title started while offline is set once the connection returns',
+        () async {
+      final room = _Room(host: true, media: null);
+      await room.settle();
+      room.backend.offline = true;
+      final player = FakePlayer(room.time, positionMs: 120000);
+      room.session.attachPlayer(player, inception);
+      await room.run(3000);
+      expect(room.backend.media, isNull);
+      expect(room.backend.mediaCalls, isEmpty);
+
+      room.backend.offline = false;
+      await room.sync();
+      await room.run(3000);
+      expect(room.backend.media!.key, inception.key);
+      expect(room.backend.playing, isTrue);
+      expect(room.backend.positionMs, greaterThan(120000));
+      expect(player.commands, isEmpty);
+    });
+
     test('pause, scrub while paused, play and seek are each published once',
         () async {
       final room = _Room(host: true, media: null);
