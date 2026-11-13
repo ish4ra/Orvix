@@ -436,6 +436,18 @@ class IsolationTest(unittest.TestCase):
                 else:
                     self.assertRegex(value, r"^\d+\.\d+\.\d+$")
 
+    def test_versions_pinned_for_normal_builds_are_decided_for_legacy_too(self):
+        # A pubspec_overrides.yaml replaces pubspec.yaml's dependency_overrides
+        # as a whole. A version pinned there for the normal builds (which use
+        # the current Flutter) therefore never reaches the Legacy build, whose
+        # Dart 3.8 could not even resolve it; Legacy must pin its own.
+        body = self.pubspec.split("dependency_overrides:\n", 1)[1].split("\nflutter:\n", 1)[0]
+        pinned = re.findall(r"^  ([a-z0-9_]+): (\d+\.\d+\.\d+)$", body, re.M)
+        self.assertIn("video_player_avfoundation", [name for name, _ in pinned])
+        for name, _ in pinned:
+            with self.subTest(package=name):
+                self.assertRegex(self.overrides, rf"(?m)^  {name}: \d+\.\d+\.\d+$")
+
     def test_legacy_overrides_cover_ios13_plus_dependencies(self):
         for package, version in (
             ("mobile_scanner", "7.4.2"),
