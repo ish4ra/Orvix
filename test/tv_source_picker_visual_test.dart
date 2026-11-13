@@ -74,6 +74,11 @@ void main() {
           markTestSkipped('Flutter SDK fonts not found');
           return;
         }
+        // Loading the fonts announces a system font change. Let that
+        // notification arrive before the picker is built, so no text
+        // relayout is still scheduled when the test ends.
+        await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+        await tester.pump();
         setTvCanvas(tester, entry.value);
         await tester.pumpWidget(MaterialApp(
           theme: tvVisualTheme(),
