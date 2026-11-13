@@ -606,7 +606,12 @@ class WatchPartySession extends ChangeNotifier {
         _playback.playing) {
       unawaited(_publish(false, last.positionMs, serverNow));
     }
-    _setSyncStatus(WatchPartySyncStatus.noPlayer);
+    // A player screen may detach while it is being disposed, when widgets
+    // must not be rebuilt: listeners hear about it a moment later.
+    _syncStatus = WatchPartySyncStatus.noPlayer;
+    scheduleMicrotask(() {
+      if (!_disposed) notifyListeners();
+    });
     unawaited(syncNow());
   }
 
@@ -1153,9 +1158,17 @@ class WatchPartySession extends ChangeNotifier {
     notifyListeners();
   }
 
+  bool _disposed = false;
+
+  @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
+  }
+
   @override
   void dispose() {
     _end(WatchPartyEndReason.left);
+    _disposed = true;
     super.dispose();
   }
 }
