@@ -20,12 +20,8 @@ import '../services/player_orientation_controller.dart';
 import '../services/skip_segment_service.dart';
 import '../services/subtitle_file_picker.dart';
 import '../services/subtitle_preferences_service.dart';
-import '../services/watch_party/watch_party_player_adapter.dart';
-import '../services/watch_party/watch_party_service.dart';
-import '../services/watch_party/watch_party_session.dart';
 import '../widgets/exo_subtitle_view.dart';
 import '../widgets/player_loading_overlay.dart';
-import '../widgets/watch_party_player_overlay.dart';
 
 export '../services/exo_player_preferences_service.dart' show ExoAspectMode;
 
@@ -248,9 +244,6 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
   bool _controlsVisible = true;
   bool _closing = false;
   bool _started = false;
-  // Set only while a Watch Party room is joined; null leaves this player
-  // exactly as it is for solo playback.
-  WatchPartyPlayerBinding? _watchParty;
   bool _reopening = false;
   bool _slowStartNotice = false;
   String? _error;
@@ -488,13 +481,6 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
       _scheduleAutoSubtitle();
       // On TV the remote lands on Play/Pause; touch keeps the surface.
       _showControls(focusPlay: _tv);
-      // The screen replaces its controller when it retries a stream, so the
-      // adapter looks it up each time.
-      _watchParty ??= WatchPartyService.instance.attachPlayer(
-        ExoWatchPartyAdapter(() => _controller),
-        item: widget.item,
-        episode: widget.episode,
-      );
     }
 
     if (_started && value.buffering) {
@@ -1296,9 +1282,6 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
   }) async {
     if (_closing) return;
     _closing = true;
-    // Before the pause below, so it is not read as the host pausing.
-    _watchParty?.detach();
-    _watchParty = null;
     _hideTimer?.cancel();
     _saveTimer?.cancel();
     _slowTimer?.cancel();
@@ -1356,8 +1339,6 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_orientation.exit());
     _closing = true;
-    _watchParty?.detach();
-    _watchParty = null;
     _hideTimer?.cancel();
     _saveTimer?.cancel();
     _slowTimer?.cancel();
@@ -1557,8 +1538,6 @@ class _AndroidExoPlayerScreenState extends State<AndroidExoPlayerScreen>
                       child: Center(child: _NoticeChip(text: _notice!)),
                     ),
                   ),
-                if (_started && _error == null && _panel == _ExoPanel.none)
-                  WatchPartyPlayerOverlay(controlsVisible: _controlsVisible),
                 if (_error != null)
                   ExcludeFocus(
                     excluding: _panel != _ExoPanel.none,

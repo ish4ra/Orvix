@@ -125,25 +125,7 @@ begin
       'start_tv_login_session(uuid,text)'
     ];
     if v_role = 'authenticated' then
-      -- Signed-in only: TV login approval and the Watch Party API.
-      v_expected := array[
-        'approve_tv_login_session(text)',
-        'cancel_tv_login_session(uuid,uuid)',
-        'list_public_supporters()',
-        'orvix_watch_party_can_listen(text)',
-        'poll_tv_login_session(uuid,uuid)',
-        'start_tv_login_session(uuid,text)',
-        'watch_party_close(uuid)',
-        'watch_party_create(text)',
-        'watch_party_join(text,text)',
-        'watch_party_leave(uuid)',
-        'watch_party_remove_participant(uuid,uuid)',
-        'watch_party_send_message(uuid,text,uuid)',
-        'watch_party_set_media(uuid,text,text,integer,integer,text,text)',
-        'watch_party_set_playback(uuid,boolean,bigint,bigint,bigint)',
-        'watch_party_sync(uuid,bigint,boolean,boolean,text,bigint)',
-        'watch_party_transfer_host(uuid,uuid)'
-      ];
+      v_expected := array['approve_tv_login_session(text)'] || v_expected;
     end if;
     if v_actual <> v_expected then
       raise exception '% can execute %, expected %', v_role, v_actual, v_expected;
@@ -198,8 +180,7 @@ begin
 end;
 $$;
 
--- Without a session, account state, TV logins, analytics and watch rooms are
--- unreachable.
+-- Without a session, account state, TV logins and analytics are unreachable.
 do $$
 declare
   v_table text;
@@ -207,9 +188,7 @@ begin
   foreach v_table in array array[
     'orvix_user_state', 'orvix_tv_login_sessions', 'orvix_tv_login_approval_attempts',
     'orvix_admins', 'orvix_analytics_installations', 'orvix_analytics_sessions',
-    'orvix_analytics_events', 'orvix_analytics_errors',
-    'orvix_watch_rooms', 'orvix_watch_room_participants',
-    'orvix_watch_room_messages', 'orvix_watch_rate_limits'
+    'orvix_analytics_events', 'orvix_analytics_errors'
   ] loop
     set local role anon;
     begin

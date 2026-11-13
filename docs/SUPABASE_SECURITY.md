@@ -23,7 +23,6 @@ expected for them and must not be "fixed" with a policy.
 | `supporters` | Public contract `list_public_supporters()`; direct read kept for released apps | select (`is_public and is_active`), temporary | same | writes only from supporter webhooks (service role); see below |
 | `orvix_admins` | Service only | none | none | currently unused; `orvix-admin` checks a fixed owner id |
 | `orvix_analytics_*` | Service only (`orvix-telemetry`, `orvix-admin`) | none | none | `user_id` is set null when the account is deleted |
-| `orvix_watch_rooms`, `orvix_watch_room_participants`, `orvix_watch_room_messages`, `orvix_watch_rate_limits` | RPC-only (`watch_party_*`) | none | none | Watch Party, see `docs/WATCH_PARTY.md`; not deployed yet; cascade from `auth.users` |
 
 ### Public supporters
 
@@ -91,10 +90,6 @@ row level security does not cover) on top of Supabase's default privileges.
 | `delete_orvix_account_data(uuid)` | invoker | user id from the verified JWT in `delete-account` | service_role |
 | `load_orvix_credentials()`, `save_orvix_credentials(p_payload)` | production-only | `auth.uid()` | authenticated |
 | `list_public_supporters()` | definer, `search_path=''` | none (public) | anon, authenticated, service_role |
-| `watch_party_create`, `_join`, `_leave`, `_sync`, `_set_media`, `_set_playback`, `_send_message`, `_remove_participant`, `_transfer_host`, `_close` | definer, `search_path=''` | `auth.uid()` (required); host checked against the room | authenticated |
-| `orvix_watch_party_can_listen(text)` | definer, `search_path=''` | `auth.uid()`; used by the Realtime policy | authenticated |
-| `orvix_watch_party_cleanup(integer)` | definer, `search_path=''` | none | service_role |
-| other `orvix_watch_*` helpers | internal | — | none |
 | `set_orvix_user_state_updated_at()` | invoker trigger | — | not callable through the API |
 
 Pre-auth TV functions are callable by anon by design. The device code and nonce
@@ -102,16 +97,6 @@ are random UUIDs that only the TV holds (the QR code carries only the six-letter
 user code), so they grant only the status of that one login. Turning an
 approval into a session needs the service-role `tv-login-exchange` function,
 leases the login with a one-time exchange token and marks it consumed.
-
-### Realtime
-
-Watch Party is the only user of Realtime. Room events are sent by the
-database (`realtime.send`) to a private Broadcast topic per room. The policy
-"Watch party members receive room broadcasts" on `realtime.messages` allows
-SELECT (listening) to active participants of the room that owns the topic.
-There is deliberately no INSERT policy for these topics (clients cannot send
-on them) and no presence policy. Removing a participant replaces the room's
-topic. Details and deployment checks: `docs/WATCH_PARTY.md`.
 
 ## Edge Functions
 
@@ -147,8 +132,5 @@ and roll back):
 supabase/tests/security/run.sh         "postgresql://localhost:5432/scratch"
 supabase/tests/tv_login/run.sh         "postgresql://localhost:5432/scratch"
 supabase/tests/account_deletion/run.sh "postgresql://localhost:5432/scratch"
-supabase/tests/watch_party/run.sh      "postgresql://localhost:5432/scratch"
-# Needs committed data, so it creates and drops its own database:
-supabase/tests/watch_party/concurrency.sh "postgresql://localhost:5432/postgres"
 deno test --allow-read supabase/functions/
 ```
