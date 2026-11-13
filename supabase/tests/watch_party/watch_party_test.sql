@@ -839,6 +839,37 @@ begin
   assert (select count(*) from public.orvix_watch_room_participants
           where user_id = pg_temp.uid(4) and left_at is null) = 1, 'active memberships';
 
+  -- A join that is refused never costs someone the room they are in:
+  -- a full room, a room they were removed from, and a wrong code.
+  update public.orvix_watch_room_participants set last_seen_at = clock_timestamp()
+  where room_id = v_room and left_at is null;
+  insert into auth.users (id, email)
+  select pg_temp.uid(n), 'filler' || n || '@example.test' from generate_series(15, 30) n;
+  insert into public.orvix_watch_room_participants (room_id, user_id, display_name)
+  select v_room, pg_temp.uid(14 + n), 'Filler ' || n
+  from generate_series(1, 10 - (select count(*)::int from public.orvix_watch_room_participants
+                                where room_id = v_room and left_at is null)) n;
+  assert (select count(*) from public.orvix_watch_room_participants
+          where room_id = v_room and left_at is null) = 10, 'the first room could not be filled';
+  v_result := pg_temp.as_user(4, format($q$select public.watch_party_join(%L, 'Four')$q$,
+    current_setting('test.code')));
+  assert v_result->>'error' = 'room_full', format('joined a full room: %s', v_result);
+  v_result := pg_temp.as_user(3, format($q$select public.watch_party_join(%L, 'Three')$q$,
+    v_other->'room'->>'code'));
+  assert (v_result->>'ok')::boolean, format('removed user could not join another room: %s', v_result);
+  v_result := pg_temp.as_user(3, format($q$select public.watch_party_join(%L, 'Three')$q$,
+    current_setting('test.code')));
+  assert v_result->>'error' = 'removed', format('removed user rejoined: %s', v_result);
+  v_result := pg_temp.as_user(4, $q$select public.watch_party_join('ZZZZZZZZ', 'Four')$q$);
+  assert v_result->>'error' = 'not_found', format('wrong code: %s', v_result);
+  assert (select count(*) from public.orvix_watch_room_participants
+          where room_id = (v_other->'room'->>'id')::uuid and left_at is null
+            and user_id in (pg_temp.uid(3), pg_temp.uid(4))) = 2,
+    'a refused join took someone out of their room';
+  delete from auth.users where id in (select pg_temp.uid(n) from generate_series(15, 30) n);
+  v_result := pg_temp.as_user(3, format('select public.watch_party_leave(%L)',
+    v_other->'room'->>'id'));
+
   -- The last person leaving deletes the room and everything in it.
   v_result := pg_temp.as_user(4, format('select public.watch_party_leave(%L)',
     v_other->'room'->>'id'));

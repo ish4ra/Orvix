@@ -448,19 +448,13 @@ end;
 $$;
 
 -- Locks p_room_id and every other room p_user is active in, always in id
--- order so two users moving between the same rooms cannot deadlock, then
--- takes the user out of the other rooms: one room per account at a time.
-create or replace function public.orvix_watch_lock_and_leave_others(
-  p_user uuid,
-  p_room_id uuid
-)
+-- order so two users moving between the same rooms cannot deadlock.
+create or replace function public.orvix_watch_lock_rooms(p_user uuid, p_room_id uuid)
 returns void
 language plpgsql
 security definer
 set search_path = ''
 as $$
-declare
-  v_other uuid;
 begin
   perform 1 from public.orvix_watch_rooms r
   where r.id = p_room_id
@@ -469,7 +463,22 @@ begin
        where p.user_id = p_user and p.left_at is null)
   order by r.id
   for update;
+end;
+$$;
 
+-- One room per account at a time: takes p_user out of every room except
+-- p_room_id. The caller holds the locks from orvix_watch_lock_rooms and
+-- calls this only once nothing can refuse the move any more, so a failed
+-- attempt to join another room never costs someone their current one.
+create or replace function public.orvix_watch_leave_others(p_user uuid, p_room_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_other uuid;
+begin
   for v_other in
     select p.room_id from public.orvix_watch_room_participants p
     where p.user_id = p_user and p.left_at is null
@@ -582,7 +591,8 @@ begin
   end if;
 
   perform public.orvix_watch_party_cleanup(25);
-  perform public.orvix_watch_lock_and_leave_others(v_uid, null);
+  perform public.orvix_watch_lock_rooms(v_uid, null);
+  perform public.orvix_watch_leave_others(v_uid, null);
 
   loop
     v_code := public.orvix_watch_new_code();
@@ -641,7 +651,7 @@ begin
     return public.orvix_watch_error('not_found');
   end if;
 
-  perform public.orvix_watch_lock_and_leave_others(v_uid, v_room.id);
+  perform public.orvix_watch_lock_rooms(v_uid, v_room.id);
   -- Re-read under the lock: the room may have closed or filled meanwhile.
   select * into v_room from public.orvix_watch_rooms where id = v_room.id;
   if not found or not public.orvix_watch_room_alive(v_room) then
@@ -667,6 +677,9 @@ begin
       end if;
     end if;
   end if;
+
+  -- Nothing can refuse the join from here on.
+  perform public.orvix_watch_leave_others(v_uid, v_room.id);
 
   insert into public.orvix_watch_room_participants as p (room_id, user_id, display_name)
   values (v_room.id, v_uid, v_name)
