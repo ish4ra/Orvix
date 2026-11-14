@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import argparse
 import collections
+import datetime
+import os
 import re
 import struct
 import subprocess
@@ -469,6 +471,105 @@ def check_zipalign(apk: str, zipalign: Path, failures: Failures) -> None:
 # --------------------------------------------------------------------------
 
 
+def describe_debug_keystores(apks: list[str], apksigner: Path | None = None) -> list[str]:
+    """Explains a signer mismatch between APK variants of one build.
+
+    A build without the release keystore (CI) is signed with the Android
+    build's debug key. Two certificates then mean that two keystores were
+    used, or that one was recreated between two build commands. This lists
+    when each APK was written and who signed it, the Android-related
+    locations in the environment, and every keystore it can find with the
+    time it was written and the certificates it holds. It never fails the
+    check itself; anything it cannot read is skipped.
+    """
+    lines: list[str] = []
+
+    def stamp(path: Path) -> str:
+        written = datetime.datetime.fromtimestamp(path.stat().st_mtime, datetime.timezone.utc)
+        return written.strftime("%H:%M:%S")
+
+    def output_of(command: list[str]) -> str:
+        try:
+            return subprocess.run(
+                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False
+            ).stdout
+        except OSError:
+            return ""
+
+    for apk in apks:
+        try:
+            subject = ""
+            if apksigner is not None:
+                found = re.search(
+                    r"certificate DN: (.+)",
+                    output_of([str(apksigner), "verify", "--print-certs", apk]),
+                )
+                subject = f"  signed by: {found.group(1).strip()}" if found else ""
+            lines.append(f"  written {stamp(Path(apk))}Z  {apk}{subject}")
+        except OSError:
+            continue
+
+    for variable in (
+        "HOME", "ANDROID_USER_HOME", "ANDROID_PREFS_ROOT", "ANDROID_SDK_HOME",
+        "ANDROID_HOME", "ANDROID_SDK_ROOT", "GRADLE_USER_HOME", "XDG_CONFIG_HOME",
+    ):
+        if os.environ.get(variable):
+            lines.append(f"  {variable}={os.environ[variable]}")
+
+    # (directory, how many levels below it to look)
+    roots: list[tuple[Path, int]] = [
+        (Path.home(), 3),
+        (Path.home() / ".gradle", 5),
+        (Path("android"), 8),
+        (Path("build"), 10),
+        (Path("/tmp"), 3),
+    ]
+    for variable in ("ANDROID_USER_HOME", "ANDROID_PREFS_ROOT", "RUNNER_TEMP", "XDG_CONFIG_HOME"):
+        if os.environ.get(variable):
+            roots.append((Path(os.environ[variable]), 3))
+    for variable in ("ANDROID_SDK_HOME", "ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        if os.environ.get(variable):
+            roots.append((Path(os.environ[variable]), 2))
+            roots.append((Path(os.environ[variable]).parent, 2))
+
+    skipped = {".pub-cache", ".git", "node_modules", "flutter", "ndk", "caches", "work"}
+    seen: set[Path] = set()
+    for root, depth in roots:
+        base = len(root.parts)
+        for directory, subdirectories, files in os.walk(root, onerror=lambda _error: None):
+            current = Path(directory)
+            if len(current.parts) - base >= depth:
+                subdirectories[:] = []
+            else:
+                subdirectories[:] = [name for name in subdirectories if name not in skipped]
+            for name in files:
+                lowered = name.lower()
+                if "keystore" not in lowered and not lowered.endswith((".jks", ".p12", ".pfx", ".bks")):
+                    continue
+                path = current / name
+                try:
+                    resolved = path.resolve()
+                    if resolved in seen or not path.is_file():
+                        continue
+                    seen.add(resolved)
+                    listing = output_of(
+                        ["keytool", "-list", "-v", "-keystore", str(path), "-storepass", "android"]
+                    )
+                    certs = [
+                        digest.replace(":", "").lower()
+                        for digest in re.findall(r"SHA-?256:\s*([0-9A-Fa-f:]{95})", listing)
+                    ]
+                    lines.append(
+                        f"  written {stamp(path)}Z  {path} "
+                        f"certs={','.join(certs) if certs else 'unreadable'}"
+                    )
+                except (OSError, ValueError):
+                    continue
+    if not seen:
+        lines.append("  no keystore found")
+    return lines
+
+
 def find_tool(build_tools: Path, name: str) -> Path:
     path = build_tools / name
     if not path.exists():
@@ -581,6 +682,11 @@ def verify(args: argparse.Namespace) -> int:
         failures.append(
             "APK variants differ in package, versionCode, versionName or signer:\n" + detail
         )
+        if len({ident[3] for ident in identities.values()}) > 1:
+            failures.append(
+                "Signer mismatch details (APKs and keystores, by time written):\n"
+                + "\n".join(describe_debug_keystores(list(identities), apksigner))
+            )
     if args.expected_cert_sha256:
         expected = args.expected_cert_sha256.lower()
         for apk, (_p, _vc, _vn, cert) in identities.items():

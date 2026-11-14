@@ -14,6 +14,7 @@ import 'ai_sinhala_trace_service.dart';
 import 'ai_translation_credentials_service.dart';
 import 'embedded_subtitle_extractor_service.dart';
 import 'online_subtitle_service.dart';
+import 'orvix_backend_config.dart';
 
 class AiSubtitleCue {
   AiSubtitleCue({
@@ -2528,6 +2529,8 @@ class AiSinhalaSubtitleService {
     required String movieHash,
     required int movieByteSize,
   }) async {
+    // Test builds must not reach the production project.
+    if (OrvixBackendConfig.isTestBuild) return null;
     final body = <String, dynamic>{
       'moviehash': movieHash,
       'moviebytesize': movieByteSize,
@@ -3533,6 +3536,13 @@ class AiSinhalaSubtitleService {
   static Future<_TranslationResponse> _invokeTranslation(
     Map<String, dynamic> body,
   ) async {
+    // Test builds must not reach the production project.
+    if (OrvixBackendConfig.isTestBuild) {
+      return const _TranslationResponse(
+        status: 503,
+        data: <String, dynamic>{'error': 'unavailable_in_test_build'},
+      );
+    }
     final apiKey = await AiTranslationCredentialsService.geminiApiKey();
     if (apiKey == null) {
       return const _TranslationResponse(
