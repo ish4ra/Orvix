@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/media_item.dart';
+import 'orvix_backend_config.dart';
 
 class SubDlTranscriptCandidate {
   const SubDlTranscriptCandidate({
@@ -35,6 +36,8 @@ class SubDlTranscriptService {
     EpisodeItem? episode,
     String? releaseHint,
   }) async {
+    // Test builds must not reach the production project.
+    if (OrvixBackendConfig.isTestBuild) return const [];
     final imdbId = item.id.trim();
     if (!RegExp(r'^tt\d+$').hasMatch(imdbId)) return const [];
 
