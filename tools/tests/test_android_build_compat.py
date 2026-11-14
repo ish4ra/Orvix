@@ -110,19 +110,24 @@ class LintStaysEnabledTest(unittest.TestCase):
                     self.assertIsNone(re.search(pattern, text))
 
 
+# Android build jobs per workflow: Mobile and TV, plus in CI the manually
+# requested Watch Party test build (one job that builds both).
+ANDROID_BUILD_JOBS = {"ci.yml": 3, "prerelease.yml": 2}
+
+
 class WorkflowCoverageTest(unittest.TestCase):
     """The fix lives in a script that every Android build runs, in CI and in
     the release workflow, for Android Mobile and Android TV."""
 
     def test_every_android_build_runs_the_compat_script_after_generating_the_project(self):
-        for name in ("ci.yml", "prerelease.yml"):
+        for name, jobs in ANDROID_BUILD_JOBS.items():
             text = (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
             generated = [m.start() for m in re.finditer(r"flutter create --platforms=android", text)]
             patched = [m.start() for m in re.finditer(r"python3 tools/configure_android_mobile_compat\.py", text)]
             builds = [m.start() for m in re.finditer(r"flutter build apk", text)]
             with self.subTest(workflow=name):
-                self.assertEqual(len(generated), 2, "Android Mobile and Android TV")
-                self.assertEqual(len(patched), 2)
+                self.assertEqual(len(generated), jobs)
+                self.assertEqual(len(patched), jobs)
                 for created, fixed in zip(generated, patched):
                     self.assertLess(created, fixed)
                     following = [build for build in builds if build > created]
@@ -130,10 +135,10 @@ class WorkflowCoverageTest(unittest.TestCase):
                     self.assertLess(fixed, following[0])
 
     def test_android_builds_still_run_on_the_jdk_the_fix_is_for(self):
-        for name in ("ci.yml", "prerelease.yml"):
+        for name, jobs in ANDROID_BUILD_JOBS.items():
             text = (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
             with self.subTest(workflow=name):
-                self.assertEqual(re.findall(r"java-version: '(\d+)'", text), ["17", "17"])
+                self.assertEqual(re.findall(r"java-version: '(\d+)'", text), ["17"] * jobs)
 
 
 class CiDebugSigningTest(unittest.TestCase):
