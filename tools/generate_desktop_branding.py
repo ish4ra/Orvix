@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
-"""Generate native desktop Orvix icons from the canonical v0.7.7 artwork."""
+"""Generate native desktop Orvix icons from the canonical v0.7.7 artwork.
+
+Windows icons are derived from the launcher artwork. macOS uses its own
+committed icon set (tools/macos_icon).
+"""
 
 import argparse
 import re
+import shutil
 from pathlib import Path
 
 from PIL import Image
 
 SOURCE = Path("assets/branding/orvix_logo.png")
 IN_APP_LOGO = Path("assets/branding/orvix_logo.webp")
+MACOS_ICONSET = Path("tools/macos_icon/AppIcon.appiconset")
 
 
 def canonical_icon() -> Image.Image:
@@ -107,19 +113,20 @@ def generate_macos(image: Image.Image) -> None:
             "macOS AppIcon.appiconset is missing; run flutter create --platforms=macos first"
         )
 
-    icon_sizes = {
-        "app_icon_16.png": 16,
-        "app_icon_32.png": 32,
-        "app_icon_64.png": 64,
-        "app_icon_128.png": 128,
-        "app_icon_256.png": 256,
-        "app_icon_512.png": 512,
-        "app_icon_1024.png": 1024,
-    }
-    for name, size in icon_sizes.items():
-        output = icon_dir / name
-        resized = image.resize((size, size), Image.Resampling.LANCZOS)
-        resized.save(output, format="PNG", optimize=True)
+    # macOS has its own icon artwork, drawn on Apple's icon grid by
+    # tools/generate_macos_icon.py and committed. It is copied as it is, so
+    # the launcher art used on the other platforms is not resized into the
+    # Dock, and a build never re-renders the icon.
+    if not MACOS_ICONSET.is_dir():
+        raise SystemExit(f"macOS icon set is missing: {MACOS_ICONSET}")
+    for stale in icon_dir.glob("*.png"):
+        stale.unlink()
+    for source in sorted(MACOS_ICONSET.iterdir()):
+        shutil.copyfile(source, icon_dir / source.name)
+    for size in (16, 32, 64, 128, 256, 512, 1024):
+        with Image.open(icon_dir / f"app_icon_{size}.png") as icon:
+            if icon.size != (size, size) or icon.mode != "RGBA":
+                raise SystemExit(f"macOS icon app_icon_{size}.png is not {size}x{size} RGBA")
 
     config = Path("macos/Runner/Configs/AppInfo.xcconfig")
     if config.exists():
