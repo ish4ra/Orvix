@@ -112,6 +112,29 @@ class TestBuildIdentityTest(unittest.TestCase):
             identity.android_manifest('android:label="orvix"')
         with self.assertRaises(identity.IdentityError):
             identity.windows_resources("nothing")
+        with self.assertRaises(identity.IdentityError):
+            identity.macos_app_info("PRODUCT_NAME = orvix\n")
+
+    def test_macos_gets_its_own_bundle_identifier_and_name(self):
+        info = (
+            "// The application's name.\n"
+            "PRODUCT_NAME = Orvix\n"
+            "PRODUCT_BUNDLE_IDENTIFIER = com.orvix.orvix\n"
+            "PRODUCT_COPYRIGHT = Copyright\n"
+        )
+        changed = identity.macos_app_info(info)
+        self.assertIn("PRODUCT_NAME = Orvix Watch Party Test\n", changed)
+        self.assertIn("PRODUCT_BUNDLE_IDENTIFIER = com.orvix.orvix.wptest\n", changed)
+        self.assertIn("PRODUCT_COPYRIGHT = Copyright\n", changed)
+
+    def test_second_macos_copy_has_a_third_identity(self):
+        script = (ROOT / "tools" / "package_macos_test_build.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("second_id=com.orvix.orvix.wptest2", script)
+        self.assertIn('codesign --force --sign - --entitlements "$entitlements" "$second"', script)
+        # The copy must refuse anything that is not the test build.
+        self.assertIn('[ "$first_id" = com.orvix.orvix.wptest ]', script)
 
     def test_committed_windows_resources_can_be_given_the_test_identity(self):
         resources = (ROOT / "windows" / "runner" / "Runner.rc").read_text(
@@ -134,14 +157,20 @@ def job(workflow: str, name: str) -> str:
     return match.group(1)
 
 
-TEST_JOBS = ("watch-party-test-android", "watch-party-test-windows")
+TEST_JOBS = (
+    "watch-party-test-android",
+    "watch-party-test-windows",
+    "watch-party-test-macos",
+)
 TEST_ONLY_WORDS = (
     "ORVIX_TEST_BUILD",
     "ORVIX_WATCH_PARTY",
     "ORVIX_SUPABASE_",
     "ORVIX_TEST_SUPABASE_",
     "write_test_build_defines.py \"",
-    "configure_test_build_identity.py ",
+    "configure_test_build_identity.py android",
+    "configure_test_build_identity.py windows",
+    "configure_test_build_identity.py macos",
     "dart-define-from-file",
 )
 
@@ -188,7 +217,12 @@ class WorkflowTest(unittest.TestCase):
     def test_backend_values_come_from_secrets_and_stay_off_command_lines(self):
         for name in TEST_JOBS:
             body = job(CI, name)
-            self.assertEqual(body.count("secrets.ORVIX_TEST_SUPABASE_URL"), 1)
+            # macOS reads the address a second time, to check that the built
+            # app really contains it.
+            self.assertEqual(
+                body.count("secrets.ORVIX_TEST_SUPABASE_URL"),
+                2 if name == "watch-party-test-macos" else 1,
+            )
             self.assertEqual(
                 body.count("secrets.ORVIX_TEST_SUPABASE_PUBLISHABLE_KEY"), 1
             )
@@ -205,6 +239,35 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("configure_android_mobile_compat.py", android)
         self.assertIn("java-version: '17'", android)
         self.assertIn("configure_test_build_identity.py windows", job(CI, TEST_JOBS[1]))
+        macos = job(CI, TEST_JOBS[2])
+        self.assertIn("configure_test_build_identity.py macos", macos)
+        self.assertIn("--bundle-id com.orvix.orvix.wptest ", macos)
+
+    def test_macos_test_build_is_verified_packed_and_started(self):
+        macos = job(CI, "watch-party-test-macos")
+        steps = [
+            "write_test_build_defines.py",
+            "flutter create --platforms=macos",
+            "generate_desktop_branding.py --macos",
+            "configure_macos_build.py",
+            "configure_test_build_identity.py macos",
+            "flutter build macos --release",
+            "verify_macos_app.py",
+            "package_macos_test_build.sh",
+            "macos_launch_smoke_test.sh",
+            "name: orvix-watch-party-test-macos\n",
+        ]
+        positions = [macos.index(step) for step in steps]
+        self.assertEqual(positions, sorted(positions))
+        for expectation in (
+            "--require-arch arm64",
+            "--require-arch x86_64",
+            "--expect-text watch_party_create",
+            "--expect-text-env ORVIX_TEST_SUPABASE_URL",
+            "--require-entitlement com.apple.security.network.client",
+        ):
+            self.assertIn(expectation, macos)
+        self.assertIn("runs-on: macos-15", macos)
 
 
 class StagingScriptTest(unittest.TestCase):

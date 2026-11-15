@@ -1,0 +1,63 @@
+Orvix Watch Party Test for macOS
+================================
+
+A private test build. It talks only to the Watch Party test backend, never
+to the public Orvix service, and it never looks for app updates. It installs
+next to the public Orvix app and does not touch its settings or sign-in.
+
+Works on Apple Silicon (M1 and later) and Intel Macs.
+
+What is in this folder
+----------------------
+  Orvix Watch Party Test.app      the test app
+  Orvix Watch Party Test 2.app    the same build as a second, separate app,
+                                  for testing with two accounts on one Mac
+
+Install
+-------
+1. Drag both apps into Applications (or any folder you like).
+2. Open "Orvix Watch Party Test".
+
+The first time, macOS will refuse: "Apple could not verify ..." This is
+expected. The build is signed ad-hoc for private testing. It is NOT signed
+with an Apple Developer ID and NOT notarized, so Gatekeeper does not know it.
+
+To allow this one app (macOS 15 Sequoia and later):
+  a. Click Done on the warning.
+  b. Open System Settings > Privacy & Security.
+  c. Scroll down to "Orvix Watch Party Test was blocked ..." and click
+     Open Anyway, then confirm.
+  Repeat once for "Orvix Watch Party Test 2".
+
+On macOS 14 and earlier: right-click the app, choose Open, then Open.
+
+Or, in Terminal, remove the download mark from these two apps only:
+  xattr -dr com.apple.quarantine "/Applications/Orvix Watch Party Test.app"
+  xattr -dr com.apple.quarantine "/Applications/Orvix Watch Party Test 2.app"
+
+Do not turn Gatekeeper off for the whole Mac. It is not needed.
+
+Testing Watch Party on one Mac
+------------------------------
+1. Open "Orvix Watch Party Test" and create or sign in to test account A.
+2. Open "Orvix Watch Party Test 2" and create or sign in to test account B.
+   (Accounts live in the test backend. Your public Orvix account does not
+   exist there.)
+3. In app 1: Settings > Watch Party > create a room. Note the code.
+4. In app 2: Settings > Watch Party > join with the code.
+5. In app 1 (the host) start a title. Open the same title in app 2.
+6. Play, pause and seek in app 1 and watch app 2 follow. Send chat both ways.
+
+Use direct or debrid sources. Both apps would share one local P2P port, and
+the P2P engine is not bundled in this build.
+
+This checks the real backend, real-time delivery and the player following
+the room. Both players share one Mac, one network and one clock, so it does
+not show how sync behaves between two different devices.
+
+Remove
+------
+Delete the two apps. Their data is in:
+  ~/Library/Containers/com.orvix.orvix.wptest
+  ~/Library/Containers/com.orvix.orvix.wptest2
+Saved secrets are in Keychain Access under names starting "orvix-test.".

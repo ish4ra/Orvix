@@ -26,7 +26,7 @@ on:
       watch_party_test_build:
         description: >-
           Also build private Watch Party test builds (Android Mobile,
-          Android TV, Windows) against the test Supabase project.
+          Android TV, Windows, macOS) against the test Supabase project.
           Workflow artifacts only; nothing is published.
         type: boolean
         default: false
@@ -80,6 +80,8 @@ jobs:
           bash -n tools/verify_ios_ipa.sh
           bash -n tools/verify_ios_legacy_ipa.sh
           bash -n tools/android_install_smoke_test.sh
+          bash -n tools/package_macos_test_build.sh
+          bash -n tools/macos_launch_smoke_test.sh
       - name: Test Android APK installability gate
         run: python3 -m unittest discover -s tools/tests -v
       - name: Guard canonical maintenance rules
@@ -537,3 +539,86 @@ jobs:
           retention-days: 7
           if-no-files-found: error
           path: build/windows/x64/runner/Release/
+
+  watch-party-test-macos:
+    name: Watch Party test build (macOS)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.watch_party_test_build }}
+    needs: quality
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Check the test backend configuration
+        env:
+          ORVIX_TEST_SUPABASE_URL: ${{ secrets.ORVIX_TEST_SUPABASE_URL }}
+          ORVIX_TEST_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.ORVIX_TEST_SUPABASE_PUBLISHABLE_KEY }}
+        run: python3 tools/write_test_build_defines.py "$RUNNER_TEMP/orvix-test-defines.json"
+      - name: Generate macOS platform
+        run: flutter create --platforms=macos --org com.orvix --project-name orvix .
+      - name: Configure macOS test build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/orvix-branding-venv"
+          "$RUNNER_TEMP/orvix-branding-venv/bin/python" -m pip install --disable-pip-version-check pillow
+          "$RUNNER_TEMP/orvix-branding-venv/bin/python" tools/generate_desktop_branding.py --macos
+          "$RUNNER_TEMP/orvix-branding-venv/bin/python" tools/configure_macos_build.py
+          python3 tools/configure_test_build_identity.py macos
+      - name: Get dependencies
+        run: flutter pub get
+      - name: Build macOS test app
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build macos --release \
+            --dart-define-from-file="$RUNNER_TEMP/orvix-test-defines.json"
+      - name: Verify the test app
+        shell: bash
+        env:
+          ORVIX_TEST_SUPABASE_URL: ${{ secrets.ORVIX_TEST_SUPABASE_URL }}
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/orvix-branding-venv/bin/python" tools/verify_macos_app.py \
+            "build/macos/Build/Products/Release/Orvix Watch Party Test.app" \
+            --bundle-id com.orvix.orvix.wptest --name "Orvix Watch Party Test" \
+            --require-arch arm64 --require-arch x86_64 \
+            --require-entitlement com.apple.security.app-sandbox \
+            --require-entitlement com.apple.security.network.client \
+            --require-entitlement com.apple.security.network.server \
+            --expect-text watch_party_create \
+            --expect-text-env ORVIX_TEST_SUPABASE_URL \
+            --icon-master tools/macos_icon/AppIcon.appiconset/app_icon_1024.png \
+            --report macos-test-report/verification.txt
+      - name: Pack the test build
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/package_macos_test_build.sh \
+            "build/macos/Build/Products/Release/Orvix Watch Party Test.app" \
+            "$RUNNER_TEMP/macos-test"
+          mv "$RUNNER_TEMP/macos-test/orvix-watch-party-test-macos.zip" .
+      - name: Start both test apps on this Apple Silicon runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          FOLDER="$RUNNER_TEMP/macos-test/Orvix Watch Party Test (macOS)"
+          mkdir -p macos-test-report
+          bash tools/macos_launch_smoke_test.sh macos-test-report \
+            "$FOLDER/Orvix Watch Party Test.app" \
+            "$FOLDER/Orvix Watch Party Test 2.app" 2>&1 | tee macos-test-report/launch.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: orvix-watch-party-test-macos-report
+          retention-days: 7
+          if-no-files-found: warn
+          path: macos-test-report/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orvix-watch-party-test-macos
+          retention-days: 7
+          if-no-files-found: error
+          path: orvix-watch-party-test-macos.zip

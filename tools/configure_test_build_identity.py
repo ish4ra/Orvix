@@ -11,6 +11,12 @@ it or sharing its saved data:
            left alone on purpose: the test build and the installed app share
            the stream cache, so only one of them may run at a time.
 
+  macos    bundle identifier com.orvix.orvix.wptest and the name
+           "Orvix Watch Party Test". macOS keeps a sandboxed app's settings,
+           sign-in, caches and temporary files in a folder named after the
+           bundle identifier, so all of them are separate from the public
+           app's.
+
 Run after the platform's normal configuration scripts. It fails if a file
 does not look as expected, so a template change cannot silently produce a
 test build that carries the public identity.
@@ -28,6 +34,9 @@ PUBLIC_ANDROID_ID = "com.orvix.orvix"
 TEST_ANDROID_ID = "com.orvix.orvix.wptest"
 TEST_APP_LABEL = "Orvix Test"
 TEST_WINDOWS_PRODUCT = "orvix-watch-party-test"
+PUBLIC_MACOS_ID = "com.orvix.orvix"
+TEST_MACOS_ID = "com.orvix.orvix.wptest"
+TEST_MACOS_NAME = "Orvix Watch Party Test"
 
 
 class IdentityError(Exception):
@@ -73,11 +82,28 @@ def windows_resources(text: str) -> str:
     )
 
 
+def macos_app_info(text: str) -> str:
+    lines = text.split("\n")
+    wanted = {
+        "PRODUCT_NAME = Orvix": f"PRODUCT_NAME = {TEST_MACOS_NAME}",
+        f"PRODUCT_BUNDLE_IDENTIFIER = {PUBLIC_MACOS_ID}": (
+            f"PRODUCT_BUNDLE_IDENTIFIER = {TEST_MACOS_ID}"
+        ),
+    }
+    for old, new in wanted.items():
+        matches = [index for index, line in enumerate(lines) if line.strip() == old]
+        if len(matches) != 1:
+            raise IdentityError(f"expected exactly one line '{old}', found {len(matches)}.")
+        lines[matches[0]] = new
+    return "\n".join(lines)
+
+
 TARGETS = {
     "android": (
         ("android/app/build.gradle.kts", android_gradle),
         ("android/app/src/main/AndroidManifest.xml", android_manifest),
     ),
+    "macos": (("macos/Runner/Configs/AppInfo.xcconfig", macos_app_info),),
     "windows": (("windows/runner/Runner.rc", windows_resources),),
 }
 

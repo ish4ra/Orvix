@@ -18,6 +18,8 @@ production project.
 | AI Sinhala, audio subtitle fallback, SubDL transcripts | as today | off (they call production functions) |
 | Android application id | `com.orvix.orvix` | `com.orvix.orvix.wptest`, shown as "Orvix Test" |
 | Windows settings folder | `Orvix\orvix` | `Orvix\orvix-watch-party-test` |
+| macOS bundle identifier | `com.orvix.orvix` | `com.orvix.orvix.wptest`, shown as "Orvix Watch Party Test" |
+| macOS saved secrets (Keychain) | default service | own service, `orvix-test.<bundle identifier>` |
 | Where it goes | GitHub release | workflow artifact, kept 7 days |
 
 Sign-in, account data, telemetry and everything else that uses the app's
@@ -90,6 +92,9 @@ Actions → **Orvix CI** → Run workflow → pick the branch → tick
 - Watch Party test build (Android mobile) → `orvix-watch-party-test-android-mobile`
 - Watch Party test build (Android tv) → `orvix-watch-party-test-android-tv`
 - Watch Party test build (Windows) → `orvix-watch-party-test-windows`
+- Watch Party test build (macOS) → `orvix-watch-party-test-macos`, plus
+  `orvix-watch-party-test-macos-report` (what was checked, and a screenshot
+  of both apps started on the build machine)
 
 Download the artifacts from the run page. Without the two secrets these jobs
 stop at "Check the test backend configuration".
@@ -106,12 +111,63 @@ stop at "Check the test backend configuration".
   FFmpeg tools and the stream engine that the release adds are not included,
   so sources that depend on them will not play. Use direct or debrid sources.
 
+- **macOS:** see [macOS](#macos) below.
+
 Then create accounts in the test project (sign up inside the test app) and
 follow the device plan in [WATCH_PARTY.md](WATCH_PARTY.md#device-testing-before-enabling).
 
+## macOS
+
+The macOS artifact is a ZIP inside the downloaded ZIP. Unpack both. The folder
+holds two apps and `INSTALL.txt`:
+
+- `Orvix Watch Party Test.app` (`com.orvix.orvix.wptest`)
+- `Orvix Watch Party Test 2.app` (`com.orvix.orvix.wptest2`): the same build
+  under a second identity, so two signed-in participants can run on one Mac.
+
+Both are universal (Apple Silicon and Intel), sandboxed, and **ad-hoc
+signed**. They are not signed with an Apple Developer ID and not notarized,
+so macOS blocks the first start. Allow each app once: System Settings →
+Privacy & Security → Open Anyway (macOS 15 and later), or right-click → Open
+(macOS 14 and earlier), or remove the download mark from just these apps:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Orvix Watch Party Test.app"
+```
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Orvix Watch Party Test 2.app"
+```
+
+Do not turn Gatekeeper off for the whole Mac.
+
+**Isolation.** macOS keeps a sandboxed app's settings, sign-in, caches and
+temporary files under `~/Library/Containers/<bundle identifier>`, so the two
+test apps and the public Orvix each have their own. Saved secrets go to the
+login keychain under a service name of their own per app. Nothing is shared
+with, or written to, the installed Orvix.
+
+**Testing with one Mac.** Sign in to a different test account in each app,
+create a room in one, join it from the other, play the same title in both
+and drive play, pause and seek from the host. This exercises the real test
+backend (RPC, Realtime, chat) and the player following the room. It does
+**not** show cross-device behaviour: both players share one machine, one
+network path and one clock. Two-device results still need two devices.
+
+Use direct or debrid sources. The P2P engine is not bundled in macOS builds,
+and both apps would share its local port.
+
+**What CI checks for the macOS test build:** bundle identifier and name,
+arm64 and x86_64 in the app, Flutter and Dart binaries, no library
+dependency outside macOS and the bundle, a valid signature with the sandbox
+and network entitlements, the Watch Party code and the test project address
+compiled in, the committed macOS icon in the bundle, and that both apps start
+and keep running on the Apple Silicon build machine. That machine is a
+virtual Mac, not a MacBook; nobody looks at the screen and nothing is played.
+
 ## Limits
 
-- macOS and iOS test builds are not produced yet.
+- iOS test builds are not produced.
 - Test APKs are debug-signed; they are for private testing only.
 - The test project is on the same free-tier limits as any project; pause or
   delete it when testing is over.
