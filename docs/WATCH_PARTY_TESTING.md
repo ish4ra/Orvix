@@ -161,9 +161,17 @@ and both apps would share its local port.
 arm64 and x86_64 in the app, Flutter and Dart binaries, no library
 dependency outside macOS and the bundle, a valid signature with the sandbox
 and network entitlements, the Watch Party code and the test project address
-compiled in, the committed macOS icon in the bundle, and that both apps start
-and keep running on the Apple Silicon build machine. That machine is a
-virtual Mac, not a MacBook; nobody looks at the screen and nothing is played.
+compiled in, and the committed macOS icon in the bundle. It then starts both
+apps on the Apple Silicon build machine.
+
+**What that start does and does not show.** The build machine is a virtual
+Mac without hardware-accelerated OpenGL. Orvix opens a video output a few
+seconds after starting, and the MPV player's video output cannot be created
+without it, so on the build machine the apps start, load their libraries,
+run for a few seconds and then stop at exactly that point. The test prints
+the crash report and only accepts this one stop. Real Macs have accelerated
+OpenGL, but **that the apps keep running, and that anything plays, is only
+known once they are run on a real Mac.**
 
 ## Limits
 

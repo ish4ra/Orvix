@@ -11,6 +11,14 @@
 # When an app stops, its own output and the system's crash report are
 # printed, so the reason is in the job log.
 #
+# One stop is expected on virtual Macs and is not counted as a failure:
+# media_kit's video output needs hardware-accelerated OpenGL, which hosted
+# build machines do not have, and Orvix opens a video output a few seconds
+# after starting. It is only excused when the crash report shows exactly that
+# place and this machine really has no accelerated OpenGL. On such a machine
+# the test shows that the app starts and loads its libraries, not that it
+# keeps running.
+#
 # It proves the app starts on the machine it runs on. It does not test
 # playback or anything a person has to look at.
 set -euo pipefail
@@ -26,6 +34,8 @@ seconds=${ORVIX_LAUNCH_SECONDS:-25}
 here=$(cd "$(dirname "$0")" && pwd)
 
 echo "Machine: $(sw_vers -productName) $(sw_vers -productVersion), $(uname -m)"
+opengl=$(python3 "$here/macos_opengl_probe.py" 2>/dev/null || echo unknown)
+echo "Hardware-accelerated OpenGL on this machine: $opengl"
 
 pids=()
 names=()
@@ -63,11 +73,20 @@ for index in "${!pids[@]}"; do
     code=0
     wait "$pid" 2>/dev/null || code=$?
     echo "$name: STOPPED after about ${stopped_after[$index]}s (exit status $code)"
-    status=1
     echo "--- $name: last output"
     tail -n 40 "$report/$name.log" || true
     echo "--- $name: crash report"
     python3 "$here/macos_crash_summary.py" "$executable" "$report/$name.crash.txt" || true
+    if [ "$opengl" = no ] &&
+      grep -q "media_kit_video  .*OpenGLHelpers.createPixelFormat" "$report/$name.crash.txt" 2>/dev/null; then
+      echo "$name: stopped where the player sets up video output, which needs"
+      echo "  hardware-accelerated OpenGL. This machine has none (virtual Mac), so"
+      echo "  this is not counted as a failure. Until then the app started, loaded"
+      echo "  its libraries and ran for about ${stopped_after[$index]}s."
+      echo "  Whether it keeps running on a real Mac is NOT shown by this test."
+    else
+      status=1
+    fi
   fi
   if [ -d "$HOME/Library/Containers/$id" ]; then
     echo "$name: sandbox container $id exists"

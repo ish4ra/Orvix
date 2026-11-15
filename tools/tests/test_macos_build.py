@@ -132,6 +132,43 @@ class BundleCheckTest(unittest.TestCase):
         self.assertIn("say(f\"  contains {label}:", source)
 
 
+class LaunchTestTest(unittest.TestCase):
+    SCRIPT = (ROOT / "tools" / "macos_launch_smoke_test.sh").read_text(encoding="utf-8")
+
+    def test_a_stopped_app_fails_unless_it_is_the_known_virtual_mac_stop(self):
+        excuse = self.SCRIPT[self.SCRIPT.index('if [ "$opengl" = no ] &&') :]
+        excuse = excuse[: excuse.index("    fi\n") + 1]
+        # Both conditions are required, and every other stop fails.
+        self.assertIn('[ "$opengl" = no ] &&', excuse)
+        self.assertIn("OpenGLHelpers.createPixelFormat", excuse)
+        self.assertIn("else\n      status=1", excuse)
+        self.assertIn("NOT shown by this test", excuse)
+
+    def test_crash_reports_are_summarized(self):
+        import json
+
+        import macos_crash_summary as crash
+
+        body = {
+            "exception": {"type": "EXC_BREAKPOINT", "signal": "SIGTRAP"},
+            "usedImages": [{"name": "media_kit_video"}],
+            "threads": [
+                {"frames": [{"imageIndex": 0, "symbol": "idle"}]},
+                {
+                    "triggered": True,
+                    "frames": [
+                        {"imageIndex": 0, "symbol": "static OpenGLHelpers.createPixelFormat()"}
+                    ],
+                },
+            ],
+        }
+        lines = crash.summarize(json.dumps({"app_name": "Orvix"}) + "\n" + json.dumps(body))
+        self.assertIn("exception: EXC_BREAKPOINT SIGTRAP", lines)
+        self.assertIn("  media_kit_video  static OpenGLHelpers.createPixelFormat()", lines)
+        self.assertNotIn("  media_kit_video  idle", lines)
+        self.assertEqual(crash.summarize("not json\nstill not")[0], "not json")
+
+
 def png_header(path: Path) -> tuple[int, int, int, int]:
     """Width, height, bit depth and colour type of a PNG."""
     data = path.read_bytes()[:26]

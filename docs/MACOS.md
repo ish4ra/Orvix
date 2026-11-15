@@ -57,9 +57,17 @@ identifier and name, sandbox and network entitlements, valid ad-hoc
 signature, no library dependency outside macOS and the bundle, the committed
 icon in the bundle.
 
+CI also starts the app on its Apple Silicon machine
+(`tools/macos_launch_smoke_test.sh`). That machine is a virtual Mac without
+hardware-accelerated OpenGL, which the MPV video output requires, and Orvix
+opens a video output a few seconds after starting. So in CI the app starts,
+loads its libraries, runs for a few seconds and stops there; the test prints
+the crash report and accepts only that stop. It does not show that the app
+keeps running on a real Mac.
+
 Still to check by hand on a Mac, because CI cannot:
 
-1. The app opens after the Gatekeeper step and the icon looks right in the
+1. The app opens after the Gatekeeper step, stays open, and the icon looks right in the
    Dock, Finder, Launchpad, Spotlight and the app switcher, in light and dark
    mode.
 2. The catalog loads and sign-in works (this is the network entitlement).
