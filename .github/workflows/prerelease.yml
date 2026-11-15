@@ -129,6 +129,8 @@ jobs:
             tools/configure_android_mobile_media_kit.py \
             tools/configure_android_signing.py \
             tools/generate_desktop_branding.py \
+            tools/configure_macos_build.py \
+            tools/verify_macos_app.py \
             tools/configure_ios_build.py \
             tools/ios_ipa_checks.py \
             tools/ios_macho.py \
@@ -355,6 +357,7 @@ jobs:
           "$RUNNER_TEMP/orvix-branding-venv/bin/python" -m pip install --disable-pip-version-check pillow
           "$RUNNER_TEMP/orvix-branding-venv/bin/python" tools/generate_desktop_branding.py --macos
           test -s macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_1024.png
+          "$RUNNER_TEMP/orvix-branding-venv/bin/python" tools/configure_macos_build.py
 
       - name: Require macOS 10.15+
         shell: bash
@@ -389,6 +392,14 @@ jobs:
         run: |
           set -euo pipefail
           test -d build/macos/Build/Products/Release/Orvix.app
+          "$RUNNER_TEMP/orvix-branding-venv/bin/python" tools/verify_macos_app.py \
+            build/macos/Build/Products/Release/Orvix.app \
+            --bundle-id com.orvix.orvix --name Orvix \
+            --require-arch arm64 --require-arch x86_64 \
+            --require-entitlement com.apple.security.app-sandbox \
+            --require-entitlement com.apple.security.network.client \
+            --require-entitlement com.apple.security.network.server \
+            --icon-master tools/macos_icon/AppIcon.appiconset/app_icon_1024.png
 
       - name: Pack macOS app
         shell: bash
