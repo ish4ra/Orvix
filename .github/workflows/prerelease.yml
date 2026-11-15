@@ -399,7 +399,7 @@ jobs:
             --require-entitlement com.apple.security.app-sandbox \
             --require-entitlement com.apple.security.network.client \
             --require-entitlement com.apple.security.network.server \
-            --icon-master tools/macos_icon/AppIcon.appiconset/app_icon_1024.png
+            --icon-set tools/macos_icon/AppIcon.appiconset
 
       - name: Pack macOS app
         shell: bash

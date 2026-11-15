@@ -316,7 +316,7 @@ jobs:
             --require-entitlement com.apple.security.app-sandbox \
             --require-entitlement com.apple.security.network.client \
             --require-entitlement com.apple.security.network.server \
-            --icon-master tools/macos_icon/AppIcon.appiconset/app_icon_1024.png
+            --icon-set tools/macos_icon/AppIcon.appiconset
 
   ios-modern:
     name: Build iOS Modern sideload IPA
@@ -590,7 +590,7 @@ jobs:
             --require-entitlement com.apple.security.network.server \
             --expect-text watch_party_create \
             --expect-text-env ORVIX_TEST_SUPABASE_URL \
-            --icon-master tools/macos_icon/AppIcon.appiconset/app_icon_1024.png \
+            --icon-set tools/macos_icon/AppIcon.appiconset \
             --report macos-test-report/verification.txt
       - name: Pack the test build
         shell: bash

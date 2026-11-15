@@ -69,9 +69,13 @@ def external_dependencies(otool_output: str) -> list[str]:
     """Dependencies from `otool -L` output that are neither part of macOS nor
     looked up inside the bundle."""
     found = []
-    for line in otool_output.splitlines()[1:]:
+    for line in otool_output.splitlines():
+        # The file's own name heads the list, once per architecture in a
+        # universal binary ("path (architecture arm64):").
+        if not line[:1].isspace() or line.rstrip().endswith(":"):
+            continue
         dependency = line.strip().split(" (compatibility", 1)[0].strip()
-        if not dependency:
+        if not dependency or dependency in found:
             continue
         if dependency.startswith(SYSTEM_PREFIXES + BUNDLE_PREFIXES):
             continue
@@ -98,19 +102,24 @@ def parse_entitlements(raw: bytes) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def icon_difference(icns: Path, master: Path) -> float:
-    """Mean per-channel difference (0-255) between the largest image in the
-    built icon and the committed 1024 px master."""
+def icon_difference(icns: Path, iconset: Path) -> tuple[int, float]:
+    """Compares the largest image inside the built icon with the committed
+    image of the same size. Returns that size and the mean per-channel
+    difference (0-255).
+
+    Xcode keeps only the smaller images in AppIcon.icns (the larger ones go
+    into Assets.car), so the largest one present is compared.
+    """
     from PIL import Image, ImageChops, ImageStat
 
     with tempfile.TemporaryDirectory() as temp:
-        iconset = Path(temp) / "AppIcon.iconset"
-        result = run("iconutil", "--convert", "iconset", str(icns), "--output", str(iconset))
+        extracted = Path(temp) / "AppIcon.iconset"
+        result = run("iconutil", "--convert", "iconset", str(icns), "--output", str(extracted))
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "iconutil failed")
-        largest = iconset / "icon_512x512@2x.png"
-        if not largest.exists():
-            raise RuntimeError("the built icon has no 1024 px image")
+        images = sorted(extracted.glob("*.png"), key=lambda path: Image.open(path).size[0])
+        if not images:
+            raise RuntimeError("the built icon contains no image")
 
         def flattened(path: Path) -> Image.Image:
             image = Image.open(path).convert("RGBA")
@@ -118,10 +127,14 @@ def icon_difference(icns: Path, master: Path) -> float:
             backdrop.alpha_composite(image)
             return backdrop.convert("RGB")
 
-        built, wanted = flattened(largest), flattened(master)
-        if built.size != wanted.size:
-            raise RuntimeError(f"the built icon is {built.size}, expected {wanted.size}")
-        return sum(ImageStat.Stat(ImageChops.difference(built, wanted)).mean) / 3
+        built = flattened(images[-1])
+        size = built.size[0]
+        committed = iconset / f"app_icon_{size}.png"
+        if not committed.exists():
+            raise RuntimeError(f"no committed {size} px image to compare with")
+        wanted = flattened(committed)
+        difference = sum(ImageStat.Stat(ImageChops.difference(built, wanted)).mean) / 3
+        return size, difference
 
 
 def main() -> int:
@@ -144,7 +157,7 @@ def main() -> int:
         help="environment variable whose value must be compiled into the "
         "Dart code; the value is never printed",
     )
-    parser.add_argument("--icon-master", type=Path)
+    parser.add_argument("--icon-set", type=Path, help="committed AppIcon.appiconset")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
 
@@ -287,17 +300,20 @@ def main() -> int:
     say()
     say("Icon")
     icns = app / "Contents" / "Resources" / "AppIcon.icns"
+    catalog = app / "Contents" / "Resources" / "Assets.car"
+    say(f"  Assets.car: {catalog.stat().st_size if catalog.exists() else 'missing'} bytes")
     if not icns.exists():
         fail("Contents/Resources/AppIcon.icns is missing")
     else:
         say(f"  AppIcon.icns: {icns.stat().st_size} bytes")
-        if args.icon_master is not None:
+        if args.icon_set is not None:
             try:
-                difference = icon_difference(icns, args.icon_master)
+                size, difference = icon_difference(icns, args.icon_set)
             except Exception as error:  # noqa: BLE001 - report any reason
                 fail(f"could not compare the built icon: {error}")
             else:
-                say(f"  Difference from {args.icon_master}: {difference:.2f} of 255")
+                say(f"  Largest image in AppIcon.icns: {size} px")
+                say(f"  Difference from the committed {size} px icon: {difference:.2f} of 255")
                 if difference > 3.0:
                     fail("the built icon is not the committed macOS icon")
 

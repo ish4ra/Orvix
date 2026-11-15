@@ -72,7 +72,7 @@ class PublicBuildTest(unittest.TestCase):
             with self.subTest(workflow=name):
                 self.assertIn("--bundle-id com.orvix.orvix --name Orvix \\\n", workflow)
                 self.assertIn(
-                    "--icon-master tools/macos_icon/AppIcon.appiconset/app_icon_1024.png",
+                    "--icon-set tools/macos_icon/AppIcon.appiconset",
                     workflow,
                 )
         self.assertIn("Orvix-v${{ needs.metadata.outputs.version }}-macOS.zip", PRERELEASE)
@@ -101,6 +101,20 @@ class BundleCheckTest(unittest.TestCase):
             verify.external_dependencies(output),
             ["/opt/homebrew/lib/libssl.3.dylib", "/Users/runner/work/lib/libfoo.dylib"],
         )
+
+    def test_universal_binaries_list_themselves_once_per_architecture(self):
+        output = "\n".join(
+            [
+                "build/Orvix.app/Contents/MacOS/Orvix (architecture x86_64):",
+                "\t@rpath/FlutterMacOS.framework/Versions/A/FlutterMacOS (compatibility version 1.0.0)",
+                "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1)",
+                "build/Orvix.app/Contents/MacOS/Orvix (architecture arm64):",
+                "\t@rpath/FlutterMacOS.framework/Versions/A/FlutterMacOS (compatibility version 1.0.0)",
+                "\t/opt/homebrew/lib/libx.dylib (compatibility version 1.0.0)",
+                "\t/opt/homebrew/lib/libx.dylib (compatibility version 1.0.0)",
+            ]
+        )
+        self.assertEqual(verify.external_dependencies(output), ["/opt/homebrew/lib/libx.dylib"])
 
     def test_missing_architectures(self):
         self.assertEqual(verify.missing_architectures(["x86_64", "arm64"], ["arm64", "x86_64"]), [])
