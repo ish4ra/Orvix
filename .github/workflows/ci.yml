@@ -73,7 +73,8 @@ jobs:
             tools/configure_macos_build.py \
             tools/verify_macos_app.py \
             tools/macos_crash_summary.py \
-            tools/macos_opengl_probe.py
+            tools/macos_opengl_probe.py \
+            tools/patch_macos_stream_engine.py
           bash -n tools/publish_orvix_release.sh
           bash -n tools/prepare_android_native.sh
           bash -n tools/ios_ipa_common.sh
@@ -84,6 +85,10 @@ jobs:
           bash -n tools/android_install_smoke_test.sh
           bash -n tools/package_macos_test_build.sh
           bash -n tools/macos_launch_smoke_test.sh
+          bash -n tools/build_macos_stream_engine.sh
+          bash -n tools/bundle_macos_stream_engine.sh
+          bash -n tools/macos_stream_engine_smoke_test.sh
+          bash -n tools/macos_sandbox_engine_test.sh
       - name: Test Android APK installability gate
         run: python3 -m unittest discover -s tools/tests -v
       - name: Guard canonical maintenance rules
@@ -282,9 +287,52 @@ jobs:
         shell: bash
         run: test -s build/app/outputs/flutter-apk/app-debug.apk
 
+  # The macOS Free P2P engine. It is built once per architecture and cached;
+  # the macOS app jobs join the two into one universal binary and put it into
+  # the app. Without it Free P2P cannot play on macOS.
+  macos-engine:
+    name: Build macOS stream engine (${{ matrix.arch }})
+    needs: quality
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        id: engine-cache
+        with:
+          path: macos-stream-engine
+          key: macos-stream-engine-${{ matrix.arch }}-${{ hashFiles('tools/build_macos_stream_engine.sh', 'tools/patch_macos_stream_engine.py') }}
+      - name: Build the engine
+        if: steps.engine-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: bash tools/build_macos_stream_engine.sh macos-stream-engine
+      - name: Start the engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat macos-stream-engine/BUILD_INFO.txt
+          bash tools/macos_stream_engine_smoke_test.sh macos-stream-engine/orvix-stream-server
+      - name: Start the engine inside the App Sandbox
+        shell: bash
+        run: bash tools/macos_sandbox_engine_test.sh macos-stream-engine/orvix-stream-server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-stream-engine-${{ matrix.arch }}
+          retention-days: 1
+          if-no-files-found: error
+          path: macos-stream-engine/
+
   macos:
     name: Build macOS
-    needs: quality
+    needs: [quality, macos-engine]
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -306,6 +354,18 @@ jobs:
         run: flutter pub get
       - name: Build macOS app
         run: flutter build macos --release
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macos-stream-engine-*
+          path: macos-stream-engine
+      - name: Bundle the Free P2P engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/bundle_macos_stream_engine.sh \
+            build/macos/Build/Products/Release/Orvix.app \
+            macos-stream-engine/macos-stream-engine-arm64/orvix-stream-server \
+            macos-stream-engine/macos-stream-engine-x86_64/orvix-stream-server
       - name: Verify app bundle
         shell: bash
         run: |
@@ -315,6 +375,7 @@ jobs:
             build/macos/Build/Products/Release/Orvix.app \
             --bundle-id com.orvix.orvix --name Orvix \
             --require-arch arm64 --require-arch x86_64 \
+            --require-stream-engine \
             --require-entitlement com.apple.security.app-sandbox \
             --require-entitlement com.apple.security.network.client \
             --require-entitlement com.apple.security.network.server \
@@ -551,7 +612,7 @@ jobs:
   watch-party-test-macos:
     name: Watch Party test build (macOS)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.watch_party_test_build }}
-    needs: quality
+    needs: [quality, macos-engine]
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -583,6 +644,18 @@ jobs:
           set -euo pipefail
           flutter build macos --release \
             --dart-define-from-file="$RUNNER_TEMP/orvix-test-defines.json"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macos-stream-engine-*
+          path: macos-stream-engine
+      - name: Bundle the Free P2P engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/bundle_macos_stream_engine.sh \
+            "build/macos/Build/Products/Release/Orvix Watch Party Test.app" \
+            macos-stream-engine/macos-stream-engine-arm64/orvix-stream-server \
+            macos-stream-engine/macos-stream-engine-x86_64/orvix-stream-server
       - name: Verify the test app
         shell: bash
         env:
@@ -593,6 +666,7 @@ jobs:
             "build/macos/Build/Products/Release/Orvix Watch Party Test.app" \
             --bundle-id com.orvix.orvix.wptest --name "Orvix Watch Party Test" \
             --require-arch arm64 --require-arch x86_64 \
+            --require-stream-engine \
             --require-entitlement com.apple.security.app-sandbox \
             --require-entitlement com.apple.security.network.client \
             --require-entitlement com.apple.security.network.server \

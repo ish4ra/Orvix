@@ -7,10 +7,64 @@ then configured by scripts in `tools/`. Nothing under `macos/` is committed.
 |---|---|---|
 | Branding | `tools/generate_desktop_branding.py --macos` | Installs the macOS icon set from `tools/macos_icon/` and names the app "Orvix" |
 | Network access | `tools/configure_macos_build.py` | Keeps the App Sandbox and adds the two network entitlements |
-| Check | `tools/verify_macos_app.py` | Identity, architectures, bundled libraries, signature, entitlements, icon |
+| Free P2P engine | `tools/bundle_macos_stream_engine.sh` | Puts the universal stream engine into the built app and signs it as the app's sandboxed helper |
+| Check | `tools/verify_macos_app.py` | Identity, architectures, bundled libraries, signature, entitlements, icon, Free P2P engine |
 
-Both `ci.yml` and `prerelease.yml` run all three for the public app, so a pull
-request builds what a release builds.
+Both `ci.yml` and `prerelease.yml` run all of them for the public app, so a
+pull request builds what a release builds.
+
+## Free P2P engine
+
+Free P2P on macOS is played through a local stream engine that the app starts
+as a child process: `Contents/Resources/orvix-stream-server`. The app talks to
+it on `127.0.0.1:11470`, and MPV plays from that address.
+
+**What went wrong.** The workflows used to build this engine and copy it into
+the app. That was lost in the consolidation (`d27df80`), and macOS builds
+since then had no engine at all. Every source check then failed at the first
+step (the engine could not be started), which the source list shows as
+ENGINE ERROR on every source and "No source delivered live data".
+
+**How it is built now.** The job `macos-engine` in both workflows runs
+`tools/build_macos_stream_engine.sh` once on an Apple Silicon and once on an
+Intel machine:
+
+- the upstream stream server at a pinned commit (tag `v0.1.8`, see
+  `licenses/stream-server`), prepared by `tools/patch_macos_stream_engine.py`;
+- linked statically against libtorrent 2.0.11 and OpenSSL, so it depends on
+  nothing but macOS (the build fails otherwise);
+- cached, so it is rebuilt only when those two scripts change.
+
+The patch changes only the headless start-up: no FFmpeg requirement, listen
+on `127.0.0.1` only (port from `ORVIX_STREAM_SERVER_PORT`, default 11470, no
+HTTPS listener), no device discovery or update checks, and exit when the app
+that started it goes away, so a crashed app cannot leave an engine holding
+the port.
+
+**How it is checked.** Before an engine is used, on both architectures:
+
+1. `tools/macos_stream_engine_smoke_test.sh`: it starts and answers its
+   health check, a second engine runs next to it on another port, it listens
+   on the loopback address only, the port is free after it stops, and it
+   exits when its parent exits.
+2. `tools/macos_sandbox_engine_test.sh`: a minimal sandboxed app with the
+   same entitlements as Orvix starts the engine as a child process, exactly
+   as Orvix does, and gets an answer. It then asks the engine for the first
+   bytes of a freely shareable torrent (Sintel); that part depends on peers
+   being reachable from the build machine and only reports.
+
+Then every macOS app build joins the two engines with `lipo`, signs the
+result with the sandbox and inherit entitlements, signs the app again with
+the entitlements it had, and `tools/verify_macos_app.py
+--require-stream-engine` fails the build, and therefore the release, when
+the engine is missing, not executable, not universal or not signed that way.
+
+**Two Orvix apps on one Mac** currently share one engine: the app expects it
+on port 11470, and the second app uses the engine the first one started.
+Both can play. If the first app quits, or leaves a title the other is still
+playing from the same source, the other's stream stops until it resolves the
+source again. The engine already supports a port of its own per app; the app
+does not use that yet.
 
 ## Icon
 
@@ -72,15 +126,20 @@ Still to check by hand on a Mac, because CI cannot:
    mode.
 2. The catalog loads and sign-in works (this is the network entitlement).
 3. A direct or debrid source plays in the MPV player, with subtitles.
-4. The in-app update check finds a newer release and the downloaded ZIP is
+4. A Free P2P source plays, seeking works, and no `orvix-stream-server`
+   process is left after quitting the app (`pgrep -fl orvix-stream-server`).
+5. The in-app update check finds a newer release and the downloaded ZIP is
    revealed in Finder.
-5. An existing installation keeps its settings after updating.
+6. An existing installation keeps its settings after updating.
 
 Known gaps:
 
-- **Free P2P does not work on macOS.** The app looks for a bundled stream
-  engine in `Contents/Resources`, and no workflow builds or bundles one for
-  macOS since the consolidation. The app reports that the engine is missing.
+- **Free P2P playback has not been seen working on a Mac yet.** The engine
+  is bundled and proven to start and answer inside the sandbox in CI; playing
+  a torrent through the app needs a real Mac.
+- The engine is linked against the build machine's OpenSSL, which is built
+  for that machine's macOS version. It is expected to run on older macOS
+  versions but that is untested.
 - **Intel** is built but cannot be run in CI (the build machines are Apple
   Silicon).
 - The minimum macOS version is whatever the current Flutter template sets

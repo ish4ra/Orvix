@@ -87,6 +87,38 @@ def missing_architectures(present: list[str], required: list[str]) -> list[str]:
     return [arch for arch in required if arch not in present]
 
 
+STREAM_ENGINE_NAME = "orvix-stream-server"
+# What a helper that runs inside its app's sandbox must be signed with.
+STREAM_ENGINE_ENTITLEMENTS = {
+    "com.apple.security.app-sandbox": True,
+    "com.apple.security.inherit": True,
+}
+
+
+def stream_engine_problems(
+    architectures: list[str],
+    required_architectures: list[str],
+    executable: bool,
+    entitlements: dict,
+    signature_valid: bool,
+) -> list[str]:
+    """Why a bundled Free P2P engine could not be started by the app."""
+    problems = []
+    missing = missing_architectures(architectures, required_architectures)
+    if missing:
+        problems.append(f"the Free P2P engine lacks {', '.join(missing)}")
+    if not executable:
+        problems.append("the Free P2P engine is not executable")
+    if not signature_valid:
+        problems.append("the Free P2P engine is not validly signed")
+    if entitlements != STREAM_ENGINE_ENTITLEMENTS:
+        problems.append(
+            "the Free P2P engine must be signed with exactly the sandbox and "
+            "inherit entitlements to run inside the app's sandbox"
+        )
+    return problems
+
+
 def run(*command: str) -> subprocess.CompletedProcess:
     return subprocess.run(command, capture_output=True, text=True, check=False)
 
@@ -158,6 +190,12 @@ def main() -> int:
         "Dart code; the value is never printed",
     )
     parser.add_argument("--icon-set", type=Path, help="committed AppIcon.appiconset")
+    parser.add_argument(
+        "--require-stream-engine",
+        action="store_true",
+        help="the Free P2P engine must be bundled, executable, universal and "
+        "signed to run inside the app's sandbox",
+    )
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
 
@@ -276,6 +314,35 @@ def main() -> int:
     say("  Gatekeeper assessment (not notarized builds are expected to be rejected):")
     for line in (assessment.stdout + assessment.stderr).strip().splitlines():
         say(f"    {line}")
+
+    # Free P2P engine.
+    engine = app / "Contents" / "Resources" / STREAM_ENGINE_NAME
+    say()
+    say("Free P2P engine")
+    if not engine.is_file():
+        say(f"  Contents/Resources/{STREAM_ENGINE_NAME}: missing")
+        if args.require_stream_engine:
+            fail("the Free P2P engine is not in the app, so Free P2P cannot play")
+    else:
+        present = run("lipo", "-archs", str(engine)).stdout.split()
+        executable_bit = os.access(engine, os.X_OK)
+        say(f"  Contents/Resources/{STREAM_ENGINE_NAME}: {engine.stat().st_size} bytes")
+        say(f"  architectures: {' '.join(present) or 'unknown'}")
+        say(f"  executable: {'yes' if executable_bit else 'no'}")
+        engine_entitlements = parse_entitlements(
+            subprocess.run(
+                ["codesign", "--display", "--entitlements", "-", "--xml", str(engine)],
+                capture_output=True,
+                check=False,
+            ).stdout
+        )
+        say(f"  entitlements: {', '.join(sorted(engine_entitlements)) or '(none)'}")
+        signed = run("codesign", "--verify", "--strict", str(engine)).returncode == 0
+        say(f"  signature valid: {'yes' if signed else 'no'}")
+        for problem in stream_engine_problems(
+            present, args.require_arch, executable_bit, engine_entitlements, signed
+        ):
+            fail(problem)
 
     # Compiled Dart code.
     dart = app / "Contents" / "Frameworks" / "App.framework" / "App"

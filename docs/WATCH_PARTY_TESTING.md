@@ -154,8 +154,9 @@ backend (RPC, Realtime, chat) and the player following the room. It does
 **not** show cross-device behaviour: both players share one machine, one
 network path and one clock. Two-device results still need two devices.
 
-Use direct or debrid sources. The P2P engine is not bundled in macOS builds,
-and both apps would share its local port.
+Free P2P is bundled. The two apps share one local engine (the app expects
+it on one fixed port): whichever plays a Free P2P source first starts it and
+the other uses it. Quit that app last. Details in [MACOS.md](MACOS.md).
 
 **What CI checks for the macOS test build:** bundle identifier and name,
 arm64 and x86_64 in the app, Flutter and Dart binaries, no library

@@ -48,12 +48,26 @@ Testing Watch Party on one Mac
 5. In app 1 (the host) start a title. Open the same title in app 2.
 6. Play, pause and seek in app 1 and watch app 2 follow. Send chat both ways.
 
-Use direct or debrid sources. Both apps would share one local P2P port, and
-the P2P engine is not bundled in this build.
+Free P2P is included. Both apps share one local engine: the app that plays
+a Free P2P source first starts it, and the other uses it too. So quit that
+first app last, and expect the second app's stream to stop if the first one
+leaves a title both are playing from the same source.
+
+If every source shows ENGINE ERROR, the line under the source list says
+why. If it says the engine is missing or did not become ready, remove the
+download mark from both apps with the two xattr commands above, quit both
+apps, and try again. Then please report what the line said.
 
 This checks the real backend, real-time delivery and the player following
 the room. Both players share one Mac, one network and one clock, so it does
 not show how sync behaves between two different devices.
+
+Checking the engine by hand (optional)
+--------------------------------------
+While a Free P2P source is playing, in Terminal:
+  pgrep -fl orvix-stream-server      shows the running engine
+  curl -s http://127.0.0.1:11470/heartbeat    answers when it is healthy
+After quitting both apps the first command should print nothing.
 
 Remove
 ------

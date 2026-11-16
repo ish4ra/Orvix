@@ -193,7 +193,7 @@ class WorkflowTest(unittest.TestCase):
                 "inputs.watch_party_test_build }}",
                 body,
             )
-            self.assertIn("needs: quality", body)
+            self.assertRegex(body, r"needs: (quality|\[quality, macos-engine\])\n")
 
     def test_normal_ci_jobs_cannot_pick_up_test_settings(self):
         outside = CI
