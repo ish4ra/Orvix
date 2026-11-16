@@ -89,6 +89,13 @@ export CXXFLAGS="-I$boost/include -I$ssl/include ${CXXFLAGS:-}"
 export CPPFLAGS="-I$boost/include -I$ssl/include ${CPPFLAGS:-}"
 export CPLUS_INCLUDE_PATH="$boost/include:$ssl/include:${CPLUS_INCLUDE_PATH:-}"
 export LDFLAGS="-L$libtorrent/lib -L$ssl/lib ${LDFLAGS:-}"
+if [ "$arch" = x86_64 ]; then
+  # The bundled RAR code asks the compiler which CPU features exist. On Intel
+  # that needs clang's runtime library, which Rust's link step leaves out.
+  runtime="$(clang -print-resource-dir)/lib/darwin/libclang_rt.osx.a"
+  test -f "$runtime" || { echo "clang runtime library not found: $runtime" >&2; exit 1; }
+  export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=$runtime"
+fi
 (cd "$work/stream-server" && cargo build --release --package server --bin server)
 
 engine="$out/orvix-stream-server"
