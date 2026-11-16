@@ -44,7 +44,8 @@ the port.
 **How it is checked.** Before an engine is used, on both architectures:
 
 1. `tools/macos_stream_engine_smoke_test.sh`: it starts and answers its
-   health check, a second engine runs next to it on another port, it listens
+   health check, a second engine with its own temporary folder runs next to
+   it on another port, a duplicate in the same folder is refused, it listens
    on the loopback address only, the port is free after it stops, and it
    exits when its parent exits.
 2. `tools/macos_sandbox_engine_test.sh`: a minimal sandboxed app with the

@@ -305,7 +305,7 @@ jobs:
             runner: macos-15-intel
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         id: engine-cache
         with:
           path: macos-stream-engine
@@ -314,6 +314,13 @@ jobs:
         if: steps.engine-cache.outputs.cache-hit != 'true'
         shell: bash
         run: bash tools/build_macos_stream_engine.sh macos-stream-engine
+      # Saved right after building, so a failing check below does not cost
+      # another twenty-minute build. The checks run on every use anyway.
+      - uses: actions/cache/save@v4
+        if: steps.engine-cache.outputs.cache-hit != 'true'
+        with:
+          path: macos-stream-engine
+          key: ${{ steps.engine-cache.outputs.cache-primary-key }}
       - name: Start the engine
         shell: bash
         run: |

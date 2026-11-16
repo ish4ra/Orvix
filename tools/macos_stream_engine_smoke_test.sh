@@ -41,13 +41,27 @@ trap 'kill "$pid" 2>/dev/null || true' EXIT
 wait_ready 11470 "$pid" "$work/default.log"
 echo "Default port: answering on 127.0.0.1:11470"
 
-# 2. A second engine on its own port, next to the first.
-(cd "$work" && ORVIX_STREAM_SERVER_PORT=11493 exec "$engine" --no-tray > "$work/second.log" 2>&1) &
+# 2. A second engine on its own port, next to the first. The engine allows
+# one instance per temporary folder (a lock file there). Every sandboxed app
+# has a temporary folder of its own, so a second app is modelled by giving
+# the second engine another one.
+mkdir -p "$work/second-tmp" "$work/orphan-tmp"
+(cd "$work" && TMPDIR="$work/second-tmp/" ORVIX_STREAM_SERVER_PORT=11493 \
+  exec "$engine" --no-tray > "$work/second.log" 2>&1) &
 second=$!
 trap 'kill "$pid" "$second" 2>/dev/null || true' EXIT
 wait_ready 11493 "$second" "$work/second.log"
 answers 11470 || { echo "engine: the first engine stopped answering." >&2; exit 1; }
 echo "Second engine: answering on 127.0.0.1:11493 while the first keeps 11470"
+
+# 2b. A second engine in the same temporary folder is refused, not started
+# twice: this is what stops one app from running two engines.
+(cd "$work" && ORVIX_STREAM_SERVER_PORT=11496 "$engine" --no-tray > "$work/duplicate.log" 2>&1) || true
+if answers 11496; then
+  echo "engine: a second engine started for the same temporary folder." >&2
+  exit 1
+fi
+echo "Same temporary folder: a duplicate engine is refused"
 
 # 3. Not reachable from the network: it listens on the loopback address only.
 if lsof -nP -a -p "$second" -iTCP -sTCP:LISTEN 2>/dev/null | grep -v "127.0.0.1:" | grep -q LISTEN; then
@@ -64,7 +78,7 @@ if answers 11470; then echo "engine: still answering after being stopped." >&2; 
 echo "Stopped: the port is free again"
 
 # 4. It exits when the process that started it goes away.
-bash -c "cd '$work' && ORVIX_STREAM_SERVER_PORT=11495 '$engine' --no-tray > '$work/orphan.log' 2>&1 & echo \$! > '$work/orphan.pid'; sleep 6"
+bash -c "cd '$work' && TMPDIR='$work/orphan-tmp/' ORVIX_STREAM_SERVER_PORT=11495 '$engine' --no-tray > '$work/orphan.log' 2>&1 & echo \$! > '$work/orphan.pid'; sleep 6"
 orphan=$(cat "$work/orphan.pid")
 gone=0
 for _ in $(seq 1 30); do
