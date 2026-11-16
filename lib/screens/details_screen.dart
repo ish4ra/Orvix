@@ -3300,7 +3300,11 @@ class DetailsScreenState extends State<DetailsScreen> {
                           Expanded(
                             child: Text(
                               liveProbe.noLiveConfirmed
-                                  ? '$liveSummary\nNo source delivered live data. Choose one manually or re-check.'
+                                  ? LocalTorrentService
+                                              .instance.engineStartFailure ==
+                                          null
+                                      ? '$liveSummary\nNo source delivered live data. Choose one manually or re-check.'
+                                      : '$liveSummary\n${LocalTorrentService.instance.engineStartFailure} Re-check to try again.'
                                   : liveSummary,
                               style: TextStyle(
                                 color: color.onSurfaceVariant,
