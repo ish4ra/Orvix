@@ -56,8 +56,11 @@ echo "Second engine: answering on 127.0.0.1:11493 while the first keeps 11470"
 
 # 2b. A second engine in the same temporary folder is refused, not started
 # twice: this is what stops one app from running two engines.
-(cd "$work" && ORVIX_STREAM_SERVER_PORT=11496 "$engine" --no-tray > "$work/duplicate.log" 2>&1) || true
-if answers 11496; then
+(cd "$work" && ORVIX_STREAM_SERVER_PORT=11496 exec "$engine" --no-tray > "$work/duplicate.log" 2>&1) &
+duplicate=$!
+sleep 5
+if kill -0 "$duplicate" 2>/dev/null || answers 11496; then
+  kill "$duplicate" 2>/dev/null || true
   echo "engine: a second engine started for the same temporary folder." >&2
   exit 1
 fi
