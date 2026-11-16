@@ -48,12 +48,17 @@ NEW = """        let mut cfg = stream_server::ServerConfig::binary_default();
         cfg.http_addr = std::net::SocketAddr::from(([127, 0, 0, 1], orvix_port));
         cfg.https_addr = None;
         cfg.public_base_url = Some(format!("http://127.0.0.1:{orvix_port}"));
-        // Never outlive the app that started this helper.
+        // Never outlive the app that started this helper. Leave at once
+        // with _exit: a normal exit waits for the torrent session's threads
+        // and can hang, which would keep the port taken.
+        unsafe extern "C" {
+            fn _exit(status: i32) -> !;
+        }
         let orvix_parent = std::os::unix::process::parent_id();
         std::thread::spawn(move || loop {
             std::thread::sleep(std::time::Duration::from_secs(2));
             if std::os::unix::process::parent_id() != orvix_parent {
-                std::process::exit(0);
+                unsafe { _exit(0) }
             }
         });
         cfg.use_tui = use_tui;
