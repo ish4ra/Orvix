@@ -106,7 +106,7 @@ class BuildTest(unittest.TestCase):
         for expectation in (
             "wait_ready 11470",
             "ORVIX_STREAM_SERVER_PORT=11493",
-            "Listening on 127.0.0.1 only",
+            "HTTP interface: listening on 127.0.0.1 only",
             "a duplicate engine is refused",
             "the port is free again",
             "Exits with its parent",

@@ -66,13 +66,16 @@ if kill -0 "$duplicate" 2>/dev/null || answers 11496; then
 fi
 echo "Same temporary folder: a duplicate engine is refused"
 
-# 3. Not reachable from the network: it listens on the loopback address only.
-if lsof -nP -a -p "$second" -iTCP -sTCP:LISTEN 2>/dev/null | grep -v "127.0.0.1:" | grep -q LISTEN; then
-  echo "engine: it listens on an address other than 127.0.0.1:" >&2
-  lsof -nP -a -p "$second" -iTCP -sTCP:LISTEN >&2
+# 3. The engine's HTTP interface, which serves the media and takes commands,
+# must not be reachable from the network: loopback only. (The BitTorrent
+# port is a different matter; it has to accept peers from the network.)
+listening=$(lsof -nP -a -p "$second" -iTCP -sTCP:LISTEN 2>/dev/null | grep ":11493 " || true)
+if [ -z "$listening" ] || echo "$listening" | grep -qv "127.0.0.1:11493 "; then
+  echo "engine: its HTTP port is not limited to 127.0.0.1:" >&2
+  lsof -nP -a -p "$second" -iTCP -sTCP:LISTEN >&2 || true
   exit 1
 fi
-echo "Listening on 127.0.0.1 only"
+echo "HTTP interface: listening on 127.0.0.1 only"
 
 kill "$pid" "$second" 2>/dev/null || true
 wait "$pid" "$second" 2>/dev/null || true
