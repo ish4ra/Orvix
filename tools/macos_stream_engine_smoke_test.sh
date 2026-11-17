@@ -84,18 +84,25 @@ if answers 11470; then echo "engine: still answering after being stopped." >&2; 
 echo "Stopped: the port is free again"
 
 # 4. It exits when the process that started it goes away. A short-lived
-# bash starts the engine (exec, so the recorded pid is the engine itself)
-# and exits; the engine must then stop on its own.
+# bash starts the engine (exec, so the recorded pid is the engine itself),
+# waits until it answers, records what is running under that pid, and exits.
+# The engine must then stop on its own.
 bash -c '( cd "$1" && TMPDIR="$1/orphan-tmp/" ORVIX_STREAM_SERVER_PORT=11495 exec "$2" --no-tray > "$1/orphan.log" 2>&1 ) &
   echo $! > "$1/orphan.pid"
-  sleep 6' _ "$work" "$engine"
+  for _ in $(seq 1 60); do
+    if curl --fail --silent --max-time 2 http://127.0.0.1:11495/heartbeat > /dev/null; then
+      ps -p $! -o comm= > "$1/orphan.comm"
+      break
+    fi
+    sleep 0.5
+  done' _ "$work" "$engine"
 orphan=$(cat "$work/orphan.pid")
-if ! ps -p "$orphan" -o comm= | grep -q orvix-stream; then
-  echo "engine: the orphan test did not start the engine (pid $orphan)." >&2
+if ! grep -q orvix-stream "$work/orphan.comm" 2>/dev/null; then
+  echo "engine: the orphan-test engine did not start and answer (pid $orphan)." >&2
   tail -n 20 "$work/orphan.log" >&2 || true
+  kill "$orphan" 2>/dev/null || true
   exit 1
 fi
-answers 11495 || { echo "engine: the orphan-test engine did not answer." >&2; exit 1; }
 gone=0
 for _ in $(seq 1 30); do
   if ! kill -0 "$orphan" 2>/dev/null; then gone=1; break; fi
