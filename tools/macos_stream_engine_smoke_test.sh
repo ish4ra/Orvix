@@ -83,9 +83,19 @@ for _ in $(seq 1 20); do answers 11470 || break; sleep 0.5; done
 if answers 11470; then echo "engine: still answering after being stopped." >&2; exit 1; fi
 echo "Stopped: the port is free again"
 
-# 4. It exits when the process that started it goes away.
-bash -c "cd '$work' && TMPDIR='$work/orphan-tmp/' ORVIX_STREAM_SERVER_PORT=11495 '$engine' --no-tray > '$work/orphan.log' 2>&1 & echo \$! > '$work/orphan.pid'; sleep 6"
+# 4. It exits when the process that started it goes away. A short-lived
+# bash starts the engine (exec, so the recorded pid is the engine itself)
+# and exits; the engine must then stop on its own.
+bash -c '( cd "$1" && TMPDIR="$1/orphan-tmp/" ORVIX_STREAM_SERVER_PORT=11495 exec "$2" --no-tray > "$1/orphan.log" 2>&1 ) &
+  echo $! > "$1/orphan.pid"
+  sleep 6' _ "$work" "$engine"
 orphan=$(cat "$work/orphan.pid")
+if ! ps -p "$orphan" -o comm= | grep -q orvix-stream; then
+  echo "engine: the orphan test did not start the engine (pid $orphan)." >&2
+  tail -n 20 "$work/orphan.log" >&2 || true
+  exit 1
+fi
+answers 11495 || { echo "engine: the orphan-test engine did not answer." >&2; exit 1; }
 gone=0
 for _ in $(seq 1 30); do
   if ! kill -0 "$orphan" 2>/dev/null; then gone=1; break; fi
@@ -96,6 +106,7 @@ if [ "$gone" -ne 1 ]; then
   echo "engine: it kept running after the process that started it exited." >&2
   exit 1
 fi
+if answers 11495; then echo "engine: its port still answers after it exited." >&2; exit 1; fi
 echo "Exits with its parent: no engine is left behind"
 trap - EXIT
 echo "Stream engine smoke test passed."
