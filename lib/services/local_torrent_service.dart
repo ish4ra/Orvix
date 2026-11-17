@@ -371,6 +371,13 @@ class LocalTorrentService {
   static const String baseUrl = 'http://127.0.0.1:11470';
   static const String bundledExeName = 'orvix-stream-server.exe';
   static const String bundledMacName = 'orvix-stream-server';
+
+  /// Why the engine could not be started the last time that was tried, in
+  /// words fit for the user, or null when the last start worked. The source
+  /// list shows it, because a source check can only say "engine error" and
+  /// that hides whether the engine is missing, incompatible or just slow.
+  String? get engineStartFailure => _engineStartFailure;
+  String? _engineStartFailure;
   static const MethodChannel _androidChannel =
       MethodChannel('orvix/torrent_engine');
 
@@ -1621,6 +1628,7 @@ class LocalTorrentService {
 
   Future<void> ensureRunning() async {
     if (await _heartbeat()) {
+      _engineStartFailure = null;
       if (Platform.isWindows) {
         final capabilities = await _orvixCapabilities();
         final currentEngine = _hasCurrentWindowsCapabilities(capabilities);
@@ -1763,6 +1771,9 @@ class LocalTorrentService {
         'The local torrent engine did not become ready in time.',
       );
     } catch (error, stackTrace) {
+      _engineStartFailure = error is LocalTorrentException
+          ? error.message
+          : 'The local torrent engine could not be started.';
       if (!completer.isCompleted) {
         completer.completeError(error, stackTrace);
       }

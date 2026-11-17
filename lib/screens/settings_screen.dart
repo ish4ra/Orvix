@@ -8,12 +8,15 @@ import '../services/ai_translation_credentials_service.dart';
 import '../services/online_subtitle_service.dart';
 import '../services/player_engine_preferences_service.dart';
 import '../services/subtitle_preferences_service.dart';
+import '../models/media_item.dart';
 import '../services/platform_profile.dart';
 import '../services/skip_segment_service.dart';
+import '../services/watch_party/watch_party_feature.dart';
 import '../tv/tv_focus.dart';
 import '../tv/tv_theme.dart';
 import '../tv/tv_widgets.dart';
 import '../widgets/update_check_section.dart';
+import '../widgets/watch_party_entry.dart';
 
 /// Preferred online subtitle languages, in picker order.
 const _subtitleLanguages = <(String, String)>[
@@ -37,7 +40,11 @@ const _subtitleLanguages = <(String, String)>[
 ];
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({super.key, this.onOpenMedia});
+
+  /// Opens a title's details. Used by Watch Party to take a participant to
+  /// the room's title.
+  final Future<void> Function(MediaItem item)? onOpenMedia;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -246,6 +253,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 const SizedBox(height: 24),
                 _tvSection('App updates', const [TvUpdateCheckSection()]),
+                if (WatchPartyFeature.enabled)
+                  _tvSection('Watch Party', [
+                    WatchPartyEntry(onOpenMedia: widget.onOpenMedia, tv: true),
+                  ]),
                 _tvSection('Player engine', [
                   TvTabGroup(
                     child: Wrap(
@@ -377,6 +388,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 26),
               const UpdateCheckCard(),
               const SizedBox(height: 22),
+              if (WatchPartyFeature.enabled) ...[
+                WatchPartyEntry(onOpenMedia: widget.onOpenMedia),
+                const SizedBox(height: 22),
+              ],
               Container(
                 padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(

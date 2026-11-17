@@ -11,6 +11,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
 import 'services/orvix_account_service.dart';
+import 'services/orvix_backend_config.dart';
 import 'services/orvix_telemetry_service.dart';
 import 'services/ai_sinhala_trace_service.dart';
 import 'services/local_torrent_service.dart';
@@ -88,9 +89,10 @@ Future<void> main() async {
   // engine can reopen files inside it.
   await LocalTorrentService.purgeStaleWindowsTorrentCacheOnStartup();
 
+  final backend = OrvixBackendConfig.current;
   await Supabase.initialize(
-    url: 'https://kpjuisxofwqxhbnnsyzf.supabase.co',
-    publishableKey: 'sb_publishable_HmqvNavX_iovenN3YRgpmA_cgxQdG9y',
+    url: backend.url,
+    publishableKey: backend.publishableKey,
   );
 
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {

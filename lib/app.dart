@@ -504,7 +504,7 @@ class _OrvixShellState extends State<_OrvixShell> {
       case 4:
         return SourcesScreen(sources: widget.sources);
       case 5:
-        return const SettingsScreen();
+        return SettingsScreen(onOpenMedia: _openMedia);
       case 6:
         return AccountScreen(
           active: _index == 6,
@@ -569,7 +569,7 @@ class _OrvixShellState extends State<_OrvixShell> {
         onAuthChanged: () => setState(() => _authRevision++),
       ),
       SourcesScreen(sources: widget.sources),
-      const SettingsScreen(),
+      SettingsScreen(onOpenMedia: _openMedia),
       AccountScreen(
         key: ValueKey('account-$_authRevision'),
         onAuthChanged: _refreshAfterAccountChange,

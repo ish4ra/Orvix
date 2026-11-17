@@ -129,6 +129,9 @@ jobs:
             tools/configure_android_mobile_media_kit.py \
             tools/configure_android_signing.py \
             tools/generate_desktop_branding.py \
+            tools/configure_macos_build.py \
+            tools/verify_macos_app.py \
+            tools/patch_macos_stream_engine.py \
             tools/configure_ios_build.py \
             tools/ios_ipa_checks.py \
             tools/ios_macho.py \
@@ -331,9 +334,60 @@ jobs:
           path: native/
           if-no-files-found: error
 
+  # The macOS Free P2P engine. It is built once per architecture and cached;
+  # the macOS app jobs join the two into one universal binary and put it into
+  # the app. Without it Free P2P cannot play on macOS.
+  macos-engine:
+    name: Build macOS stream engine (${{ matrix.arch }})
+    needs: [metadata, validate]
+    if: needs.metadata.outputs.platforms == 'all'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache/restore@v4
+        id: engine-cache
+        with:
+          path: macos-stream-engine
+          key: macos-stream-engine-${{ matrix.arch }}-${{ hashFiles('tools/build_macos_stream_engine.sh', 'tools/patch_macos_stream_engine.py') }}
+      - name: Build the engine
+        if: steps.engine-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: bash tools/build_macos_stream_engine.sh macos-stream-engine
+      # Saved right after building, so a failing check below does not cost
+      # another twenty-minute build. The checks run on every use anyway.
+      - uses: actions/cache/save@v4
+        if: steps.engine-cache.outputs.cache-hit != 'true'
+        with:
+          path: macos-stream-engine
+          key: ${{ steps.engine-cache.outputs.cache-primary-key }}
+      - name: Start the engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat macos-stream-engine/BUILD_INFO.txt
+          bash tools/macos_stream_engine_smoke_test.sh macos-stream-engine/orvix-stream-server
+      - name: Start the engine inside the App Sandbox
+        shell: bash
+        run: bash tools/macos_sandbox_engine_test.sh macos-stream-engine/orvix-stream-server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-stream-engine-${{ matrix.arch }}
+          retention-days: 1
+          if-no-files-found: error
+          path: macos-stream-engine/
+
   macos:
     name: Build macOS
-    needs: [metadata, validate]
+    needs: [metadata, validate, macos-engine]
     if: needs.metadata.outputs.platforms == 'all'
     runs-on: macos-15
     steps:
@@ -355,6 +409,7 @@ jobs:
           "$RUNNER_TEMP/orvix-branding-venv/bin/python" -m pip install --disable-pip-version-check pillow
           "$RUNNER_TEMP/orvix-branding-venv/bin/python" tools/generate_desktop_branding.py --macos
           test -s macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_1024.png
+          "$RUNNER_TEMP/orvix-branding-venv/bin/python" tools/configure_macos_build.py
 
       - name: Require macOS 10.15+
         shell: bash
@@ -384,11 +439,32 @@ jobs:
       - name: Build macOS
         run: flutter build macos --release
 
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macos-stream-engine-*
+          path: macos-stream-engine
+      - name: Bundle the Free P2P engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/bundle_macos_stream_engine.sh \
+            build/macos/Build/Products/Release/Orvix.app \
+            macos-stream-engine/macos-stream-engine-arm64/orvix-stream-server \
+            macos-stream-engine/macos-stream-engine-x86_64/orvix-stream-server
       - name: Verify macOS app
         shell: bash
         run: |
           set -euo pipefail
           test -d build/macos/Build/Products/Release/Orvix.app
+          "$RUNNER_TEMP/orvix-branding-venv/bin/python" tools/verify_macos_app.py \
+            build/macos/Build/Products/Release/Orvix.app \
+            --bundle-id com.orvix.orvix --name Orvix \
+            --require-arch arm64 --require-arch x86_64 \
+            --require-stream-engine \
+            --require-entitlement com.apple.security.app-sandbox \
+            --require-entitlement com.apple.security.network.client \
+            --require-entitlement com.apple.security.network.server \
+            --icon-set tools/macos_icon/AppIcon.appiconset
 
       - name: Pack macOS app
         shell: bash

@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'local_torrent_service.dart';
+import 'orvix_backend_config.dart';
 
 class AiAudioSinhalaCue {
   const AiAudioSinhalaCue({
@@ -50,6 +51,12 @@ class AiAudioSttService {
     required Duration start,
     Duration duration = windowDuration,
   }) async {
+    // Test builds must not reach the production project.
+    if (OrvixBackendConfig.isTestBuild) {
+      throw const AiAudioSttException(
+        'Audio subtitle fallback is turned off in test builds.',
+      );
+    }
     if (!(Platform.isWindows || Platform.isAndroid || Platform.isMacOS)) {
       throw const AiAudioSttException(
         'Audio subtitle fallback is not supported on this platform.',

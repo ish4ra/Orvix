@@ -4,6 +4,7 @@
 // they cannot show what a screen really looks like or whether a label fits.
 // These helpers load Roboto and the Material icon font that ship with the
 // Flutter SDK. Set ORVIX_CAPTURE_DIR to also write PNG screenshots.
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -45,8 +46,38 @@ Future<bool> loadTvFonts() async {
       ..addFont(Future.value(ByteData.sublistView(icons.readAsBytesSync())));
     await loader.load();
   }
+  await _waitForFontChanges();
   _fontsLoaded = true;
   return true;
+}
+
+/// Loading a font makes the engine announce a font change a moment later
+/// (Flutter 3.50 and newer). Text that is on screen when the announcement
+/// arrives schedules a relayout frame, and a test that ends before that
+/// frame fails with "an animation is still running". Waiting here, before
+/// any screen is built, keeps the announcement out of the tests. Returns
+/// once no announcement has arrived for a moment.
+Future<void> _waitForFontChanges() async {
+  final binding = TestWidgetsFlutterBinding.ensureInitialized();
+  var announced = Completer<void>();
+  void onChange() {
+    if (!announced.isCompleted) announced.complete();
+  }
+
+  PaintingBinding.instance.systemFonts.addListener(onChange);
+  try {
+    for (var round = 0; round < 10; round++) {
+      final arrived = await binding.runAsync(
+        () => announced.future
+            .then((_) => true)
+            .timeout(const Duration(milliseconds: 150), onTimeout: () => false),
+      );
+      if (arrived != true) break;
+      announced = Completer<void>();
+    }
+  } finally {
+    PaintingBinding.instance.systemFonts.removeListener(onChange);
+  }
 }
 
 /// The app's dark theme essentials with the real font.

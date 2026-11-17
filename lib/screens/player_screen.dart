@@ -28,7 +28,11 @@ import '../services/subtitle_preferences_service.dart';
 import '../services/subtitle_render_policy.dart';
 import '../services/video_black_bar_crop_service.dart';
 import '../services/skip_segment_service.dart';
+import '../services/watch_party/watch_party_player_adapter.dart';
+import '../services/watch_party/watch_party_service.dart';
+import '../services/watch_party/watch_party_session.dart';
 import '../widgets/player_loading_overlay.dart';
+import '../widgets/watch_party_player_overlay.dart';
 
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({
@@ -123,6 +127,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   StreamSubscription<String>? _playbackErrorSubscription;
   StreamSubscription<mk.Track>? _trackSubscription;
   bool _playbackStarted = false;
+  // Set only while a Watch Party room is joined; null leaves this player
+  // exactly as it is for solo playback.
+  WatchPartyPlayerBinding? _watchParty;
   bool _successReported = false;
   bool _failureReported = false;
   bool _startupFailureVisible = false;
@@ -1001,6 +1008,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (firstStart && !_successReported) {
       _successReported = true;
       widget.onPlaybackStarted?.call();
+    }
+    if (firstStart) {
+      _watchParty ??= WatchPartyService.instance.attachPlayer(
+        MediaKitWatchPartyAdapter(widget.playback.player),
+        item: widget.item,
+        episode: widget.episode,
+      );
     }
   }
 
@@ -3528,6 +3542,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _preparePlayerExitInternal() async {
     _closing = true;
+    // Before the pause and stop below, so they are not read as the host
+    // pausing and rewinding the room.
+    _watchParty?.detach();
+    _watchParty = null;
     _hideTimer?.cancel();
     _saveTimer?.cancel();
     _nextTimer?.cancel();
@@ -5678,6 +5696,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   void dispose() {
     _closing = true;
+    _watchParty?.detach();
+    _watchParty = null;
     _hideTimer?.cancel();
     _saveTimer?.cancel();
     _nextTimer?.cancel();
@@ -5859,6 +5879,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 if (_activeSkipSegment != null && !_skipSegmentDismissed)
                   _skipSegmentOverlay(),
                 if (_nextCountdown > 0) _nextEpisodeOverlay(),
+                if (_error == null && _playbackStarted)
+                  WatchPartyPlayerOverlay(controlsVisible: _controlsVisible),
               ],
             ),
           ),

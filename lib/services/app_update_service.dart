@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'local_torrent_service.dart';
+import 'orvix_backend_config.dart';
 import 'platform_profile.dart';
 import 'public_release_discovery.dart';
 import 'release_version.dart';
@@ -221,7 +222,11 @@ class AppUpdateService {
     return null;
   }
 
-  Future<UpdatePlatform?> platform() => _platform ??= _platformLoader();
+  // A test build is a separate app and must never install a public release
+  // over itself, so it reports no update platform.
+  Future<UpdatePlatform?> platform() => OrvixBackendConfig.isTestBuild
+      ? Future<UpdatePlatform?>.value()
+      : _platform ??= _platformLoader();
 
   /// The installed version this service compares against.
   Future<String> currentVersion() => _currentVersion();
